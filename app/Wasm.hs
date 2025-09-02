@@ -284,9 +284,15 @@ factorial = Function $
 printNumber :: Function Empty (I32 :<| VNil)
 printNumber = Function $
     -- Just consume the parameter without returning anything
-       LocalGet SFZ
+       LocalGet slotZero
     :| Drop
     :| End
+    where
+      -- example: here we are saying that
+      -- extract the zeroth index from
+      -- a vector of size 2
+      slotZero :: SFin 'Z ('S ('S 'Z))
+      slotZero = SFZ
 
 -- | Example 4: Function with more complex local variable patterns.
 -- Takes one parameter, uses three local variables for intermediate calculations.
