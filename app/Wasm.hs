@@ -1,3 +1,4 @@
+{-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -9,10 +10,11 @@
 -- WebAssembly programs are stack-safe and type-correct at compile time.
 module Wasm where
 
-import GHC.TypeLits (Nat, type (-))
-import GHC.TypeError (TypeError, ErrorMessage(..))
 import Data.Int (Int32)
+import GHC.TypeLits (Nat) -- , type (-))
+-- import GHC.TypeError (TypeError, ErrorMessage(..))
 import Types (WasmType(I64, I32), KnownWasmType, RuntimeTypeOf, WasmType)
+import Utils
 import WasmModule (WasmModule(..))
 
 {-
@@ -48,27 +50,7 @@ LOCAL VARIABLE CONTEXT
 -- | Reference to a local variable slot (0-indexed).
 type SlotIndex = Nat
 
--- | Singleton type for slot indices.
--- This is another witness type that brings type-level natural numbers
--- into term-level code, allowing us to refer to specific local variable slots.
-data KnownSlot (slotIndex :: SlotIndex) where
-    SlotZero :: KnownSlot 0
-    SlotOne  :: KnownSlot 1
-    -- TODO: Add more slots or make this more general
-
--- | Type-level list representing the types of local variables.
--- Example: [I32, I32] means two local i32 variables.
-type LocalsShape = [WasmType]
-
--- | Get the type of a local variable at a given slot.
--- This performs bounds checking and gives helpful error messages.
-type family GetLocalType (slotIndex :: SlotIndex) (context :: LocalsShape) :: WasmType where
-    GetLocalType 0 (top ': _) = top
-    GetLocalType n (_ ': rest) = GetLocalType (n-1) rest
-    GetLocalType n '[] = 
-        TypeError ('Text "Local variable index out of bounds: "
-                  ':<>: 'ShowType n
-                  ':<>: 'Text " exceeds context length ")
+type LocalsShape n = Vec n WasmType
 
 {- TODO: Better error messages
    Improve type error messages for common mistakes like:
@@ -99,7 +81,7 @@ INSTRUCTIONS
 --   - inputStack: the stack shape before the instruction
 --   - outputStack: the stack shape after the instruction
 --   - locals: the local variable context (currently unchanged by most instructions)
-data Instruction (inputStack :: StackShape) (outputStack :: StackShape) (locals :: LocalsShape) (inputModule::WasmModule) (outputModule::WasmModule) where
+data Instruction (inputStack :: StackShape) (outputStack :: StackShape) (locals :: LocalsShape n) (inputModule::WasmModule) (outputModule::WasmModule) where
 
     -- Constants: push a literal value onto the stack
     I32Const :: Int32 -> Instruction inputStack (I32 :> inputStack) locals inputGlobals outputGlobals
@@ -164,12 +146,12 @@ data Instruction (inputStack :: StackShape) (outputStack :: StackShape) (locals 
 
     -- Local variable operations
     -- LocalGet: push the value of a local variable onto the stack
-    LocalGet :: KnownSlot (slotIndex :: SlotIndex)
-             -> Instruction inputStack (GetLocalType slotIndex locals :> inputStack) locals inputGlobals outputGlobals
+    LocalGet :: SFin i n
+             -> Instruction inputStack (Index i locals :> inputStack) locals inputGlobals outputGlobals
 
     -- LocalSet: pop a value from stack and store it in a local variable
-    LocalSet :: KnownSlot (slotIndex :: SlotIndex)
-             -> Instruction (GetLocalType slotIndex locals :> inputStack) inputStack locals inputGlobals outputGlobals
+    LocalSet :: SFin i n
+             -> Instruction (Index i locals :> inputStack) inputStack locals inputGlobals outputGlobals
     -- TODO: Handle uninitialized local variables according to WASM spec
 
     -- TODO GlobalGet: push the value of a global variable onto the stack
@@ -218,7 +200,7 @@ INSTRUCTION SEQUENCES
 -- This represents a linear sequence of instructions where the output stack
 -- of one instruction becomes the input stack of the next.
 infixr 5 :|  -- Right-associative, like list construction
-data InstructionSequence (inputStack :: StackShape) (outputStack :: StackShape) (locals :: LocalsShape) (inputGlobals :: WasmModule) (outputGlobals :: WasmModule) where
+data InstructionSequence (inputStack :: StackShape) (outputStack :: StackShape) (locals :: LocalsShape n) (inputGlobals :: WasmModule) (outputGlobals :: WasmModule) where
     End  :: InstructionSequence inputStack inputStack locals inputGlobals outputGlobals                -- Base case: empty sequence (identity)
     (:|) :: Instruction initialStack intermediateStack locals inputGlobals outputGlobals               -- Inductive case: first instruction
          -> InstructionSequence intermediateStack finalStack locals inputGlobals outputGlobals                         -- rest of sequence
@@ -233,7 +215,7 @@ FUNCTIONS
 -- | A complete WebAssembly function.
 -- Functions start with an empty stack and produce the specified final stack shape.
 -- The locals context represents the function's parameters and local variables.
-data Function (resultStack :: StackShape) (locals :: LocalsShape) where
+data Function (resultStack :: StackShape) (locals :: LocalsShape n) where
     Function :: InstructionSequence Empty resultStack locals inputGlobals outputGlobals -> Function resultStack locals
 
 {-
@@ -243,81 +225,81 @@ EXAMPLE FUNCTIONS
 -}
 
 
-add1Sequence :: InstructionSequence (I32 :> I32 :> Empty) (I32 :> Empty) '[] ('WasmModule '[]) ('WasmModule '[])
+add1Sequence :: InstructionSequence (I32 :> I32 :> Empty) (I32 :> Empty) 'VNil ('WasmModule '[]) ('WasmModule '[])
 add1Sequence = I32Add :| End
 
-addSubSequence :: InstructionSequence (I32 :> (I32 :> (I32 :> Empty))) (I32 :> Empty) '[] ('WasmModule '[]) ('WasmModule '[]) -- only 3 I32 because the result of the add is the first argument of the subtract
+addSubSequence :: InstructionSequence (I32 :> (I32 :> (I32 :> Empty))) (I32 :> Empty) 'VNil ('WasmModule '[]) ('WasmModule '[]) -- only 3 I32 because the result of the add is the first argument of the subtract
 addSubSequence = I32Add :| (I32Sub :| End)
 
 -- | Example 1: Add two integers
 -- Takes two i32 parameters (slots 0 and 1), returns their sum
-add2 :: Function (I32 :> Empty) (I32 ': I32 ': '[])  -- Function resultStack locals (repr the function parameters)
+add2 :: Function (I32 :> Empty) (I32 :<| I32 :<| VNil)  -- Function resultStack locals (repr the function parameters)
 add2 = Function $
     -- Local slots: (0) first parameter, (1) second parameter
-       LocalGet SlotZero    -- Push first parameter
-    :| LocalGet SlotOne     -- Push second parameter
+       LocalGet SFZ    -- Push first parameter
+    :| LocalGet (SFS SFZ)     -- Push second parameter
     :| I32Add               -- Add them (pops 2, pushes 1 result)
     :| End
 
 -- | Example 2: Factorial function using iteration
 -- Takes one i32 parameter, returns its factorial
-factorial :: Function (I32 :> Empty) (I32 ': I32 ': '[])
+factorial :: Function (I32 :> Empty) (I32 :<| I32 :<| VNil)
 factorial = Function $
     -- Local slots: (0) input parameter (also used as counter), (1) accumulator
     -- Initialize accumulator to 1
        I32Const 1
-    :| LocalSet SlotOne
+    :| LocalSet (SFS SFZ)
     -- Main computation block
     :| Block 0 NoReturn (
         -- Check if n <= 1 (base case)
-           LocalGet SlotZero
+           LocalGet SFZ
         :| I32Const 1
         :| I32LeS
         :| BrIf 0              -- Exit block if n <= 1
         -- Iterative loop for factorial computation
         :| Loop 1 (
             -- accumulator *= n
-               LocalGet SlotOne
-            :| LocalGet SlotZero
+               LocalGet (SFS SFZ)
+            :| LocalGet SFZ
             :| I32Mul
-            :| LocalSet SlotOne
+            :| LocalSet (SFS SFZ)
             -- n -= 1
-            :| LocalGet SlotZero
+            :| LocalGet SFZ
             :| I32Const 1
             :| I32Sub
-            :| LocalSet SlotZero
+            :| LocalSet SFZ
             -- Continue if n > 1
-            :| LocalGet SlotZero
+            :| LocalGet SFZ
             :| I32Const 1
             :| I32GtS
             :| BrIf 1             -- Branch back to loop start
             :| End)
         :| End)
     -- Return the accumulated result
-    :| LocalGet SlotOne
+    :| LocalGet (SFS SFZ)
     :| End
 
 -- | Example 3: Function that returns nothing (void function).
 -- Demonstrates different return types - this one returns Empty stack.
-printNumber :: Function Empty (I32 ': '[])
+printNumber :: Function Empty (I32 :<| VNil)
 printNumber = Function $
     -- Just consume the parameter without returning anything
-       LocalGet SlotZero
+       LocalGet SFZ
     :| Drop
     :| End
 
 -- | Example 4: Function with more complex local variable patterns.
 -- Takes one parameter, uses three local variables for intermediate calculations.
-complexCalculation :: Function (I32 :> Empty) (I32 ': I32 ': I32 ': I32 ': '[])
+complexCalculation :: Function (I32 :> Empty) (I32 :<| I32 :<| I32 :<| I32 :<| VNil)
 complexCalculation = Function $
     -- Local slots: (0) input, (1) temp1, (2) temp2, (3) result
     -- temp1 = input * 2
-       LocalGet SlotZero
+       LocalGet SFZ
     :| I32Const 2
     :| I32Mul
-    :| LocalSet SlotOne
+    :| LocalSet (SFS SFZ)
     -- temp2 = input + 10
-    :| LocalGet SlotZero
+    :| LocalGet SFZ
     :| I32Const 10
     :| I32Add
     -- TODO: Need more slot witnesses for slots 2 and 3
@@ -326,20 +308,20 @@ complexCalculation = Function $
 
 -- | Example 5: Conditional logic with If instruction.
 -- Returns the absolute value of the input.
-absoluteValue :: Function (I32 :> Empty) (I32 ': '[])
+absoluteValue :: Function (I32 :> Empty) (I32 :<| VNil)
 absoluteValue = Function $
     -- Check if input is negative
-       LocalGet SlotZero
+       LocalGet SFZ
     :| I32Const 0
     :| I32LtS              -- Is input < 0?
     :| If
         -- Then branch: negate the number (0 - input)
         (  I32Const 0
-        :| LocalGet SlotZero
+        :| LocalGet SFZ
         :| I32Sub
         :| End)
         -- Else branch: return input as-is
-        (  LocalGet SlotZero
+        (  LocalGet SFZ
         :| End)
     :| End
 
@@ -348,26 +330,26 @@ absoluteValue = Function $
 --nestedControlFlow = Function $
 --    -- Outer block
 --       Block 0 (ReturnsOne ForI32) (
---           LocalGet SlotZero
+--           LocalGet SFZ
 --        :| I32Const 10
 --        :| I32GtS
 --        :| BrIf 0  -- Exit outer block if input > 10
 --        -- Inner block
 --        :| Block 1 NoReturn (
---               LocalGet SlotZero
+--               LocalGet SFZ
 --            :| I32Const 5
 --            :| I32LtS
 --            :| BrIf 1  -- Exit inner block if input < 5
 --            -- If we're here, 5 <= input <= 10
---            :| LocalGet SlotZero
+--            :| LocalGet SFZ
 --            :| I32Const 2
 --            :| I32Mul
---            :| LocalSet SlotOne
+--            :| LocalSet (SFS SFZ)
 --            :| End)
 --        -- Default case: return input unchanged
---        :| LocalGet SlotZero
+--        :| LocalGet SFZ
 --        :| End)
---    :| LocalGet SlotOne  -- Return the result
+--    :| LocalGet (SFS SFZ)  -- Return the result
 --    :| End
 
 {-
@@ -384,11 +366,11 @@ data Stack (stackShape :: StackShape) where
 
 -- | Runtime representation of the WebAssembly locals.
 -- This is the actual data structure that holds local values during execution.
-data Locals (localsShape :: LocalsShape) where
-    NoLocals   :: Locals '[]
-    ConsLocals :: RuntimeTypeOf wasmType -> Locals localsShape -> Locals (wasmType ': localsShape)
+data Locals (localsShape :: LocalsShape n) where
+    NoLocals   :: Locals 'VNil
+    ConsLocals :: RuntimeTypeOf wasmType -> Locals localsShape -> Locals (wasmType :<| localsShape)
 
-data RuntimeContext (stackShape :: StackShape) (localsShape :: LocalsShape) = RuntimeContext
+data RuntimeContext (stackShape :: StackShape) (localsShape :: LocalsShape n) = RuntimeContext
     { stack  :: Stack stackShape,
       locals :: Locals localsShape
       -- TODO: labels, tables, etc.
