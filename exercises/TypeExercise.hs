@@ -1,13 +1,13 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE TypeOperators        #-}
+{-# LANGUAGE TypeOperators #-}
 
 module TypeExercise where
 
 import Prelude hiding (head, replicate, (++), Double)
-import Data.Type.Equality ((:~:)(..))
--- import Data.Semigroup (Min)
+import Data.Type.Equality ((:~:)(..), gcastWith)
+
 
 -- 1) type-level natural numbers
 data Nat = Z | S Nat
@@ -55,14 +55,13 @@ type family Double (n :: Nat) :: Nat where
     -- why do we need the double 'S
 
 -- and now implement
+-- duplicate (VCons x xs) = VCons x VNil ++ VCons x VNil ++ duplicate xs -- both versions work..
+--such that duplicate [x1,x2,x3] gives [x1,x1,x2,x2,x3,x3]
+
 
 duplicate :: Vec n a -> Vec (Double n) a
 duplicate VNil = VNil
 duplicate (VCons x xs) = VCons x (VCons x (duplicate xs))
--- duplicate (VCons x xs) = VCons x VNil ++ VCons x VNil ++ duplicate xs -- both versions work..
-
---such that duplicate [x1,x2,x3] gives [x1,x1,x2,x2,x3,x3]
-
 
 
 {-@ Exercise 2
@@ -76,9 +75,6 @@ duplicate (VCons x xs) = VCons x (VCons x (duplicate xs))
 {-@     What would the type of `head` for `Vec n a`
     Think and give the type and implementation.
 @-}
-head :: Vec n a -> Maybe a
-head VNil = Nothing
-head (VCons x _) = Just x
 
 head2 :: Vec (S n) a -> a
 head2 (VCons x _) = x
@@ -87,7 +83,8 @@ head2 (VCons x _) = x
 -- 7) zipWith for vectors of the same length
 zipWithVec :: (a -> b -> c) -> Vec n a -> Vec n b -> Vec n c
 zipWithVec _ VNil VNil = VNil
-zipWithVec f (VCons x xs) (VCons y ys) = VCons (f x y) (zipWithVec f xs ys)
+zipWithVec f (VCons x xs) (VCons y ys) =
+  VCons (f x y) (zipWithVec f xs ys)
 
 
 {-@ Exercise 3
@@ -105,7 +102,6 @@ zipWithVec f (VCons x xs) (VCons y ys) = VCons (f x y) (zipWithVec f xs ys)
 replicate :: SNat n -> a -> Vec n a -- we need singletons here because the resulting type depends on the input type?
 replicate SZ _ = VNil
 replicate (SS n) a = VCons a (replicate n a)
-
 
 {-@ Exercise 4
     Implement `takeVec`, `dropVec`
@@ -146,6 +142,7 @@ dropVec SZ xs = xs
 dropVec _ VNil = VNil
 dropVec (SS n) (VCons _ xs) = dropVec n xs
 
+
 {-@ Exercise 5
     Implement `index`
 @-}
@@ -155,10 +152,9 @@ data Fin (n :: Nat) where
   FZ :: Fin ('S n)         -- zero index, valid in any 'S n
   FS :: Fin n -> Fin ('S n)
 
-index :: Fin n -> Vec (S n) a -> a
--- index _ VNil = undefined
-index FZ (VCons x _) = x 
-index (FS n) (VCons _ xs) = index n xs
+index :: Fin n -> Vec n a -> a
+index FZ      (VCons x _)  = x
+index (FS i)  (VCons _ xs) = index i xs
 -- note: indexing into VNil is impossible by the types
 
 -- example values
@@ -205,6 +201,12 @@ proveZeroAdd :: SNat n -> Add n 'Z :~: n
 proveZeroAdd SZ = Refl
 proveZeroAdd (SS n) = case proveZeroAdd n of Refl -> Refl
 
+addZRightId :: SNat n -> Add n ('Z) :~: n
+addZRightId SZ     = Refl
+addZRightId (SS n) =
+  case addZRightId n of
+    Refl -> Refl
+
 
 {-@ Exercise 7 : More Proofs!
     Prove Vec n a ++ VNil == Vec n a
@@ -220,13 +222,12 @@ proveZeroAdd (SS n) = case proveZeroAdd n of Refl -> Refl
     approach things that proof assistants do.
 
 @-}
--- induction proof
--- case n == Z
--- (++) :: Vec m a -> Vec n a -> Vec (Add m n) a
-proveAppendNil :: SNat n -> Vec n a :~: Vec (Add n 'Z) a -- we replace the ++ by the type definition (so we add Zero to the lenth of the result vector)
-proveAppendNil SZ = Refl
-proveAppendNil (SS n) = case proveAppendNil n of Refl -> Refl
 
 
-
+appendNilRight :: SNat n -> Vec n a -> Vec n a
+appendNilRight n xs =
+  -- append xs VNil :: Vec (Add n 'Z) a
+  -- addZRightId n  :: Add n 'Z :~: n
+  -- gcastWith rewrites the result to Vec n a
+  gcastWith (addZRightId n) (xs ++ VNil)
 
