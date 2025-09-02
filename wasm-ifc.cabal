@@ -48,7 +48,7 @@ build-type:         Simple
 extra-doc-files:    CHANGELOG.md
 
 -- Extra source files to be distributed with the package, such as examples, or a tutorial module.
--- extra-source-files:
+extra-source-files: Types, WasmModule
 
 common warnings
     ghc-options: -Wall
@@ -61,7 +61,7 @@ executable wasm-ifc
     main-is:          Main.hs
 
     -- Modules included in this executable, other than Main.
-    other-modules:    TinySecLang, Wasm
+    other-modules:    TinySecLang, Wasm, TypeExercise, WasmModule, Types
 
     -- LANGUAGE extensions used by modules in this package.
     -- other-extensions:
@@ -70,7 +70,8 @@ executable wasm-ifc
     build-depends:    base ^>=4.21.0.0
 
     -- Directories containing source files.
-    hs-source-dirs:   app
+    hs-source-dirs:   app, exercises
+
 
     -- Base language which the package is written in.
     default-language: Haskell2010
