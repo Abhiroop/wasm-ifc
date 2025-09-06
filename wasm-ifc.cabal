@@ -48,7 +48,7 @@ build-type:         Simple
 extra-doc-files:    CHANGELOG.md
 
 -- Extra source files to be distributed with the package, such as examples, or a tutorial module.
-extra-source-files: Types, WasmModule
+extra-source-files: Types, WasmModule, Utils, Wasm
 
 common warnings
     ghc-options: -Wall
@@ -61,7 +61,7 @@ executable wasm-ifc
     main-is:          Main.hs
 
     -- Modules included in this executable, other than Main.
-    other-modules:    TinySecLang, Wasm, TypeExercise, WasmModule, Types
+    other-modules:    TinySecLang, Wasm, TypeExercise, WasmModule, Types, Utils
 
     -- LANGUAGE extensions used by modules in this package.
     -- other-extensions:

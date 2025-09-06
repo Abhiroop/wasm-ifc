@@ -3,11 +3,14 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE PolyKinds #-}
 
 module WasmModule where 
 import GHC.TypeLits (Nat, type (-))  
 import Types (WasmType(..)) 
-import GHC.TypeError (TypeError, ErrorMessage(..))      
+import GHC.TypeError (TypeError, ErrorMessage(..))    
+import Utils  
+import Data.Kind (Type)
 -- https://webassembly.github.io/spec/core/syntax/modules.html#syntax-global
 -- WebAssembly programs are organized into modules, 
 -- which are the unit of deployment, loading, and compilation.
@@ -37,7 +40,8 @@ data GlobalType = GlobalType Mutability WasmType
 -- where val = globals[a]
 -- this is in execution in validation it doesn't go throught the globaladdr
 
-type GlobalsShape = [GlobalType]
+-- type GlobalsShape = [GlobalType]
+type GlobalsShape n = Vec n GlobalType
 
 -- module ::== {
         -- types vec(functype),
@@ -50,23 +54,14 @@ type GlobalsShape = [GlobalType]
         -- import vec(import),
         -- exports vec(export)    
 --    }
-data WasmModule = WasmModule {
-    globals :: GlobalsShape
+data WasmModule (n::SNat) = WasmModule {
+    globals :: GlobalsShape n
+    -- , x :: String
     -- types :: XYZ,
     }
 
 type GlobalSlot = Nat
 
-
--- | Get the type of a local variable at a given slot.
--- This performs bounds checking and gives helpful error messages.
-type family GetGlobalType (slotIndex :: GlobalSlot) (context :: GlobalsShape) :: GlobalType where
-    GetGlobalType 0 (top ': _) = top
-    GetGlobalType n (_ ': rest) = GetGlobalType (n-1) rest
-    GetGlobalType n '[] = 
-        TypeError ('Text "Local variable index out of bounds: "
-                  ':<>: 'ShowType n
-                  ':<>: 'Text " exceeds context length ")
 
 
 

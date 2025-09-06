@@ -16,7 +16,7 @@ infixr 5 :<|
 
 -- | Type-level indexing into vectors
 type family Index (i :: SNat) (v :: Vec n a) :: a where
-    Index Z (x :<| _)       = x
+    Index 'Z (x :<| _)      =  x
     Index ('S n) (_ :<| xs) = Index n xs
 
 

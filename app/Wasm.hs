@@ -4,6 +4,7 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE ExplicitForAll #-}
 
 -- | A type-safe embedded domain-specific language (DSL) for WebAssembly.
 -- This module uses advanced Haskell type system features to ensure that
@@ -15,7 +16,8 @@ import GHC.TypeLits (Nat) -- , type (-))
 -- import GHC.TypeError (TypeError, ErrorMessage(..))
 import Types (WasmType(I64, I32), KnownWasmType, RuntimeTypeOf, WasmType)
 import Utils
-import WasmModule (WasmModule(..))
+import WasmModule (WasmModule(..), GlobalsShape)
+import GHC.Records (HasField)
 
 {-
 =============================================================================
@@ -81,82 +83,88 @@ INSTRUCTIONS
 --   - inputStack: the stack shape before the instruction
 --   - outputStack: the stack shape after the instruction
 --   - locals: the local variable context (currently unchanged by most instructions)
-data Instruction (inputStack :: StackShape) (outputStack :: StackShape) (locals :: LocalsShape n) (inputModule::WasmModule) (outputModule::WasmModule) where
+data Instruction (inputStack :: StackShape) (outputStack :: StackShape) (locals :: LocalsShape n) (inputModule::WasmModule n) (outputModule::WasmModule n) where
 
     -- Constants: push a literal value onto the stack
-    I32Const :: Int32 -> Instruction inputStack (I32 :> inputStack) locals inputGlobals outputGlobals
+    I32Const :: Int32 -> Instruction inputStack (I32 :> inputStack) locals inputModule outputModule
 
     -- i32 arithmetic operators (all pop two values, push one result)
-    I32Add :: Instruction (I32 :> I32 :> inputStack) (I32 :> inputStack) locals inputGlobals outputGlobals
-    I32Sub :: Instruction (I32 :> I32 :> inputStack) (I32 :> inputStack) locals inputGlobals outputGlobals
-    I32Mul :: Instruction (I32 :> I32 :> inputStack) (I32 :> inputStack) locals inputGlobals outputGlobals
-    I32Div :: Instruction (I32 :> I32 :> inputStack) (I32 :> inputStack) locals inputGlobals outputGlobals
+    I32Add :: Instruction (I32 :> I32 :> inputStack) (I32 :> inputStack) locals inputModule outputModule
+    I32Sub :: Instruction (I32 :> I32 :> inputStack) (I32 :> inputStack) locals inputModule outputModule
+    I32Mul :: Instruction (I32 :> I32 :> inputStack) (I32 :> inputStack) locals inputModule outputModule
+    I32Div :: Instruction (I32 :> I32 :> inputStack) (I32 :> inputStack) locals inputModule outputModule
     -- TODO: Handle division by zero at type level if WASM spec allows,
     --       otherwise document that this fails at runtime
     --       In spec it is defined as: if i2 is 0, then the result is undefined.
     --       Also I think division exists for signed and unsigned ints
-    I32RemU :: Instruction (I32 :> I32 :> inputStack) (I32 :> inputStack) locals inputGlobals outputGlobals --remainder operation (unsigned)
+    I32RemU :: Instruction (I32 :> I32 :> inputStack) (I32 :> inputStack) locals inputModule outputModule --remainder operation (unsigned)
     --      if i2 is zero then the output is undefined
-    I32RemS :: Instruction (I32 :> I32 :> inputStack) (I32 :> inputStack) locals inputGlobals outputGlobals -- remaidner operaton (signed)
+    I32RemS :: Instruction (I32 :> I32 :> inputStack) (I32 :> inputStack) locals inputModule outputModule -- remaidner operaton (signed)
     --      if i2 is zero then the output is undefined -> the result has the sign of the first operator
 
     -- i32 comparison operators (pop two values, push i32 boolean result)
-    I32EqZ :: Instruction (I32 :> inputStack) (I32 :> inputStack) locals inputGlobals outputGlobals           -- test if zero
-    I32Eq  :: Instruction (I32 :> I32 :> inputStack) (I32 :> inputStack) locals inputGlobals outputGlobals   -- equal
-    I32Neq :: Instruction (I32 :> I32 :> inputStack) (I32 :> inputStack) locals inputGlobals outputGlobals   -- inequality
-    I32LtS :: Instruction (I32 :> I32 :> inputStack) (I32 :> inputStack) locals inputGlobals outputGlobals   -- less than (signed)
-    I32LtU :: Instruction (I32 :> I32 :> inputStack) (I32 :> inputStack) locals inputGlobals outputGlobals   -- less than (unsigned)
-    I32LeS :: Instruction (I32 :> I32 :> inputStack) (I32 :> inputStack) locals inputGlobals outputGlobals   -- less or equal (signed)
-    I32LeU :: Instruction (I32 :> I32 :> inputStack) (I32 :> inputStack) locals inputGlobals outputGlobals   -- less or equal (unsigned)
-    I32GtS :: Instruction (I32 :> I32 :> inputStack) (I32 :> inputStack) locals inputGlobals outputGlobals   -- greater than (signed)
-    I32GtU :: Instruction (I32 :> I32 :> inputStack) (I32 :> inputStack) locals inputGlobals outputGlobals   -- greater than (unsigned)
-    I32GeS :: Instruction (I32 :> I32 :> inputStack) (I32 :> inputStack) locals inputGlobals outputGlobals   -- greater or equal (signed)
-    I32GeU :: Instruction (I32 :> I32 :> inputStack) (I32 :> inputStack) locals inputGlobals outputGlobals   -- greater or equal (unsigned)
+    I32EqZ :: Instruction (I32 :> inputStack) (I32 :> inputStack) locals inputModule outputModule           -- test if zero
+    I32Eq  :: Instruction (I32 :> I32 :> inputStack) (I32 :> inputStack) locals inputModule outputModule   -- equal
+    I32Neq :: Instruction (I32 :> I32 :> inputStack) (I32 :> inputStack) locals inputModule outputModule   -- inequality
+    I32LtS :: Instruction (I32 :> I32 :> inputStack) (I32 :> inputStack) locals inputModule outputModule   -- less than (signed)
+    I32LtU :: Instruction (I32 :> I32 :> inputStack) (I32 :> inputStack) locals inputModule outputModule   -- less than (unsigned)
+    I32LeS :: Instruction (I32 :> I32 :> inputStack) (I32 :> inputStack) locals inputModule outputModule   -- less or equal (signed)
+    I32LeU :: Instruction (I32 :> I32 :> inputStack) (I32 :> inputStack) locals inputModule outputModule   -- less or equal (unsigned)
+    I32GtS :: Instruction (I32 :> I32 :> inputStack) (I32 :> inputStack) locals inputModule outputModule   -- greater than (signed)
+    I32GtU :: Instruction (I32 :> I32 :> inputStack) (I32 :> inputStack) locals inputModule outputModule   -- greater than (unsigned)
+    I32GeS :: Instruction (I32 :> I32 :> inputStack) (I32 :> inputStack) locals inputModule outputModule   -- greater or equal (signed)
+    I32GeU :: Instruction (I32 :> I32 :> inputStack) (I32 :> inputStack) locals inputModule outputModule   -- greater or equal (unsigned)
 
     -- more operators (e.g. bitwise negation, bitwise conjunction, ..., min, max)
 
     -- i64 arithmetic operators
-    I64Add :: Instruction (I64 :> I64 :> inputStack) (I64 :> inputStack) locals inputGlobals outputGlobals
-    I64Sub :: Instruction (I64 :> I64 :> inputStack) (I64 :> inputStack) locals inputGlobals outputGlobals
-    I64Mul :: Instruction (I64 :> I64 :> inputStack) (I64 :> inputStack) locals inputGlobals outputGlobals
-    I64Div :: Instruction (I64 :> I64 :> inputStack) (I64 :> inputStack) locals inputGlobals outputGlobals
+    I64Add :: Instruction (I64 :> I64 :> inputStack) (I64 :> inputStack) locals inputModule outputModule
+    I64Sub :: Instruction (I64 :> I64 :> inputStack) (I64 :> inputStack) locals inputModule outputModule
+    I64Mul :: Instruction (I64 :> I64 :> inputStack) (I64 :> inputStack) locals inputModule outputModule
+    I64Div :: Instruction (I64 :> I64 :> inputStack) (I64 :> inputStack) locals inputModule outputModule
     -- differentiation signed vs unsigned?
-    I64RemU :: Instruction (I64 :> I64 :> inputStack) (I64 :> inputStack) locals inputGlobals outputGlobals --remainder operation (unsigned)
+    I64RemU :: Instruction (I64 :> I64 :> inputStack) (I64 :> inputStack) locals inputModule outputModule --remainder operation (unsigned)
     --      if i2 is zero then the output is undefined
-    I64RemS :: Instruction (I64 :> I64 :> inputStack) (I64 :> inputStack) locals inputGlobals outputGlobals -- remaidner operaton (signed)
+    I64RemS :: Instruction (I64 :> I64 :> inputStack) (I64 :> inputStack) locals inputModule outputModule -- remaidner operaton (signed)
     --      if i2 is zero then the output is undefined -> the result has the sign of the first operator
 
     -- i64 comparison operators
-    I64EqZ :: Instruction (I64 :> inputStack) (I64 :> inputStack) locals inputGlobals outputGlobals            -- test if equal to zero
-    I64Eq  :: Instruction (I64 :> I64 :> inputStack) (I64 :> inputStack) locals inputGlobals outputGlobals     -- equal
-    I64Neq :: Instruction (I64 :> I64 :> inputStack) (I64 :> inputStack) locals inputGlobals outputGlobals     -- inequality
-    I64LtS :: Instruction (I64 :> I64 :> inputStack) (I64 :> inputStack) locals inputGlobals outputGlobals     -- less than (signed)
-    I64LtU :: Instruction (I64 :> I64 :> inputStack) (I64 :> inputStack) locals inputGlobals outputGlobals     -- less than (unsigned)
-    I64LeS :: Instruction (I64 :> I64 :> inputStack) (I64 :> inputStack) locals inputGlobals outputGlobals     -- less or equal (signed)
-    I64LeU :: Instruction (I64 :> I64 :> inputStack) (I64 :> inputStack) locals inputGlobals outputGlobals     -- less or equal (unsigned)
-    I64GtS :: Instruction (I64 :> I64 :> inputStack) (I64 :> inputStack) locals inputGlobals outputGlobals     -- greater than (signed)
-    I64GtU :: Instruction (I64 :> I64 :> inputStack) (I64 :> inputStack) locals inputGlobals outputGlobals     -- greater than (unsigned)
-    I64GeS :: Instruction (I64 :> I64 :> inputStack) (I64 :> inputStack) locals inputGlobals outputGlobals     -- greater or equal (signed)
-    I64GeU :: Instruction (I64 :> I64 :> inputStack) (I64 :> inputStack) locals inputGlobals outputGlobals     -- greater or equal (unsigned)
+    I64EqZ :: Instruction (I64 :> inputStack) (I64 :> inputStack) locals inputModule outputModule            -- test if equal to zero
+    I64Eq  :: Instruction (I64 :> I64 :> inputStack) (I64 :> inputStack) locals inputModule outputModule     -- equal
+    I64Neq :: Instruction (I64 :> I64 :> inputStack) (I64 :> inputStack) locals inputModule outputModule     -- inequality
+    I64LtS :: Instruction (I64 :> I64 :> inputStack) (I64 :> inputStack) locals inputModule outputModule     -- less than (signed)
+    I64LtU :: Instruction (I64 :> I64 :> inputStack) (I64 :> inputStack) locals inputModule outputModule     -- less than (unsigned)
+    I64LeS :: Instruction (I64 :> I64 :> inputStack) (I64 :> inputStack) locals inputModule outputModule     -- less or equal (signed)
+    I64LeU :: Instruction (I64 :> I64 :> inputStack) (I64 :> inputStack) locals inputModule outputModule     -- less or equal (unsigned)
+    I64GtS :: Instruction (I64 :> I64 :> inputStack) (I64 :> inputStack) locals inputModule outputModule     -- greater than (signed)
+    I64GtU :: Instruction (I64 :> I64 :> inputStack) (I64 :> inputStack) locals inputModule outputModule     -- greater than (unsigned)
+    I64GeS :: Instruction (I64 :> I64 :> inputStack) (I64 :> inputStack) locals inputModule outputModule     -- greater or equal (signed)
+    I64GeU :: Instruction (I64 :> I64 :> inputStack) (I64 :> inputStack) locals inputModule outputModule     -- greater or equal (unsigned)
 
 
 
     -- Stack manipulation
-    Drop :: Instruction (dropped :> inputStack) inputStack locals inputGlobals outputGlobals  -- remove top value from stack
+    Drop :: Instruction (dropped :> inputStack) inputStack locals inputModule outputModule  -- remove top value from stack
 
     -- Local variable operations
     -- LocalGet: push the value of a local variable onto the stack
     LocalGet :: SFin i n
-             -> Instruction inputStack (Index i locals :> inputStack) locals inputGlobals outputGlobals
+             -> Instruction inputStack (Index i locals :> inputStack) locals inputModule outputModule
 
     -- LocalSet: pop a value from stack and store it in a local variable
     LocalSet :: SFin i n
-             -> Instruction (Index i locals :> inputStack) inputStack locals inputGlobals outputGlobals
+             -> Instruction (Index i locals :> inputStack) inputStack locals inputModule outputModule
     -- TODO: Handle uninitialized local variables according to WASM spec
 
-    -- TODO GlobalGet: push the value of a global variable onto the stack
-    -- GlobalGet :: (GetGlobalType slotIndex inputGlobals ~ 'Var t) => KnownSlot (slotIndex :: GlobalSlot)
-    --           -> Instruction inputStack (GetGlobalType slotIndex inputGlobals) :> inputStack) locals inputGlobals outputGlobals
+    -- GlobalGet: push the value of a global variable onto the stack
+    GlobalGet :: forall i n inputStack locals (inputModule :: WasmModule n) outputModule g.
+        HasField "globals" inputModule (GlobalsShape n)
+        => SFin i n 
+        -> Instruction inputStack (Index i g :> inputStack) locals inputModule outputModule
+    
+    -- GlobalSet: pop a value from stack and store it in a global variable => global type must be mutable where do we check this
+    -- GlobalSet :: SFin i n
+    --           -> Instruction (Index i inputModule :> inputStack) inputStack locals inputModule outputModule
 
     -- Control flow instructions
     -- Block: a sequence of instructions that can be exited early with 'br'
@@ -165,28 +173,28 @@ data Instruction (inputStack :: StackShape) (outputStack :: StackShape) (locals 
     -- valtype? represents a function type like [] -> [valtype?]
     Block :: Label
           -> KnownStackShape outputShape -- represents the optional valtype however what about the typeidx? can't know the function type
-          -> InstructionSequence inputStack (outputShape +>+ inputStack) locals inputGlobals outputGlobals
-          -> Instruction inputStack (outputShape +>+ inputStack) locals inputGlobals outputGlobals
+          -> InstructionSequence inputStack (outputShape +>+ inputStack) locals inputModule outputModule
+          -> Instruction inputStack (outputShape +>+ inputStack) locals inputModule outputModule
 
     -- Loop: a sequence of instructions that can be restarted with 'br'
     -- also technically the loop inst has the same blocktype annotation as block
     -- this part is missing here
     Loop  :: Label
-          -> InstructionSequence inputStack inputStack locals inputGlobals outputGlobals
-          -> Instruction inputStack inputStack locals inputGlobals outputGlobals
+          -> InstructionSequence inputStack inputStack locals inputModule outputModule
+          -> Instruction inputStack inputStack locals inputModule outputModule
 
     -- If: conditional execution (pops i32 condition, executes one of two branches)
-    If    :: InstructionSequence inputStack outputStack locals inputGlobals outputGlobals    -- then branch
-          -> InstructionSequence inputStack outputStack locals inputGlobals outputGlobals    -- else branch
-          -> Instruction (I32 :> inputStack) outputStack locals inputGlobals outputGlobals
+    If    :: InstructionSequence inputStack outputStack locals inputModule outputModule    -- then branch
+          -> InstructionSequence inputStack outputStack locals inputModule outputModule    -- else branch
+          -> Instruction (I32 :> inputStack) outputStack locals inputModule outputModule
 
     -- Br: unconditional branch to a label
     -- TODO: Make labels type-safe to prevent invalid references
-    Br    :: Label -> Instruction inputStack outputStack locals inputGlobals outputGlobals
+    Br    :: Label -> Instruction inputStack outputStack locals inputModule outputModule
 
     -- BrIf: conditional branch (pops i32 condition)
     -- TODO: Make labels type-safe to prevent invalid references
-    BrIf  :: Label -> Instruction (I32 :> inputStack) inputStack locals inputGlobals outputGlobals
+    BrIf  :: Label -> Instruction (I32 :> inputStack) inputStack locals inputModule outputModule
 
     -- TODO: missing WASM instructions
 
@@ -200,11 +208,11 @@ INSTRUCTION SEQUENCES
 -- This represents a linear sequence of instructions where the output stack
 -- of one instruction becomes the input stack of the next.
 infixr 5 :|  -- Right-associative, like list construction
-data InstructionSequence (inputStack :: StackShape) (outputStack :: StackShape) (locals :: LocalsShape n) (inputGlobals :: WasmModule) (outputGlobals :: WasmModule) where
-    End  :: InstructionSequence inputStack inputStack locals inputGlobals outputGlobals                -- Base case: empty sequence (identity)
-    (:|) :: Instruction initialStack intermediateStack locals inputGlobals outputGlobals               -- Inductive case: first instruction
-         -> InstructionSequence intermediateStack finalStack locals inputGlobals outputGlobals                         -- rest of sequence
-         -> InstructionSequence initialStack finalStack locals inputGlobals outputGlobals                              -- combined sequence
+data InstructionSequence (inputStack :: StackShape) (outputStack :: StackShape) (locals :: LocalsShape n) (inputModule :: WasmModule n) (outputModule :: WasmModule n) where
+    End  :: InstructionSequence inputStack inputStack locals inputModule outputModule                -- Base case: empty sequence (identity)
+    (:|) :: Instruction initialStack intermediateStack locals inputModule outputModule               -- Inductive case: first instruction
+         -> InstructionSequence intermediateStack finalStack locals inputModule outputModule                         -- rest of sequence
+         -> InstructionSequence initialStack finalStack locals inputModule outputModule                              -- combined sequence
 
 {-
 =============================================================================
@@ -216,7 +224,7 @@ FUNCTIONS
 -- Functions start with an empty stack and produce the specified final stack shape.
 -- The locals context represents the function's parameters and local variables.
 data Function (resultStack :: StackShape) (locals :: LocalsShape n) where
-    Function :: InstructionSequence Empty resultStack locals inputGlobals outputGlobals -> Function resultStack locals
+    Function :: InstructionSequence Empty resultStack locals inputModule outputModule -> Function resultStack locals
 
 {-
 =============================================================================
@@ -225,10 +233,12 @@ EXAMPLE FUNCTIONS
 -}
 
 
-add1Sequence :: InstructionSequence (I32 :> I32 :> Empty) (I32 :> Empty) 'VNil ('WasmModule '[]) ('WasmModule '[])
+-- add1Sequence :: InstructionSequence (I32 :> I32 :> Empty) (I32 :> Empty) 'VNil ('WasmModule '[]) ('WasmModule '[])
+add1Sequence :: forall {n :: SNat} {inputStack :: StackShape} {locals :: LocalsShape n} {inputModule :: WasmModule n} {outputModule :: WasmModule n}. InstructionSequence (I32 :> (I32 :> inputStack)) (I32 :> inputStack) locals inputModule outputModule
 add1Sequence = I32Add :| End
 
-addSubSequence :: InstructionSequence (I32 :> (I32 :> (I32 :> Empty))) (I32 :> Empty) 'VNil ('WasmModule '[]) ('WasmModule '[]) -- only 3 I32 because the result of the add is the first argument of the subtract
+-- addSubSequence :: InstructionSequence (I32 :> (I32 :> (I32 :> Empty))) (I32 :> Empty) 'VNil (WasmModule Z) ('WasmModule '[]) -- only 3 I32 because the result of the add is the first argument of the subtract
+addSubSequence :: forall {n :: SNat} {inputStack :: StackShape} {locals :: LocalsShape n} {inputModule :: WasmModule n} {outputModule :: WasmModule n}. InstructionSequence (I32 :> (I32 :> (I32 :> inputStack))) (I32 :> inputStack) locals inputModule outputModule
 addSubSequence = I32Add :| (I32Sub :| End)
 
 -- | Example 1: Add two integers
@@ -383,12 +393,12 @@ data RuntimeContext (stackShape :: StackShape) (localsShape :: LocalsShape n) = 
     }
 
 -- TODO
-executeInstruction :: Instruction inputStack outputStack locals inputGlobals outputGlobals
+executeInstruction :: Instruction inputStack outputStack locals inputModule outputModule
                    -> RuntimeContext inputStack locals
                    -> RuntimeContext outputStack locals
 executeInstruction = undefined
 
-executeInstructionSequence :: InstructionSequence inputStack outputStack locals inputGlobals outputGlobals
+executeInstructionSequence :: InstructionSequence inputStack outputStack locals inputModule outputModule
                            -> RuntimeContext inputStack locals
                            -> RuntimeContext outputStack locals
 executeInstructionSequence = undefined
