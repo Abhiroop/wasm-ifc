@@ -16,8 +16,7 @@ import GHC.TypeLits (Nat) -- , type (-))
 -- import GHC.TypeError (TypeError, ErrorMessage(..))
 import Types (WasmType(I64, I32), KnownWasmType, RuntimeTypeOf, WasmType)
 import Utils
-import WasmModule (WasmModule(..), GlobalsShape)
-import GHC.Records (HasField)
+import WasmModule (WasmModule(..), GlobalsShape, GetGlobals)
 
 {-
 =============================================================================
@@ -157,10 +156,11 @@ data Instruction (inputStack :: StackShape) (outputStack :: StackShape) (locals 
     -- TODO: Handle uninitialized local variables according to WASM spec
 
     -- GlobalGet: push the value of a global variable onto the stack
-    GlobalGet :: forall i n inputStack locals (inputModule :: WasmModule n) outputModule g.
-        HasField "globals" inputModule (GlobalsShape n)
-        => SFin i n 
-        -> Instruction inputStack (Index i g :> inputStack) locals inputModule outputModule
+    -- ABHI: Call the type family defined in WasmModule.hs to do the desired
+    --       kind conversion i.e. GlobalType -> WasmType and it will work!
+    GlobalGet ::
+        SFin i n 
+        -> Instruction inputStack (Index i (GetGlobals inputModule) :> inputStack) locals inputModule outputModule
     
     -- GlobalSet: pop a value from stack and store it in a global variable => global type must be mutable where do we check this
     -- GlobalSet :: SFin i n

@@ -60,6 +60,13 @@ data WasmModule (n::SNat) = WasmModule {
     -- types :: XYZ,
     }
 
+type family GetGlobals (m :: WasmModule n) :: Vec n GlobalType where
+    GetGlobals ('WasmModule globals) = globals
+
+-- Type family to extract WasmType from GlobalType
+-- ABHI: We need something here that discards the mutability information
+--      Define a type family called GlobalTypeToWasmType here.
+
 type GlobalSlot = Nat
 
 
