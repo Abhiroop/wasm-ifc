@@ -16,7 +16,7 @@ import GHC.TypeLits (Nat) -- , type (-))
 -- import GHC.TypeError (TypeError, ErrorMessage(..))
 import Types (WasmType(I64, I32), KnownWasmType, RuntimeTypeOf, WasmType)
 import Utils
-import WasmModule (WasmModule(..), GlobalsShape, GetGlobals)
+import WasmModule (WasmModule(..), GetGlobals, GlobalTypeToWasmType)
 
 {-
 =============================================================================
@@ -153,6 +153,18 @@ data Instruction (inputStack :: StackShape) (outputStack :: StackShape) (locals 
     -- LocalSet: pop a value from stack and store it in a local variable
     LocalSet :: SFin i n
              -> Instruction (Index i locals :> inputStack) inputStack locals inputModule outputModule
+
+    -- LocalTee:
+    -- pop val from stack
+    -- push val to stack
+    -- push val to stack
+    -- localSet
+        -- pop val from stack
+        -- local[i] = val
+    -- => in the end value is still on top of the stack as well as saved in the locals
+        -- => technically the stack looks the same at the start and at the end?
+    LocalTee :: SFin i n
+             -> Instruction (Index i locals :> inputStack) (Index i locals :> inputStack) locals inputModule outputModule
     -- TODO: Handle uninitialized local variables according to WASM spec
 
     -- GlobalGet: push the value of a global variable onto the stack
@@ -160,11 +172,11 @@ data Instruction (inputStack :: StackShape) (outputStack :: StackShape) (locals 
     --       kind conversion i.e. GlobalType -> WasmType and it will work!
     GlobalGet ::
         SFin i n 
-        -> Instruction inputStack (Index i (GetGlobals inputModule) :> inputStack) locals inputModule outputModule
+        -> Instruction inputStack (GlobalTypeToWasmType (Index i  (GetGlobals inputModule)) :> inputStack) locals inputModule outputModule
     
     -- GlobalSet: pop a value from stack and store it in a global variable => global type must be mutable where do we check this
-    -- GlobalSet :: SFin i n
-    --           -> Instruction (Index i inputModule :> inputStack) inputStack locals inputModule outputModule
+    GlobalSet :: SFin i n
+              -> Instruction (GlobalTypeToWasmType (Index i (GetGlobals inputModule)) :> inputStack) inputStack locals inputModule outputModule
 
     -- Control flow instructions
     -- Block: a sequence of instructions that can be exited early with 'br'

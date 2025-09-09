@@ -6,11 +6,9 @@
 {-# LANGUAGE PolyKinds #-}
 
 module WasmModule where 
-import GHC.TypeLits (Nat, type (-))  
-import Types (WasmType(..)) 
-import GHC.TypeError (TypeError, ErrorMessage(..))    
+import GHC.TypeLits (Nat)  
+import Types (WasmType(..))    
 import Utils  
-import Data.Kind (Type)
 -- https://webassembly.github.io/spec/core/syntax/modules.html#syntax-global
 -- WebAssembly programs are organized into modules, 
 -- which are the unit of deployment, loading, and compilation.
@@ -66,6 +64,8 @@ type family GetGlobals (m :: WasmModule n) :: Vec n GlobalType where
 -- Type family to extract WasmType from GlobalType
 -- ABHI: We need something here that discards the mutability information
 --      Define a type family called GlobalTypeToWasmType here.
+type family GlobalTypeToWasmType (g :: GlobalType) :: WasmType where
+    GlobalTypeToWasmType (m w) = w
 
 type GlobalSlot = Nat
 
