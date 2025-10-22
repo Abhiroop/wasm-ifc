@@ -4,11 +4,14 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE FlexibleContexts #-}
 
 module WasmModule where 
 import GHC.TypeLits (Nat)  
 import Types (WasmType(..))    
 import Utils  
+import Data.Int (Int32)
+import Data.Word (Word32, Word64)
 -- https://webassembly.github.io/spec/core/syntax/modules.html#syntax-global
 -- WebAssembly programs are organized into modules, 
 -- which are the unit of deployment, loading, and compilation.
@@ -41,6 +44,7 @@ data GlobalType = GlobalType Mutability WasmType
 -- type GlobalsShape = [GlobalType]
 type GlobalsShape n = Vec n GlobalType
 
+
 -- module ::== {
         -- types vec(functype),
         -- funcs vec(func),
@@ -52,14 +56,15 @@ type GlobalsShape n = Vec n GlobalType
         -- import vec(import),
         -- exports vec(export)    
 --    }
-data WasmModule (n::SNat) = WasmModule {
-    globals :: GlobalsShape n
+data WasmModule = forall (n::SNat) (m::SNat).  WasmModule {
+    globals :: GlobalsShape n,
+    mems :: MemoriesShape m
     -- , x :: String
     -- types :: XYZ,
     }
 
-type family GetGlobals (m :: WasmModule n) :: Vec n GlobalType where
-    GetGlobals ('WasmModule globals) = globals
+type family GetGlobals (m :: WasmModule) :: Vec n GlobalType where
+    GetGlobals ('WasmModule globals _) = globals
 
 -- Type family to extract WasmType from GlobalType
 -- ABHI: We need something here that discards the mutability information
@@ -70,5 +75,29 @@ type family GlobalTypeToWasmType (g :: GlobalType) :: WasmType where
 type GlobalSlot = Nat
 
 
+-----------------
+-- MEMORY
+-----------------
+-- mem ::== {type memtype}
+-- memtype ::== limits
+    -- limits constrain the minimum and optionally the maximum size of a memory.
+    -- The limits are given in units of page size -> always a multiple of the WebAssembly page size = 65536
+-- Approach 1: Define based on the limits a vector with a size and then with offset access that vector?
+    -- Based on spec one entry in memory vector is 1 Byte or 8 bits.
+    -- Hence we reserve 4 entries for a 32 bit integer e.g.
+    -- ignore alignment for now, TODO
+
+data Limits = Limits Word32 (Maybe Word32)
+newtype MemoryType = MemoryType Limits
+
+-- Is a vector with memory type which defines the limits of the memory space.
+type MemoriesShape n = Vec n MemoryType
+
+data MemArg (alignment :: Word32) (offset :: Word64)where-- Memory Offset Alignment
+    SMemArg :: MemArg alignment offset-- Is this ok? or do we need to have an "incremental" constructor?
+    -- because we have it simply defined like this we have it as unsigned integers like in the 
+    -- spec https://webassembly.github.io/spec/core/syntax/instructions.html#memory-instructions
 
 
+type family GetMems (m :: WasmModule) :: Vec n MemoryType where
+    GetMems ('WasmModule _ mems) = mems

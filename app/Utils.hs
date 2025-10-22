@@ -36,3 +36,14 @@ sexample1 = SFZ
 sexample2 :: SFin ('S 'Z) ('S ('S 'Z))   -- Specifically index 1, for length 2
 sexample2 = SFS SFZ
 
+type family LessThan (i :: SNat) (j :: SNat) :: Bool where
+    LessThan 'Z ('S j)       = 'True
+    LessThan _ 'Z       = 'False -- So it also returns False if i == j
+    LessThan ('S i) ('S j)   = LessThan i j
+
+infixr 5 :-
+
+type family (m :: SNat) :- (n :: SNat) :: SNat where
+    m :- 'Z         = m
+    ('S m) :- ('S n) = m :- n
+
