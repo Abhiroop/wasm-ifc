@@ -19,6 +19,12 @@ type family Index (i :: SNat) (v :: Vec n a) :: a where
     Index 'Z (x :<| _)      =  x
     Index ('S n) (_ :<| xs) = Index n xs
 
+-- type family GetVecLen (v :: Vec n a) :: SNat where
+--     GetVecLen (v :: Vec n a) = n
+type family GetVecLen (v :: Vec n a) :: SNat where
+    GetVecLen VNil         = 'Z
+    GetVecLen ( _ :<| xs)  = 'S (GetVecLen xs)
+
 
 {-@ This is slightly different from the Fin n type
     that we had. Here we have an additional type
@@ -40,6 +46,12 @@ type family LessThan (i :: SNat) (j :: SNat) :: Bool where
     LessThan 'Z ('S j)       = 'True
     LessThan _ 'Z       = 'False -- So it also returns False if i == j
     LessThan ('S i) ('S j)   = LessThan i j
+
+type family IsEqual (i :: SNat) (j :: SNat) :: Bool where
+    IsEqual 'Z 'Z             = 'True
+    IsEqual 'Z ('S j)        = 'False
+    IsEqual ('S i) 'Z        = 'False
+    IsEqual ('S i) ('S j)    = IsEqual i j
 
 infixr 5 :-
 

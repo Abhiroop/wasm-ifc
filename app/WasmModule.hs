@@ -44,7 +44,16 @@ data GlobalType = GlobalType Mutability WasmType
 -- type GlobalsShape = [GlobalType]
 type GlobalsShape n = Vec n GlobalType
 
+type family GetGlobalsShape (m :: WasmModuleShape) :: SNat where
+    GetGlobalsShape ('WasmModuleShape globalsShape _) = globalsShape
 
+type family GetMemoriesShape (m :: WasmModuleShape) :: SNat where
+    GetMemoriesShape ('WasmModuleShape _ memoriesShape) = memoriesShape
+
+data WasmModuleShape = WasmModuleShape {
+    globalsShape :: SNat,
+    memoriesShape :: SNat
+    }
 -- module ::== {
         -- types vec(functype),
         -- funcs vec(func),
@@ -56,14 +65,14 @@ type GlobalsShape n = Vec n GlobalType
         -- import vec(import),
         -- exports vec(export)    
 --    }
-data WasmModule = forall (n::SNat) (m::SNat).  WasmModule {
-    globals :: GlobalsShape n,
-    mems :: MemoriesShape m
+data WasmModule (shape :: WasmModuleShape) = WasmModule {
+    globals :: GlobalsShape (GetGlobalsShape shape),
+    mems :: MemoriesShape (GetMemoriesShape shape)
     -- , x :: String
     -- types :: XYZ,
     }
 
-type family GetGlobals (m :: WasmModule) :: Vec n GlobalType where
+type family GetGlobals (m :: WasmModule shape) :: Vec (GetGlobalsShape shape) GlobalType where
     GetGlobals ('WasmModule globals _) = globals
 
 -- Type family to extract WasmType from GlobalType
@@ -99,5 +108,5 @@ data MemArg (alignment :: Word32) (offset :: Word64)where-- Memory Offset Alignm
     -- spec https://webassembly.github.io/spec/core/syntax/instructions.html#memory-instructions
 
 
-type family GetMems (m :: WasmModule) :: Vec n MemoryType where
+type family GetMems (m :: WasmModule shape) :: Vec (GetMemoriesShape shape) MemoryType where
     GetMems ('WasmModule _ mems) = mems

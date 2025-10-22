@@ -90,7 +90,7 @@ type family StackLength (s :: StackShape) :: SNat where
     StackLength Empty       = 'Z
     StackLength (t :> ts)  = 'S (StackLength ts)
 
-type family GetLabelStackLength (ls :: LabelStack l) :: SNat where
+-- type family GetLabelStackLength (ls :: LabelStack l) :: SNat where
 
 data StackIndex (i :: SNat) (n :: SNat) where
     StackIndexZ :: StackIndex 'Z ('S n)
