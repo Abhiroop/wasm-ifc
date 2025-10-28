@@ -5,6 +5,7 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE ExplicitForAll #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 
 
@@ -551,7 +552,8 @@ setGlobalValue _ _ (ConsGlobals _ SConst _) = error "Cannot set value of a const
 setGlobalValue _ _ NoGlobals = error "Index out of bounds in setGlobalValue"
 
 -- TODO
-executeInstruction :: Instruction inputStack outputStack locals wasmModule inputLabels outputLabels
+executeInstruction :: forall inputStack outputStack locals wasmModule inputLabels outputLabels labels .
+                      Instruction inputStack outputStack locals wasmModule inputLabels outputLabels
                    -> RuntimeContext inputStack locals wasmModule labels
                    -> RuntimeContext outputStack locals wasmModule labels
 executeInstruction instr prevCtxt@(RuntimeContext prevStack prevLocals prevGlobal prevLabels) = case instr of
@@ -741,11 +743,11 @@ executeInstruction instr prevCtxt@(RuntimeContext prevStack prevLocals prevGloba
                       Push val rest -> RuntimeContext rest prevLocals (setGlobalValue idx val prevGlobal) prevLabels
     MemoryLoad arg -> undefined
     MemoryStore arg -> undefined
-    Block (BTParamsResults _ res) instrSeq ->
-        let newContext = executeInstructionSequence instrSeq (prevCtxt { labels = ConsLabels res prevLabels })
-        in newContext { labels = prevLabels }
-                -- let newContext = executeInstructionSequence instrSeq (RuntimeContext prevStack prevLocals prevGlobal (ConsLabels res prevLabels))
-                -- in RuntimeContext (stack newContext) (locals newContext) prevGlobal prevLabels
+    Block (BTParamsResults _ (res :: SStackShape resStack)) instrSeq ->
+      let newLabels = ConsLabels res (labels prevCtxt)
+          newContext =
+            executeInstructionSequence instrSeq (prevCtxt { labels = newLabels } :: RuntimeContext inputStack locals wasmModule (resStack :>: labels))
+      in newContext { labels = prevLabels }
     Loop (BTParamsResults params _) instrSeq -> undefined
                 -- let newContext = executeInstructionSequence instrSeq (RuntimeContext prevStack prevLocals prevGlobal (ConsLabels params prevLabels))
                 -- in RuntimeContext (stack newContext) (locals newContext) prevGlobal prevLabels
