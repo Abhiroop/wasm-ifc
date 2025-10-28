@@ -13,13 +13,14 @@
 -- WebAssembly programs are stack-safe and type-correct at compile time.
 module Wasm where
 
-import Data.Int (Int32)
+import Data.Int (Int32, Int64)
 import Data.Word (Word32, Word64)
-import GHC.TypeLits (Nat) -- , type (-))
+import GHC.TypeLits (Nat)  -- , type (-))
 -- import GHC.TypeError (TypeError, ErrorMessage(..))
 import Types (WasmType(I64, I32), RuntimeTypeOf, WasmType, StackShape(..), type (+>+), StackIndex (..), GetLabelType, LabelStack(..), RemoveLabels, CheckTopEqual, BlockType (..), SStackShape(..), FuncName, FuncTypeAnn (..))
 import Utils
-import WasmModule (WasmModule(..), GetGlobals, GlobalTypeToWasmType, MemArg(SMemArg), Mutability, GlobalsShape, WasmModuleShape, GetGlobalsShape)
+import WasmModule (WasmModule(..), GetGlobals, GlobalTypeToWasmType, MemArg(SMemArg), GlobalsShape, WasmModuleShape, GetGlobalsShape, GlobalType (GlobalTypeMW), KnownMutability(SVar, SConst))
+
 
 {-
 =============================================================================
@@ -147,7 +148,7 @@ data Instruction (inputStack :: StackShape) (outputStack :: StackShape) (locals 
     -- TODO: Handle uninitialized local variables according to WASM spec
 
     -- GlobalGet: push the value of a global variable onto the stack
-    GlobalGet :: forall (i :: SNat) (n :: SNat) (m :: SNat) (l :: SNat) (shape :: WasmModuleShape) (inputStack :: StackShape) (wasmModule :: WasmModule shape) (locals :: LocalsShape m) (inputLabels :: LabelStack l).
+    GlobalGet :: forall (i :: SNat) (n :: SNat) (m :: SNat) (l :: SNat) (j :: SNat) (shape :: WasmModuleShape) (inputStack :: StackShape) (wasmModule :: WasmModule shape) (locals :: LocalsShape m) (inputLabels :: LabelStack l).
         SFin i n
         -> Instruction inputStack (GlobalTypeToWasmType (Index i (GetGlobals wasmModule)) :> inputStack) locals wasmModule inputLabels inputLabels
 
@@ -162,7 +163,7 @@ data Instruction (inputStack :: StackShape) (outputStack :: StackShape) (locals 
         -- this simply returns a memory type which includes the limits of the memory
     -- We need the forall in order to use MemoryLoad @I32
     -- type equality ~ or :~:
-    MemoryLoad :: forall (wasmtype::WasmType) (m :: SNat) (k :: SNat) (l :: SNat) (shape :: WasmModuleShape) (align :: Word32) (offset :: Word64) (inputStack :: StackShape) (wasmModule :: WasmModule shape) (locals :: LocalsShape m) (inputLabels :: LabelStack k) (outputLabels :: LabelStack l).
+    MemoryLoad :: forall (wasmtype::WasmType) (m :: SNat) (k :: SNat) (l :: SNat) (i :: SNat) (shape :: WasmModuleShape) (align :: Word32) (offset :: Word64) (inputStack :: StackShape) (wasmModule :: WasmModule shape) (locals :: LocalsShape m) (inputLabels :: LabelStack k) (outputLabels :: LabelStack l).
             MemArg align offset  -- ignore alignment for now, also not 100% sure why i32 has to be on top of stack
              -> Instruction (I32 :> inputStack) (wasmtype :> inputStack) locals wasmModule inputLabels outputLabels
     -- MemoryStore: pop address and value from stack, store value at address in memory
@@ -192,20 +193,20 @@ data Instruction (inputStack :: StackShape) (outputStack :: StackShape) (locals 
     
     -- technically the type like this would be defined at a type index in the types module
     -- Alternatively we can define just a WasmType in BlockType and then it would be the same as the func type []->[WasmType] => how should we go about it ? implement the types module? however not quite sure how we add types to the type module.
-    Block :: forall (m :: SNat) (l :: SNat) (shape :: WasmModuleShape) (paramsStack :: StackShape) (resStack :: StackShape) (inputStack :: StackShape)(outputStack :: StackShape) (locals :: LocalsShape m) (wasmModule :: WasmModule shape) (inputLabels :: LabelStack l) (outputLabels :: LabelStack l).
+    Block :: forall (m :: SNat) (l :: SNat) (p :: SNat) (r :: SNat) (i :: SNat) (o :: SNat) (shape :: WasmModuleShape) (paramsStack :: StackShape) (resStack :: StackShape) (inputStack :: StackShape)(outputStack :: StackShape) (locals :: LocalsShape m) (wasmModule :: WasmModule shape) (inputLabels :: LabelStack l).
             (CheckTopEqual paramsStack inputStack ~ 'True,
                 CheckTopEqual resStack outputStack ~ 'True)  -- ensure that the parameters of the block are on top of the input stack
           => BlockType paramsStack resStack -- represents the optional valtype however what about the typeidx? can't know the function type
-          -> InstructionSequence inputStack outputStack locals wasmModule (resStack :>: inputLabels) (resStack :>: outputLabels)
-          -> Instruction inputStack outputStack locals wasmModule inputLabels outputLabels
+          -> InstructionSequence inputStack outputStack locals wasmModule (resStack :>: inputLabels) (resStack :>: inputLabels)
+          -> Instruction inputStack outputStack locals wasmModule inputLabels inputLabels
 
     -- Loop: a sequence of instructions that can be restarted with 'br'
-    Loop  :: forall (m :: SNat) (l :: SNat) (shape :: WasmModuleShape) (paramsStack :: StackShape) (resStack :: StackShape) (inputStack :: StackShape)(outputStack :: StackShape) (locals :: LocalsShape m) (wasmModule :: WasmModule shape) (inputLabels :: LabelStack l) (outputLabels :: LabelStack l).
+    Loop  :: forall (m :: SNat) (l :: SNat) (p :: SNat) (r :: SNat) (i :: SNat) (o :: SNat) (shape :: WasmModuleShape) (paramsStack :: StackShape) (resStack :: StackShape) (inputStack :: StackShape) (outputStack :: StackShape) (locals :: LocalsShape m) (wasmModule :: WasmModule shape) (inputLabels :: LabelStack l).
             (CheckTopEqual paramsStack inputStack ~ 'True,
                 CheckTopEqual resStack outputStack ~ 'True)  -- ensure that the parameters of the block are on top of the input stack
           => BlockType paramsStack resStack
-          -> InstructionSequence inputStack outputStack locals wasmModule (paramsStack :>: inputLabels) (paramsStack :>: outputLabels)
-          -> Instruction inputStack outputStack locals wasmModule inputLabels outputLabels
+          -> InstructionSequence inputStack outputStack locals wasmModule (paramsStack :>: inputLabels) (paramsStack :>: inputLabels)
+          -> Instruction inputStack outputStack locals wasmModule inputLabels inputLabels
 
     -- If: conditional execution (pops i32 condition, executes one of two branches)
     If    :: InstructionSequence inputStack outputStack locals wasmModule inputLabels outputLabels     -- then branch
@@ -282,7 +283,7 @@ FUNCTIONS
 -- Functions start with an empty stack and produce the specified final stack shape.
 -- The locals context represents the function's parameters and local variables.
 data Function (inputStack :: StackShape) (resultStack :: StackShape) (locals :: LocalsShape n) (outputLabels :: LabelStack l) where
-    Function :: InstructionSequence inputStack resultStack locals wasmModule EmptyLabels outputLabels -> Function inputStack resultStack locals outputLabels
+    Function :: InstructionSequence inputStack resultStack locals wasmModule Types.EmptyLabels outputLabels -> Function inputStack resultStack locals outputLabels
     -- add a new type that captures the function type annotation, i.e.
     -- FuncTypeAnn inputStack resultStack ->
 
@@ -293,7 +294,7 @@ EXAMPLE FUNCTIONS
 -}
 
 -- Example Call in Function
-callExample :: Function Empty (I32 :> Empty) (I32 :<| I32 :<| VNil) EmptyLabels
+callExample :: Function Empty (I32 :> Empty) (I32 :<| I32 :<| VNil) Types.EmptyLabels
 callExample = Function $
        LocalGet SFZ    -- get first parameter
     :| LocalGet (SFS SFZ)  -- get second parameter
@@ -302,7 +303,7 @@ callExample = Function $
 
 -- Example MemoryLoad
 -- the locals are the two I32 integers that are used to compute the address of the memory load
-memLoadSequence :: Function Empty (I64 :> Empty) (I32 :<| I32 :<| VNil) EmptyLabels
+memLoadSequence :: Function Empty (I64 :> Empty) (I32 :<| I32 :<| VNil) Types.EmptyLabels
 memLoadSequence = Function $
        LocalGet SFZ
     :| MemoryLoad @I64 SMemArg 
@@ -312,7 +313,7 @@ memLoadSequence = Function $
     :| End
 
 -- Example MemoryStore
-memstoresequence :: Function Empty Empty (I32 :<| I64 :<| VNil) EmptyLabels
+memstoresequence :: Function Empty Empty (I32 :<| I64 :<| VNil) Types.EmptyLabels
 memstoresequence = Function $
        LocalGet (SFS SFZ)  -- get the address
     :| LocalGet SFZ      -- get the value to store
@@ -320,16 +321,16 @@ memstoresequence = Function $
     :| End
 
 -- add1Sequence :: InstructionSequence (I32 :> I32 :> Empty) (I32 :> Empty) 'VNil ('WasmModule '[]) ('WasmModule '[])
-add1Sequence :: forall {n :: SNat} {k :: SNat} {shape :: WasmModuleShape} {inputStack :: StackShape} {locals :: LocalsShape n} {wasmModule :: WasmModule shape} {inputLabels :: LabelStack k}. InstructionSequence (I32 :> (I32 :> inputStack)) (I32 :> inputStack) locals wasmModule inputLabels inputLabels
+add1Sequence :: forall {n :: SNat} {k :: SNat} {i :: SNat} {shape :: WasmModuleShape} {inputStack :: StackShape} {locals :: LocalsShape n} {wasmModule :: WasmModule shape} {inputLabels :: LabelStack k}. InstructionSequence (I32 :> (I32 :> inputStack)) (I32 :> inputStack) locals wasmModule inputLabels inputLabels
 add1Sequence = I32Add :| End
 
 -- addSubSequence :: InstructionSequence (I32 :> (I32 :> (I32 :> Empty))) (I32 :> Empty) 'VNil (WasmModule Z) ('WasmModule '[]) -- only 3 I32 because the result of the add is the first argument of the subtract
-addSubSequence :: forall {n :: SNat} {k :: SNat} {shape :: WasmModuleShape} {inputStack :: StackShape} {locals :: LocalsShape n} {wasmModule :: WasmModule shape} {inputLabels :: LabelStack k}. InstructionSequence (I32 :> (I32 :> (I32 :> inputStack))) (I32 :> inputStack) locals wasmModule inputLabels inputLabels
+addSubSequence :: forall {n :: SNat} {k :: SNat} {i :: SNat} {shape :: WasmModuleShape} {inputStack :: StackShape} {locals :: LocalsShape n} {wasmModule :: WasmModule shape} {inputLabels :: LabelStack k}. InstructionSequence (I32 :> (I32 :> (I32 :> inputStack))) (I32 :> inputStack) locals wasmModule inputLabels inputLabels
 addSubSequence = I32Add :| (I32Sub :| End)
 
 -- | Example 1: Add two integers
 -- Takes two i32 parameters (slots 0 and 1), returns their sum
-add2 :: Function Empty (I32 :> Empty) (I32 :<| I32 :<| VNil) EmptyLabels -- Function resultStack locals (repr the function parameters)
+add2 :: Function Empty (I32 :> Empty) (I32 :<| I32 :<| VNil) Types.EmptyLabels -- Function resultStack locals (repr the function parameters)
 add2 = Function $
     -- Local slots: (0) first parameter, (1) second parameter
        LocalGet SFZ    -- Push first parameter
@@ -339,7 +340,7 @@ add2 = Function $
 
 -- | Example 2: Factorial function using iteration
 -- Takes one i32 parameter, returns its factorial
-factorial :: Function Empty (I32 :> Empty) (I32 :<| I32 :<| VNil) EmptyLabels
+factorial :: Function Empty (I32 :> Empty) (I32 :<| I32 :<| VNil) Types.EmptyLabels
 factorial = Function $
     -- Local slots: (0) input parameter (also used as counter), (1) accumulator
     -- Initialize accumulator to 1
@@ -378,7 +379,7 @@ factorial = Function $
 
 -- | Example 3: Function that returns nothing (void function).
 -- Demonstrates different return types - this one returns Empty stack.
-printNumber :: Function Empty Empty (I32 :<| VNil) EmptyLabels
+printNumber :: Function Empty Empty (I32 :<| VNil) Types.EmptyLabels
 printNumber = Function $
     -- Just consume the parameter without returning anything
        LocalGet slotZero
@@ -393,7 +394,7 @@ printNumber = Function $
 
 -- | Example 4: Function with more complex local variable patterns.
 -- Takes one parameter, uses three local variables for intermediate calculations.
-complexCalculation :: Function Empty (I32 :> Empty) (I32 :<| I32 :<| I32 :<| I32 :<| VNil) EmptyLabels
+complexCalculation :: Function Empty (I32 :> Empty) (I32 :<| I32 :<| I32 :<| I32 :<| VNil) Types.EmptyLabels
 complexCalculation = Function $
     -- Local slots: (0) input, (1) temp1, (2) temp2, (3) result
     -- temp1 = input * 2
@@ -411,7 +412,7 @@ complexCalculation = Function $
 
 -- | Example 5: Conditional logic with If instruction.
 -- Returns the absolute value of the input.
-absoluteValue :: Function Empty (I32 :> Empty) (I32 :<| VNil) EmptyLabels
+absoluteValue :: Function Empty (I32 :> Empty) (I32 :<| VNil) Types.EmptyLabels
 absoluteValue = Function $
     -- Check if input is negative
        LocalGet SFZ
@@ -467,6 +468,24 @@ data Stack (stackShape :: StackShape) where
     EmptyStack :: Stack Empty
     Push       :: RuntimeTypeOf wasmType -> Stack stackShape -> Stack (wasmType :> stackShape)
 
+
+stackLength :: Stack stackShape -> Int
+stackLength EmptyStack       = 0
+stackLength (Push _ rest) = 1 + stackLength rest
+
+makeSNat :: Int -> SNat
+makeSNat 0 = Z
+makeSNat n | n > 0     = S (makeSNat (n - 1))
+           | otherwise = error "Negative number cannot be converted to SNat"
+
+
+-- (Num n, stackLength popShape ~ n) =>
+-- popNFromStack :: (stackLength popShape ~ n) => n -> Stack (popShape +>+ stackShape) -> (Stack popShape, Stack stackShape)
+-- popNFromStack 0 stackShape = (EmptyStack, stackShape)
+-- popNFromStack n (Push val rest) =
+--     let (popShape, remaining) = popNFromStack (n - 1) rest
+--     in (Push val popShape, remaining)
+
 -- | Runtime representation of the WebAssembly locals.
 -- This is the actual data structure that holds local values during execution.
 data Locals (localsShape :: LocalsShape n) where
@@ -475,14 +494,36 @@ data Locals (localsShape :: LocalsShape n) where
 
 data Globals (globalsShape :: GlobalsShape n) where
     NoGlobals   :: Globals 'VNil
-    ConsGlobals :: RuntimeTypeOf (GlobalTypeToWasmType wasmType) -> Mutability -> Globals globalsShape -> Globals (wasmType :<| globalsShape)
+    ConsGlobals :: RuntimeTypeOf wasmType -> KnownMutability m -> Globals globalsShape -> Globals (GlobalTypeMW m wasmType :<| globalsShape)
 
-data RuntimeContext (stackShape :: StackShape) (localsShape :: LocalsShape n) (wasmModule :: WasmModule shape) = RuntimeContext
+data Labels (labelsShape :: LabelStack n) where
+    NoLabels :: Labels 'Types.EmptyLabels
+    ConsLabels  :: SStackShape labelStackShape -> Labels restLabelsShape -> Labels (labelStackShape :>: restLabelsShape)
+-- data Memory (memsShape :: MemoriesShape n) where
+--     NoMems   :: Memory 'VNil
+--     ConsMems :: MemoryType -> Memory memsShape -> Memory (MemoryType :<| memsShape)
+
+-- type family RuntimeTypeOfGlobal (g :: GlobalType) :: KnownMutability m -> KnownWasmType w where
+--     RuntimeTypeOfGlobal (GlobalTypeMW v wasmType) = (KnownMutability v) (RuntimeTypeOf (GlobalTypeToWasmType (GlobalTypeMW v wasmType)))
+
+data RuntimeContext (stackShape :: StackShape) (localsShape :: LocalsShape n) (wasmModule :: WasmModule shape) (labelsShape :: LabelStack m) = RuntimeContext
     { stack  :: Stack stackShape,
       locals :: Locals localsShape,
-      globals :: Globals ((GetGlobals wasmModule) :: GlobalsShape (GetGlobalsShape shape))
+      wasmModule :: RuntimeWasmModule wasmModule,
+      labels :: Labels labelsShape
+    --   globals :: Globals ((GetGlobals wasmModule) :: GlobalsShape (GetGlobalsShape shape))
       -- TODO: labels, tables, etc.
     }
+
+data RuntimeWasmModule (wasmModule :: WasmModule shape) = RuntimeWasmModule
+    { 
+        -- memories :: Memory ((GetMems wasmModule) :: MemoriesShape (GetMemoriesShape shape)),
+      runtimeGlobals :: Globals ((GetGlobals wasmModule) :: GlobalsShape (GetGlobalsShape shape))
+    }
+
+-- function to extract the globals from the runtimeWasmModule
+getRuntimeGlobals :: RuntimeWasmModule wasmModule -> Globals (GetGlobals wasmModule)
+getRuntimeGlobals (RuntimeWasmModule {runtimeGlobals = gs}) = gs
 
 -- function to get the value of a local variable at a given index
 getLocalValue :: SFin i n -> Locals localsShape -> RuntimeTypeOf (Index i localsShape)
@@ -496,208 +537,251 @@ setLocalValue SFZ newVal (ConsLocals _ rest) = ConsLocals newVal rest
 setLocalValue (SFS idx) newVal (ConsLocals val rest) = ConsLocals val (setLocalValue idx newVal rest)
 setLocalValue _ _ NoLocals = error "Index out of bounds in setLocalValue"
 
+-- function to get the value of a global variable at a given index
+getGlobalValue :: SFin i n -> Globals globalsShape -> RuntimeTypeOf (GlobalTypeToWasmType (Index i globalsShape))
+getGlobalValue SFZ (ConsGlobals val _ _) = val
+getGlobalValue (SFS idx) (ConsGlobals _ _ rest) = getGlobalValue idx rest
+getGlobalValue _ NoGlobals = error "Index out of bounds in getGlobalValue"
+
+--function to set the value of a global variable at a given index, mutability has to be var
+setGlobalValue :: SFin i n -> RuntimeTypeOf (GlobalTypeToWasmType (Index i globalsShape)) -> Globals globalsShape -> Globals globalsShape
+setGlobalValue SFZ newVal (ConsGlobals _ SVar rest) = ConsGlobals newVal SVar rest
+setGlobalValue (SFS idx) newVal (ConsGlobals oldVal SVar rest) = ConsGlobals oldVal SVar (setGlobalValue idx newVal rest)
+setGlobalValue _ _ (ConsGlobals _ SConst _) = error "Cannot set value of a constant global variable" -- TODO: double check this
+setGlobalValue _ _ NoGlobals = error "Index out of bounds in setGlobalValue"
+
 -- TODO
 executeInstruction :: Instruction inputStack outputStack locals wasmModule inputLabels outputLabels
-                   -> RuntimeContext inputStack locals globals
-                   -> RuntimeContext outputStack locals globals
-executeInstruction instr (RuntimeContext prevStack prevLocals prevGlobals) = case instr of
-    I32Const val -> RuntimeContext (Push val prevStack) prevLocals prevGlobals
+                   -> RuntimeContext inputStack locals wasmModule labels
+                   -> RuntimeContext outputStack locals wasmModule labels
+executeInstruction instr (RuntimeContext prevStack prevLocals wasmModule prevLabels) = case instr of
+    I32Const val -> RuntimeContext (Push val prevStack) prevLocals wasmModule prevLabels
     I32Add       -> case prevStack of
                       Push val1 (Push val2 rest) ->
                           let result = val2 + val1
-                          in RuntimeContext (Push result rest) prevLocals prevGlobals
+                          in RuntimeContext (Push result rest) prevLocals wasmModule prevLabels
     I32Sub       -> case prevStack of
                       Push val1 (Push val2 rest) ->
                           let result = val1 - val2 -- TODO double check the order!!
-                          in RuntimeContext (Push result rest) prevLocals prevGlobals
+                          in RuntimeContext (Push result rest) prevLocals wasmModule prevLabels 
     I32Mul       -> case prevStack of
                       Push val1 (Push val2 rest) ->
                           let result = val2 * val1
-                          in RuntimeContext (Push result rest) prevLocals prevGlobals
+                          in RuntimeContext (Push result rest) prevLocals wasmModule prevLabels
     I32Div       -> case prevStack of
                       Push val1 (Push val2 rest) ->
                           let result = val2 `div` val1 -- TODO double check the order!!
-                          in RuntimeContext (Push result rest) prevLocals prevGlobals
+                          in RuntimeContext (Push result rest) prevLocals wasmModule prevLabels
     I32RemU      -> case prevStack of
                       Push val1 (Push val2 rest) ->
                           let result = val2 `mod` val1 -- TODO double check the order!!
-                          in RuntimeContext (Push result rest) prevLocals prevGlobals
+                          in RuntimeContext (Push result rest) prevLocals wasmModule prevLabels
     I32RemS      -> case prevStack of
                       Push val1 (Push val2 rest) ->
                           let result = val2 `mod` val1 -- TODO double check the order!!
-                          in RuntimeContext (Push result rest) prevLocals prevGlobals
+                          in RuntimeContext (Push result rest) prevLocals wasmModule prevLabels
     I32EqZ       -> case prevStack of
                       Push val rest ->
-                          let result = if val == 0 then 1 else 0
-                          in RuntimeContext (Push result rest) prevLocals prevGlobals
+                          let result = if val == 0 then (1 :: Int32) else (0 :: Int32)
+                          in RuntimeContext (Push result rest) prevLocals wasmModule prevLabels
     I32Eq        -> case prevStack of
                       Push val1 (Push val2 rest) ->
-                          let result = if val1 == val2 then 1 else 0
-                          in RuntimeContext (Push result rest) prevLocals prevGlobals
- 
+                          let result = if val1 == val2 then (1 :: Int32) else (0 :: Int32)
+                          in RuntimeContext (Push result rest) prevLocals wasmModule prevLabels
+
     I32Neq       -> case prevStack of
                       Push val1 (Push val2 rest) ->
-                          let result = if val1 /= val2 then 1 else 0
-                          in RuntimeContext (Push result rest) prevLocals prevGlobals
- 
+                          let result = if val1 /= val2 then (1 :: Int32) else (0 :: Int32)
+                          in RuntimeContext (Push result rest) prevLocals wasmModule prevLabels
+
     I32LtS       -> case prevStack of
                       Push val1 (Push val2 rest) ->
-                          let result = if val2 < val1 then 1 else 0
-                          in RuntimeContext (Push result rest) prevLocals prevGlobals
- 
+                          let result = if val2 < val1 then (1 :: Int32) else (0 :: Int32)
+                          in RuntimeContext (Push result rest) prevLocals wasmModule prevLabels
+
     I32LtU       -> case prevStack of
                       Push val1 (Push val2 rest) ->
-                          let result = if val2 < val1 then 1 else 0 -- TODO: Check whether we should implement explicit WASM type for unsigned integers
-                          in RuntimeContext (Push result rest) prevLocals prevGlobals
- 
+                          let result = if (fromIntegral val2 :: Word32) < (fromIntegral val1 :: Word32) then 1 else 0
+                          in RuntimeContext (Push result rest) prevLocals wasmModule prevLabels
+
     I32LeS       -> case prevStack of
                       Push val1 (Push val2 rest) ->
-                          let result = if val2 <= val1 then 1 else 0
-                          in RuntimeContext (Push result rest) prevLocals prevGlobals
- 
+                          let result = if val2 <= val1 then (1 :: Int32) else (0 :: Int32)
+                          in RuntimeContext (Push result rest) prevLocals wasmModule prevLabels
+
     I32LeU       -> case prevStack of
                       Push val1 (Push val2 rest) ->
                           let result = if val2 <= val1 then 1 else 0 -- TODO: Check whether we should implement explicit WASM type for unsigned integers
-                          in RuntimeContext (Push result rest) prevLocals prevGlobals
- 
+                          in RuntimeContext (Push result rest) prevLocals wasmModule prevLabels
+
     I32GtS       -> case prevStack of
                       Push val1 (Push val2 rest) ->
                           let result = if val2 > val1 then 1 else 0
-                          in RuntimeContext (Push result rest) prevLocals prevGlobals
+                          in RuntimeContext (Push result rest) prevLocals wasmModule prevLabels
  
     I32GtU       -> case prevStack of
                       Push val1 (Push val2 rest) ->
                           let result = if val2 > val1 then 1 else 0 -- TODO: Check whether we should implement explicit WASM type for unsigned integers
-                          in RuntimeContext (Push result rest) prevLocals prevGlobals
+                          in RuntimeContext (Push result rest) prevLocals wasmModule prevLabels
  
     I32GeS       -> case prevStack of
                       Push val1 (Push val2 rest) ->
                           let result = if val2 >= val1 then 1 else 0
-                          in RuntimeContext (Push result rest) prevLocals prevGlobals
+                          in RuntimeContext (Push result rest) prevLocals wasmModule prevLabels
  
     I32GeU       -> case prevStack of
                       Push val1 (Push val2 rest) ->
                           let result = if val2 >= val1 then 1 else 0 -- TODO: Check whether we should implement explicit WASM type for unsigned integers
-                          in RuntimeContext (Push result rest) prevLocals prevGlobals
+                          in RuntimeContext (Push result rest) prevLocals wasmModule prevLabels
  
     I64Add       -> case prevStack of
                       Push val1 (Push val2 rest) ->
                           let result = val2 + val1
-                          in RuntimeContext (Push result rest) prevLocals prevGlobals
+                          in RuntimeContext (Push result rest) prevLocals wasmModule prevLabels
  
     I64Sub       -> case prevStack of
                       Push val1 (Push val2 rest) ->
                           let result = val2 - val1 -- TODO double check the order!!
-                          in RuntimeContext (Push result rest) prevLocals prevGlobals
+                          in RuntimeContext (Push result rest) prevLocals wasmModule prevLabels
  
     I64Mul       -> case prevStack of
                       Push val1 (Push val2 rest) ->
                           let result = val2 * val1
-                          in RuntimeContext (Push result rest) prevLocals prevGlobals
+                          in RuntimeContext (Push result rest) prevLocals wasmModule prevLabels
  
     I64Div       -> case prevStack of
                       Push val1 (Push val2 rest) ->
                           let result = val2 `div` val1 -- TODO double check the order!!
-                          in RuntimeContext (Push result rest) prevLocals prevGlobals
+                          in RuntimeContext (Push result rest) prevLocals wasmModule prevLabels
  
     I64RemU      -> case prevStack of
                       Push val1 (Push val2 rest) ->
                           let result = val2 `mod` val1 -- TODO double check the order!!
-                          in RuntimeContext (Push result rest) prevLocals prevGlobals
+                          in RuntimeContext (Push result rest) prevLocals wasmModule prevLabels
  
     I64RemS      -> case prevStack of
                       Push val1 (Push val2 rest) ->
                           let result = val2 `mod` val1 -- TODO double check the order!!
-                          in RuntimeContext (Push result rest) prevLocals prevGlobals
+                          in RuntimeContext (Push result rest) prevLocals wasmModule prevLabels
  
     I64EqZ       -> case prevStack of
                       Push val rest ->
-                          let result = if val == 0 then 1 else 0
-                          in RuntimeContext (Push result rest) prevLocals prevGlobals
+                          let result = if val == 0 then (1 :: Int64) else (0 :: Int64)
+                          in RuntimeContext (Push result rest) prevLocals wasmModule prevLabels
  
     I64Eq        -> case prevStack of
                       Push val1 (Push val2 rest) ->
                           let result = if val1 == val2 then 1 else 0
-                          in RuntimeContext (Push result rest) prevLocals prevGlobals
+                          in RuntimeContext (Push result rest) prevLocals wasmModule prevLabels
  
     I64Neq       -> case prevStack of
                       Push val1 (Push val2 rest) ->
                           let result = if val1 /= val2 then 1 else 0
-                          in RuntimeContext (Push result rest) prevLocals prevGlobals
+                          in RuntimeContext (Push result rest) prevLocals wasmModule prevLabels
  
     I64LtS       -> case prevStack of
                       Push val1 (Push val2 rest) ->
                           let result = if val2 < val1 then 1 else 0
-                          in RuntimeContext (Push result rest) prevLocals prevGlobals
+                          in RuntimeContext (Push result rest) prevLocals wasmModule prevLabels
  
     I64LtU       -> case prevStack of
                       Push val1 (Push val2 rest) ->
                           let result = if val2 < val1 then 1 else 0 -- TODO: Check whether we should implement explicit WASM type for unsigned integers
-                          in RuntimeContext (Push result rest) prevLocals prevGlobals
+                          in RuntimeContext (Push result rest) prevLocals wasmModule prevLabels
  
     I64LeS       -> case prevStack of
                       Push val1 (Push val2 rest) ->
                           let result = if val2 <= val1 then 1 else 0
-                          in RuntimeContext (Push result rest) prevLocals prevGlobals
+                          in RuntimeContext (Push result rest) prevLocals wasmModule prevLabels
  
     I64LeU       -> case prevStack of
                       Push val1 (Push val2 rest) ->
                           let result = if val2 <= val1 then 1 else 0 -- TODO: Check whether we should implement explicit WASM type for unsigned integers
-                          in RuntimeContext (Push result rest) prevLocals prevGlobals
+                          in RuntimeContext (Push result rest) prevLocals wasmModule prevLabels
  
     I64GtS       -> case prevStack of
                       Push val1 (Push val2 rest) ->
                           let result = if val2 > val1 then 1 else 0
-                          in RuntimeContext (Push result rest) prevLocals prevGlobals
+                          in RuntimeContext (Push result rest) prevLocals wasmModule prevLabels
  
     I64GtU       -> case prevStack of
                       Push val1 (Push val2 rest) ->
                           let result = if val2 > val1 then 1 else 0 -- TODO: Check whether we should implement explicit WASM type for unsigned integers
-                          in RuntimeContext (Push result rest) prevLocals prevGlobals
+                          in RuntimeContext (Push result rest) prevLocals wasmModule prevLabels
  
     I64GeS       -> case prevStack of
                       Push val1 (Push val2 rest) ->
                           let result = if val2 >= val1 then 1 else 0
-                          in RuntimeContext (Push result rest) prevLocals prevGlobals
+                          in RuntimeContext (Push result rest) prevLocals wasmModule prevLabels
  
     I64GeU       -> case prevStack of
                       Push val1 (Push val2 rest) ->
                           let result = if val2 >= val1 then 1 else 0 -- TODO: Check whether we should implement explicit WASM type for unsigned integers
-                          in RuntimeContext (Push result rest) prevLocals prevGlobals
+                          in RuntimeContext (Push result rest) prevLocals wasmModule prevLabels
  
     Drop         -> case prevStack of
-                      Push _ rest -> RuntimeContext rest prevLocals prevGlobals
- 
+                      Push _ rest -> RuntimeContext rest prevLocals wasmModule prevLabels
+
     LocalGet idx -> case getLocalValue idx prevLocals of
-                      val -> RuntimeContext (Push val prevStack) prevLocals prevGlobals
- 
+                      val -> RuntimeContext (Push val prevStack) prevLocals wasmModule prevLabels
+
     LocalSet idx -> case prevStack of
                       Push val rest ->
                           let newLocals = setLocalValue idx val prevLocals
-                          in RuntimeContext rest newLocals prevGlobals
- 
+                          in RuntimeContext rest newLocals wasmModule prevLabels
+
     LocalTee idx -> case prevStack of
                       Push val rest ->
                           let newLocals = setLocalValue idx val prevLocals
-                          in RuntimeContext (Push val rest) newLocals prevGlobals
- 
-    GlobalGet idx -> undefined
-    GlobalSet idx-> undefined
-    MemoryLoad arg-> undefined
-    MemoryStore arg-> undefined
-    Block btype seq-> undefined
-    Loop labelIdx seq-> undefined
-    If thenSeq elseSeq-> undefined
-    Br labelIdx  -> undefined
+                          in RuntimeContext (Push val rest) newLocals wasmModule prevLabels
+
+    GlobalGet idx -> case getGlobalValue idx (getRuntimeGlobals wasmModule) of
+                      val -> RuntimeContext (Push val prevStack) prevLocals wasmModule prevLabels
+    GlobalSet idx -> case prevStack of
+                      Push val rest ->
+                          let newGlobals = setGlobalValue idx val (getRuntimeGlobals wasmModule)
+                              newWasmModule = wasmModule { runtimeGlobals = newGlobals }
+                          in RuntimeContext rest prevLocals newWasmModule prevLabels
+    MemoryLoad arg -> undefined
+    MemoryStore arg -> undefined
+    Block (BTParamsResults _ res) instrSeq ->
+                let newContext = executeInstructionSequence instrSeq (RuntimeContext prevStack prevLocals wasmModule (ConsLabels res prevLabels))
+                in RuntimeContext (stack newContext) (locals newContext) wasmModule prevLabels
+    Loop (BTParamsResults params _) instrSeq -> 
+                let newContext = executeInstructionSequence instrSeq (RuntimeContext prevStack prevLocals wasmModule (ConsLabels params prevLabels))
+                in RuntimeContext (stack newContext) (locals newContext) wasmModule prevLabels
+    If thenSeq elseSeq -> case prevStack of
+        Push cond rest ->
+            if cond /= 0
+            then executeInstructionSequence thenSeq (RuntimeContext rest prevLocals wasmModule prevLabels)
+            else executeInstructionSequence elseSeq (RuntimeContext rest prevLocals wasmModule prevLabels)
+    Br labelIdx -> undefined -- case labelIdx of
+        -- StackIndexZ -> 
+        --     case prevLabels of
+        --         ConsLabels labelType restLabels ->
+        --         -- pop the labelType from the stack
+        --             case popN (stackLength labelType) prevStack of
+        --                 (poppedVals, remainingStack) -> RuntimeContext remainingStack prevLocals wasmModule (removeLabels 1 prevLabels)
+                -- TODO: need to remove all remaining entries of stack that were added after the label was created
+                -- Therefore we need to keep track of the stack length at time the label was created and save the stacklength in the Labels data structure
+                    -- in RuntimeContext remainingStack prevLocals wasmModule (removeLabels 1 prevLabels)
+        -- StackIndexS n ->
+        --     let (ConsLabels _ restLabels) = prevLabels
+        --         newLabelIdx = n
+        --     in executeInstruction (Br newLabelIdx) (RuntimeContext prevStack prevLocals wasmModule restLabels)
     BrIf labelIdx-> undefined
-    Call funcName typeAnn -> undefined
+    Call funcName (FFuncTypeAnn params res) -> undefined -- executeFunction (Function Empty outputStack params (ConsLabels res prevLabels)) (RuntimeContext prevStack prevLocals wasmModule prevLabels)
 
 executeInstructionSequence :: InstructionSequence inputStack outputStack locals wasmModule inputLabels outputLabels
-                           -> RuntimeContext inputStack locals globals
-                           -> RuntimeContext outputStack locals globals
-executeInstructionSequence = undefined
+                           -> RuntimeContext inputStack locals wasmModule labels
+                           -> RuntimeContext outputStack locals wasmModule labels
+executeInstructionSequence instrSeq (RuntimeContext inputStack prevLocals prevWasmModule prevLabels) = case instrSeq of
+    End -> RuntimeContext inputStack prevLocals prevWasmModule prevLabels
+    (instr :| rest) ->
+        let intermediateContext = executeInstruction instr (RuntimeContext inputStack prevLocals prevWasmModule prevLabels)
+        in executeInstructionSequence rest intermediateContext
 
 executeFunction :: Function inputStack outputStack locals labels
-                   -> RuntimeContext Empty locals globals
-                   -> RuntimeContext outputStack locals globals
+                   -> RuntimeContext Empty locals globals labels
+                   -> RuntimeContext outputStack locals globals labels
 executeFunction = undefined

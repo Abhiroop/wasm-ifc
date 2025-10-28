@@ -27,7 +27,10 @@ data KnownMutability (m :: Mutability) where
     SVar   :: KnownMutability 'Var
 
 -- Global types classify global variables, which hold a value and can either be mutable or immutable.
-data GlobalType = GlobalType Mutability WasmType
+data GlobalType = GlobalTypeMW Mutability WasmType
+
+type family GetMutability (g :: GlobalType) :: Mutability where
+    GetMutability (GlobalTypeMW m w) = m
  
 
 -- The global component of a module defines a vector of global variables (or globals for short):
@@ -79,7 +82,9 @@ type family GetGlobals (m :: WasmModule shape) :: Vec (GetGlobalsShape shape) Gl
 -- ABHI: We need something here that discards the mutability information
 --      Define a type family called GlobalTypeToWasmType here.
 type family GlobalTypeToWasmType (g :: GlobalType) :: WasmType where
-    GlobalTypeToWasmType (m w) = w
+    GlobalTypeToWasmType (GlobalTypeMW _ w) = w
+
+
 
 type GlobalSlot = Nat
 

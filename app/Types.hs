@@ -12,7 +12,7 @@ import Data.Type.Equality (type (==))
 import Data.Kind (Type)
 import Data.Int (Int32, Int64)
 import Data.String ()
-import Utils(SNat(S, Z), (:-))
+import Utils(SNat(S, Z), (:-), (:+))
 import GHC.TypeError (ErrorMessage(Text))
 
 {-
@@ -61,21 +61,28 @@ data SStackShape (s :: StackShape) where
 -- The stack grows to the right: (I32 :> I32 :> Empty) means two I32s on stack.
 infixr 5 :>  -- Right-associative operator with precedence 5
 -- data StackShape = Empty | (:>) WasmOrLabelType StackShape
-data StackShape = Empty | (:>) WasmType StackShape
+data StackShape where
+    Empty :: StackShape
+    (:>) :: WasmType -> StackShape -> StackShape
+
+
+type family SAdd (n :: SNat) (m :: SNat) :: SNat where
+    SAdd ('S n) m = 'S (n :+ m)
+    SAdd n m      = n :+ m
 
 -- | Stack concatenation at the type level.
 -- This combines two stack shapes: upper sits on top of lower.
 -- Example: (I32 :> Empty) +>+ (I32 :> I32 :> Empty) = (I32 :> I32 :> I32 :> Empty)
 type family (upper :: StackShape) +>+ (lower :: StackShape) :: StackShape where
-    upper +>+ Empty = upper
     Empty +>+ lower = lower
     (top :> upper) +>+ lower = top :> (upper +>+ lower)
+infixl 5 +>+
 
 -- | Singleton type for stack shapes that we expect to return from blocks.
 -- This lets us specify at the type level what shape a block should produce.
-data KnownStackShape (stackShape :: StackShape) where
-    NoReturn  :: KnownStackShape Empty                    -- Block returns nothing
-    ReturnsOneWasmType :: KnownWasmType t -> KnownStackShape (t :> Empty)  -- Block returns one value
+-- data KnownStackShape (stackShape :: StackShape n) where
+--     NoReturn  :: KnownStackShape Empty                    -- Block returns nothing
+--     ReturnsOneWasmType :: KnownWasmType t -> KnownStackShape (t :> Empty)  -- Block returns one value
 
 data LabelStack (l :: SNat) where
     EmptyLabels :: LabelStack 'Z
@@ -85,10 +92,21 @@ type family RemoveLabels (i :: SNat) (labels :: LabelStack ('S l)) :: LabelStack
     RemoveLabels 'Z (l :>: ls) = ls
     RemoveLabels ('S i) (t :>: ts) = RemoveLabels i ts
 
-    
+
 type family StackLength (s :: StackShape) :: SNat where
     StackLength Empty       = 'Z
     StackLength (t :> ts)  = 'S (StackLength ts)
+
+type family Fst (pair :: (a, b)) :: a where
+    Fst '(x, y) = x
+
+type family Snd (pair :: (a, b)) :: b where
+    Snd '(x, y) = y
+
+type family SplitAt (n :: SNat) (s :: StackShape)
+  :: (StackShape, StackShape) where
+  SplitAt 'Z s = '( 'Empty, s)
+  SplitAt ('S n) (t :> s) = '(t :> Fst (SplitAt n s), Snd (SplitAt n s))
 
 -- type family GetLabelStackLength (ls :: LabelStack l) :: SNat where
 
@@ -100,7 +118,7 @@ data StackIndex (i :: SNat) (n :: SNat) where
 ---- Labels on input Stack old try
 ---------------------------------------
 type family CheckTopEqual (top :: StackShape) (stack :: StackShape) :: Bool where
-    CheckTopEqual Empty _ = 'True
+    CheckTopEqual Empty stack = 'True
     CheckTopEqual (t :> ts) (t :> ss) = CheckTopEqual ts ss
     CheckTopEqual top stack = TypeError ('Text "Top of stack does not match expected type.")
 
@@ -162,7 +180,7 @@ type family RuntimeTypeOf (wasmType :: WasmType) :: Type where
 --     RuntimeStackTypeOf ('IsWasmType I64) = Int64
 --     RuntimeStackTypeOf 'Label = () -- ??? not sure should be a stack shape I think
 
-    
+
 -- | Type-level comparison: is n less than m?
 type family (n :: Nat) <? (m :: Nat) :: Bool where
     n <? m = CmpNat n m == 'LT

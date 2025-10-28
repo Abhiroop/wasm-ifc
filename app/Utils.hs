@@ -3,7 +3,10 @@
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
+
 module Utils where
+
+
 
 data SNat = Z | S SNat
 
@@ -58,4 +61,11 @@ infixr 5 :-
 type family (m :: SNat) :- (n :: SNat) :: SNat where
     m :- 'Z         = m
     ('S m) :- ('S n) = m :- n
+
+infixl 6 :+
+type family (m :: SNat) :+ (n :: SNat) :: SNat where
+    'Z :+ n         = n
+    ('S m) :+ n = 'S (m :+ n)
+
+
 
