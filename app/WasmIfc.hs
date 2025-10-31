@@ -6,7 +6,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 
-module Wasm where
+module WasmIfc where
 
 import GHC.TypeLits (Nat, type (+), type (-), CmpNat)
 import GHC.TypeError (TypeError, ErrorMessage(..))

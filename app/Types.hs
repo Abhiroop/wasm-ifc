@@ -7,12 +7,11 @@
 
 module Types where
 
-import GHC.TypeLits (Nat, CmpNat, TypeError)
-import Data.Type.Equality (type (==))
+import GHC.TypeLits (TypeError)
 import Data.Kind (Type)
 import Data.Int (Int32, Int64)
 import Data.String ()
-import Utils(SNat(S, Z), (:-), (:+))
+import Utils(Nat(S, Z), (:-), (:+), LessThan)
 import GHC.TypeError (ErrorMessage(Text))
 
 {-
@@ -37,7 +36,7 @@ data BlockType (params :: StackShape) (res :: StackShape) where
     -- BTParamsEmptyResults :: SStackShape s -> BlockType 'Empty s
     -- BTParamsResultEmpty :: SStackShape s -> BlockType s 'Empty
     BTParamsResults :: SStackShape s -> SStackShape t -> BlockType s t
-               -- | BT_TypeIdx SNat TODO also some sort of typeidx but not sure what to do about that yet
+               -- | BT_TypeIdx Nat TODO also some sort of typeidx but not sure what to do about that yet
 
 
 {-
@@ -65,8 +64,12 @@ data StackShape where
     Empty :: StackShape
     (:>) :: WasmType -> StackShape -> StackShape
 
+type family ReduceStackToLength (n :: Nat) (s :: StackShape) :: StackShape where
+    ReduceStackToLength 'Z s = 'Empty
+    ReduceStackToLength ('S n) (t :> s) = t :> ReduceStackToLength n s
 
-type family SAdd (n :: SNat) (m :: SNat) :: SNat where
+
+type family SAdd (n :: Nat) (m :: Nat) :: Nat where
     SAdd ('S n) m = 'S (n :+ m)
     SAdd n m      = n :+ m
 
@@ -84,16 +87,31 @@ infixl 5 +>+
 --     NoReturn  :: KnownStackShape Empty                    -- Block returns nothing
 --     ReturnsOneWasmType :: KnownWasmType t -> KnownStackShape (t :> Empty)  -- Block returns one value
 
-data LabelStack (l :: SNat) where
+data LabelStack (l :: Nat) where
     EmptyLabels :: LabelStack 'Z
-    (:>:) :: StackShape -> LabelStack l -> LabelStack ('S l)
+    (:>:) :: (StackShape, Nat) -> LabelStack l -> LabelStack ('S l) -- DINA: also save the stack length of the current stack so we know what
+    -- the stack was before we created the label.
 
-type family RemoveLabels (i :: SNat) (labels :: LabelStack ('S l)) :: LabelStack (l :- i) where
-    RemoveLabels 'Z (l :>: ls) = ls
-    RemoveLabels ('S i) (t :>: ts) = RemoveLabels i ts
+type family RemoveLabels (i :: Nat) (labels :: LabelStack l) :: LabelStack (l :- 'S i) where
+    RemoveLabels 'Z ('(l, _) :>: ls) = ls
+    RemoveLabels ('S i) ('(t, _) :>: ts) = RemoveLabels i ts
+
+type family ConcatLabelStacks (ls1 :: LabelStack l1) (ls2 :: LabelStack l2) :: LabelStack (l1 :+ l2) where
+    ConcatLabelStacks EmptyLabels ls2 = ls2
+    ConcatLabelStacks (t :>: ts) ls2 = t :>: ConcatLabelStacks ts ls2
+
+type family IncludesLabelType (labelType :: StackShape) (labels :: LabelStack l) :: Bool where
+    IncludesLabelType labelType EmptyLabels = 'False
+    IncludesLabelType labelType ('(labelType, _) :>: ls) = 'True
+    IncludesLabelType labelType ('(t, _) :>: ls) = IncludesLabelType labelType ls
+
+type family GetNthLabelType (n :: Nat) (labels :: LabelStack l) :: StackShape where
+    GetNthLabelType 'Z ('(t, _) :>: ts)       = t
+    GetNthLabelType ('S n) ('(t, _) :>: ts)   = GetNthLabelType n ts
 
 
-type family StackLength (s :: StackShape) :: SNat where
+
+type family StackLength (s :: StackShape) :: Nat where
     StackLength Empty       = 'Z
     StackLength (t :> ts)  = 'S (StackLength ts)
 
@@ -103,16 +121,18 @@ type family Fst (pair :: (a, b)) :: a where
 type family Snd (pair :: (a, b)) :: b where
     Snd '(x, y) = y
 
-type family SplitAt (n :: SNat) (s :: StackShape)
+type family SplitAt (n :: Nat) (s :: StackShape)
   :: (StackShape, StackShape) where
   SplitAt 'Z s = '( 'Empty, s)
   SplitAt ('S n) (t :> s) = '(t :> Fst (SplitAt n s), Snd (SplitAt n s))
 
--- type family GetLabelStackLength (ls :: LabelStack l) :: SNat where
+-- type family GetLabelStackLength (ls :: LabelStack l) :: Nat where
 
-data StackIndex (i :: SNat) (n :: SNat) where
+data StackIndex (i :: Nat) (n :: Nat) where
     StackIndexZ :: StackIndex 'Z ('S n)
+    -- StackIndexS :: LessThan i n ~ 'True => StackIndex i n -> StackIndex ('S i) ('S n)
     StackIndexS :: StackIndex i n -> StackIndex ('S i) ('S n)
+
 
 --------------------------------------
 ---- Labels on input Stack old try
@@ -125,7 +145,7 @@ type family CheckTopEqual (top :: StackShape) (stack :: StackShape) :: Bool wher
 -- Pop the labels out of the stack but make sure to add the other entries back
 -- when the type family is first called the top parameter should be Empty
 -- We return only everything on the stack without the label until the label we want
--- type family PopTopUntilLabelFromStack (nestedness :: SNat) (arity :: SNat) (top::StackShape) (stack :: StackShape) :: StackShape where
+-- type family PopTopUntilLabelFromStack (nestedness :: Nat) (arity :: Nat) (top::StackShape) (stack :: StackShape) :: StackShape where
 --     PopTopUntilLabelFromStack 'Z a t (Label :> ss) = ReturnTopWithCorrectArity a t Empty
 --     PopTopUntilLabelFromStack ('S nestedness) a t (Label :> ss) = PopTopUntilLabelFromStack nestedness a t ss
 --     PopTopUntilLabelFromStack nestedness a t (s :> ss) = PopTopUntilLabelFromStack nestedness a (s :> t) ss
@@ -134,7 +154,7 @@ type family CheckTopEqual (top :: StackShape) (stack :: StackShape) :: Bool wher
 -- now we want a function the with the labeltype computes the arity and therefore only pushes the right number
 -- of stack entries back onto the stack
 -- then we can compare whether this is actually the correct label type
--- type family ReturnTopWithCorrectArity (arity :: SNat) (popped :: StackShape) (top :: StackShape) :: StackShape where
+-- type family ReturnTopWithCorrectArity (arity :: Nat) (popped :: StackShape) (top :: StackShape) :: StackShape where
 --     ReturnTopWithCorrectArity 'Z popped top = top -- if it is zero we don't put anything on the stack
 --     ReturnTopWithCorrectArity ('S arity) (p :> ps) top = ReturnTopWithCorrectArity arity ps (p :> top)
 
@@ -161,9 +181,9 @@ data KnownWasmType (wasmType :: WasmType) where
 --     KnownWasmType :: KnownWasmType t -> KnownWasmTypeOrLabel ('IsWasmType t)
 --     KnownLabel    :: KnownStackShape s -> KnownWasmTypeOrLabel 'Label
 
-type family GetLabelType (n :: SNat) (labels :: LabelStack l) :: StackShape where
-    GetLabelType 'Z (t :>: ts)       = t
-    GetLabelType ('S n) (t :>: ts)   = GetLabelType n ts
+type family GetLabelType (n :: Nat) (labels :: LabelStack l) :: StackShape where
+    GetLabelType 'Z ('(t, _) :>: ts)       = t
+    GetLabelType ('S n) ('(t, _) :>: ts)   = GetLabelType n ts
 
 
 -- data KnownLabelType (l :: StackShape)
@@ -180,7 +200,3 @@ type family RuntimeTypeOf (wasmType :: WasmType) :: Type where
 --     RuntimeStackTypeOf ('IsWasmType I64) = Int64
 --     RuntimeStackTypeOf 'Label = () -- ??? not sure should be a stack shape I think
 
-
--- | Type-level comparison: is n less than m?
-type family (n :: Nat) <? (m :: Nat) :: Bool where
-    n <? m = CmpNat n m == 'LT

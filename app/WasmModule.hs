@@ -7,7 +7,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 
 module WasmModule where 
-import GHC.TypeLits (Nat)  
+-- import GHC.TypeLits (Nat)  
 import Types (WasmType(..))    
 import Utils  
 import Data.Int (Int32)
@@ -47,15 +47,15 @@ type family GetMutability (g :: GlobalType) :: Mutability where
 -- type GlobalsShape = [GlobalType]
 type GlobalsShape n = Vec n GlobalType
 
-type family GetGlobalsShape (m :: WasmModuleShape) :: SNat where
+type family GetGlobalsShape (m :: WasmModuleShape) :: Nat where
     GetGlobalsShape ('WasmModuleShape globalsShape _) = globalsShape
 
-type family GetMemoriesShape (m :: WasmModuleShape) :: SNat where
+type family GetMemoriesShape (m :: WasmModuleShape) :: Nat where
     GetMemoriesShape ('WasmModuleShape _ memoriesShape) = memoriesShape
 
 data WasmModuleShape = WasmModuleShape {
-    globalsShape :: SNat,
-    memoriesShape :: SNat
+    globalsShape :: Nat,
+    memoriesShape :: Nat
     }
 -- module ::== {
         -- types vec(functype),

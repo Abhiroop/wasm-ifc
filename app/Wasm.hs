@@ -4,9 +4,9 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE ExplicitForAll #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE ConstraintKinds #-}
 
 
 -- | A type-safe embedded domain-specific language (DSL) for WebAssembly.
@@ -16,11 +16,9 @@ module Wasm where
 
 import Data.Int (Int32, Int64)
 import Data.Word (Word32, Word64)
-import GHC.TypeLits (Nat)  -- , type (-))
--- import GHC.TypeError (TypeError, ErrorMessage(..))
-import Types (WasmType(I64, I32), RuntimeTypeOf, WasmType, StackShape(..), type (+>+), StackIndex (..), GetLabelType, LabelStack(..), RemoveLabels, CheckTopEqual, BlockType (..), SStackShape(..), FuncName, FuncTypeAnn (..))
+import Types (WasmType(I64, I32), RuntimeTypeOf, WasmType, StackShape(..), type (+>+), StackIndex (..), GetLabelType, LabelStack(..), RemoveLabels, CheckTopEqual, BlockType (..), SStackShape(..), FuncName, FuncTypeAnn (..), GetNthLabelType, StackLength, ReduceStackToLength)
 import Utils
-import WasmModule (WasmModule(..), GetGlobals, GlobalTypeToWasmType, MemArg(SMemArg), GlobalsShape, WasmModuleShape, GetGlobalsShape, GlobalType (GlobalTypeMW), KnownMutability(SVar, SConst))
+import WasmModule (WasmModule(..), GetGlobals, GlobalTypeToWasmType, MemArg(SMemArg), GlobalsShape, WasmModuleShape, GlobalType (GlobalTypeMW), KnownMutability(SVar, SConst))
 
 
 {-
@@ -149,7 +147,7 @@ data Instruction (inputStack :: StackShape) (outputStack :: StackShape) (locals 
     -- TODO: Handle uninitialized local variables according to WASM spec
 
     -- GlobalGet: push the value of a global variable onto the stack
-    GlobalGet :: forall (i :: SNat) (n :: SNat) (m :: SNat) (l :: SNat) (j :: SNat) (shape :: WasmModuleShape) (inputStack :: StackShape) (wasmModule :: WasmModule shape) (locals :: LocalsShape m) (inputLabels :: LabelStack l).
+    GlobalGet :: forall (i :: Nat) (n :: Nat) (m :: Nat) (l :: Nat) (j :: Nat) (shape :: WasmModuleShape) (inputStack :: StackShape) (wasmModule :: WasmModule shape) (locals :: LocalsShape m) (inputLabels :: LabelStack l).
         SFin i n
         -> Instruction inputStack (GlobalTypeToWasmType (Index i (GetGlobals wasmModule)) :> inputStack) locals wasmModule inputLabels inputLabels
 
@@ -164,7 +162,7 @@ data Instruction (inputStack :: StackShape) (outputStack :: StackShape) (locals 
         -- this simply returns a memory type which includes the limits of the memory
     -- We need the forall in order to use MemoryLoad @I32
     -- type equality ~ or :~:
-    MemoryLoad :: forall (wasmtype::WasmType) (m :: SNat) (k :: SNat) (l :: SNat) (i :: SNat) (shape :: WasmModuleShape) (align :: Word32) (offset :: Word64) (inputStack :: StackShape) (wasmModule :: WasmModule shape) (locals :: LocalsShape m) (inputLabels :: LabelStack k) (outputLabels :: LabelStack l).
+    MemoryLoad :: forall (wasmtype::WasmType) (m :: Nat) (k :: Nat) (l :: Nat) (i :: Nat) (shape :: WasmModuleShape) (align :: Word32) (offset :: Word64) (inputStack :: StackShape) (wasmModule :: WasmModule shape) (locals :: LocalsShape m) (inputLabels :: LabelStack k) (outputLabels :: LabelStack l).
             MemArg align offset  -- ignore alignment for now, also not 100% sure why i32 has to be on top of stack
              -> Instruction (I32 :> inputStack) (wasmtype :> inputStack) locals wasmModule inputLabels outputLabels
     -- MemoryStore: pop address and value from stack, store value at address in memory
@@ -194,28 +192,31 @@ data Instruction (inputStack :: StackShape) (outputStack :: StackShape) (locals 
     
     -- technically the type like this would be defined at a type index in the types module
     -- Alternatively we can define just a WasmType in BlockType and then it would be the same as the func type []->[WasmType] => how should we go about it ? implement the types module? however not quite sure how we add types to the type module.
-    Block :: forall (m :: SNat) (l :: SNat) (p :: SNat) (r :: SNat) (i :: SNat) (o :: SNat) (shape :: WasmModuleShape) (paramsStack :: StackShape) (resStack :: StackShape) (inputStack :: StackShape)(outputStack :: StackShape) (locals :: LocalsShape m) (wasmModule :: WasmModule shape) (inputLabels :: LabelStack l).
+    Block :: forall (m :: Nat) (l :: Nat) (p :: Nat) (r :: Nat) (i :: Nat) (o :: Nat) (shape :: WasmModuleShape) (paramsStack :: StackShape) (resStack :: StackShape) (inputStack :: StackShape)(outputStack :: StackShape) (locals :: LocalsShape m) (wasmModule :: WasmModule shape) (inputLabels :: LabelStack l).
             (CheckTopEqual paramsStack inputStack ~ 'True,
                 CheckTopEqual resStack outputStack ~ 'True)  -- ensure that the parameters of the block are on top of the input stack
           => BlockType paramsStack resStack -- represents the optional valtype however what about the typeidx? can't know the function type
-          -> InstructionSequence inputStack outputStack locals wasmModule (resStack :>: inputLabels) (resStack :>: inputLabels)
+          -> InstructionSequence inputStack outputStack locals wasmModule ('(resStack, StackLength inputStack) :>: inputLabels) ('(resStack, StackLength inputStack) :>: inputLabels)
           -> Instruction inputStack outputStack locals wasmModule inputLabels inputLabels
 
     -- Loop: a sequence of instructions that can be restarted with 'br'
-    Loop  :: forall (m :: SNat) (l :: SNat) (p :: SNat) (r :: SNat) (i :: SNat) (o :: SNat) (shape :: WasmModuleShape) (paramsStack :: StackShape) (resStack :: StackShape) (inputStack :: StackShape) (outputStack :: StackShape) (locals :: LocalsShape m) (wasmModule :: WasmModule shape) (inputLabels :: LabelStack l).
+    Loop  :: forall (m :: Nat) (l :: Nat) (p :: Nat) (r :: Nat) (i :: Nat) (o :: Nat) (shape :: WasmModuleShape) (paramsStack :: StackShape) (resStack :: StackShape) (inputStack :: StackShape) (outputStack :: StackShape) (locals :: LocalsShape m) (wasmModule :: WasmModule shape) (inputLabels :: LabelStack l).
             (CheckTopEqual paramsStack inputStack ~ 'True,
                 CheckTopEqual resStack outputStack ~ 'True)  -- ensure that the parameters of the block are on top of the input stack
           => BlockType paramsStack resStack
-          -> InstructionSequence inputStack outputStack locals wasmModule (paramsStack :>: inputLabels) (paramsStack :>: inputLabels)
+          -> InstructionSequence inputStack outputStack locals wasmModule ('(paramsStack, StackLength inputStack) :>: inputLabels) ('(paramsStack, StackLength inputStack) :>: inputLabels)
           -> Instruction inputStack outputStack locals wasmModule inputLabels inputLabels
 
     -- If: conditional execution (pops i32 condition, executes one of two branches)
-    If    :: InstructionSequence inputStack outputStack locals wasmModule inputLabels outputLabels     -- then branch
-          -> InstructionSequence inputStack outputStack locals wasmModule inputLabels outputLabels     -- else branch
-          -> Instruction (I32 :> inputStack) outputStack locals wasmModule inputLabels outputLabels
+    If    :: (CheckTopEqual paramsStack inputStack ~ 'True,
+                CheckTopEqual resStack outputStack ~ 'True)  -- ensure that the parameters of the block are on top of the input stack
+          => BlockType paramsStack resStack
+          -> InstructionSequence inputStack outputStack locals wasmModule ('(resStack, StackLength inputStack) :>: inputLabels) ('(resStack, StackLength inputStack) :>: inputLabels)     -- then branch
+          -> InstructionSequence inputStack outputStack locals wasmModule ('(resStack, StackLength inputStack) :>: inputLabels) ('(resStack, StackLength inputStack) :>: inputLabels)     -- else branch
+          -> Instruction (I32 :> inputStack) outputStack locals wasmModule inputLabels inputLabels
 
     -- Br: unconditional branch to a label
-        -- SNat is the nesting depth of how many nested blocks/loops to break out of
+        -- Nat is the nesting depth of how many nested blocks/loops to break out of
         -- I guess this means we need an additional stack or vector that stores the current 
             -- block nesting depth
             -- this is needed because we want to be able to validate that the labelidx
@@ -235,15 +236,16 @@ data Instruction (inputStack :: StackShape) (outputStack :: StackShape) (locals 
     --           -> Instruction inputStack outputStack locals wasmModule labels
 
     -- This does not compile
-    -- Br   :: forall (i::SNat) (l :: SNat) (n ::SNat) (m::SNat) (inputLabels :: LabelStack ('S l)) (inputStack :: StackShape) (outputStack :: StackShape) (locals :: LocalsShape n) (wasmModule :: WasmModule m).
+    -- Br   :: forall (i::Nat) (l :: Nat) (n ::Nat) (m::Nat) (inputLabels :: LabelStack ('S l)) (inputStack :: StackShape) (outputStack :: StackShape) (locals :: LocalsShape n) (wasmModule :: WasmModule m).
     --         StackIndex i l
     --         -> Instruction (GetLabelType i inputLabels +>+ inputStack) outputStack locals wasmModule inputLabels (RemoveLabels i inputLabels) -- after branching, the labels above the target label are removed from the label stack?
 
     -- This version compiles
     -- Checks whether the top of the input stack is equal to the label type as a constraint
-    Br    :: forall (i :: SNat) (l :: SNat) (n :: SNat) (shape :: WasmModuleShape) (inputLabels :: LabelStack (S l)) (inputStack :: StackShape) (outputStack :: StackShape) (locals :: LocalsShape n) (wasmModule :: WasmModule shape).
+    
+    Br    :: forall (i :: Nat) (l :: Nat) (n :: Nat) (shape :: WasmModuleShape) (inputLabels :: LabelStack l) (inputStack :: StackShape) (outputStack :: StackShape) (locals :: LocalsShape n) (wasmModule :: WasmModule shape).
         CheckTopEqual (GetLabelType i inputLabels) inputStack ~ 'True =>
-            StackIndex i (S l)
+            StackIndex i l
             -> Instruction inputStack outputStack locals wasmModule inputLabels (RemoveLabels i inputLabels)
 
     -- BrIf: conditional branch (pops i32 condition)
@@ -322,11 +324,11 @@ memstoresequence = Function $
     :| End
 
 -- add1Sequence :: InstructionSequence (I32 :> I32 :> Empty) (I32 :> Empty) 'VNil ('WasmModule '[]) ('WasmModule '[])
-add1Sequence :: forall {n :: SNat} {k :: SNat} {i :: SNat} {shape :: WasmModuleShape} {inputStack :: StackShape} {locals :: LocalsShape n} {wasmModule :: WasmModule shape} {inputLabels :: LabelStack k}. InstructionSequence (I32 :> (I32 :> inputStack)) (I32 :> inputStack) locals wasmModule inputLabels inputLabels
+add1Sequence :: forall {n :: Nat} {k :: Nat} {i :: Nat} {shape :: WasmModuleShape} {inputStack :: StackShape} {locals :: LocalsShape n} {wasmModule :: WasmModule shape} {inputLabels :: LabelStack k}. InstructionSequence (I32 :> (I32 :> inputStack)) (I32 :> inputStack) locals wasmModule inputLabels inputLabels
 add1Sequence = I32Add :| End
 
 -- addSubSequence :: InstructionSequence (I32 :> (I32 :> (I32 :> Empty))) (I32 :> Empty) 'VNil (WasmModule Z) ('WasmModule '[]) -- only 3 I32 because the result of the add is the first argument of the subtract
-addSubSequence :: forall {n :: SNat} {k :: SNat} {i :: SNat} {shape :: WasmModuleShape} {inputStack :: StackShape} {locals :: LocalsShape n} {wasmModule :: WasmModule shape} {inputLabels :: LabelStack k}. InstructionSequence (I32 :> (I32 :> (I32 :> inputStack))) (I32 :> inputStack) locals wasmModule inputLabels inputLabels
+addSubSequence :: forall {n :: Nat} {k :: Nat} {i :: Nat} {shape :: WasmModuleShape} {inputStack :: StackShape} {locals :: LocalsShape n} {wasmModule :: WasmModule shape} {inputLabels :: LabelStack k}. InstructionSequence (I32 :> (I32 :> (I32 :> inputStack))) (I32 :> inputStack) locals wasmModule inputLabels inputLabels
 addSubSequence = I32Add :| (I32Sub :| End)
 
 -- | Example 1: Add two integers
@@ -419,7 +421,7 @@ absoluteValue = Function $
        LocalGet SFZ
     :| I32Const 0
     :| I32LtS              -- Is input < 0?
-    :| If
+    :| If (BTParamsResults SEmpty SEmpty)
         -- Then branch: negate the number (0 - input)
         (  I32Const 0
         :| LocalGet SFZ
@@ -470,18 +472,48 @@ data Stack (stackShape :: StackShape) where
     Push       :: RuntimeTypeOf wasmType -> Stack stackShape -> Stack (wasmType :> stackShape)
 
 
-stackLength :: Stack stackShape -> Int
-stackLength EmptyStack       = 0
-stackLength (Push _ rest) = 1 + stackLength rest
+stackLength :: Stack stackShape -> Nat
+stackLength EmptyStack       = Z
+stackLength (Push _ rest) = S (stackLength rest)
 
-makeSNat :: Int -> SNat
-makeSNat 0 = Z
-makeSNat n | n > 0     = S (makeSNat (n - 1))
-           | otherwise = error "Negative number cannot be converted to SNat"
+concatStacks :: Stack s1 -> Stack s2 -> Stack (s1 +>+ s2)
+concatStacks EmptyStack s2       = s2
+concatStacks (Push val rest) s2 = Push val (concatStacks rest s2)
 
 
+popNthLabel :: (GetNthLabelType n restLabelsShape ~ rightLabelStack) => StackIndex n l -> Labels restLabelsShape -> (SStackShape rightLabelStack, Nat)
+popNthLabel StackIndexZ (ConsLabels sstackShape lenInputStack _) = (sstackShape, lenInputStack)
+popNthLabel (StackIndexS idx) (ConsLabels _ _ rest) = popNthLabel idx rest
+popNthLabel _ NoLabels = error "Index out of bounds in popNthLabel"
+
+reduceStackToLength :: forall n stackShape. SNat n -> Stack stackShape -> Stack (ReduceStackToLength n stackShape)
+reduceStackToLength SZ _ = EmptyStack
+reduceStackToLength (SS n) (Push val rest) = Push val (reduceStackToLength n rest)
+reduceStackToLength _ EmptyStack = error "Cannot reduce stack to length greater than its current length"
+
+removeLabelsUntilStackIdx :: forall n l (inputLabelStack :: LabelStack l). StackIndex n l -> Labels inputLabelStack -> Labels (RemoveLabels n inputLabelStack)
+removeLabelsUntilStackIdx StackIndexZ (ConsLabels _ _ rest) = rest
+removeLabelsUntilStackIdx (StackIndexS idx) (ConsLabels _ _ rest) = removeLabelsUntilStackIdx idx rest
+
+
+firstTuple :: (a, b) -> a
+firstTuple (a,b) = a
+
+sndTuple :: (a,b) -> b
+sndTuple (a,b) = b
+
+-- popOne :: Stack stackShape -> RuntimeTypeOf wasmType
+popOne :: Stack (wasmType :> stackShape) -> RuntimeTypeOf wasmType
+popOne (Push val _) = val
+
+popZero :: Stack stackShape -> (Stack 'Empty, Stack stackShape)
+popZero rest = (EmptyStack, rest)
+
+
+-- popN :: (GreaterZero t1 ~ 'True) => Proxy t1 -> Stack (popShape +>+ stackShape) -> (Stack popShape, Stack stackShape)
+-- popN n (Push val rest) = (Push val (firstTuple (popN (n-1) rest)), sndTuple (popN (n-1) rest))
 -- (Num n, stackLength popShape ~ n) =>
--- popNFromStack :: (stackLength popShape ~ n) => n -> Stack (popShape +>+ stackShape) -> (Stack popShape, Stack stackShape)
+-- popNFromStack :: (IfIntZero n (popShape ~ Empty)) => Proxy n -> Stack (popShape +>+ stackShape) -> (Stack popShape, Stack stackShape)
 -- popNFromStack 0 stackShape = (EmptyStack, stackShape)
 -- popNFromStack n (Push val rest) =
 --     let (popShape, remaining) = popNFromStack (n - 1) rest
@@ -499,32 +531,19 @@ data Globals (globalsShape :: GlobalsShape n) where
 
 data Labels (labelsShape :: LabelStack n) where
     NoLabels :: Labels 'Types.EmptyLabels
-    ConsLabels  :: SStackShape labelStackShape -> Labels restLabelsShape -> Labels (labelStackShape :>: restLabelsShape)
+    ConsLabels  :: SStackShape labelStackShape -> Nat -> Labels restLabelsShape -> Labels ('(labelStackShape, n) :>: restLabelsShape)
 -- data Memory (memsShape :: MemoriesShape n) where
 --     NoMems   :: Memory 'VNil
 --     ConsMems :: MemoryType -> Memory memsShape -> Memory (MemoryType :<| memsShape)
 
--- type family RuntimeTypeOfGlobal (g :: GlobalType) :: KnownMutability m -> KnownWasmType w where
---     RuntimeTypeOfGlobal (GlobalTypeMW v wasmType) = (KnownMutability v) (RuntimeTypeOf (GlobalTypeToWasmType (GlobalTypeMW v wasmType)))
 
 data RuntimeContext (stackShape :: StackShape) (localsShape :: LocalsShape n) (wasmModule :: WasmModule shape) (labelsShape :: LabelStack m) = RuntimeContext
     { stack  :: Stack stackShape,
       locals :: Locals localsShape,
-    --   wasmModule :: RuntimeWasmModule wasmModule,
       globals :: Globals (GetGlobals wasmModule), -- :: GlobalsShape (GetGlobalsShape shape)),
       labels :: Labels labelsShape
       -- TODO: labels, tables, etc.
     }
-
--- data RuntimeWasmModule (wasmModule :: WasmModule shape) = RuntimeWasmModule
---     { 
---         -- memories :: Memory ((GetMems wasmModule) :: MemoriesShape (GetMemoriesShape shape)),
---       runtimeGlobals :: Globals ((GetGlobals wasmModule) :: GlobalsShape (GetGlobalsShape shape))
---     }
-
--- function to extract the globals from the runtimeWasmModule
--- getRuntimeGlobals :: RuntimeWasmModule wasmModule -> Globals (GetGlobals wasmModule)
--- getRuntimeGlobals (RuntimeWasmModule {runtimeGlobals = gs}) = gs
 
 -- function to get the value of a local variable at a given index
 getLocalValue :: SFin i n -> Locals localsShape -> RuntimeTypeOf (Index i localsShape)
@@ -552,10 +571,10 @@ setGlobalValue _ _ (ConsGlobals _ SConst _) = error "Cannot set value of a const
 setGlobalValue _ _ NoGlobals = error "Index out of bounds in setGlobalValue"
 
 -- TODO
-executeInstruction :: forall inputStack outputStack locals wasmModule inputLabels outputLabels labels .
+executeInstruction :: forall inputStack outputStack locals wasmModule inputLabels outputLabels .
                       Instruction inputStack outputStack locals wasmModule inputLabels outputLabels
-                   -> RuntimeContext inputStack locals wasmModule labels
-                   -> RuntimeContext outputStack locals wasmModule labels
+                   -> RuntimeContext inputStack locals wasmModule inputLabels
+                   -> RuntimeContext outputStack locals wasmModule outputLabels
 executeInstruction instr prevCtxt@(RuntimeContext prevStack prevLocals prevGlobal prevLabels) = case instr of
     I32Const val -> RuntimeContext (Push val prevStack) prevLocals prevGlobal prevLabels
     I32Add       -> case prevStack of
@@ -744,32 +763,42 @@ executeInstruction instr prevCtxt@(RuntimeContext prevStack prevLocals prevGloba
     MemoryLoad arg -> undefined
     MemoryStore arg -> undefined
     Block (BTParamsResults _ (res :: SStackShape resStack)) instrSeq ->
-      let newLabels = ConsLabels res (labels prevCtxt)
+      let newLabels = ConsLabels res (stackLength prevStack) (labels prevCtxt)
           newContext =
-            executeInstructionSequence instrSeq (prevCtxt { labels = newLabels } :: RuntimeContext inputStack locals wasmModule (resStack :>: labels))
+            executeInstructionSequence instrSeq (prevCtxt { labels = newLabels } :: RuntimeContext inputStack locals wasmModule ('(resStack, StackLength inputStack) :>: inputLabels))
       in newContext { labels = prevLabels }
-    Loop (BTParamsResults params _) instrSeq -> undefined
-                -- let newContext = executeInstructionSequence instrSeq (RuntimeContext prevStack prevLocals prevGlobal (ConsLabels params prevLabels))
-                -- in RuntimeContext (stack newContext) (locals newContext) prevGlobal prevLabels
-    If thenSeq elseSeq -> case prevStack of
-        Push cond rest ->
+    Loop (BTParamsResults (params :: SStackShape paramsStack) _) instrSeq -> 
+                let newLabels = ConsLabels params (stackLength prevStack) (labels prevCtxt)
+                    newContext = executeInstructionSequence instrSeq (prevCtxt { labels = newLabels } :: RuntimeContext inputStack locals wasmModule ('(paramsStack, StackLength inputStack) :>: inputLabels))
+                in newContext { labels = prevLabels }
+    If (BTParamsResults _ (res :: SStackShape resStack)) thenSeq elseSeq -> case prevStack of
+        Push cond (rest :: Stack inputStackWOCond) ->
             if cond /= 0
-            then executeInstructionSequence thenSeq (RuntimeContext rest prevLocals prevGlobal prevLabels)
-            else executeInstructionSequence elseSeq (RuntimeContext rest prevLocals prevGlobal prevLabels)
-    Br labelIdx -> undefined -- case labelIdx of
-        -- StackIndexZ -> 
-        --     case prevLabels of
-        --         ConsLabels labelType restLabels ->
-        --         -- pop the labelType from the stack
-        --             case popN (stackLength labelType) prevStack of
-        --                 (poppedVals, remainingStack) -> RuntimeContext remainingStack prevLocals prevGlobal (removeLabels 1 prevLabels)
-                -- TODO: need to remove all remaining entries of stack that were added after the label was created
-                -- Therefore we need to keep track of the stack length at time the label was created and save the stacklength in the Labels data structure
-                    -- in RuntimeContext remainingStack prevLocals prevGlobal (removeLabels 1 prevLabels)
-        -- StackIndexS n ->
-        --     let (ConsLabels _ restLabels) = prevLabels
-        --         newLabelIdx = n
-        --     in executeInstruction (Br newLabelIdx) (RuntimeContext prevStack prevLocals prevGlobal restLabels)
+            then 
+                let newLabels = ConsLabels res (stackLength prevStack) (labels prevCtxt)
+                    newCtxt = executeInstructionSequence thenSeq (prevCtxt { labels = newLabels, stack = rest } :: RuntimeContext inputStackWOCond locals wasmModule ('(resStack, StackLength inputStack) :>: inputLabels))
+                in newCtxt { labels = prevLabels }
+
+            else 
+                let newLabels = ConsLabels res (stackLength prevStack) (labels prevCtxt)
+                    newCtxt = executeInstructionSequence elseSeq (prevCtxt { labels = newLabels, stack = rest } :: RuntimeContext inputStackWOCond locals wasmModule ('(resStack, StackLength inputStack) :>: inputLabels))
+                in newCtxt { labels = prevLabels }
+    Br (labelIdx :: StackIndex i n) -> 
+            -- DINA: not solved recursively like in specs but rather
+            -- 1. remove all labels above the target label and get the length of the stack at creation of label (line 803)
+              -- a) for this we now also save the length of the stack on the labelstack on creation (see block instr e.g.)
+            -- 2. remove everything from the stack that was added after the creation of the label
+              -- a) this we do with the reduceStackToLength function
+            -- 3. push the label type onto the stack since this is the expected stack after branching
+              -- a) IGNORE FOR NOW: However, here I am also not sure whether technically we should push back
+              --    the top n elements from the input stack in order for it to really be correct?
+            -- CURRENT PROBLEM: Cannot deduce the concatination of the input stack and the label type to outputStack  
+        let (labelType, lenStackBeforeLabelCreation) = popNthLabel labelIdx prevLabels
+            in prevCtxt { 
+                stack = concatStacks labelType (reduceStackToLength lenStackBeforeLabelCreation prevStack) :: Stack outputStack,
+                labels = removeLabelsUntilStackIdx labelIdx prevLabels :: Labels (RemoveLabels i inputLabels) 
+                }  :: RuntimeContext outputStack locals wasmModule (RemoveLabels i inputLabels)
+
     BrIf labelIdx-> undefined
     Call funcName (FFuncTypeAnn params res) -> undefined -- executeFunction (Function Empty outputStack params (ConsLabels res prevLabels)) (RuntimeContext prevStack prevLocals prevGlobal prevLabels)
 
