@@ -516,7 +516,9 @@ reduceStackToLength n s = fst (takeStack n (reverseStack s))
   where
     reverseStack :: Stack stackShape -> Stack (Reverse stackShape)
     reverseStack EmptyStack  = EmptyStack
-    reverseStack (Push x xs) = unsafeCoerce concatStacks xs (Push (unsafeCoerce x) EmptyStack)
+    reverseStack (Push x xs) =
+      unsafeCoerce $ concatStacks (unsafeCoerce $ reverseStack (unsafeCoerce xs))
+      (Push (unsafeCoerce x) EmptyStack)
 
 
 removeLabelsUntilStackIdx :: forall n l (inputLabelStack :: LabelStack l). StackIndex n l -> Labels inputLabelStack -> Labels (RemoveLabels n inputLabelStack)
