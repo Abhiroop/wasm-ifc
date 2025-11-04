@@ -17,7 +17,8 @@ module Wasm where
 
 import Data.Int (Int32, Int64)
 import Data.Word (Word32, Word64)
-import Types (WasmType(I64, I32), RuntimeTypeOf, WasmType, StackShape(..), type (+>+), StackIndex (..), GetLabelType, LabelStack(..), RemoveLabels, CheckTopEqual, BlockType (..), SStackShape(..), FuncName, FuncTypeAnn (..), GetNthLabelType, StackLength, ReduceStackToLength, stackShapeLen, Take, Drop, Len, GetLabelCreationStackLength, CheckEqualStacks, FuncTypeAnn (..))
+import Types (WasmType(I64, I32), RuntimeTypeOf, WasmType, StackShape(..), type (+>+), StackIndex (..), GetLabelType, LabelStack(..), RemoveLabels, CheckTopEqual, BlockType (..), SStackShape(..), FuncName, FuncTypeAnn (..), GetNthLabelType, StackLength, stackShapeLen, Take, Drop, Len, GetLabelCreationStackLength, CheckEqualStacks, FuncTypeAnn (..), Reverse)
+import Unsafe.Coerce
 import Utils
 import WasmModule (WasmModule(..), GetGlobals, GlobalTypeToWasmType, MemArg(SMemArg), GlobalsShape, WasmModuleShape, GlobalType (GlobalTypeMW), KnownMutability(SVar, SConst))
 
@@ -244,7 +245,9 @@ data Instruction (inputStack :: StackShape) (outputStack :: StackShape) (locals 
     -- Checks whether the top of the input stack is equal to the label type as a constraint
     Br    :: forall (i :: Nat) (l :: Nat) (n :: Nat) (shape :: WasmModuleShape) (inputLabels :: LabelStack l) (inputStack :: StackShape) (outputStack :: StackShape) (locals :: LocalsShape n) (wasmModule :: WasmModule shape) (baseStack :: StackShape).
         (CheckTopEqual (GetLabelType i inputLabels) inputStack ~ 'True,
-                  (Take (Len (GetLabelType i inputLabels)) inputStack +>+ baseStack) ~ outputStack
+         ((Take (Len (GetLabelType i inputLabels)) inputStack) +>+
+          (Take (GetLabelCreationStackLength i inputLabels) (Reverse inputStack)))
+          ~ outputStack
         ) =>
             StackIndex i l
             -> Instruction inputStack
@@ -477,23 +480,9 @@ data Stack (stackShape :: StackShape) where
     EmptyStack :: Stack Empty
     Push       :: RuntimeTypeOf wasmType -> Stack stackShape -> Stack (wasmType :> stackShape)
 
-
-
 stackLength :: Stack stackShape -> SNat (StackLength stackShape)
 stackLength EmptyStack       = SZ
 stackLength (Push _ rest) = SS (stackLength rest)
-
-
--- -- Hello existential type!
--- data SomeStack = forall s. SomeStack (Stack s)
-
-
--- XXX: TODO: the type should specify that you are not taking more than
--- what the stack has
--- takeStack :: Int -> Stack stackShape -> Stack stackShape'
--- takeStack = undefined
--- takeStack 0 _ = EmptyStack
--- takeStack n (Push x xs) = Push x (takeStack (n - 1) xs)
 
 
 takeStack :: SNat n -> Stack s -> (Stack (Take n s), Stack (Drop n s))
@@ -502,10 +491,6 @@ takeStack (SS n) (Push x xs) =
   let (taken, rest) = takeStack n xs
   in (Push x taken, rest)
 
-
--- stackLength :: Stack stackShape -> Nat
--- stackLength EmptyStack       = Z
--- stackLength (Push _ rest) = S (stackLength rest)
 
 
 concatStacks :: Stack s1 -> Stack s2 -> Stack (s1 +>+ s2)
@@ -522,25 +507,16 @@ popNthLabel StackIndexZ (ConsLabels sstackShape lenInputStack _) = (sstackShape,
 popNthLabel (StackIndexS idx) (ConsLabels _ _ rest) = popNthLabel idx rest
 popNthLabel _ NoLabels = error "Index out of bounds in popNthLabel"
 
-reduceStackToLength :: forall n stackShape. SNat n -> Stack stackShape -> Stack (ReduceStackToLength n stackShape)
-reduceStackToLength SZ _ = EmptyStack
-reduceStackToLength (SS n) (Push val rest) = Push val (reduceStackToLength n rest)
-reduceStackToLength _ EmptyStack = error "Cannot reduce stack to length greater than its current length"
 
--- reduceStackToLength :: Nat -> Stack stackShape -> Stack stackshape'
--- reduceStackToLength = undefined
--- reduceStackToLength SZ _ = EmptyStack
--- reduceStackToLength (SS n) (Push val rest) = Push val (reduceStackToLength n rest)
--- reduceStackToLength _ EmptyStack = error "Cannot reduce stack to length greater than its current length"
-
-
--- reduceStackToSome :: Nat -> Stack s -> SomeStack
--- reduceStackToSome n stk = go n stk
---   where
---     go :: Nat -> Stack x -> SomeStack
---     go Z     xs         = SomeStack xs
---     go (S k) (Push _ t) = go k t
---     go (S _) EmptyStack = SomeStack EmptyStack
+reduceStackToLength :: forall n stackShape.
+                       SNat n
+                    -> Stack stackShape
+                    -> Stack (Take n (Reverse stackShape))
+reduceStackToLength n s = fst (takeStack n (reverseStack s))
+  where
+    reverseStack :: Stack stackShape -> Stack (Reverse stackShape)
+    reverseStack EmptyStack  = EmptyStack
+    reverseStack (Push x xs) = unsafeCoerce concatStacks xs (Push (unsafeCoerce x) EmptyStack)
 
 
 removeLabelsUntilStackIdx :: forall n l (inputLabelStack :: LabelStack l). StackIndex n l -> Labels inputLabelStack -> Labels (RemoveLabels n inputLabelStack)
@@ -835,35 +811,15 @@ executeInstruction instr prevCtxt@(RuntimeContext prevStack prevLocals prevGloba
                 let newLabels = ConsLabels res (stackLength rest) (labels prevCtxt)
                     newCtxt = executeInstructionSequence elseSeq (prevCtxt { labels = newLabels, stack = rest } :: RuntimeContext inputStackWOCond locals wasmModule ('(resStack, StackLength inputStackWOCond) :>: inputLabels))
                 in newCtxt { labels = prevLabels }
-    Br (labelIdx :: StackIndex i n) -> undefined
-
-            -- DINA: not solved recursively like in specs but rather
-            -- 1. remove all labels above the target label and get the length of the stack at creation of label (line 803)
-              -- a) for this we now also save the length of the stack on the labelstack on creation (see block instr e.g.)
-            -- 2. remove everything from the stack that was added after the creation of the label
-              -- a) this we do with the reduceStackToLength function
-            -- 3. push the label type onto the stack since this is the expected stack after branching
-              -- a) IGNORE FOR NOW: However, here I am also not sure whether technically we should push back
-              --    the top n elements from the input stack in order for it to really be correct?
-            -- CURRENT PROBLEM: Cannot deduce the concatination of the input stack and the label type to outputStack  
-        -- let (labelType, lenStackBeforeLabelCreation) = popNthLabel labelIdx prevLabels
-
-        --     -- prevStack :: Stack inputStack
-        --     -- stackToKeep :: Stack s where s is prefix of inputStack of length (stackShapeLen labelType)
-        --     -- baseStack   :: Stack s2 where s2 is a suffix of inputStack of length lenStackBeforeLabelCreation
-        --     -- finalStack  :: Stack (s +>+ s2) where (s +>+ s2) ~ outputStack
-
-
-        --     (stackToKeep, _) = takeStack (stackShapeLen labelType) prevStack
-        --     -- stackToKeep :: Stack (Take (Len (GetLabelType i inputLabels)) inputStack)
-        --     --                             Len (s :: StackShape) :: Nat
-        --     baseStack  = reduceStackToLength lenStackBeforeLabelCreation prevStack
-        --     -- Stack (ReduceStackToLength stackLen inputStack) -- where stackLen comes from popNthLabel
-        --     finalStack = concatStacks stackToKeep baseStack --  :: Stack ((Take ......) +>+ s2) 
-        --  in prevCtxt {
-        --       stack = finalStack,
-        --       labels = removeLabelsUntilStackIdx labelIdx prevLabels :: Labels (RemoveLabels i inputLabels)
-        --      }  :: RuntimeContext outputStack locals wasmModule (RemoveLabels i inputLabels)
+    Br (labelIdx :: StackIndex i n) ->
+        let (labelType, lenStackBeforeLabelCreation) = popNthLabel labelIdx prevLabels
+            (stackToKeep, _) = takeStack (stackShapeLen labelType) prevStack
+            baseStack  = reduceStackToLength lenStackBeforeLabelCreation prevStack
+            finalStack = concatStacks stackToKeep baseStack
+         in prevCtxt {
+              stack = finalStack,
+              labels = removeLabelsUntilStackIdx labelIdx prevLabels :: Labels (RemoveLabels i inputLabels)
+             }  :: RuntimeContext outputStack locals wasmModule (RemoveLabels i inputLabels)
 
     BrIf labelIdx-> undefined
     Call funcName (FFuncTypeAnn params res) -> undefined -- executeFunction (Function Empty outputStack params (ConsLabels res prevLabels)) (RuntimeContext prevStack prevLocals prevGlobal prevLabels)

@@ -75,14 +75,13 @@ data StackShape where
     Empty :: StackShape
     (:>) :: WasmType -> StackShape -> StackShape
 
-type family ReduceStackToLength (n :: Nat) (s :: StackShape) :: StackShape where
-    ReduceStackToLength 'Z s = 'Empty
-    ReduceStackToLength ('S n) (t :> s) = t :> ReduceStackToLength n s
-
-
 type family SAdd (n :: Nat) (m :: Nat) :: Nat where
     SAdd ('S n) m = 'S (n :+ m)
     SAdd n m      = n :+ m
+
+type family  Reverse (s :: StackShape) :: StackShape where
+  Reverse Empty    = Empty
+  Reverse (t :> s) = (Reverse s) +>+ (t :> Empty)
 
 type family Take (n :: Nat) (s :: StackShape) :: StackShape where
   Take 'Z       s         = 'Empty
