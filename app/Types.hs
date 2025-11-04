@@ -49,7 +49,18 @@ data SStackShape (s :: StackShape) where
     SEmpty :: SStackShape 'Empty
     (::>) :: KnownWasmType t -> SStackShape ts -> SStackShape (t :> ts)
 
+-- stackShapeLen :: SStackShape s -> Int
+-- stackShapeLen SEmpty = 0
+-- stackShapeLen (_ ::> xs) = 1 + stackShapeLen xs
 
+type family Len (s :: StackShape) :: Nat where
+  Len 'Empty      = 'Z
+  Len (t :> ts)   = 'S (Len ts)
+
+
+stackShapeLen :: SStackShape s -> SNat (Len s)
+stackShapeLen SEmpty         = SZ
+stackShapeLen (_kw ::> rest) = SS (stackShapeLen rest)
 
 -- data WasmOrLabelType = IsWasmType WasmType | Label | StackType StackShape-- if we go for the stack
     -- for the labels so we can put a stackshape on a stack
@@ -72,6 +83,17 @@ type family ReduceStackToLength (n :: Nat) (s :: StackShape) :: StackShape where
 type family SAdd (n :: Nat) (m :: Nat) :: Nat where
     SAdd ('S n) m = 'S (n :+ m)
     SAdd n m      = n :+ m
+
+type family Take (n :: Nat) (s :: StackShape) :: StackShape where
+  Take 'Z       s         = 'Empty
+  Take ('S n)   (t :> s)  = t :> Take n s
+  Take ('S n)   'Empty    = TypeError ('Text "take: stack too small")
+
+type family Drop (n :: Nat) (s :: StackShape) :: StackShape where
+  Drop 'Z       s         = s
+  Drop ('S n)   (t :> s)  = Drop n s
+  Drop ('S n)   'Empty    = TypeError ('Text "take: stack too small")
+
 
 -- | Stack concatenation at the type level.
 -- This combines two stack shapes: upper sits on top of lower.
@@ -210,4 +232,3 @@ type family RuntimeTypeOf (wasmType :: WasmType) :: Type where
 --     RuntimeStackTypeOf ('IsWasmType I32) = Int32
 --     RuntimeStackTypeOf ('IsWasmType I64) = Int64
 --     RuntimeStackTypeOf 'Label = () -- ??? not sure should be a stack shape I think
-
