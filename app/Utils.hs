@@ -14,6 +14,10 @@ data SNat (n :: Nat) where
     SZ :: SNat 'Z
     SS :: SNat n -> SNat ('S n)
 
+type family MakeSNat (n :: Nat) :: SNat n where
+    MakeSNat 'Z         = 'SZ
+    MakeSNat ('S n)     = 'SS (MakeSNat n)
+
 data Vec (n :: Nat) a where
     VNil  :: Vec 'Z a
     (:<|) :: a -> Vec n a -> Vec ('S n) a

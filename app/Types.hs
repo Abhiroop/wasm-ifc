@@ -11,7 +11,7 @@ import GHC.TypeLits (TypeError)
 import Data.Kind (Type)
 import Data.Int (Int32, Int64)
 import Data.String ()
-import Utils(Nat(S, Z), (:-), (:+), LessThan)
+import Utils(Nat(S, Z), (:-), (:+), LessThan, SNat(..), MakeSNat)
 import GHC.TypeError (ErrorMessage(Text))
 
 {-
@@ -105,8 +105,8 @@ type family IncludesLabelType (labelType :: StackShape) (labels :: LabelStack l)
     IncludesLabelType labelType ('(labelType, _) :>: ls) = 'True
     IncludesLabelType labelType ('(t, _) :>: ls) = IncludesLabelType labelType ls
 
-type family GetNthLabelType (n :: Nat) (labels :: LabelStack l) :: StackShape where
-    GetNthLabelType 'Z ('(t, _) :>: ts)       = t
+type family GetNthLabelType (n :: Nat) (labels :: LabelStack l) :: (StackShape, Nat) where
+    GetNthLabelType 'Z ('(t, lenInput) :>: ts)       = '(t, lenInput)
     GetNthLabelType ('S n) ('(t, _) :>: ts)   = GetNthLabelType n ts
 
 
@@ -141,6 +141,11 @@ type family CheckTopEqual (top :: StackShape) (stack :: StackShape) :: Bool wher
     CheckTopEqual Empty stack = 'True
     CheckTopEqual (t :> ts) (t :> ss) = CheckTopEqual ts ss
     CheckTopEqual top stack = TypeError ('Text "Top of stack does not match expected type.")
+
+type family CheckEqualStacks (s1 :: StackShape) (s2 :: StackShape) :: Bool where
+    CheckEqualStacks Empty Empty = 'True
+    CheckEqualStacks (t :> ts) (t :> ss) = CheckEqualStacks ts ss
+    CheckEqualStacks s1 s2 = 'False
 
 -- Pop the labels out of the stack but make sure to add the other entries back
 -- when the type family is first called the top parameter should be Empty
@@ -184,6 +189,12 @@ data KnownWasmType (wasmType :: WasmType) where
 type family GetLabelType (n :: Nat) (labels :: LabelStack l) :: StackShape where
     GetLabelType 'Z ('(t, _) :>: ts)       = t
     GetLabelType ('S n) ('(t, _) :>: ts)   = GetLabelType n ts
+
+type family GetLabelCreationStackLength (n :: Nat) (labels :: LabelStack l) :: Nat where
+    GetLabelCreationStackLength 'Z ('(t, lenInput) :>: ts)       = lenInput
+    GetLabelCreationStackLength ('S n) ('(t, _) :>: ts)   = GetLabelCreationStackLength n ts
+
+
 
 
 -- data KnownLabelType (l :: StackShape)

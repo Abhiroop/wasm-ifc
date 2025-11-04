@@ -16,7 +16,7 @@ module Wasm where
 
 import Data.Int (Int32, Int64)
 import Data.Word (Word32, Word64)
-import Types (WasmType(I64, I32), RuntimeTypeOf, WasmType, StackShape(..), type (+>+), StackIndex (..), GetLabelType, LabelStack(..), RemoveLabels, CheckTopEqual, BlockType (..), SStackShape(..), FuncName, FuncTypeAnn (..), GetNthLabelType, StackLength, ReduceStackToLength)
+import Types (WasmType(I64, I32), RuntimeTypeOf, WasmType, StackShape(..), type (+>+), StackIndex (..), GetLabelType, LabelStack(..), RemoveLabels, CheckTopEqual, BlockType (..), SStackShape(..), FuncName, FuncTypeAnn (..), GetLabelCreationStackLength, StackLength, ReduceStackToLength, FuncTypeAnn (..), CheckEqualStacks)
 import Utils
 import WasmModule (WasmModule(..), GetGlobals, GlobalTypeToWasmType, MemArg(SMemArg), GlobalsShape, WasmModuleShape, GlobalType (GlobalTypeMW), KnownMutability(SVar, SConst))
 
@@ -244,9 +244,15 @@ data Instruction (inputStack :: StackShape) (outputStack :: StackShape) (locals 
     -- Checks whether the top of the input stack is equal to the label type as a constraint
     
     Br    :: forall (i :: Nat) (l :: Nat) (n :: Nat) (shape :: WasmModuleShape) (inputLabels :: LabelStack l) (inputStack :: StackShape) (outputStack :: StackShape) (locals :: LocalsShape n) (wasmModule :: WasmModule shape).
-        CheckTopEqual (GetLabelType i inputLabels) inputStack ~ 'True =>
+        (CheckTopEqual (GetLabelType i inputLabels) inputStack ~ 'True)  =>
+        -- CheckEqualStacks (ReduceStackToLength (GetLabelCreationStackLength i inputLabels) inputStack) (ReduceStackToLength (GetLabelCreationStackLength i inputLabels) outputStack) ~ 'True,
+        -- CheckEqualStacks (GetLabelType i inputLabels +>+ ReduceStackToLength (GetLabelCreationStackLength i inputLabels) inputStack) outputStack ~ 'True ) =>
             StackIndex i l
-            -> Instruction inputStack outputStack locals wasmModule inputLabels (RemoveLabels i inputLabels)
+            -> Instruction inputStack (GetLabelType i inputLabels +>+ ReduceStackToLength (GetLabelCreationStackLength i inputLabels) inputStack) locals wasmModule inputLabels (RemoveLabels i inputLabels)
+
+            --s10
+                    --  +>+ ReduceStackToLength
+                    --        (GetLabelCreationStackLength i inputLabels) inputStack
 
     -- BrIf: conditional branch (pops i32 condition)
     -- TODO: Maybe use SFin as well
@@ -286,7 +292,7 @@ FUNCTIONS
 -- Functions start with an empty stack and produce the specified final stack shape.
 -- The locals context represents the function's parameters and local variables.
 data Function (inputStack :: StackShape) (resultStack :: StackShape) (locals :: LocalsShape n) (outputLabels :: LabelStack l) where
-    Function :: InstructionSequence inputStack resultStack locals wasmModule Types.EmptyLabels outputLabels -> Function inputStack resultStack locals outputLabels
+    Function :: FuncTypeAnn inputStack resultStack -> InstructionSequence inputStack resultStack locals wasmModule outputLabels outputLabels -> Function inputStack resultStack locals outputLabels
     -- add a new type that captures the function type annotation, i.e.
     -- FuncTypeAnn inputStack resultStack ->
 
@@ -298,7 +304,7 @@ EXAMPLE FUNCTIONS
 
 -- Example Call in Function
 callExample :: Function Empty (I32 :> Empty) (I32 :<| I32 :<| VNil) Types.EmptyLabels
-callExample = Function $
+callExample = Function (FFuncTypeAnn Empty (I32 :> Empty)) $
        LocalGet SFZ    -- get first parameter
     :| LocalGet (SFS SFZ)  -- get second parameter
     :| Call "add2" (FFuncTypeAnn (I32 :> (I32 :> Empty)) (I32 :> Empty)) -- call add2 function
@@ -307,7 +313,7 @@ callExample = Function $
 -- Example MemoryLoad
 -- the locals are the two I32 integers that are used to compute the address of the memory load
 memLoadSequence :: Function Empty (I64 :> Empty) (I32 :<| I32 :<| VNil) Types.EmptyLabels
-memLoadSequence = Function $
+memLoadSequence = Function (FFuncTypeAnn Empty (I64 :> Empty)) $
        LocalGet SFZ
     :| MemoryLoad @I64 SMemArg 
     :| LocalGet (SFS SFZ)
@@ -317,24 +323,24 @@ memLoadSequence = Function $
 
 -- Example MemoryStore
 memstoresequence :: Function Empty Empty (I32 :<| I64 :<| VNil) Types.EmptyLabels
-memstoresequence = Function $
+memstoresequence = Function (FFuncTypeAnn Empty Empty) $
        LocalGet (SFS SFZ)  -- get the address
     :| LocalGet SFZ      -- get the value to store
     :| MemoryStore @I64 SMemArg 
     :| End
 
 -- add1Sequence :: InstructionSequence (I32 :> I32 :> Empty) (I32 :> Empty) 'VNil ('WasmModule '[]) ('WasmModule '[])
-add1Sequence :: forall {n :: Nat} {k :: Nat} {i :: Nat} {shape :: WasmModuleShape} {inputStack :: StackShape} {locals :: LocalsShape n} {wasmModule :: WasmModule shape} {inputLabels :: LabelStack k}. InstructionSequence (I32 :> (I32 :> inputStack)) (I32 :> inputStack) locals wasmModule inputLabels inputLabels
+add1Sequence :: forall {n :: Nat} {k :: Nat} {shape :: WasmModuleShape} {inputStack :: StackShape} {locals :: LocalsShape n} {wasmModule :: WasmModule shape} {inputLabels :: LabelStack k}. InstructionSequence (I32 :> (I32 :> inputStack)) (I32 :> inputStack) locals wasmModule inputLabels inputLabels
 add1Sequence = I32Add :| End
 
 -- addSubSequence :: InstructionSequence (I32 :> (I32 :> (I32 :> Empty))) (I32 :> Empty) 'VNil (WasmModule Z) ('WasmModule '[]) -- only 3 I32 because the result of the add is the first argument of the subtract
-addSubSequence :: forall {n :: Nat} {k :: Nat} {i :: Nat} {shape :: WasmModuleShape} {inputStack :: StackShape} {locals :: LocalsShape n} {wasmModule :: WasmModule shape} {inputLabels :: LabelStack k}. InstructionSequence (I32 :> (I32 :> (I32 :> inputStack))) (I32 :> inputStack) locals wasmModule inputLabels inputLabels
+addSubSequence :: forall {n :: Nat} {k :: Nat} {shape :: WasmModuleShape} {inputStack :: StackShape} {locals :: LocalsShape n} {wasmModule :: WasmModule shape} {inputLabels :: LabelStack k}. InstructionSequence (I32 :> (I32 :> (I32 :> inputStack))) (I32 :> inputStack) locals wasmModule inputLabels inputLabels
 addSubSequence = I32Add :| (I32Sub :| End)
 
 -- | Example 1: Add two integers
 -- Takes two i32 parameters (slots 0 and 1), returns their sum
 add2 :: Function Empty (I32 :> Empty) (I32 :<| I32 :<| VNil) Types.EmptyLabels -- Function resultStack locals (repr the function parameters)
-add2 = Function $
+add2 = Function (FFuncTypeAnn Empty (I32 :> Empty)) $
     -- Local slots: (0) first parameter, (1) second parameter
        LocalGet SFZ    -- Push first parameter
     :| LocalGet (SFS SFZ)     -- Push second parameter
@@ -344,7 +350,7 @@ add2 = Function $
 -- | Example 2: Factorial function using iteration
 -- Takes one i32 parameter, returns its factorial
 factorial :: Function Empty (I32 :> Empty) (I32 :<| I32 :<| VNil) Types.EmptyLabels
-factorial = Function $
+factorial = Function (FFuncTypeAnn Empty (I32 :> Empty)) $
     -- Local slots: (0) input parameter (also used as counter), (1) accumulator
     -- Initialize accumulator to 1
        I32Const 1
@@ -383,7 +389,7 @@ factorial = Function $
 -- | Example 3: Function that returns nothing (void function).
 -- Demonstrates different return types - this one returns Empty stack.
 printNumber :: Function Empty Empty (I32 :<| VNil) Types.EmptyLabels
-printNumber = Function $
+printNumber = Function (FFuncTypeAnn Empty Empty) $
     -- Just consume the parameter without returning anything
        LocalGet slotZero
     :| Drop
@@ -398,7 +404,7 @@ printNumber = Function $
 -- | Example 4: Function with more complex local variable patterns.
 -- Takes one parameter, uses three local variables for intermediate calculations.
 complexCalculation :: Function Empty (I32 :> Empty) (I32 :<| I32 :<| I32 :<| I32 :<| VNil) Types.EmptyLabels
-complexCalculation = Function $
+complexCalculation = Function (FFuncTypeAnn Empty (I32 :> Empty)) $
     -- Local slots: (0) input, (1) temp1, (2) temp2, (3) result
     -- temp1 = input * 2
        LocalGet SFZ
@@ -416,7 +422,7 @@ complexCalculation = Function $
 -- | Example 5: Conditional logic with If instruction.
 -- Returns the absolute value of the input.
 absoluteValue :: Function Empty (I32 :> Empty) (I32 :<| VNil) Types.EmptyLabels
-absoluteValue = Function $
+absoluteValue = Function (FFuncTypeAnn Empty (I32 :> Empty)) $
     -- Check if input is negative
        LocalGet SFZ
     :| I32Const 0
@@ -472,16 +478,16 @@ data Stack (stackShape :: StackShape) where
     Push       :: RuntimeTypeOf wasmType -> Stack stackShape -> Stack (wasmType :> stackShape)
 
 
-stackLength :: Stack stackShape -> Nat
-stackLength EmptyStack       = Z
-stackLength (Push _ rest) = S (stackLength rest)
+stackLength :: Stack stackShape -> SNat (StackLength stackShape)
+stackLength EmptyStack       = SZ
+stackLength (Push _ rest) = SS (stackLength rest)
 
 concatStacks :: Stack s1 -> Stack s2 -> Stack (s1 +>+ s2)
 concatStacks EmptyStack s2       = s2
 concatStacks (Push val rest) s2 = Push val (concatStacks rest s2)
 
 
-popNthLabel :: (GetNthLabelType n restLabelsShape ~ rightLabelStack) => StackIndex n l -> Labels restLabelsShape -> (SStackShape rightLabelStack, Nat)
+popNthLabel :: (GetLabelCreationStackLength n restLabelsShape ~ stackLen, GetLabelType n restLabelsShape ~ rightLabelStack) => StackIndex n l -> Labels restLabelsShape -> (SStackShape rightLabelStack, SNat stackLen)
 popNthLabel StackIndexZ (ConsLabels sstackShape lenInputStack _) = (sstackShape, lenInputStack)
 popNthLabel (StackIndexS idx) (ConsLabels _ _ rest) = popNthLabel idx rest
 popNthLabel _ NoLabels = error "Index out of bounds in popNthLabel"
@@ -531,7 +537,7 @@ data Globals (globalsShape :: GlobalsShape n) where
 
 data Labels (labelsShape :: LabelStack n) where
     NoLabels :: Labels 'Types.EmptyLabels
-    ConsLabels  :: SStackShape labelStackShape -> Nat -> Labels restLabelsShape -> Labels ('(labelStackShape, n) :>: restLabelsShape)
+    ConsLabels  :: SStackShape labelStackShape -> SNat m -> Labels restLabelsShape -> Labels ('(labelStackShape, m) :>: restLabelsShape)
 -- data Memory (memsShape :: MemoriesShape n) where
 --     NoMems   :: Memory 'VNil
 --     ConsMems :: MemoryType -> Memory memsShape -> Memory (MemoryType :<| memsShape)
@@ -775,15 +781,15 @@ executeInstruction instr prevCtxt@(RuntimeContext prevStack prevLocals prevGloba
         Push cond (rest :: Stack inputStackWOCond) ->
             if cond /= 0
             then 
-                let newLabels = ConsLabels res (stackLength prevStack) (labels prevCtxt)
-                    newCtxt = executeInstructionSequence thenSeq (prevCtxt { labels = newLabels, stack = rest } :: RuntimeContext inputStackWOCond locals wasmModule ('(resStack, StackLength inputStack) :>: inputLabels))
+                let newLabels = ConsLabels res (stackLength rest) (labels prevCtxt)
+                    newCtxt = executeInstructionSequence thenSeq (prevCtxt { labels = newLabels, stack = rest } :: RuntimeContext inputStackWOCond locals wasmModule ('(resStack, StackLength inputStackWOCond) :>: inputLabels))
                 in newCtxt { labels = prevLabels }
 
             else 
-                let newLabels = ConsLabels res (stackLength prevStack) (labels prevCtxt)
-                    newCtxt = executeInstructionSequence elseSeq (prevCtxt { labels = newLabels, stack = rest } :: RuntimeContext inputStackWOCond locals wasmModule ('(resStack, StackLength inputStack) :>: inputLabels))
+                let newLabels = ConsLabels res (stackLength rest) (labels prevCtxt)
+                    newCtxt = executeInstructionSequence elseSeq (prevCtxt { labels = newLabels, stack = rest } :: RuntimeContext inputStackWOCond locals wasmModule ('(resStack, StackLength inputStackWOCond) :>: inputLabels))
                 in newCtxt { labels = prevLabels }
-    Br (labelIdx :: StackIndex i n) -> 
+    Br (labelIdx :: StackIndex i n) -> -- undefined
             -- DINA: not solved recursively like in specs but rather
             -- 1. remove all labels above the target label and get the length of the stack at creation of label (line 803)
               -- a) for this we now also save the length of the stack on the labelstack on creation (see block instr e.g.)
@@ -793,25 +799,27 @@ executeInstruction instr prevCtxt@(RuntimeContext prevStack prevLocals prevGloba
               -- a) IGNORE FOR NOW: However, here I am also not sure whether technically we should push back
               --    the top n elements from the input stack in order for it to really be correct?
             -- CURRENT PROBLEM: Cannot deduce the concatination of the input stack and the label type to outputStack  
-        let (labelType, lenStackBeforeLabelCreation) = popNthLabel labelIdx prevLabels
+        let (labelType, lenStackBeforeLabelCreation) = popNthLabel labelIdx prevLabels :: (SStackShape (GetLabelType i inputLabels), SNat (GetLabelCreationStackLength i inputLabels))
             in prevCtxt { 
-                stack = concatStacks labelType (reduceStackToLength lenStackBeforeLabelCreation prevStack) :: Stack outputStack,
+                stack = concatStacks labelType (reduceStackToLength lenStackBeforeLabelCreation prevStack),
                 labels = removeLabelsUntilStackIdx labelIdx prevLabels :: Labels (RemoveLabels i inputLabels) 
                 }  :: RuntimeContext outputStack locals wasmModule (RemoveLabels i inputLabels)
 
     BrIf labelIdx-> undefined
     Call funcName (FFuncTypeAnn params res) -> undefined -- executeFunction (Function Empty outputStack params (ConsLabels res prevLabels)) (RuntimeContext prevStack prevLocals prevGlobal prevLabels)
 
-executeInstructionSequence :: InstructionSequence inputStack outputStack locals globals inputLabels outputLabels
-                           -> RuntimeContext inputStack locals wasmModule labels
-                           -> RuntimeContext outputStack locals wasmModule labels
-executeInstructionSequence instrSeq (RuntimeContext inputStack prevLocals prevWasmModule prevLabels) = undefined --case instrSeq of
-    -- End -> RuntimeContext inputStack prevLocals prevWasmModule prevLabels
-    -- (instr :| rest) ->
-    --     let intermediateContext = executeInstruction instr (RuntimeContext inputStack prevLocals prevWasmModule prevLabels)
-    --     in executeInstructionSequence rest intermediateContext
+executeInstructionSequence :: InstructionSequence inputStack outputStack locals wasmModule inputLabels inputLabels
+                           -> RuntimeContext inputStack locals wasmModule inputLabels
+                           -> RuntimeContext outputStack locals wasmModule inputLabels
+executeInstructionSequence instrSeq prevCtxt@(RuntimeContext inputStack prevLocals prevWasmModule prevLabels) = case instrSeq of
+    End -> RuntimeContext inputStack prevLocals prevWasmModule prevLabels
+    (instr :| rest) ->
+        let intermediateContext = executeInstruction instr prevCtxt
+        in executeInstructionSequence rest intermediateContext
 
 executeFunction :: Function inputStack outputStack locals labels
-                   -> RuntimeContext Empty locals globals labels
+                   -> RuntimeContext inputStack locals globals labels
                    -> RuntimeContext outputStack locals globals labels
-executeFunction = undefined
+executeFunction func@(Function (FFuncTypeAnn params res) instrSeq) prevCtxt = undefined
+    -- let newCtxt = executeInstructionSequence instrSeq (prevCtxt { stack = EmptyStack, locals = params }) :: RuntimeContext Empty locals globals labels
+    -- in newCtxt { stack = concatStacks res (stack prevCtxt) }
