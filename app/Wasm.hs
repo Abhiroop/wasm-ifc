@@ -17,8 +17,7 @@ module Wasm where
 
 import Data.Int (Int32, Int64)
 import Data.Word (Word32, Word64)
-import Types (WasmType(I64, I32), RuntimeTypeOf, WasmType, StackShape(..), type (+>+), StackIndex (..), GetLabelType, LabelStack(..), RemoveLabels, CheckTopEqual, BlockType (..), SStackShape(..), FuncName, FuncTypeAnn (..), GetNthLabelType, StackLength, stackShapeLen, Take, Drop, Len, GetLabelCreationStackLength, CheckEqualStacks, FuncTypeAnn (..), Reverse)
-import Unsafe.Coerce
+import Types (WasmType(I64, I32), RuntimeTypeOf, WasmType, StackShape(..), type (+>+), StackIndex (..), GetLabelType, LabelStack(..), RemoveLabels, CheckTopEqual, BlockType (..), SStackShape(..), FuncName, FuncTypeAnn (..), StackLength, stackShapeLen, Take, Drop, Len, GetLabelCreationStackLength, FuncTypeAnn (..), Reverse, KnownWasmType (ForI32))
 import Utils
 import WasmModule (WasmModule(..), GetGlobals, GlobalTypeToWasmType, MemArg(SMemArg), GlobalsShape, WasmModuleShape, GlobalType (GlobalTypeMW), KnownMutability(SVar, SConst))
 
@@ -193,7 +192,7 @@ data Instruction (inputStack :: StackShape) (outputStack :: StackShape) (locals 
     
     -- technically the type like this would be defined at a type index in the types module
     -- Alternatively we can define just a WasmType in BlockType and then it would be the same as the func type []->[WasmType] => how should we go about it ? implement the types module? however not quite sure how we add types to the type module.
-    Block :: forall (m :: Nat) (l :: Nat) (p :: Nat) (r :: Nat) (i :: Nat) (o :: Nat) (shape :: WasmModuleShape) (paramsStack :: StackShape) (resStack :: StackShape) (inputStack :: StackShape)(outputStack :: StackShape) (locals :: LocalsShape m) (wasmModule :: WasmModule shape) (inputLabels :: LabelStack l).
+    Block :: forall (m :: Nat) (l :: Nat) (shape :: WasmModuleShape) (paramsStack :: StackShape) (resStack :: StackShape) (inputStack :: StackShape)(outputStack :: StackShape) (locals :: LocalsShape m) (wasmModule :: WasmModule shape) (inputLabels :: LabelStack l).
             (CheckTopEqual paramsStack inputStack ~ 'True,
                 CheckTopEqual resStack outputStack ~ 'True)  -- ensure that the parameters of the block are on top of the input stack
           => BlockType paramsStack resStack -- represents the optional valtype however what about the typeidx? can't know the function type
@@ -201,7 +200,7 @@ data Instruction (inputStack :: StackShape) (outputStack :: StackShape) (locals 
           -> Instruction inputStack outputStack locals wasmModule inputLabels inputLabels
 
     -- Loop: a sequence of instructions that can be restarted with 'br'
-    Loop  :: forall (m :: Nat) (l :: Nat) (p :: Nat) (r :: Nat) (i :: Nat) (o :: Nat) (shape :: WasmModuleShape) (paramsStack :: StackShape) (resStack :: StackShape) (inputStack :: StackShape) (outputStack :: StackShape) (locals :: LocalsShape m) (wasmModule :: WasmModule shape) (inputLabels :: LabelStack l).
+    Loop  :: forall (m :: Nat) (l :: Nat) (shape :: WasmModuleShape) (paramsStack :: StackShape) (resStack :: StackShape) (inputStack :: StackShape) (outputStack :: StackShape) (locals :: LocalsShape m) (wasmModule :: WasmModule shape) (inputLabels :: LabelStack l).
             (CheckTopEqual paramsStack inputStack ~ 'True,
                 CheckTopEqual resStack outputStack ~ 'True)  -- ensure that the parameters of the block are on top of the input stack
           => BlockType paramsStack resStack
@@ -255,7 +254,9 @@ data Instruction (inputStack :: StackShape) (outputStack :: StackShape) (locals 
                            locals
                            wasmModule
                            inputLabels
-                           (RemoveLabels i inputLabels) --XXX: Potential error
+                           inputLabels
+                           --(RemoveLabels i inputLabels) --XXX: Potential error
+                           -- TODO: remove the RemoveLabels and write an example for branch
 
     -- BrIf: conditional branch (pops i32 condition)
     -- TODO: Maybe use SFin as well
@@ -339,6 +340,49 @@ add1Sequence = I32Add :| End
 -- addSubSequence :: InstructionSequence (I32 :> (I32 :> (I32 :> Empty))) (I32 :> Empty) 'VNil (WasmModule Z) ('WasmModule '[]) -- only 3 I32 because the result of the add is the first argument of the subtract
 addSubSequence :: forall {n :: Nat} {k :: Nat} {shape :: WasmModuleShape} {inputStack :: StackShape} {locals :: LocalsShape n} {wasmModule :: WasmModule shape} {inputLabels :: LabelStack k}. InstructionSequence (I32 :> (I32 :> (I32 :> inputStack))) (I32 :> inputStack) locals wasmModule inputLabels inputLabels
 addSubSequence = I32Add :| (I32Sub :| End)
+
+-- example function for Br instruction
+branchExample :: Function Empty Empty (I32 :<| VNil) ('(Empty, Z) :>: EmptyLabels)
+branchExample = Function (FFuncTypeAnn Empty Empty) $
+       Block (BTParamsResults SEmpty SEmpty) (
+        Br (StackIndexS StackIndexZ)
+        :| End)
+    :| End
+
+    -- example function for Br instruction
+branchExample2 :: Function Empty Empty (I32 :<| VNil) ('(Empty, Z) :>: EmptyLabels)
+branchExample2 = Function (FFuncTypeAnn Empty Empty) $
+       Block (BTParamsResults SEmpty SEmpty) (
+        Br StackIndexZ
+        :| End)
+    :| Br StackIndexZ
+    :| End
+
+    -- example function for Br instruction
+branchExample3 :: Function Empty (I32 :> Empty) (I32 :<| VNil) EmptyLabels
+branchExample3 = Function (FFuncTypeAnn Empty Empty) $
+       Block (BTParamsResults SEmpty (ForI32 ::> SEmpty)) (
+        Block (BTParamsResults SEmpty SEmpty) (
+            Br StackIndexZ
+            :| End)
+        :| I32Const 42
+        :| Br StackIndexZ
+        :| End
+        )
+    :| End
+
+-- example function for Br instruction
+branchExample4 :: Function Empty (I32 :> Empty) (I32 :<| VNil) EmptyLabels
+branchExample4 = Function (FFuncTypeAnn Empty Empty) $
+       Block (BTParamsResults SEmpty (ForI32 ::> SEmpty)) (
+        Block (BTParamsResults SEmpty SEmpty) (
+            I32Const 42
+            :| Br (StackIndexS StackIndexZ)
+            :| End)
+        -- :| Br StackIndexZ
+        :| End
+        )
+    :| End
 
 -- | Example 1: Add two integers
 -- Takes two i32 parameters (slots 0 and 1), returns their sum
@@ -525,28 +569,6 @@ removeLabelsUntilStackIdx StackIndexZ (ConsLabels _ _ rest) = rest
 removeLabelsUntilStackIdx (StackIndexS idx) (ConsLabels _ _ rest) = removeLabelsUntilStackIdx idx rest
 
 
-firstTuple :: (a, b) -> a
-firstTuple (a,b) = a
-
-sndTuple :: (a,b) -> b
-sndTuple (a,b) = b
-
--- popOne :: Stack stackShape -> RuntimeTypeOf wasmType
-popOne :: Stack (wasmType :> stackShape) -> RuntimeTypeOf wasmType
-popOne (Push val _) = val
-
-popZero :: Stack stackShape -> (Stack 'Empty, Stack stackShape)
-popZero rest = (EmptyStack, rest)
-
-
--- popN :: (GreaterZero t1 ~ 'True) => Proxy t1 -> Stack (popShape +>+ stackShape) -> (Stack popShape, Stack stackShape)
--- popN n (Push val rest) = (Push val (firstTuple (popN (n-1) rest)), sndTuple (popN (n-1) rest))
--- (Num n, stackLength popShape ~ n) =>
--- popNFromStack :: (IfIntZero n (popShape ~ Empty)) => Proxy n -> Stack (popShape +>+ stackShape) -> (Stack popShape, Stack stackShape)
--- popNFromStack 0 stackShape = (EmptyStack, stackShape)
--- popNFromStack n (Push val rest) =
---     let (popShape, remaining) = popNFromStack (n - 1) rest
---     in (Push val popShape, remaining)
 
 -- | Runtime representation of the WebAssembly locals.
 -- This is the actual data structure that holds local values during execution.
@@ -818,9 +840,8 @@ executeInstruction instr prevCtxt@(RuntimeContext prevStack prevLocals prevGloba
             baseStack  = reduceStackToLength lenStackBeforeLabelCreation prevStack
             finalStack = concatStacks stackToKeep baseStack
          in prevCtxt {
-              stack = finalStack,
-              labels = removeLabelsUntilStackIdx labelIdx prevLabels :: Labels (RemoveLabels i inputLabels)
-             }  :: RuntimeContext outputStack locals wasmModule (RemoveLabels i inputLabels)
+              stack = finalStack
+             }  :: RuntimeContext outputStack locals wasmModule inputLabels
 
     BrIf labelIdx-> undefined
     Call funcName (FFuncTypeAnn params res) -> undefined -- executeFunction (Function Empty outputStack params (ConsLabels res prevLabels)) (RuntimeContext prevStack prevLocals prevGlobal prevLabels)
