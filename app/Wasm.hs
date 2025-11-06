@@ -512,13 +512,12 @@ reduceStackToLength :: forall n stackShape.
                        SNat n
                     -> Stack stackShape
                     -> Stack (Take n (Reverse stackShape))
-reduceStackToLength n s = fst (takeStack n (reverseStack s))
-  where
-    reverseStack :: Stack stackShape -> Stack (Reverse stackShape)
-    reverseStack EmptyStack  = EmptyStack
-    reverseStack (Push x xs) =
-      unsafeCoerce $ concatStacks (unsafeCoerce $ reverseStack (unsafeCoerce xs))
-      (Push (unsafeCoerce x) EmptyStack)
+reduceStackToLength n = fst . takeStack n . reverseStack
+
+reverseStack :: Stack stackShape -> Stack (Reverse stackShape)
+reverseStack EmptyStack = EmptyStack
+reverseStack (Push @wasmType val rest) =
+  concatStacks (reverseStack rest) (Push @wasmType val EmptyStack)
 
 
 removeLabelsUntilStackIdx :: forall n l (inputLabelStack :: LabelStack l). StackIndex n l -> Labels inputLabelStack -> Labels (RemoveLabels n inputLabelStack)
