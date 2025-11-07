@@ -1,7 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -9,8 +8,7 @@
 module WasmModule where 
 -- import GHC.TypeLits (Nat)  
 import Types (WasmType(..))    
-import Utils  
-import Data.Int (Int32)
+import Utils 
 import Data.Word (Word32, Word64)
 -- https://webassembly.github.io/spec/core/syntax/modules.html#syntax-global
 -- WebAssembly programs are organized into modules, 
@@ -101,14 +99,17 @@ type GlobalSlot = Nat
     -- Hence we reserve 4 entries for a 32 bit integer e.g.
     -- ignore alignment for now, TODO
 
-data Limits = Limits Word32 (Maybe Word32)
+-- technically also addr type that defines whether the address is i32 or i64
+-- https://webassembly.github.io/spec/core/syntax/types.html#syntax-memtype
+data Limits = Limits Word64 (Maybe Word64)
 newtype MemoryType = MemoryType Limits
 
 -- Is a vector with memory type which defines the limits of the memory space.
 type MemoriesShape n = Vec n MemoryType
 
-data MemArg (alignment :: Word32) (offset :: Word64)where-- Memory Offset Alignment
-    SMemArg :: MemArg alignment offset-- Is this ok? or do we need to have an "incremental" constructor?
+data MemArg (alignment :: Word32) (offset :: Word64)where -- Memory Offset Alignment
+    SMemArg :: MemArg alignment offset 
+    -- Is this ok? or do we need to have an "incremental" constructor?
     -- because we have it simply defined like this we have it as unsigned integers like in the 
     -- spec https://webassembly.github.io/spec/core/syntax/instructions.html#memory-instructions
 
