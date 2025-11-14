@@ -352,18 +352,42 @@ executeInstruction instr prevCtxt@(RuntimeContext prevStack prevLocals prevGloba
               stack = finalStack
              }  :: RuntimeContext outputStack locals wasmModule inputLabels
 
+
+
+
+
+
+
+
+
+
+
     BrIf (labelIdx :: SFin i n) -> case prevStack of
         Push cond (rest :: Stack restStackShape) ->
-            -- if cond == 0
-            -- then prevCtxt { stack = rest } :: RuntimeContext outputStack locals wasmModule inputLabels
-            -- else
-                let (labelType, lenStackBeforeLabelCreation) = popNthLabel labelIdx prevLabels
-                    (stackToKeep, _) = takeStack (stackShapeLen labelType) rest
-                    baseStack  = reduceStackToLength lenStackBeforeLabelCreation rest
-                    finalStack = concatStacks stackToKeep baseStack
-                in prevCtxt {
-                    stack = finalStack
-                    }  :: RuntimeContext outputStack locals wasmModule inputLabels
+            if cond == 0
+            then prevCtxt { stack = rest } :: RuntimeContext restStackShape locals wasmModule inputLabels
+            else prevCtxt { stack = rest
+                          }  :: RuntimeContext restStackShape locals wasmModule inputLabels
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     Call funcName (FFuncTypeAnn params res) -> undefined -- executeFunction (Function Empty outputStack params (ConsLabels res prevLabels)) (RuntimeContext prevStack prevLocals prevGlobal prevLabels)
 
 executeInstructionSequence :: InstructionSequence inputStack outputStack locals wasmModule inputLabels inputLabels
