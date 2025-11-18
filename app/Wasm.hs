@@ -252,13 +252,9 @@ data Instruction (inputStack :: ValStackShape) (outputStack :: ValStackShape) (l
     -- and then the outputStack is just the inputStack minus the i32 condition
     BrIf  :: forall (i :: Nat) (l :: Nat) (n :: Nat) (shape :: WasmModuleShape) (inputLabels :: LabelStackShape l) (inputStack :: ValStackShape) (outputStack :: ValStackShape) (locals :: LocalsShape n) (wasmModule :: WasmModule shape) (baseStack :: ValStackShape).
     -- inputStack ~ outputStack =>
-        (CheckTopEqual (GetLabelType i inputLabels) inputStack ~ 'True,
-            (Take (LenStackShape (GetLabelType i inputLabels)) inputStack +>+
-            Take (GetLabelCreationStackLength i inputLabels) (Reverse inputStack))
-            ~ outputStack
-            ) =>
+        (CheckTopEqual (GetLabelType i inputLabels) inputStack ~ 'True) =>
         SFin i l 
-        -> Instruction (I32 :> inputStack) outputStack locals wasmModule inputLabels inputLabels
+        -> Instruction (I32 :> inputStack) inputStack locals wasmModule inputLabels inputLabels
 
     -- "naive" way
     Call  :: FuncName -> FuncTypeAnn inputStack outputStack -> Instruction inputStack outputStack locals wasmModule inputLabels outputLabels 
