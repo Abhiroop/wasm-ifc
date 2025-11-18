@@ -43,17 +43,6 @@ type LocalsShape n = Vec n WasmType
 
 {-
 =============================================================================
-CONTROL FLOW LABELS
-=============================================================================
--}
-
--- | Labels for control flow (blocks, loops, branches).
--- TODO: This should be made type-safe to prevent referencing invalid labels
--- Currently just an Int, but should track label scopes and validity.
-type LabelIndex = Int
-
-{-
-=============================================================================
 INSTRUCTIONS
 =============================================================================
 -}
@@ -257,8 +246,6 @@ data Instruction (inputStack :: ValStackShape) (outputStack :: ValStackShape) (l
                            wasmModule
                            inputLabels
                            inputLabels
-                           --(RemoveLabels i inputLabels) --XXX: Potential error
-                           -- TODO: remove the RemoveLabels and write an example for branch
 
     -- BrIf: conditional branch (pops i32 condition)
     -- DINA: Problem => either we branch then we have the conditions below for the outputStack or we don't branch

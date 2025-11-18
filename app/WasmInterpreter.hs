@@ -155,8 +155,8 @@ executeInstruction instr prevCtxt@(RuntimeContext prevStack prevLocals prevGloba
                           in RuntimeContext (Push result rest) prevLocals prevGlobal prevLabels
     I32RemU      -> case prevStack of
                       Push val1 (Push val2 rest) ->
-                          let result = val2 `mod` val1 -- TODO double check the order!!
-                          in RuntimeContext (Push result rest) prevLocals prevGlobal prevLabels
+                          let result = (fromIntegral val2 :: Word32) `mod` (fromIntegral val1 :: Word32) -- TODO double check the order & also double check the result!!
+                          in RuntimeContext (Push (fromIntegral result :: Int32) rest) prevLocals prevGlobal prevLabels
     I32RemS      -> case prevStack of
                       Push val1 (Push val2 rest) ->
                           let result = val2 `mod` val1 -- TODO double check the order!!
@@ -192,7 +192,7 @@ executeInstruction instr prevCtxt@(RuntimeContext prevStack prevLocals prevGloba
 
     I32LeU       -> case prevStack of
                       Push val1 (Push val2 rest) ->
-                          let result = if val2 <= val1 then 1 else 0 -- TODO: Check whether we should implement explicit WASM type for unsigned integers
+                          let result = if (fromIntegral val2 :: Word32) <= (fromIntegral val1 :: Word32) then 1 else 0
                           in RuntimeContext (Push result rest) prevLocals prevGlobal prevLabels
 
     I32GtS       -> case prevStack of
@@ -202,7 +202,7 @@ executeInstruction instr prevCtxt@(RuntimeContext prevStack prevLocals prevGloba
  
     I32GtU       -> case prevStack of
                       Push val1 (Push val2 rest) ->
-                          let result = if val2 > val1 then 1 else 0 -- TODO: Check whether we should implement explicit WASM type for unsigned integers
+                          let result = if (fromIntegral val2 :: Word32) > (fromIntegral val1 :: Word32) then 1 else 0
                           in RuntimeContext (Push result rest) prevLocals prevGlobal prevLabels
  
     I32GeS       -> case prevStack of
@@ -212,7 +212,7 @@ executeInstruction instr prevCtxt@(RuntimeContext prevStack prevLocals prevGloba
  
     I32GeU       -> case prevStack of
                       Push val1 (Push val2 rest) ->
-                          let result = if val2 >= val1 then 1 else 0 -- TODO: Check whether we should implement explicit WASM type for unsigned integers
+                          let result = if (fromIntegral val2 :: Word32) >= (fromIntegral val1 :: Word32) then 1 else 0
                           in RuntimeContext (Push result rest) prevLocals prevGlobal prevLabels
  
     I64Add       -> case prevStack of
@@ -237,8 +237,8 @@ executeInstruction instr prevCtxt@(RuntimeContext prevStack prevLocals prevGloba
  
     I64RemU      -> case prevStack of
                       Push val1 (Push val2 rest) ->
-                          let result = val2 `mod` val1 -- TODO double check the order!!
-                          in RuntimeContext (Push result rest) prevLocals prevGlobal prevLabels
+                          let result = (fromIntegral val2 :: Word64) `mod` (fromIntegral val1 :: Word64) -- TODO double check the order & also double check the result!!
+                          in RuntimeContext (Push (fromIntegral result :: Int64) rest) prevLocals prevGlobal prevLabels
  
     I64RemS      -> case prevStack of
                       Push val1 (Push val2 rest) ->
@@ -267,7 +267,7 @@ executeInstruction instr prevCtxt@(RuntimeContext prevStack prevLocals prevGloba
  
     I64LtU       -> case prevStack of
                       Push val1 (Push val2 rest) ->
-                          let result = if val2 < val1 then 1 else 0 -- TODO: Check whether we should implement explicit WASM type for unsigned integers
+                          let result = if (fromIntegral val2 :: Word64) < (fromIntegral val1 :: Word64) then 1 else 0
                           in RuntimeContext (Push result rest) prevLocals prevGlobal prevLabels
  
     I64LeS       -> case prevStack of
@@ -277,7 +277,7 @@ executeInstruction instr prevCtxt@(RuntimeContext prevStack prevLocals prevGloba
  
     I64LeU       -> case prevStack of
                       Push val1 (Push val2 rest) ->
-                          let result = if val2 <= val1 then 1 else 0 -- TODO: Check whether we should implement explicit WASM type for unsigned integers
+                          let result = if (fromIntegral val2 :: Word64) <= (fromIntegral val1 :: Word64) then 1 else 0
                           in RuntimeContext (Push result rest) prevLocals prevGlobal prevLabels
  
     I64GtS       -> case prevStack of
@@ -287,7 +287,7 @@ executeInstruction instr prevCtxt@(RuntimeContext prevStack prevLocals prevGloba
  
     I64GtU       -> case prevStack of
                       Push val1 (Push val2 rest) ->
-                          let result = if val2 > val1 then 1 else 0 -- TODO: Check whether we should implement explicit WASM type for unsigned integers
+                          let result = if (fromIntegral val2 :: Word64) > (fromIntegral val1 :: Word64) then 1 else 0
                           in RuntimeContext (Push result rest) prevLocals prevGlobal prevLabels
  
     I64GeS       -> case prevStack of
@@ -297,7 +297,7 @@ executeInstruction instr prevCtxt@(RuntimeContext prevStack prevLocals prevGloba
  
     I64GeU       -> case prevStack of
                       Push val1 (Push val2 rest) ->
-                          let result = if val2 >= val1 then 1 else 0 -- TODO: Check whether we should implement explicit WASM type for unsigned integers
+                          let result = if (fromIntegral val2 :: Word64) >= (fromIntegral val1 :: Word64) then 1 else 0
                           in RuntimeContext (Push result rest) prevLocals prevGlobal prevLabels
  
     Drop         -> case prevStack of
@@ -325,24 +325,24 @@ executeInstruction instr prevCtxt@(RuntimeContext prevStack prevLocals prevGloba
     Block (BTParamsResults _ (res :: SValStackShape resStack)) instrSeq ->
       let newLabels = ConsLabels res (stackLength prevStack) (labels prevCtxt)
           newContext =
-            executeInstructionSequence instrSeq (prevCtxt { labels = newLabels } :: RuntimeContext inputStack locals wasmModule ('(resStack, StackLength inputStack) :>: inputLabels))
-      in newContext { labels = prevLabels }
+            executeInstructionSequence instrSeq (prevCtxt { labels = newLabels } :: RuntimeContext inputStack locals wasmModule ('(resStack, StackLength inputStack) :>: inputLabels)) funcMap
+      in newContext { labels = prevLabels } :: RuntimeContext outputStack locals wasmModule inputLabels
     Loop (BTParamsResults (params :: SValStackShape paramsStack) _) instrSeq -> 
                 let newLabels = ConsLabels params (stackLength prevStack) (labels prevCtxt)
-                    newContext = executeInstructionSequence instrSeq (prevCtxt { labels = newLabels } :: RuntimeContext inputStack locals wasmModule ('(paramsStack, StackLength inputStack) :>: inputLabels))
+                    newContext = executeInstructionSequence instrSeq (prevCtxt { labels = newLabels } :: RuntimeContext inputStack locals wasmModule ('(paramsStack, StackLength inputStack) :>: inputLabels)) funcMap
                 in newContext { labels = prevLabels }
     If (BTParamsResults _ (res :: SValStackShape resStack)) thenSeq elseSeq -> case prevStack of
         Push cond (rest :: Stack inputStackWOCond) ->
             if cond /= 0
             then 
                 let newLabels = ConsLabels res (stackLength rest) (labels prevCtxt)
-                    newCtxt = executeInstructionSequence thenSeq (prevCtxt { labels = newLabels, stack = rest } :: RuntimeContext inputStackWOCond locals wasmModule ('(resStack, StackLength inputStackWOCond) :>: inputLabels))
-                in newCtxt { labels = prevLabels }
+                    newCtxt = executeInstructionSequence thenSeq (prevCtxt { labels = newLabels, stack = rest } :: RuntimeContext inputStackWOCond locals wasmModule ('(resStack, StackLength inputStackWOCond) :>: inputLabels)) funcMap
+                in newCtxt { labels = prevLabels } :: RuntimeContext outputStack locals wasmModule inputLabels
 
             else 
                 let newLabels = ConsLabels res (stackLength rest) (labels prevCtxt)
-                    newCtxt = executeInstructionSequence elseSeq (prevCtxt { labels = newLabels, stack = rest } :: RuntimeContext inputStackWOCond locals wasmModule ('(resStack, StackLength inputStackWOCond) :>: inputLabels))
-                in newCtxt { labels = prevLabels }
+                    newCtxt = executeInstructionSequence elseSeq (prevCtxt { labels = newLabels, stack = rest } :: RuntimeContext inputStackWOCond locals wasmModule ('(resStack, StackLength inputStackWOCond) :>: inputLabels)) funcMap
+                in newCtxt { labels = prevLabels } :: RuntimeContext outputStack locals wasmModule inputLabels
     Br (labelIdx :: SFin i n) ->
         let (labelType, lenStackBeforeLabelCreation) = popNthLabel labelIdx prevLabels
             (stackToKeep, _) = takeStack (stackShapeLen labelType) prevStack
