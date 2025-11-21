@@ -17,7 +17,7 @@ module Wasm where
 
 import Data.Int (Int32)
 import Data.Word (Word32, Word64)
-import Types (WasmType(I64, I32), WasmType, ValStackShape(..), type (+>+), GetLabelType, LabelStackShape(..), CheckTopEqual, BlockType (..), SValStackShape(..), FuncName, FuncTypeAnn (..), StackLength, Take, LenStackShape, GetLabelCreationStackLength, FuncTypeAnn (..), Reverse, KnownWasmType (ForI32), RuntimeTypeOf)
+import Types (WasmType(I64, I32), WasmType, ValStackShape(..), type (+>+), CheckTopEqual, BlockType (..), SValStackShape(..), FuncName, FuncTypeAnn (..), StackLength, Take, LenStackShape, FuncTypeAnn (..), Reverse, KnownWasmType (ForI32), RuntimeTypeOf)
 import Utils
 import WasmModule (WasmModule(..), GetGlobals, GlobalTypeToWasmType, MemArg(SMemArg), WasmModuleShape)
 import Data.Kind (Constraint)
@@ -234,11 +234,11 @@ data Instruction (inputStack :: ValStackShape) (outputStack :: ValStackShape) (l
     -- This version compiles
     -- Checks whether the top of the input stack is equal to the label type as a constraint
     Br    :: forall (i :: Nat) (l :: Nat) (n :: Nat) (shape :: WasmModuleShape) (inputLabels :: LabelStackShape l) (inputStack :: ValStackShape) (outputStack :: ValStackShape) (locals :: LocalsShape n) (wasmModule :: WasmModule shape) (baseStack :: ValStackShape).
-        (CheckTopEqual (GetLabelType i inputLabels) inputStack ~ 'True,
-         (Take (LenStackShape (GetLabelType i inputLabels)) inputStack +>+
-          Take (GetLabelCreationStackLength i inputLabels) (Reverse inputStack))
-          ~ outputStack
-        ) =>
+        -- (CheckTopEqual (GetLabelType i inputLabels) inputStack ~ 'True,
+        --  (Take (LenStackShape (GetLabelType i inputLabels)) inputStack +>+
+        --   Take (GetLabelCreationStackLength i inputLabels) (Reverse inputStack))
+        --   ~ outputStack
+        -- ) => 
             SFin i l
             -> Instruction inputStack
                            outputStack
@@ -264,6 +264,8 @@ data Instruction (inputStack :: ValStackShape) (outputStack :: ValStackShape) (l
 
     -- TODO: missing WASM instructions
 
+    Leave :: SNat n -> Instruction inputStack inputStack locals wasmModule inputLabels inputLabels
+
 {-
 =============================================================================
 INSTRUCTION SEQUENCES
@@ -275,9 +277,9 @@ INSTRUCTION SEQUENCES
 -- of one instruction becomes the input stack of the next.
 infixr 5 :|  -- Right-associative, like list construction
 data InstructionSequence (inputStack :: ValStackShape) (outputStack :: ValStackShape) (locals :: LocalsShape n) (wasmModule :: WasmModule shape) (inputLabels :: LabelStackShape k) (outputLabels :: LabelStackShape l) where
-    End  :: InstructionSequence inputStack inputStack locals wasmModule inputLabels outputLabels   -- Base case: empty sequence (identity)
-    (:|) :: Instruction initialStack intermediateStack locals wasmModule inputLabels outputLabels               -- Inductive case: first instruction
-         -> InstructionSequence intermediateStack finalStack locals wasmModule inputLabels outputLabels                          -- rest of sequence
+    End  :: InstructionSequence inputStack inputStack locals wasmModule inputLabels inputLabels   -- Base case: empty sequence (identity)
+    (:|) :: Instruction initialStack intermediateStack locals wasmModule inputLabels intermediateLabels               -- Inductive case: first instruction
+         -> InstructionSequence intermediateStack finalStack locals wasmModule intermediateLabels outputLabels                          -- rest of sequence
          -> InstructionSequence initialStack finalStack locals wasmModule inputLabels outputLabels                              -- combined sequence
 
 {-
@@ -293,6 +295,52 @@ data Function (inputStack :: ValStackShape) (resultStack :: ValStackShape) (loca
     Function :: FuncTypeAnn inputStack resultStack -> InstructionSequence inputStack resultStack locals wasmModule outputLabels outputLabels -> Function inputStack resultStack locals outputLabels
     -- add a new type that captures the function type annotation, i.e.
     -- FuncTypeAnn inputStack resultStack ->
+
+
+
+
+{-
+=============================================================================
+LABEL THINGS
+=============================================================================
+-}
+
+type family GetLabelType (n :: Nat) (labels :: LabelStackShape l) :: ValStackShape where
+    GetLabelType 'Z ('(t, _, cont) :>: ts)       = t
+    GetLabelType ('S n) ('(t, _, cont) :>: ts)   = GetLabelType n ts
+
+-- Save the stack length of the current value stack along with the label type on the label stack
+data LabelStackShape (l :: Nat) where
+    EmptyLabels :: LabelStackShape 'Z
+    (:>:) :: (ValStackShape, Nat, InstructionSequence inputStack outputStack locals wasmModule inputLabels outputLabels) -> LabelStackShape l -> LabelStackShape ('S l)
+    
+
+-- type family GetLabelCreationStackLength (n :: Nat) (labels :: LabelStackShape l) :: Nat where
+--     GetLabelCreationStackLength 'Z ('(t, lenInput, cont) :>: ts)       = lenInput
+--     GetLabelCreationStackLength ('S n) ('(t, _, cont) :>: ts)   = GetLabelCreationStackLength n ts
+
+
+-- | Type family to remove top n labels from a LabelStackShape.
+type family RemoveLabels (i :: Nat) (labels :: LabelStackShape l) :: LabelStackShape (l :- 'S i) where
+    RemoveLabels 'Z ('(l, _) :>: ls) = ls
+    RemoveLabels ('S i) ('(t, _) :>: ts) = RemoveLabels i ts
+
+-- | Type family to concatenate two LabelStackShapes.
+type family ConcatLabelStacks (ls1 :: LabelStackShape l1) (ls2 :: LabelStackShape l2) :: LabelStackShape (l1 :+ l2) where
+    ConcatLabelStacks EmptyLabels ls2 = ls2
+    ConcatLabelStacks (t :>: ts) ls2 = t :>: ConcatLabelStacks ts ls2
+
+-- | Type family to check if a LabelStackShape includes a specific ValStackShape.
+type family IncludesLabelType (labelType :: ValStackShape) (labels :: LabelStackShape l) :: Bool where
+    IncludesLabelType labelType EmptyLabels = 'False
+    IncludesLabelType labelType ('(labelType, _) :>: ls) = 'True
+    IncludesLabelType labelType ('(t, _) :>: ls) = IncludesLabelType labelType ls
+
+
+type family GetNthLabelType (n :: Nat) (labels :: LabelStackShape l) :: (ValStackShape, Nat) where
+    GetNthLabelType 'Z ('(t, lenInput) :>: ts)       = '(t, lenInput)
+    GetNthLabelType ('S n) ('(t, _) :>: ts)   = GetNthLabelType n ts
+
 
 {-
 =============================================================================

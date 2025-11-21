@@ -16,7 +16,7 @@
 module WasmInterpreter where
 
 import Data.Int (Int32, Int64)
-import Data.Word (Word32)
+import Data.Word (Word32, Word64)
 import Types (RuntimeTypeOf, ValStackShape(..), type (+>+), GetLabelType, LabelStackShape(..), RemoveLabels, BlockType (..), SValStackShape(..), FuncTypeAnn (..), StackLength, stackShapeLen, Take, Drop, GetLabelCreationStackLength, FuncTypeAnn (..), Reverse)
 import Utils
 import WasmModule (WasmModule(..), GetGlobals, GlobalTypeToWasmType, GlobalsShape, GlobalType (GlobalTypeMW), KnownMutability(SVar, SConst))
@@ -89,9 +89,13 @@ data Globals (globalsShape :: GlobalsShape n) where
     NoGlobals   :: Globals 'VNil
     ConsGlobals :: RuntimeTypeOf wasmType -> KnownMutability m -> Globals globalsShape -> Globals (GlobalTypeMW m wasmType :<| globalsShape)
 
+-- inside a label on the stack we savw
+    -- the label stack Shape (so the types on the top of the value stack when the label is accessed)
+    -- the length of the value stack when the label was created
+    -- the continuation of the label (what should be executed when e.g. br is called)
 data Labels (labelsShape :: LabelStackShape n) where
     NoLabels :: Labels 'Types.EmptyLabels
-    ConsLabels  :: SValStackShape labelStackShape -> SNat m -> Labels restLabelsShape -> Labels ('(labelStackShape, m) :>: restLabelsShape)
+    ConsLabels  :: SValStackShape labelStackShape -> SNat m -> (RuntimeInstrSeq instrSeq) -> Labels restLabelsShape -> Labels ('(labelStackShape, m, instrSeq) :>: restLabelsShape)
 -- data Memory (memsShape :: MemoriesShape n) where
 --     NoMems   :: Memory 'VNil
 --     ConsMems :: MemoryType -> Memory memsShape -> Memory (MemoryType :<| memsShape)
@@ -129,6 +133,41 @@ setGlobalValue SFZ newVal (ConsGlobals _ SVar rest) = ConsGlobals newVal SVar re
 setGlobalValue (SFS idx) newVal (ConsGlobals oldVal SVar rest) = ConsGlobals oldVal SVar (setGlobalValue idx newVal rest)
 setGlobalValue _ _ (ConsGlobals _ SConst _) = error "Cannot set value of a constant global variable" -- TODO: double check this
 setGlobalValue _ _ NoGlobals = error "Index out of bounds in setGlobalValue"
+
+data RuntimeInstr (instr :: Instruction inputStack outputStack locals wasmModule inputLabels outputLabels) where
+    RInstr :: Instruction inputStack outputStack locals wasmModule inputLabels outputLabels
+           -> RuntimeInstr instr
+
+data RuntimeInstrSeq (instrSeq :: InstructionSequence inputStack outputStack locals wasmModule inputLabels outputLabels) where
+    REnd  :: RuntimeInstrSeq 'End
+    RCons :: RuntimeInstr (instr :: Instruction inputStack intermediateStack locals wasmModule inputLabels intermediateLabels)
+          -> RuntimeInstrSeq restInstrSeq
+          -> RuntimeInstrSeq (instr :| restInstrSeq)
+
+
+executeBody :: forall inputStack outputStack locals wasmModule inputLabels outputLabels intermediateStack intermediateLabels .
+            -- ((firstInstr :: Instruction inputStack intermediateStack locals wasmModule inputLabels intermediateLabels) :| restInstr ~ totalInstr) => 
+            -- InstructionSequence inputStack outputStack locals wasmModule inputLabels outputLabels
+            -- RuntimeInstrSeq (totalInstr :: InstructionSequence inputStack outputStack locals wasmModule inputLabels outputLabels)
+            -- RuntimeInstrSeq ((firstInstr :: Instruction inputStack intermediateStack locals wasmModule inputLabels intermediateLabels) :| (restInstr :: InstructionSequence intermediateStack outputStack locals wasmModule intermediateLabels outputLabels))
+            Instruction inputStack intermediateStack locals wasmModule inputLabels intermediateLabels
+            -> InstructionSequence intermediateStack outputStack locals wasmModule intermediateLabels outputLabels
+            -> RuntimeContext inputStack locals wasmModule inputLabels
+            -> (InstructionSequence outputStack outputStack locals wasmModule outputLabels outputLabels, 
+                 RuntimeContext outputStack locals wasmModule outputLabels)
+executeBody instr instrSeq prevCtxt = case instrSeq of
+    End -> (End, executeInstruction instr prevCtxt)
+        -- let intermediateCtxt = executeInstruction instr prevCtxt
+        -- in (REnd :: RuntimeInstrSeq restInstr,
+        --           intermediateCtxt :: RuntimeContext outputStack locals wasmModule outputLabels)
+    (Leave SZ) :| rest -> let (topLabel, restLabels) = popNthLabel SFZ (labels prevCtxt)
+        in undefined
+    (Leave index) :| rest -> undefined
+    (i :| rest) -> 
+        let intermediateCtxt = executeInstruction instr prevCtxt
+            (finalInstrSeq, finalCtxt) = executeBody i rest intermediateCtxt
+        in (finalInstrSeq, finalCtxt)
+
 
 -- TODO
 executeInstruction :: forall inputStack outputStack locals wasmModule inputLabels outputLabels .
@@ -325,23 +364,23 @@ executeInstruction instr prevCtxt@(RuntimeContext prevStack prevLocals prevGloba
     Block (BTParamsResults _ (res :: SValStackShape resStack)) instrSeq ->
       let newLabels = ConsLabels res (stackLength prevStack) (labels prevCtxt)
           newContext =
-            executeInstructionSequence instrSeq (prevCtxt { labels = newLabels } :: RuntimeContext inputStack locals wasmModule ('(resStack, StackLength inputStack) :>: inputLabels)) funcMap
+            executeInstructionSequence instrSeq (prevCtxt { labels = newLabels } :: RuntimeContext inputStack locals wasmModule ('(resStack, StackLength inputStack) :>: inputLabels)) 
       in newContext { labels = prevLabels } :: RuntimeContext outputStack locals wasmModule inputLabels
     Loop (BTParamsResults (params :: SValStackShape paramsStack) _) instrSeq -> 
                 let newLabels = ConsLabels params (stackLength prevStack) (labels prevCtxt)
-                    newContext = executeInstructionSequence instrSeq (prevCtxt { labels = newLabels } :: RuntimeContext inputStack locals wasmModule ('(paramsStack, StackLength inputStack) :>: inputLabels)) funcMap
+                    newContext = executeInstructionSequence instrSeq (prevCtxt { labels = newLabels } :: RuntimeContext inputStack locals wasmModule ('(paramsStack, StackLength inputStack) :>: inputLabels)) 
                 in newContext { labels = prevLabels }
     If (BTParamsResults _ (res :: SValStackShape resStack)) thenSeq elseSeq -> case prevStack of
         Push cond (rest :: Stack inputStackWOCond) ->
             if cond /= 0
             then 
                 let newLabels = ConsLabels res (stackLength rest) (labels prevCtxt)
-                    newCtxt = executeInstructionSequence thenSeq (prevCtxt { labels = newLabels, stack = rest } :: RuntimeContext inputStackWOCond locals wasmModule ('(resStack, StackLength inputStackWOCond) :>: inputLabels)) funcMap
+                    newCtxt = executeInstructionSequence thenSeq (prevCtxt { labels = newLabels, stack = rest } :: RuntimeContext inputStackWOCond locals wasmModule ('(resStack, StackLength inputStackWOCond) :>: inputLabels)) 
                 in newCtxt { labels = prevLabels } :: RuntimeContext outputStack locals wasmModule inputLabels
 
             else 
                 let newLabels = ConsLabels res (stackLength rest) (labels prevCtxt)
-                    newCtxt = executeInstructionSequence elseSeq (prevCtxt { labels = newLabels, stack = rest } :: RuntimeContext inputStackWOCond locals wasmModule ('(resStack, StackLength inputStackWOCond) :>: inputLabels)) funcMap
+                    newCtxt = executeInstructionSequence elseSeq (prevCtxt { labels = newLabels, stack = rest } :: RuntimeContext inputStackWOCond locals wasmModule ('(resStack, StackLength inputStackWOCond) :>: inputLabels)) 
                 in newCtxt { labels = prevLabels } :: RuntimeContext outputStack locals wasmModule inputLabels
     Br (labelIdx :: SFin i n) ->
         let (labelType, lenStackBeforeLabelCreation) = popNthLabel labelIdx prevLabels
@@ -353,15 +392,6 @@ executeInstruction instr prevCtxt@(RuntimeContext prevStack prevLocals prevGloba
              }  :: RuntimeContext outputStack locals wasmModule inputLabels
 
 
-
-
-
-
-
-
-
-
-
     BrIf (labelIdx :: SFin i n) -> case prevStack of
         Push cond (rest :: Stack restStackShape) ->
             if cond == 0
@@ -370,29 +400,11 @@ executeInstruction instr prevCtxt@(RuntimeContext prevStack prevLocals prevGloba
                           }  :: RuntimeContext restStackShape locals wasmModule inputLabels
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     Call funcName (FFuncTypeAnn params res) -> undefined -- executeFunction (Function Empty outputStack params (ConsLabels res prevLabels)) (RuntimeContext prevStack prevLocals prevGlobal prevLabels)
 
-executeInstructionSequence :: InstructionSequence inputStack outputStack locals wasmModule inputLabels inputLabels
+executeInstructionSequence :: InstructionSequence inputStack outputStack locals wasmModule inputLabels outputLabels
                            -> RuntimeContext inputStack locals wasmModule inputLabels
-                           -> RuntimeContext outputStack locals wasmModule inputLabels
+                           -> RuntimeContext outputStack locals wasmModule outputLabels
 executeInstructionSequence instrSeq prevCtxt@(RuntimeContext inputStack prevLocals prevWasmModule prevLabels) = case instrSeq of
     End -> RuntimeContext inputStack prevLocals prevWasmModule prevLabels
     (instr :| rest) ->

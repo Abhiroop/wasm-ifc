@@ -90,34 +90,6 @@ type family (upper :: ValStackShape) +>+ (lower :: ValStackShape) :: ValStackSha
 infixl 5 +>+
 
 
--- Save the stack length of the current value stack along with the label type on the label stack
-data LabelStackShape (l :: Nat) where
-    EmptyLabels :: LabelStackShape 'Z
-    (:>:) :: (ValStackShape, Nat) -> LabelStackShape l -> LabelStackShape ('S l)
-
-
--- | Type family to remove top n labels from a LabelStackShape.
-type family RemoveLabels (i :: Nat) (labels :: LabelStackShape l) :: LabelStackShape (l :- 'S i) where
-    RemoveLabels 'Z ('(l, _) :>: ls) = ls
-    RemoveLabels ('S i) ('(t, _) :>: ts) = RemoveLabels i ts
-
--- | Type family to concatenate two LabelStackShapes.
-type family ConcatLabelStacks (ls1 :: LabelStackShape l1) (ls2 :: LabelStackShape l2) :: LabelStackShape (l1 :+ l2) where
-    ConcatLabelStacks EmptyLabels ls2 = ls2
-    ConcatLabelStacks (t :>: ts) ls2 = t :>: ConcatLabelStacks ts ls2
-
--- | Type family to check if a LabelStackShape includes a specific ValStackShape.
-type family IncludesLabelType (labelType :: ValStackShape) (labels :: LabelStackShape l) :: Bool where
-    IncludesLabelType labelType EmptyLabels = 'False
-    IncludesLabelType labelType ('(labelType, _) :>: ls) = 'True
-    IncludesLabelType labelType ('(t, _) :>: ls) = IncludesLabelType labelType ls
-
-
-type family GetNthLabelType (n :: Nat) (labels :: LabelStackShape l) :: (ValStackShape, Nat) where
-    GetNthLabelType 'Z ('(t, lenInput) :>: ts)       = '(t, lenInput)
-    GetNthLabelType ('S n) ('(t, _) :>: ts)   = GetNthLabelType n ts
-
-
 type family StackLength (s :: ValStackShape) :: Nat where
     StackLength EmptyValStack       = 'Z
     StackLength (t :> ts)  = 'S (StackLength ts)
@@ -158,14 +130,6 @@ data KnownWasmType (wasmType :: WasmType) where
     ForI64 :: KnownWasmType I64
 
 
-type family GetLabelType (n :: Nat) (labels :: LabelStackShape l) :: ValStackShape where
-    GetLabelType 'Z ('(t, _) :>: ts)       = t
-    GetLabelType ('S n) ('(t, _) :>: ts)   = GetLabelType n ts
-
-type family GetLabelCreationStackLength (n :: Nat) (labels :: LabelStackShape l) :: Nat where
-    GetLabelCreationStackLength 'Z ('(t, lenInput) :>: ts)       = lenInput
-    GetLabelCreationStackLength ('S n) ('(t, _) :>: ts)   = GetLabelCreationStackLength n ts
-
 
 
 -- | Type family that maps WebAssembly types to their Haskell representations.
@@ -173,3 +137,4 @@ type family GetLabelCreationStackLength (n :: Nat) (labels :: LabelStackShape l)
 type family RuntimeTypeOf (wasmType :: WasmType) :: Type where
     RuntimeTypeOf I32 = Int32
     RuntimeTypeOf I64 = Int64
+
