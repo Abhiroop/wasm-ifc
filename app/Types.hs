@@ -47,14 +47,15 @@ data SValStackShape (s :: ValStackShape) where
     (::>) :: KnownWasmType t -> SValStackShape ts -> SValStackShape (t :> ts)
 
 
+
 type family LenStackShape (s :: ValStackShape) :: Nat where
   LenStackShape 'EmptyValStack      = 'Z
   LenStackShape (t :> ts)   = 'S (LenStackShape ts)
 
 
-stackShapeLen :: SValStackShape s -> SNat (LenStackShape s)
-stackShapeLen SEmpty         = SZ
-stackShapeLen (_kw ::> rest) = SS (stackShapeLen rest)
+stackShapeLen :: SValStackShape s -> Nat
+stackShapeLen SEmpty         = Z
+stackShapeLen (_kw ::> rest) = S (stackShapeLen rest)
 
 -- | Type-level representation of the WebAssembly stack.
 -- The stack grows to the right: (I32 :> I32 :> Empty) means two I32s on stack.
@@ -129,6 +130,12 @@ data KnownWasmType (wasmType :: WasmType) where
     ForI32 :: KnownWasmType I32
     ForI64 :: KnownWasmType I64
 
+-- Runtime representation of WASM values, with types encoded in the GADT
+-- data RuntimeWasmTypes (t :: WasmType) where
+--     RInt32 :: RuntimeTypeOf 'I32 -> RuntimeWasmTypes 'I32
+--     RInt64 :: RuntimeTypeOf 'I64 -> RuntimeWasmTypes 'I64
+
+type RuntimeWasmTypes = Int32
 
 
 
@@ -137,4 +144,3 @@ data KnownWasmType (wasmType :: WasmType) where
 type family RuntimeTypeOf (wasmType :: WasmType) :: Type where
     RuntimeTypeOf I32 = Int32
     RuntimeTypeOf I64 = Int64
-

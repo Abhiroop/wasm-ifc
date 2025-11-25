@@ -4,12 +4,16 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE TypeOperators #-}
 
 module WasmModule where 
 -- import GHC.TypeLits (Nat)  
-import Types (WasmType(..))    
+import Types (WasmType(..), RuntimeTypeOf, KnownWasmType(..), RuntimeWasmTypes)    
 import Utils 
 import Data.Word (Word32, Word64)
+import Data.Int (Int64, Int32)
+import Data.Kind (Type)
+import Data.List (List)
 -- https://webassembly.github.io/spec/core/syntax/modules.html#syntax-global
 -- WebAssembly programs are organized into modules, 
 -- which are the unit of deployment, loading, and compilation.
@@ -46,12 +50,12 @@ type family GetMutability (g :: GlobalType) :: Mutability where
 type GlobalsShape n = Vec n GlobalType
 
 type family GetGlobalsShape (m :: WasmModuleShape) :: Nat where
-    GetGlobalsShape ('WasmModuleShape globalsShape _) = globalsShape
+    GetGlobalsShape ('WasmModuleShapeR globalsShape _) = globalsShape
 
 type family GetMemoriesShape (m :: WasmModuleShape) :: Nat where
-    GetMemoriesShape ('WasmModuleShape _ memoriesShape) = memoriesShape
+    GetMemoriesShape ('WasmModuleShapeR _ memoriesShape) = memoriesShape
 
-data WasmModuleShape = WasmModuleShape {
+data WasmModuleShape = WasmModuleShapeR {
     globalsShape :: Nat,
     memoriesShape :: Nat
     }
@@ -66,7 +70,7 @@ data WasmModuleShape = WasmModuleShape {
         -- import vec(import),
         -- exports vec(export)    
 --    }
-data WasmModule (shape :: WasmModuleShape) = WasmModule {
+data WasmModule (shape :: WasmModuleShape) = WasmModuleR {
     globals :: GlobalsShape (GetGlobalsShape shape),
     mems :: MemoriesShape (GetMemoriesShape shape)
     -- , x :: String
@@ -74,7 +78,7 @@ data WasmModule (shape :: WasmModuleShape) = WasmModule {
     }
 
 type family GetGlobals (m :: WasmModule shape) :: Vec (GetGlobalsShape shape) GlobalType where
-    GetGlobals ('WasmModule globals _) = globals
+    GetGlobals ('WasmModuleR globals _) = globals
 
 -- Type family to extract WasmType from GlobalType
 -- ABHI: We need something here that discards the mutability information
@@ -101,18 +105,48 @@ type GlobalSlot = Nat
 
 -- technically also addr type that defines whether the address is i32 or i64
 -- https://webassembly.github.io/spec/core/syntax/types.html#syntax-memtype
-data Limits = Limits Word64 (Maybe Word64)
-newtype MemoryType = MemoryType Limits
+-- data MemoryArray where
+--     MemoryArrayR :: SNat n -> (Vec n WasmType) -> MemoryArray
 
+
+-- data SomeWasmType where
+--     SomeWasmType :: RuntimeWasmTypes t -> SomeWasmType
+type MemoryArray = List Int32
+data Limits = LimitsR Word64 (Maybe Word64)
+-- data MemoryType (n::Nat) where
+--      MemoryTypeR :: SNat n -> Limits -> MemoryArray n -> MemoryType n
+
+data SWord64 (n :: Word64) where
+    ZWord64 :: SWord64 (fromIntegral 0)
+    SWord64 :: Word64 -> SWord64 n
+
+
+{-
+data ValStackShape where
+    EmptyValStack :: ValStackShape
+    (:>) :: WasmType -> ValStackShape -> ValStackShape
+-}
 -- Is a vector with memory type which defines the limits of the memory space.
-type MemoriesShape n = Vec n MemoryType
+-- the first to arguments are the min and max limits
+-- data MemoriesShapeStack where
+--     EmptyMemShape :: MemoriesShapeStack
+--     ConsMemShape :: (SWord64 n,Maybe (SWord64 m)) -> MemoriesShapeStack -> MemoriesShapeStack
 
-data MemArg (alignment :: Word32) (offset :: Word64)where -- Memory Offset Alignment
-    SMemArg :: MemArg alignment offset 
+type MemoriesShape (n::Nat) = Vec n MemoryArray
+
+data MemArg (alignment :: Word32) (offset :: Word64) where -- Memory Offset Alignment
+    SMemArg :: Word32 -> Word64 -> MemArg alignment offset
     -- Is this ok? or do we need to have an "incremental" constructor?
     -- because we have it simply defined like this we have it as unsigned integers like in the 
     -- spec https://webassembly.github.io/spec/core/syntax/instructions.html#memory-instructions
 
 
-type family GetMems (m :: WasmModule shape) :: Vec (GetMemoriesShape shape) MemoryType where
-    GetMems ('WasmModule _ mems) = mems
+type family GetMems (m :: WasmModule shape) :: Vec (GetMemoriesShape shape) MemoryArray where
+    GetMems ('WasmModuleR _ mems) = mems
+
+-- type family GetMemArrayFromMemoryType (memType :: MemoryType) :: List WasmType where
+--     GetMemArrayFromMemoryType (_ arr) = arr
+
+
+-- data RuntimeTypeOfMemory (memType :: MemoryType) where
+--     RuntimeTypeOfMemory :: MemoryType -> RuntimeTypeOfMemory memType
