@@ -11,7 +11,7 @@ import GHC.TypeLits (TypeError)
 import Data.Kind (Type)
 import Data.Int (Int32, Int64)
 import Data.String ()
-import Utils(Nat(S, Z), (:-), (:+), SNat(..))
+import Utils(Nat(S, Z), (:-), (:+), (.+.), SNat(..))
 import GHC.TypeError (ErrorMessage(Text))
 
 {-
@@ -67,8 +67,16 @@ data ValStackShape where
 -- | Type family that reverses a ValStackShape.
 type family Reverse (s :: ValStackShape) :: ValStackShape where
   Reverse EmptyValStack    = EmptyValStack
-  Reverse (t :> s) = Reverse s +>+ (t :> EmptyValStack)
+  Reverse (t :> (s :: ValStackShape)) = Reverse s +>+ (t :> EmptyValStack)
 
+
+-- type family ReverseAcc (s :: ValStackShape n) (acc :: ValStackShape m)
+--     :: ValStackShape (n ::+ m) where
+--   ReverseAcc EmptyValStack acc   = acc
+--   ReverseAcc (x :> xs)   acc  = ReverseAcc xs (x :> acc)
+
+-- type family Reverse (s :: ValStackShape n) :: ValStackShape n where
+--   Reverse s = ReverseAcc s EmptyValStack
 -- | Type family that takes the top n elements from a ValStackShape.
 type family Take (n :: Nat) (s :: ValStackShape) :: ValStackShape where
   Take 'Z       s         = 'EmptyValStack
@@ -88,7 +96,7 @@ type family Drop (n :: Nat) (s :: ValStackShape) :: ValStackShape where
 type family (upper :: ValStackShape) +>+ (lower :: ValStackShape) :: ValStackShape where
     EmptyValStack +>+ lower = lower
     (top :> upper) +>+ lower = top :> (upper +>+ lower)
-infixl 5 +>+
+infixr 5 +>+
 
 
 type family StackLength (s :: ValStackShape) :: Nat where

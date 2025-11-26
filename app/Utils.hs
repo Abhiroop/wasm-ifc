@@ -3,8 +3,10 @@
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE TypeFamilyDependencies #-}
 
 module Utils where
+import Data.Type.Equality ((:~:)(Refl))
 
 -----------------------------------------------------------------------------
 -- PEANO NATS
@@ -36,10 +38,23 @@ type family (m :: Nat) :- (n :: Nat) :: Nat where
 
 
 -- Peano Nat addition
-infixl 6 :+
 type family (m :: Nat) :+ (n :: Nat) :: Nat where
     'Z :+ n         = n
-    ('S m) :+ n = 'S (m :+ n)
+    'S m :+ n = 'S (m :+ n)
+
+congSuc :: a :~: b -> 'S a :~: 'S b
+congSuc Refl = Refl
+
+nPlusZero :: SNat n -> (n :+ 'Z) :~: n
+nPlusZero SZ = Refl
+nPlusZero (SS m) = congSuc (nPlusZero m)
+
+(.+.) :: SNat a -> SNat b -> SNat (a :+ b)
+SZ .+. b    = b
+SS m .+. b = SS (m .+. b)
+-- type family (m :: Nat) ::+ (n :: Nat) :: Nat where
+--     'Z ::+ n        = n
+--     m ::+ ('S n) = 'S (m ::+ n)
 
 
 -----------------------------------------------------------------------------
@@ -76,8 +91,8 @@ type family GetVecLen (v :: Vec n a) :: Nat where
     The `i` parameter is a WITNESS to the specific index value
 @-}
 data SFin (i :: Nat) (n :: Nat) where
-    SFZ :: SFin 'Z ('S n)
-    SFS :: SFin i n -> SFin ('S i) ('S n)
+    SFZ :: (LessThan 'Z ('S n) ~ 'True) => SFin 'Z ('S n)
+    SFS :: (LessThan i ('S n) ~ 'True) => SFin i n -> SFin ('S i) ('S n)
 
 sexample1 :: SFin 'Z ('S ('S 'Z))        -- Specifically index 0, for length 2
 sexample1 = SFZ

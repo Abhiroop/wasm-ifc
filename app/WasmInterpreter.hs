@@ -43,6 +43,7 @@ takeStack SZ stk = (EmptyStack, stk)
 takeStack (SS n) (Push x xs) =
   let (taken, rest) = takeStack n xs
   in (Push x taken, rest)
+takeStack (SS _) EmptyStack = error "takeStack: stack underflow"
 
 
 
@@ -51,13 +52,25 @@ concatStacks EmptyStack s2       = s2
 concatStacks (Push val rest) s2 = Push val (concatStacks rest s2)
 
 
-popNthLabel :: -- ( GetLabelCreationStackLength n restLabelsShape ~ stackLen
-            --    , GetLabelType n restLabelsShape ~ rightLabelStack) =>
-               SFin n l
-            -> Labels l
-            -> (Nat, Nat)
-popNthLabel SFZ (ConsLabels labelTypeArity lenInputStack _) = (labelTypeArity, lenInputStack)
-popNthLabel (SFS idx) (ConsLabels _ _ rest) = popNthLabel idx rest
+-- type family GetRunTimeLabelEntry (l :: Nat) (labels:: Labels n) :: (Nat, Nat) where
+--     GetRunTimeLabelEntry 'Z (ConsLabels arity h rest) = '(arity, h)
+--     GetRunTimeLabelEntry ('S n) (ConsLabels _ _ rest) = GetRunTimeLabelEntry n rest
+
+popNthLabelFromTop :: -- ( GetLabelCreationStackLength n restLabelsShape ~ stackLen
+            -- (   origLabelStackShape ~ LabelStackShape l,
+            -- (LenStackShape(GetLabelType n (restLabelsShape :: LabelStackShape l)) ~ m) =>
+            -- ((LenStackShape(GetLabelType (l :- S n) (restLabelsShape :: LabelStackShape l))) ~ m) =>
+            -- (GetRunTimeLabelEntry n (l1 :: Labels l) ~ '(a, h), arity ~ SNat a) => 
+            SFin n ('S l)
+            -- -> Labels (labelsShape :: LabelStackShape l)
+            -> Labels (('(arity, height) :>: (restLabelsShape :: LabelStackShape l)) :: LabelStackShape ('S l))
+            -> (SNat (LenStackShape arity), SNat height)
+            -- -> (SNat arity, SNat height)
+            -- -> (arity, SNat h)
+popNthLabelFromTop SFZ ((ConsLabels labelTypeArity lenInputStack _) :: Labels (restLabelsShape :: LabelStackShape l)) = (labelTypeArity, lenInputStack) -- :: (SNat (LenStackShape(GetLabelType (S n) restLabelsShape)))
+-- popNthLabelFromTop SFZ ((ConsLabels labelTypeArity lenInputStack _) :: Labels l) = (labelTypeArity , lenInputStack) -- :: (SNat (LenStackShape(GetLabelType (S n) restLabelsShape)))    
+-- popNthLabelFromTop (SFS (idx :: SFin n1 l1)) (ConsLabels _ _ (rest :: Labels (newLabelsShape :: LabelStackShape l1))) = popNthLabelFromTop idx rest
+popNthLabelFromTop (SFS (idx :: SFin n1 l1)) ((ConsLabels _ _ rest) :: Labels (top :>: remainingLabels)) = popNthLabelFromTop idx rest
 
 
 reduceStackToLength :: forall n stackShape.
@@ -71,10 +84,6 @@ reverseStack EmptyStack = EmptyStack
 reverseStack (Push @wasmType val rest) =
   concatStacks (reverseStack rest) (Push @wasmType val EmptyStack)
 
-
-removeLabelsUntilStackIdx :: SFin n l -> Labels l -> Labels (l :- S n)
-removeLabelsUntilStackIdx SFZ (ConsLabels _ _ rest) = rest
-removeLabelsUntilStackIdx (SFS idx) (ConsLabels _ _ rest) = removeLabelsUntilStackIdx idx rest
 
 
 
@@ -92,9 +101,13 @@ data Globals (globalsShape :: GlobalsShape n) where
     -- the label stack Shape (so the types on the top of the value stack when the label is accessed)
     -- the length of the value stack when the label was created
     -- the continuation of the label (what should be executed when e.g. br is called)
-data Labels (labelsShape :: Nat) where
-    NoLabels :: Labels 'Z
-    ConsLabels  :: Nat -> Nat -> Labels n -> Labels ('S n)
+-- data Labels (newLabelsShape :: Nat) where
+data Labels (labelsShape :: LabelStackShape n) where
+    NoLabels :: Labels 'EmptyLabels
+    -- NoLabels :: Labels 'Z
+    ConsLabels :: SNat (LenStackShape a) -> SNat h -> Labels (labelsShape :: LabelStackShape n) -> Labels ('(a :: ValStackShape, h:: Nat) :>: labelsShape) -- (newLabelsShape :: LabelStackShape ('S n))
+    -- ConsLabels :: SNat a -> SNat h -> Labels n -> Labels ('S n) -- (newLabelsShape :: LabelStackShape ('S n))
+
 
 data Memory (memsShape :: MemoriesShape n) where
     NoMems   :: Memory 'VNil
@@ -102,7 +115,7 @@ data Memory (memsShape :: MemoriesShape n) where
 
 
 
-data RuntimeContext (stackShape :: ValStackShape) (localsShape :: LocalsShape n) (wasmModule :: WasmModule shape) (labelsShape :: Nat) = RuntimeContext
+data RuntimeContext (stackShape :: ValStackShape) (localsShape :: LocalsShape n) (wasmModule :: WasmModule shape) (labelsShape :: LabelStackShape s) = RuntimeContext
     { stack  :: Stack stackShape,
       locals :: Locals localsShape,
       globals :: Globals (GetGlobals wasmModule), -- :: GlobalsShape (GetGlobalsShape shape)),
@@ -193,8 +206,10 @@ data RuntimeInstrSeq (instrSeq :: InstructionSequence inputStack outputStack loc
 -- TODO
 executeInstruction :: forall inputStack outputStack locals wasmModule inputLabels outputLabels .
                       Instruction inputStack outputStack locals wasmModule inputLabels outputLabels
-                   -> RuntimeContext inputStack locals wasmModule (LenLabelStackShape inputLabels)
-                   -> RuntimeContext outputStack locals wasmModule (LenLabelStackShape outputLabels)
+                   -> RuntimeContext inputStack locals wasmModule inputLabels
+                   -> RuntimeContext outputStack locals wasmModule outputLabels
+                --    -> RuntimeContext inputStack locals wasmModule (LenLabelStackShape inputLabels)
+                --    -> RuntimeContext outputStack locals wasmModule (LenLabelStackShape outputLabels)
 executeInstruction instr prevCtxt@(RuntimeContext prevStack prevLocals prevGlobal prevLabels prevMemory) = case instr of
     I32Const val -> RuntimeContext (Push val prevStack) prevLocals prevGlobal prevLabels prevMemory
     I32Add       -> case prevStack of
@@ -398,7 +413,7 @@ executeInstruction instr prevCtxt@(RuntimeContext prevStack prevLocals prevGloba
       let newLabels = ConsLabels (stackShapeLen res) (stackLength prevStack) (labels prevCtxt)
           newContext =
             executeInstructionSequence instrSeq prevCtxt { labels = newLabels } -- :: RuntimeContext inputStack locals wasmModule ('(resStack, StackLength inputStack) :>: inputLabels)) 
-      in newContext { labels = prevLabels } :: RuntimeContext outputStack locals wasmModule (LenLabelStackShape inputLabels)
+      in newContext { labels = prevLabels } :: RuntimeContext outputStack locals wasmModule inputLabels
     Loop (BTParamsResults (params :: SValStackShape paramsStack) _) instrSeq -> 
                 let newLabels = ConsLabels (stackShapeLen params) (stackLength prevStack) (labels prevCtxt)
                     newContext = executeInstructionSequence instrSeq (prevCtxt { labels = newLabels } ) --untimeContext inputStack locals wasmModule ('(paramsStack, StackLength inputStack) :>: inputLabels)) 
@@ -415,14 +430,14 @@ executeInstruction instr prevCtxt@(RuntimeContext prevStack prevLocals prevGloba
                 let newLabels = ConsLabels (stackShapeLen res) (stackLength rest) (labels prevCtxt)
                     newCtxt = executeInstructionSequence elseSeq (prevCtxt { labels = newLabels, stack = rest }) -- :: RuntimeContext inputStackWOCond locals wasmModule ('(resStack, StackLength inputStackWOCond) :>: inputLabels)) 
                 in newCtxt { labels = prevLabels } -- :: RuntimeContext outputStack locals wasmModule inputLabels
-    Br (labelIdx :: SFin i n) -> undefined
-        -- let (labelType, lenStackBeforeLabelCreation) = popNthLabel labelIdx prevLabels
-        --     (stackToKeep, _) = takeStack (stackShapeLen labelType) prevStack
-        --     baseStack  = reduceStackToLength lenStackBeforeLabelCreation prevStack
-        --     finalStack = concatStacks stackToKeep baseStack
-        --  in prevCtxt {
-        --       stack = finalStack
-        --      }  -- :: RuntimeContext outputStack locals wasmModule inputLabels
+    Br labelIdx -> 
+        let (labelType, lenStackBeforeLabelCreation) = popNthLabel labelIdx prevLabels
+            (stackToKeep, _) = takeStack labelType prevStack
+            baseStack  = reduceStackToLength lenStackBeforeLabelCreation prevStack
+            finalStack = concatStacks stackToKeep baseStack
+         in prevCtxt {
+              stack = finalStack
+             }  -- :: RuntimeContext outputStack locals wasmModule inputLabels
 
 
     BrIf (labelIdx :: SFin i n) -> case prevStack of
@@ -436,9 +451,13 @@ executeInstruction instr prevCtxt@(RuntimeContext prevStack prevLocals prevGloba
     Call funcName (FFuncTypeAnn params res) -> undefined -- executeFunction (Function Empty outputStack params (ConsLabels res prevLabels)) (RuntimeContext prevStack prevLocals prevGlobal prevLabels)
     Leave labelIdx -> undefined
 
+
+
 executeInstructionSequence :: InstructionSequence inputStack outputStack locals wasmModule inputLabels outputLabels
-                           -> RuntimeContext inputStack locals wasmModule ( LenLabelStackShape inputLabels)
-                           -> RuntimeContext outputStack locals wasmModule (LenLabelStackShape outputLabels)
+                           -> RuntimeContext inputStack locals wasmModule inputLabels
+                           -> RuntimeContext outputStack locals wasmModule outputLabels
+                        --    -> RuntimeContext inputStack locals wasmModule (LenLabelStackShape inputLabels)
+                        --    -> RuntimeContext outputStack locals wasmModule (LenLabelStackShape outputLabels)
 executeInstructionSequence instrSeq prevCtxt@(RuntimeContext inputStack prevLocals prevWasmModule prevLabels prevMemory) = case instrSeq of
     End -> RuntimeContext inputStack prevLocals prevWasmModule prevLabels prevMemory
     (instr :| rest) ->
@@ -446,8 +465,10 @@ executeInstructionSequence instrSeq prevCtxt@(RuntimeContext inputStack prevLoca
         in executeInstructionSequence rest intermediateContext
 
 executeFunction :: Function inputStack outputStack locals labels wasmModule
-                   -> RuntimeContext inputStack locals globals (LenLabelStackShape labels)
-                   -> RuntimeContext outputStack locals globals (LenLabelStackShape labels)
+                   -> RuntimeContext inputStack locals globals labels
+                   -> RuntimeContext outputStack locals globals labels
+                --    -> RuntimeContext inputStack locals globals (LenLabelStackShape labels)
+                --    -> RuntimeContext outputStack locals globals (LenLabelStackShape labels)
 executeFunction func@(Function (FFuncTypeAnn params res) instrSeq) prevCtxt = undefined
     -- let newCtxt = executeInstructionSequence instrSeq (prevCtxt { stack = EmptyStack, locals = params }) :: RuntimeContext Empty locals globals labels
     -- in newCtxt { stack = concatStacks res (stack prevCtxt) }

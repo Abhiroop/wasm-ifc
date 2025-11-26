@@ -243,8 +243,9 @@ data Instruction (inputStack :: ValStackShape) (outputStack :: ValStackShape) (l
     Br    :: forall (i :: Nat) (l :: Nat) (n :: Nat) (shape :: WasmModuleShape) (inputLabels :: LabelStackShape l) (inputStack :: ValStackShape) (outputStack :: ValStackShape) (locals :: LocalsShape n) (wasmModule :: WasmModule shape) (baseStack :: ValStackShape).
         (CheckTopEqual (GetLabelType i inputLabels) inputStack ~ 'True,
          (Take (LenStackShape (GetLabelType i inputLabels)) inputStack +>+
-          Take (GetLabelCreationStackLength i inputLabels) (Reverse inputStack))
-          ~ outputStack
+          Take (GetLabelCreationValStackLength i inputLabels) (Reverse inputStack))
+          ~ outputStack,
+          l ~ LenLabelStackShape inputLabels
         ) => 
             SFin i l
             -> Instruction inputStack
@@ -325,9 +326,9 @@ type family LenLabelStackShape (s :: LabelStackShape l) :: Nat where
     LenLabelStackShape 'EmptyLabels     = 'Z
     LenLabelStackShape (t :>: ts)   = 'S (LenLabelStackShape ts)
 
-type family GetLabelCreationStackLength (n :: Nat) (labels :: LabelStackShape l) :: Nat where
-    GetLabelCreationStackLength 'Z ('(t, lenInput) :>: ts)       = lenInput
-    GetLabelCreationStackLength ('S n) ('(t, _) :>: ts)   = GetLabelCreationStackLength n ts
+type family GetLabelCreationValStackLength (n :: Nat) (labels :: LabelStackShape l) :: Nat where
+    GetLabelCreationValStackLength 'Z ('(t, lenInput) :>: ts)       = lenInput
+    GetLabelCreationValStackLength ('S n) ('(t, _) :>: ts)   = GetLabelCreationValStackLength n ts
 
 
 -- | Type family to remove top n labels from a LabelStackShape.
