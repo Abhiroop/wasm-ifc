@@ -53,9 +53,9 @@ type family LenStackShape (s :: ValStackShape) :: Nat where
   LenStackShape (t :> ts)   = 'S (LenStackShape ts)
 
 
-stackShapeLen :: SValStackShape s -> Nat
-stackShapeLen SEmpty         = Z
-stackShapeLen (_kw ::> rest) = S (stackShapeLen rest)
+stackShapeLen :: SValStackShape s -> SNat (LenStackShape s)
+stackShapeLen SEmpty         = SZ
+stackShapeLen (_kw ::> rest) = SS (stackShapeLen rest)
 
 -- | Type-level representation of the WebAssembly stack.
 -- The stack grows to the right: (I32 :> I32 :> Empty) means two I32s on stack.
