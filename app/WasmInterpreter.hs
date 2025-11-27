@@ -62,9 +62,9 @@ type family GetArity (label :: Label a h) :: Nat where
 type family GetHeight (label :: Label a h) :: Nat where
     GetHeight '(_, height :: SNat h) = h
 
-data RuntimeLabels (labels :: Labels l) where
-    RuntimeNoLabels :: RuntimeLabels 'NoLabels
-    RuntimeConsLabels :: forall (a :: Nat) (h :: Nat) (l :: Nat) (labels:: Labels l) (arity :: SNat a) (height :: SNat h) . Label a h -> RuntimeLabels labels -> RuntimeLabels (ConsLabels '(arity, height) labels)
+-- data RuntimeLabels (labels :: Labels l) where
+--     RuntimeNoLabels :: RuntimeLabels 'NoLabels
+--     RuntimeConsLabels :: forall (a :: Nat) (h :: Nat) (l :: Nat) (labels:: Labels l) (arity :: SNat a) (height :: SNat h) . Label a h -> RuntimeLabels labels -> RuntimeLabels (ConsLabels '(arity, height) labels)
 
 type Label a h = (SNat a, SNat h) -- (arity, height)
 
@@ -73,11 +73,11 @@ popNthLabelFromTop ::
             forall (a :: Nat) (h :: Nat) (n :: Nat) (l :: Nat) (allLabels :: Labels l) .(a ~ GetArity (GetRunTimeLabelEntry (l :- S n) allLabels),
             h ~ GetHeight (GetRunTimeLabelEntry (l :- 'S n) allLabels)) => 
             SFin n l
-            -> RuntimeLabels (allLabels :: Labels l)
+            -> Labels l
             -- -> (SNat (GetArity (GetRunTimeLabelEntry (l :- 'S n) allLabels)), SNat (GetHeight (GetRunTimeLabelEntry (l :- 'S n) allLabels)))
             -> (SNat a, SNat h)
-popNthLabelFromTop (SFZ :: SFin n l) ((RuntimeConsLabels ( labelTypeArity, lenInputStack) _) :: RuntimeLabels allLabels) =  (labelTypeArity, lenInputStack) --(labelTypeArity :: SNat (GetArity (GetRunTimeLabelEntry (l :- 'S n) allLabels)), lenInputStack :: SNat (GetHeight (GetRunTimeLabelEntry (l :- 'S n) allLabels))) -- :: (SNat (LenStackShape(GetLabelType (S n) restLabelsShape)))
-popNthLabelFromTop (SFS idx) (RuntimeConsLabels (_, _) rest) = popNthLabelFromTop idx rest
+popNthLabelFromTop (SFZ :: SFin n l) (ConsLabels ( labelTypeArity, lenInputStack) _) =  (labelTypeArity, lenInputStack) --(labelTypeArity :: SNat (GetArity (GetRunTimeLabelEntry (l :- 'S n) allLabels)), lenInputStack :: SNat (GetHeight (GetRunTimeLabelEntry (l :- 'S n) allLabels))) -- :: (SNat (LenStackShape(GetLabelType (S n) restLabelsShape)))
+popNthLabelFromTop (SFS idx) (ConsLabels (_, _) rest) = popNthLabelFromTop idx rest
 
 -- popNthLabelFromTop :: 
 --             SFin n ('S l)
