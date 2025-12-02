@@ -326,6 +326,15 @@ type family LenLabelStackShape (s :: LabelStackShape l) :: Nat where
     LenLabelStackShape 'EmptyLabels     = 'Z
     LenLabelStackShape (t :>: ts)   = 'S (LenLabelStackShape ts)
 
+
+{- type family GetLabelShapeList (s :: LabelStackShape l) :: [LabelShape] where
+    What is the body of this? -}
+
+type family GetNatList (s :: LabelStackShape l) :: [Nat] where
+    GetNatList 'EmptyLabels     = '[]
+    GetNatList ('(t, n) :>: ts)   = LenStackShape t ': GetNatList ts
+
+
 type family GetLabelCreationValStackLength (n :: Nat) (labels :: LabelStackShape l) :: Nat where
     GetLabelCreationValStackLength 'Z ('(t, lenInput) :>: ts)       = lenInput
     GetLabelCreationValStackLength ('S n) ('(t, _) :>: ts)   = GetLabelCreationValStackLength n ts

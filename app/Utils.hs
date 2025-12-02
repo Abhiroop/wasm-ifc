@@ -91,8 +91,8 @@ type family GetVecLen (v :: Vec n a) :: Nat where
     The `i` parameter is a WITNESS to the specific index value
 @-}
 data SFin (i :: Nat) (n :: Nat) where
-    SFZ :: (LessThan 'Z ('S n) ~ 'True) => SFin 'Z ('S n)
-    SFS :: (LessThan i ('S n) ~ 'True) => SFin i n -> SFin ('S i) ('S n)
+    SFZ :: SFin 'Z ('S n)
+    SFS :: SFin i n -> SFin ('S i) ('S n)
 
 sexample1 :: SFin 'Z ('S ('S 'Z))        -- Specifically index 0, for length 2
 sexample1 = SFZ
@@ -100,5 +100,8 @@ sexample1 = SFZ
 sexample2 :: SFin ('S 'Z) ('S ('S 'Z))   -- Specifically index 1, for length 2
 sexample2 = SFS SFZ
 
+getIntFromSNat :: SFin i n -> Int -- might need Nat
+getIntFromSNat SFZ     = 0
+getIntFromSNat (SFS n) = 1 + getIntFromSNat n
 
 
