@@ -14,9 +14,19 @@ import Data.Type.Equality ((:~:)(Refl))
 
 data Nat = Z | S Nat
 
+type family (:==) (a :: Nat) (b :: Nat) :: Bool where
+    'Z :== 'Z = 'True
+    'Z :== ('S b) = 'False
+    ('S a) :== 'Z = 'False
+    ('S a) :== ('S b) = a :== b
+
 data SNat (n :: Nat) where
     SZ :: SNat 'Z
     SS :: SNat n -> SNat ('S n)
+
+type family LogicalAnd (a :: Bool) (b :: Bool) :: Bool where
+    LogicalAnd 'True 'True = 'True
+    LogicalAnd _ _ = 'False
 
 type family LessThan (i :: Nat) (j :: Nat) :: Bool where
     LessThan 'Z ('S j)       = 'True
@@ -38,20 +48,16 @@ type family (m :: Nat) :- (n :: Nat) :: Nat where
 
 
 -- Peano Nat addition
+type family (m :: Nat) +: (n :: Nat) :: Nat where
+    'Z +: n         = n
+    'S m +: n = 'S (m +: n)
 type family (m :: Nat) :+ (n :: Nat) :: Nat where
-    'Z :+ n         = n
-    'S m :+ n = 'S (m :+ n)
+    m :+ 'Z         = m
+    m :+ 'S n = 'S (m :+ n)
 
-congSuc :: a :~: b -> 'S a :~: 'S b
-congSuc Refl = Refl
-
-nPlusZero :: SNat n -> (n :+ 'Z) :~: n
-nPlusZero SZ = Refl
-nPlusZero (SS m) = congSuc (nPlusZero m)
-
-(.+.) :: SNat a -> SNat b -> SNat (a :+ b)
-SZ .+. b    = b
-SS m .+. b = SS (m .+. b)
+-- (.+.) :: SNat a -> SNat b -> SNat (a :+ b)
+-- SZ .+. b    = b
+-- SS m .+. b = SS (m .+. b)
 -- type family (m :: Nat) ::+ (n :: Nat) :: Nat where
 --     'Z ::+ n        = n
 --     m ::+ ('S n) = 'S (m ::+ n)
@@ -67,6 +73,8 @@ data Vec (n :: Nat) a where
 infixr 5 :<|
 
 
+
+
 -- | Type-level indexing into vectors
 type family Index (i :: Nat) (v :: Vec n a) :: a where
     Index 'Z (x :<| _)      =  x
@@ -74,8 +82,7 @@ type family Index (i :: Nat) (v :: Vec n a) :: a where
 
 -- | Type-level function to get the length of a vector
 type family GetVecLen (v :: Vec n a) :: Nat where
-    GetVecLen VNil         = 'Z
-    GetVecLen ( _ :<| xs)  = 'S (GetVecLen xs)
+    GetVecLen (v :: Vec n a) = n
 
     
 
@@ -91,8 +98,12 @@ type family GetVecLen (v :: Vec n a) :: Nat where
     The `i` parameter is a WITNESS to the specific index value
 @-}
 data SFin (i :: Nat) (n :: Nat) where
-    SFZ :: (LessThan 'Z ('S n) ~ 'True) => SFin 'Z ('S n)
-    SFS :: (LessThan i ('S n) ~ 'True) => SFin i n -> SFin ('S i) ('S n)
+    SFZ :: 
+        -- (LessThan 'Z ('S n) ~ 'True) => 
+        SFin 'Z ('S n)
+    SFS :: 
+        -- (LessThan i ('S n) ~ 'True) => 
+        SFin i n -> SFin ('S i) ('S n)
 
 sexample1 :: SFin 'Z ('S ('S 'Z))        -- Specifically index 0, for length 2
 sexample1 = SFZ
