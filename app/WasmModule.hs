@@ -47,7 +47,7 @@ type family GetMutability (g :: GlobalType) :: Mutability where
 -- this is in execution in validation it doesn't go throught the globaladdr
 
 -- type GlobalsShape = [GlobalType]
-type GlobalsShape n = [GlobalType]
+type GlobalsShape = [GlobalType]
 
 type family GetGlobalsShape (m :: WasmModuleShape) :: Nat where
     GetGlobalsShape ('WasmModuleShapeR globalsShape _) = globalsShape
@@ -71,8 +71,8 @@ data WasmModuleShape = WasmModuleShapeR {
         -- exports vec(export)    
 --    }
 data WasmModule (shape :: WasmModuleShape) = WasmModuleR {
-    globals :: GlobalsShape (GetGlobalsShape shape),
-    mems :: MemoriesShape (GetMemoriesShape shape)
+    globals :: GlobalsShape,
+    mems :: MemoriesShape
     -- , x :: String
     -- types :: XYZ,
     }
@@ -132,7 +132,7 @@ data ValStackShape where
 --     EmptyMemShape :: MemoriesShapeStack
 --     ConsMemShape :: (SWord64 n,Maybe (SWord64 m)) -> MemoriesShapeStack -> MemoriesShapeStack
 
-type MemoriesShape (n::Nat) = Vec n MemoryArray
+type MemoriesShape = [MemoryArray]
 
 data MemArg (alignment :: Word32) (offset :: Word64) where -- Memory Offset Alignment
     SMemArg :: Word32 -> Word64 -> MemArg alignment offset
@@ -141,7 +141,7 @@ data MemArg (alignment :: Word32) (offset :: Word64) where -- Memory Offset Alig
     -- spec https://webassembly.github.io/spec/core/syntax/instructions.html#memory-instructions
 
 
-type family GetMems (m :: WasmModule shape) :: Vec (GetMemoriesShape shape) MemoryArray where
+type family GetMems (m :: WasmModule shape) :: [MemoryArray] where
     GetMems ('WasmModuleR _ mems) = mems
 
 -- type family GetMemArrayFromMemoryType (memType :: MemoryType) :: List WasmType where

@@ -17,7 +17,7 @@ module Wasm where
 
 import Data.Int (Int32)
 import Data.Word (Word32, Word64)
-import Types (WasmType(I64, I32), WasmType, ValStackShape, type (:+>+), CheckTopVecEqual, BlockType (..), FuncName, FuncTypeAnn (..), Take, FuncTypeAnn (..), Reverse, KnownWasmType (ForI32), LabelStackShape, GetLabelType, GetLabelCreationValStackLength, SomeValStackShape(..), KnownValStackShape (KnownValVNil, KnownValCons), GetSpecificValVec, LabelShape(..))
+import Types --(Length, WasmType(I64, I32), WasmType, ValStackShape, type (:+>+), CheckTopVecEqual, BlockType (..), FuncName, FuncTypeAnn (..), Take, FuncTypeAnn (..), Reverse, KnownWasmType (ForI32), LabelStackShape, GetLabelType, GetLabelCreationValStackLength, SomeValStackShape(..), KnownValStackShape (KnownValVNil, KnownValCons), GetSpecificValVec, LabelShape(..))
 import Utils
 import WasmModule (WasmModule(..), GetGlobals, GlobalTypeToWasmType, MemArg(SMemArg), WasmModuleShape(..), GetMemoriesShape, GetGlobalsShape, GlobalType(..), Mutability(..))
 
@@ -187,26 +187,26 @@ data Instruction (inputStack :: ValStackShape) (outputStack :: ValStackShape) (l
     -- technically the type like this would be defined at a type index in the types module
     -- Alternatively we can define just a WasmType in BlockType and then it would be the same as the func type []->[WasmType] => how should we go about it ? implement the types module? however not quite sure how we add types to the type module.
     Block :: forall (m :: Nat) (l :: Nat) (ps :: Nat) (rs :: Nat) (ivs :: Nat) (ovs :: Nat) (shape :: WasmModuleShape) (paramsStack :: ValStackShape) (resStack :: ValStackShape) (inputStack :: ValStackShape) (outputStack :: ValStackShape) (locals :: LocalsShape) (wasmModule :: WasmModule shape) (inputLabels :: LabelStackShape).
-            (CheckTopVecEqual ('SomeValStackShape paramsStack) ('SomeValStackShape inputStack) ~ 'True,
-                CheckTopVecEqual ('SomeValStackShape resStack) ('SomeValStackShape outputStack) ~ 'True)  -- ensure that the parameters of the block are on top of the input stack
+            (CheckTopVecEqual ( paramsStack) ( inputStack) ~ 'True,
+                CheckTopVecEqual ( resStack) ( outputStack) ~ 'True)  -- ensure that the parameters of the block are on top of the input stack
           => BlockType paramsStack resStack -- represents the optional valtype however what about the typeidx? can't know the function type
-          -> InstructionSequence inputStack outputStack locals wasmModule ('LabelShape resStack (GetVecLen inputStack) ': inputLabels) ('LabelShape resStack (GetVecLen inputStack) ': inputLabels)
+          -> InstructionSequence inputStack outputStack locals wasmModule ('LabelShape resStack (Length inputStack) ': inputLabels) ('LabelShape resStack (Length inputStack) ': inputLabels)
           -> Instruction inputStack outputStack locals wasmModule inputLabels inputLabels
 
     -- Loop: a sequence of instructions that can be restarted with 'br'
-    Loop  :: forall (m :: Nat) (l :: Nat) (ps :: Nat) (rs :: Nat) (ivs :: Nat) (ovs :: Nat) (shape :: WasmModuleShape) (paramsStack :: ValStackShape) (resStack :: ValStackShape) (inputStack :: ValStackShape) (outputStack :: ValStackShape) (locals :: LocalsShape m) (wasmModule :: WasmModule shape) (inputLabels :: LabelStackShape l).
-            (CheckTopVecEqual ('SomeValStackShape paramsStack) ('SomeValStackShape inputStack) ~ 'True,
-                CheckTopVecEqual ('SomeValStackShape resStack) ('SomeValStackShape outputStack) ~ 'True)  -- ensure that the parameters of the block are on top of the input stack
+    Loop  :: forall (m :: Nat) (l :: Nat) (ps :: Nat) (rs :: Nat) (ivs :: Nat) (ovs :: Nat) (shape :: WasmModuleShape) (paramsStack :: ValStackShape) (resStack :: ValStackShape) (inputStack :: ValStackShape) (outputStack :: ValStackShape) (locals :: LocalsShape) (wasmModule :: WasmModule shape) (inputLabels :: LabelStackShape).
+            (CheckTopVecEqual ( paramsStack) ( inputStack) ~ 'True,
+                CheckTopVecEqual ( resStack) ( outputStack) ~ 'True)  -- ensure that the parameters of the block are on top of the input stack
           => BlockType paramsStack resStack
-          -> InstructionSequence inputStack outputStack locals wasmModule ('( 'SomeValStackShape paramsStack, GetVecLen inputStack) ': inputLabels) ('( 'SomeValStackShape paramsStack, GetVecLen inputStack) ': inputLabels)
+          -> InstructionSequence inputStack outputStack locals wasmModule ('LabelShape paramsStack (Length inputStack) ': inputLabels) ( 'LabelShape paramsStack (Length inputStack) ': inputLabels)
           -> Instruction inputStack outputStack locals wasmModule inputLabels inputLabels
 
     -- If: conditional execution (pops i32 condition, executes one of two branches)
-    If    :: (CheckTopVecEqual ('SomeValStackShape paramsStack) ('SomeValStackShape inputStack) ~ 'True,
-                CheckTopVecEqual ('SomeValStackShape resStack) ('SomeValStackShape outputStack) ~ 'True)  -- ensure that the parameters of the block are on top of the input stack
+    If    :: (CheckTopVecEqual ( paramsStack) ( inputStack) ~ 'True,
+                CheckTopVecEqual ( resStack) ( outputStack) ~ 'True)  -- ensure that the parameters of the block are on top of the input stack
           => BlockType paramsStack resStack
-          -> InstructionSequence inputStack outputStack locals wasmModule ('( 'SomeValStackShape resStack, GetVecLen inputStack) ': inputLabels) ('( 'SomeValStackShape resStack, GetVecLen inputStack) ': inputLabels)     -- then branch
-          -> InstructionSequence inputStack outputStack locals wasmModule ('( 'SomeValStackShape resStack, GetVecLen inputStack) ': inputLabels) ('( 'SomeValStackShape resStack, GetVecLen inputStack) ': inputLabels)     -- else branch
+          -> InstructionSequence inputStack outputStack locals wasmModule ('LabelShape resStack (Length inputStack) ': inputLabels) ('LabelShape resStack (Length inputStack) ': inputLabels)     -- then branch
+          -> InstructionSequence inputStack outputStack locals wasmModule ('LabelShape resStack (Length inputStack) ': inputLabels) ('LabelShape resStack (Length inputStack) ': inputLabels)     -- else branch
           -> Instruction (I32 ': inputStack) outputStack locals wasmModule inputLabels inputLabels
 
     -- Br: unconditional branch to a label
@@ -236,19 +236,13 @@ data Instruction (inputStack :: ValStackShape) (outputStack :: ValStackShape) (l
 
     -- This version compiles
     -- Checks whether the top of the input stack is equal to the label type as a constraint
-    Br    :: forall (labelLength :: Nat) (creationLength :: Nat) (i :: Nat) (l :: Nat) (n :: Nat) (ivs :: Nat) (ovs :: Nat) (shape :: WasmModuleShape) (inputLabels :: LabelStackShape l) (inputStack :: ValStackShape ivs) (outputStack :: ValStackShape (labelLength :+ creationLength)) (labelType :: SomeValStackShape) (locals :: LocalsShape n) (wasmModule :: WasmModule shape) .
-        (CheckTopVecEqual (GetLabelType (Index i inputLabels)) ( 'SomeValStackShape inputStack) ~ 'True,
-        labelLength ~ GetVecLen (GetSpecificValVec(GetLabelType (Index i inputLabels))),
-        -- labelLength ~ GetVecLen (GetSpecificValVec(GetLabelType (Index i inputLabels))),
-        creationLength ~ GetLabelCreationValStackLength (Index i inputLabels),
-        -- creationLength ~ GetLabelCreationValStackLength (Index i inputLabels),
-        -- '(labelType, creationLength) ~ Index i inputLabels,
-        -- labelLength ~ GetVecLen (GetSpecificValVec labelType),
-        ovs ~ labelLength :+ creationLength,
-        (Take labelLength inputStack :+>+
-          Take creationLength (Reverse inputStack))
+
+    Br    :: forall (i :: Nat) (l :: Nat) (shape :: WasmModuleShape) (inputLabels :: LabelStackShape) (inputStack :: ValStackShape) (outputStack :: ValStackShape)  (locals :: LocalsShape) (wasmModule :: WasmModule shape) .
+        (CheckTopVecEqual (GetLabelType (Index i inputLabels)) inputStack ~ 'True,
+        (Take (Arity (Index i inputLabels)) inputStack :+>+
+          Take (Height (Index i inputLabels)) (Reverse inputStack))
           ~ outputStack,
-          l ~ GetVecLen inputLabels
+          l ~ Length inputLabels
         ) => 
             SFin i l
             -> Instruction inputStack
@@ -261,9 +255,9 @@ data Instruction (inputStack :: ValStackShape) (outputStack :: ValStackShape) (l
     -- BrIf: conditional branch (pops i32 condition)
     -- DINA: Problem => either we branch then we have the conditions below for the outputStack or we don't branch
     -- and then the outputStack is just the inputStack minus the i32 condition
-    BrIf  :: forall (i :: Nat) (l :: Nat) (n :: Nat) (ivs :: Nat) (shape :: WasmModuleShape) (inputLabels :: LabelStackShape l) (inputStack :: ValStackShape ivs) (locals :: LocalsShape n) (wasmModule :: WasmModule shape) .
+    BrIf  :: forall (i :: Nat) (l :: Nat) (shape :: WasmModuleShape) (inputLabels :: LabelStackShape) (inputStack :: ValStackShape) (locals :: LocalsShape) (wasmModule :: WasmModule shape) .
     -- inputStack ~ outputStack =>
-        (CheckTopVecEqual (GetLabelType (Index i inputLabels)) ( 'SomeValStackShape inputStack) ~ 'True) =>
+        (CheckTopVecEqual (GetLabelType (Index i inputLabels)) (  inputStack) ~ 'True) =>
         SFin i l 
         -> Instruction (I32 ': inputStack) inputStack locals wasmModule inputLabels inputLabels
 
@@ -302,7 +296,7 @@ FUNCTIONS
 -- | A complete WebAssembly function.
 -- Functions start with an empty stack and produce the specified final stack shape.
 -- The locals context represents the function's parameters and local variables.
-data Function (inputStack :: ValStackShape ivs) (resultStack :: ValStackShape ovs) (locals :: LocalsShape n) (outputLabels :: LabelStackShape l) (wasmModule :: WasmModule shape) where
+data Function (inputStack :: ValStackShape) (resultStack :: ValStackShape) (locals :: LocalsShape) (outputLabels :: LabelStackShape) (wasmModule :: WasmModule shape) where
     Function :: FuncTypeAnn inputStack resultStack -> InstructionSequence inputStack resultStack locals wasmModule outputLabels outputLabels -> Function inputStack resultStack locals outputLabels wasmModule
     -- add a new type that captures the function type annotation, i.e.
     -- FuncTypeAnn inputStack resultStack ->
@@ -319,7 +313,7 @@ EXAMPLE FUNCTIONS
 -}
 
 -- Example Call in Function
-callExample :: forall (s :: WasmModuleShape) (wm :: WasmModule s) . (s ~ WasmModuleShapeR Z Z) => Function VNil (I32 ': VNil) (I32 ': I32 ': VNil) VNil wm
+callExample :: forall (s :: WasmModuleShape) (wm :: WasmModule s) . (s ~ WasmModuleShapeR Z Z) => Function '[] (I32 ': '[]) (I32 ': I32 ': '[]) '[] wm
 callExample = Function (FFuncTypeAnn [] (I32 : [])) $
        LocalGet SFZ    -- get first parameter
     :| LocalGet (SFS SFZ)  -- get second parameter
@@ -330,7 +324,7 @@ callExample = Function (FFuncTypeAnn [] (I32 : [])) $
 -- the locals are the two I32 integers that are used to compute the address of the memory load
 -- memLoadSequence :: Function EmptyValStack (I64 :> EmptyValStack) (I32 ': I32 ': VNil) EmptyLabels ((WasmModuleR VNil ('[ 'SomeWasmType ( RInt32 (fromIntegral 10 :: Int32)), 'SomeWasmType ( RInt32 (fromIntegral 20 :: Int32))] ': VNil)) :: WasmModule ( WasmModuleShapeR Z (S Z)))
 
-memLoadSequence :: Function VNil (I64 ': VNil) (I32 ': I32 ': VNil) VNil ((WasmModuleR VNil ('[ fromIntegral 10::Int32, fromIntegral 20::Int32 ] ': VNil)) :: WasmModule ( WasmModuleShapeR Z (S Z)))
+memLoadSequence :: Function '[] (I64 ': '[]) (I32 ': I32 ': '[]) '[] ((WasmModuleR '[] ('[ fromIntegral 10::Int32, fromIntegral 20::Int32 ] ': '[])) :: WasmModule ( WasmModuleShapeR Z (S Z)))
 memLoadSequence = Function (FFuncTypeAnn [] (I64 : [])) $
        LocalGet SFZ
     :| MemoryLoad @I64 SFZ (SMemArg 0 0) 
@@ -341,8 +335,8 @@ memLoadSequence = Function (FFuncTypeAnn [] (I64 : [])) $
 
 -- Example MemoryStore
 -- memstoresequence :: Function EmptyValStack EmptyValStack (I32 ': I64 ': VNil) EmptyLabels ((WasmModuleR VNil (MemoryTypeR (LimitsR (fromIntegral 0 Word64) Nothing) '[] ': VNil)) :: WasmModule ( WasmModuleShapeR Z (S Z)))
-memstoresequence :: Function VNil VNil (I32 ': I64 ': VNil) VNil ((WasmModuleR VNil ('[] ': VNil)) :: WasmModule ( WasmModuleShapeR Z (S Z)))
-memstoresequence = Function (FFuncTypeAnn VNil VNil) $
+memstoresequence :: Function '[] '[] (I32 ': I64 ': '[]) '[] ((WasmModuleR '[] ('[] ': '[])) :: WasmModule ( WasmModuleShapeR Z (S Z)))
+memstoresequence = Function (FFuncTypeAnn [] []) $
        LocalGet (SFS SFZ)  -- get the address
     :| LocalGet SFZ      -- get the value to store
     :| MemoryStore @I64 SFZ (SMemArg 0 0)
@@ -350,8 +344,8 @@ memstoresequence = Function (FFuncTypeAnn VNil VNil) $
 
 -- Example GlobalGet and GlobalSet
 -- have to force the WasmModuleShape so :: WasmModule (WasmModuleShapeR (S Z) Z) is necessary!!!
-globalGetSetSequence :: Function VNil (I32 ': VNil) VNil VNil ((WasmModuleR (GlobalTypeMW Var I32 ': VNil) VNil) :: WasmModule ( WasmModuleShapeR (S Z) Z))
-globalGetSetSequence = Function (FFuncTypeAnn VNil (I32 : VNil)) $
+globalGetSetSequence :: Function '[] (I32 ': '[]) '[] '[] ((WasmModuleR (GlobalTypeMW Var I32 ': '[]) '[]) :: WasmModule ( WasmModuleShapeR (S Z) Z))
+globalGetSetSequence = Function (FFuncTypeAnn [] (I32 : [])) $
        GlobalGet SFZ        -- get global at index 0
     :| I32Const 10
     :| I32Add
@@ -360,25 +354,25 @@ globalGetSetSequence = Function (FFuncTypeAnn VNil (I32 : VNil)) $
     :| End
 
 -- add1Sequence :: InstructionSequence (I32 :> I32 :> Empty) (I32 :> Empty) 'VNil ('WasmModule '[]) ('WasmModule '[])
-add1Sequence :: forall {n :: Nat} {k :: Nat} {ivs :: Nat} {shape :: WasmModuleShape} {inputStack :: ValStackShape ivs} {locals :: LocalsShape n} {wasmModule :: WasmModule shape} {inputLabels :: LabelStackShape k}. InstructionSequence (I32 ': (I32 ': inputStack)) (I32 ': inputStack) locals wasmModule inputLabels inputLabels
+add1Sequence :: forall {n :: Nat} {k :: Nat} {ivs :: Nat} {shape :: WasmModuleShape} {inputStack :: ValStackShape} {locals :: LocalsShape} {wasmModule :: WasmModule shape} {inputLabels :: LabelStackShape}. InstructionSequence (I32 ': (I32 ': inputStack)) (I32 ': inputStack) locals wasmModule inputLabels inputLabels
 add1Sequence = I32Add :| End
 
 -- addSubSequence :: InstructionSequence (I32 :> (I32 :> (I32 :> Empty))) (I32 :> Empty) 'VNil (WasmModule Z) ('WasmModule '[]) -- only 3 I32 because the result of the add is the first argument of the subtract
-addSubSequence :: forall {n :: Nat} {k :: Nat} {ivs :: Nat} {shape :: WasmModuleShape} {inputStack :: ValStackShape ivs} {locals :: LocalsShape n} {wasmModule :: WasmModule shape} {inputLabels :: LabelStackShape k}. InstructionSequence (I32 ': (I32 ': (I32 ': inputStack))) (I32 ': inputStack) locals wasmModule inputLabels inputLabels
+addSubSequence :: forall {n :: Nat} {k :: Nat} {ivs :: Nat} {shape :: WasmModuleShape} {inputStack :: ValStackShape} {locals :: LocalsShape} {wasmModule :: WasmModule shape} {inputLabels :: LabelStackShape}. InstructionSequence (I32 ': (I32 ': (I32 ': inputStack))) (I32 ': inputStack) locals wasmModule inputLabels inputLabels
 addSubSequence = I32Add :| (I32Sub :| End)
 
 -- example function for Br instruction
 -- branchExample :: forall (s :: WasmModuleShape) (wm :: WasmModule s) . (s ~ WasmModuleShapeR Z Z) => Function VNil VNil (I32 ': VNil) ('(VNil, Z) ': EmptyLabels) wm
-branchExample :: Function VNil VNil (I32 ': VNil) ('( 'SomeValStackShape VNil, Z) ': VNil) ((WasmModuleR VNil VNil) :: WasmModule ( WasmModuleShapeR Z Z))
-branchExample = Function (FFuncTypeAnn VNil VNil) $
+branchExample :: Function '[] '[] (I32 ': '[]) (( 'LabelShape '[] Z) ': '[]) ((WasmModuleR '[] '[]) :: WasmModule ( WasmModuleShapeR Z Z))
+branchExample = Function (FFuncTypeAnn [] []) $
        Block (BTParamsResults KnownValVNil KnownValVNil) (
         Br (SFS SFZ)
         :| End)
     :| End
 
     -- example function for Br instruction
-branchExample2 ::forall (s :: WasmModuleShape) (wm :: WasmModule s) . (s ~ WasmModuleShapeR Z Z) =>  Function VNil VNil (I32 ': VNil) ('( 'SomeValStackShape VNil, Z) ': VNil) wm
-branchExample2 = Function (FFuncTypeAnn VNil VNil) $
+branchExample2 ::forall (s :: WasmModuleShape) (wm :: WasmModule s) . (s ~ WasmModuleShapeR Z Z) =>  Function '[] '[] (I32 ': '[]) (('LabelShape '[] Z) ': '[]) wm
+branchExample2 = Function (FFuncTypeAnn [] []) $
        Block (BTParamsResults KnownValVNil KnownValVNil) (
         Br SFZ
         :| End)
@@ -386,8 +380,8 @@ branchExample2 = Function (FFuncTypeAnn VNil VNil) $
     :| End
 
     -- example function for Br instruction
-branchExample3 :: forall (s :: WasmModuleShape) (wm :: WasmModule s) . (s ~ WasmModuleShapeR Z Z) =>  Function VNil (I32 ': VNil) (I32 ': VNil) VNil wm
-branchExample3 = Function (FFuncTypeAnn VNil VNil) $
+branchExample3 :: forall (s :: WasmModuleShape) (wm :: WasmModule s) . (s ~ WasmModuleShapeR Z Z) =>  Function '[] (I32 ': '[]) (I32 ': '[]) '[] wm
+branchExample3 = Function (FFuncTypeAnn [] []) $
        Block (BTParamsResults KnownValVNil (KnownValCons ForI32 KnownValVNil)) (
         Block (BTParamsResults KnownValVNil KnownValVNil) (
             Br SFZ
@@ -399,8 +393,8 @@ branchExample3 = Function (FFuncTypeAnn VNil VNil) $
     :| End
 
 -- example function for Br instruction
-branchExample4 :: forall (s :: WasmModuleShape) (wm :: WasmModule s) . (s ~ WasmModuleShapeR Z Z) => Function VNil (I32 ': VNil) (I32 ': VNil) VNil wm
-branchExample4 = Function (FFuncTypeAnn VNil VNil) $
+branchExample4 :: forall (s :: WasmModuleShape) (wm :: WasmModule s) . (s ~ WasmModuleShapeR Z Z) => Function '[] (I32 ': '[]) (I32 ': '[]) '[] wm
+branchExample4 = Function (FFuncTypeAnn [] []) $
        Block (BTParamsResults KnownValVNil (KnownValCons ForI32 KnownValVNil)) (
         Block (BTParamsResults KnownValVNil KnownValVNil) (
             I32Const 42
@@ -413,8 +407,8 @@ branchExample4 = Function (FFuncTypeAnn VNil VNil) $
 
 -- | Example 1: Add two integers
 -- Takes two i32 parameters (slots 0 and 1), returns their sum
-add2 :: forall (s :: WasmModuleShape) (wm :: WasmModule s) . (s ~ WasmModuleShapeR Z Z) => Function VNil (I32 ': VNil) (I32 ': I32 ': VNil) VNil wm -- Function resultStack locals (repr the function parameters)
-add2 = Function (FFuncTypeAnn VNil (I32 : VNil)) $
+add2 :: forall (s :: WasmModuleShape) (wm :: WasmModule s) . (s ~ WasmModuleShapeR Z Z) => Function '[] (I32 ': '[]) (I32 ': I32 ': '[]) '[] wm -- Function resultStack locals (repr the function parameters)
+add2 = Function (FFuncTypeAnn [] (I32 : [])) $
     -- Local slots: (0) first parameter, (1) second parameter
        LocalGet SFZ    -- Push first parameter
     :| LocalGet (SFS SFZ)     -- Push second parameter
@@ -423,8 +417,8 @@ add2 = Function (FFuncTypeAnn VNil (I32 : VNil)) $
 
 -- | Example 2: Factorial function using iteration
 -- Takes one i32 parameter, returns its factorial
-factorial :: forall (s :: WasmModuleShape) (wm :: WasmModule s) . (s ~ WasmModuleShapeR Z Z) => Function VNil (I32 ': VNil) (I32 ': I32 ': VNil) VNil wm
-factorial = Function (FFuncTypeAnn VNil (I32 : VNil)) $
+factorial :: forall (s :: WasmModuleShape) (wm :: WasmModule s) . (s ~ WasmModuleShapeR Z Z) => Function '[] (I32 ': '[]) (I32 ': I32 ': '[]) '[] wm
+factorial = Function (FFuncTypeAnn [] (I32 : [])) $
     -- Local slots: (0) input parameter (also used as counter), (1) accumulator
     -- Initialize accumulator to 1
        I32Const 1
@@ -462,8 +456,8 @@ factorial = Function (FFuncTypeAnn VNil (I32 : VNil)) $
 
 -- | Example 3: Function that returns nothing (void function).
 -- Demonstrates different return types - this one returns Empty stack.
-printNumber :: forall (s :: WasmModuleShape) (wm :: WasmModule s) . (s ~ WasmModuleShapeR Z Z) => Function VNil VNil (I32 ': VNil) VNil wm
-printNumber = Function (FFuncTypeAnn VNil VNil) $
+printNumber :: forall (s :: WasmModuleShape) (wm :: WasmModule s) . (s ~ WasmModuleShapeR Z Z) => Function '[] '[] (I32 ': '[]) '[] wm
+printNumber = Function (FFuncTypeAnn [] []) $
     -- Just consume the parameter without returning anything
        LocalGet slotZero
     :| Drop
@@ -477,8 +471,8 @@ printNumber = Function (FFuncTypeAnn VNil VNil) $
 
 -- | Example 4: Function with more complex local variable patterns.
 -- Takes one parameter, uses three local variables for intermediate calculations.
-complexCalculation :: forall (s :: WasmModuleShape) (wm :: WasmModule s) . (s ~ WasmModuleShapeR Z Z) => Function VNil (I32 ': VNil) (I32 ': I32 ': I32 ': I32 ': VNil) VNil wm
-complexCalculation = Function (FFuncTypeAnn VNil (I32 : VNil)) $
+complexCalculation :: forall (s :: WasmModuleShape) (wm :: WasmModule s) . (s ~ WasmModuleShapeR Z Z) => Function '[] (I32 ': '[]) (I32 ': I32 ': I32 ': I32 ': '[]) '[] wm
+complexCalculation = Function (FFuncTypeAnn [] (I32 : [])) $
     -- Local slots: (0) input, (1) temp1, (2) temp2, (3) result
     -- temp1 = input * 2
        LocalGet SFZ
@@ -495,8 +489,8 @@ complexCalculation = Function (FFuncTypeAnn VNil (I32 : VNil)) $
 
 -- | Example 5: Conditional logic with If instruction.
 -- Returns the absolute value of the input.
-absoluteValue :: forall (s :: WasmModuleShape) (wm :: WasmModule s) . (s ~ WasmModuleShapeR Z Z) => Function VNil (I32 ': VNil) (I32 ': VNil) VNil wm
-absoluteValue = Function (FFuncTypeAnn VNil (I32 : VNil)) $
+absoluteValue :: forall (s :: WasmModuleShape) (wm :: WasmModule s) . (s ~ WasmModuleShapeR Z Z) => Function '[] (I32 ': '[]) (I32 ': '[]) '[] wm
+absoluteValue = Function (FFuncTypeAnn [] (I32 : [])) $
     -- Check if input is negative
        LocalGet SFZ
     :| I32Const 0

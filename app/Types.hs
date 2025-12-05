@@ -20,13 +20,11 @@ type family CheckSameVecType (xs :: [a]) (ys :: [a]) :: Bool where
         = Length xs :== Length ys
     -- CheckSameVecType _ _ = 'False
 
-type family CheckTopVecEqual (top :: SomeValStackShape) (stack :: SomeValStackShape) :: Bool where
-    CheckTopVecEqual ('SomeValStackShape '[]) s2 = 'True
-    CheckTopVecEqual ('SomeValStackShape (t ': ts)) ('SomeValStackShape (t ': ss)) = CheckTopVecEqual ('SomeValStackShape ts) ('SomeValStackShape ss)
+type family CheckTopVecEqual (top :: ValStackShape) (stack :: ValStackShape) :: Bool where
+    CheckTopVecEqual '[] s2 = 'True
+    CheckTopVecEqual (t ': ts) (t ': ss) = CheckTopVecEqual ts ss
     CheckTopVecEqual s1 s2 = 'False
 
-type family GetSpecificValVec (s :: SomeValStackShape) :: ValStackShape where
-    GetSpecificValVec ('SomeValStackShape v) = v
 
 {-
 =============================================================================
@@ -72,16 +70,16 @@ type family Arity (shape :: LabelShape) :: Nat where
 type family Height (shape :: LabelShape) :: Nat where
     Height ('LabelShape types height) = height
 
-type family GetLabelType (label :: (SomeValStackShape, Nat)) :: SomeValStackShape where
-    GetLabelType '( t, _) = t
+type family GetLabelType (label :: LabelShape) :: ValStackShape where
+    GetLabelType ('LabelShape types height) = types
 
 type LabelStackShape = [LabelShape]
     
 
-type family GetLabelCreationValStackLength (label :: (SomeValStackShape, Nat)) :: Nat where
-    GetLabelCreationValStackLength '(t, lenInput)  
-         = lenInput
--- | Type family to remove top n labels from a LabelStackShape.
+type family GetLabelCreationValStackLength (label :: LabelShape) :: Nat where
+    GetLabelCreationValStackLength ('LabelShape types height)  
+         = height
+-- | Type family to remove top n labels from a LabelStackShape.GetLabelCreationValStackLength
 type family RemoveLabels (i :: Nat) (labels :: LabelStackShape) :: LabelStackShape where
     RemoveLabels 'Z (_ ': ls) = ls
     RemoveLabels ('S i) (_ ': ts) = RemoveLabels i ts
@@ -100,9 +98,6 @@ knownStackShapeLen (KnownValCons _kw rest) = SS (knownStackShapeLen rest)
 -- The stack grows to the right: (I32 ': I32 ': []) means two I32s on stack.
 type ValStackShape = [WasmType]
 
--- existential valstackshape type
-data SomeValStackShape where
-    SomeValStackShape :: ValStackShape -> SomeValStackShape
 
 data KnownValStackShape (s :: ValStackShape) where
     KnownValVNil :: KnownValStackShape '[]

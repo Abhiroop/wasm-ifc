@@ -81,8 +81,8 @@ type family Index (i :: Nat) (v :: [a]) :: a where
     Index ('S n) (_ ': xs) = Index n xs
 
 -- | Type-level function to get the length of a vector
-type family GetVecLen (v :: [a]) :: Nat where
-    GetVecLen (v :: [a]) = n
+-- type family GetVecLen (v :: [a]) :: Nat where
+--     GetVecLen (v :: [a]) = n
 
     
 
