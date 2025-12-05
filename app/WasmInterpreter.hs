@@ -72,11 +72,13 @@ data Memory (memsShape :: MemoriesShape) where
     NoMems   :: Memory '[]
     ConsMems :: MemoryArray -> Memory memsShape -> Memory (memArray : memsShape)
 
+data SomeInstructionSequence where
+    SomeInstructionSequence :: InstructionSequence inputStack outputStack locals wasmModule inputLabels outputLabels -> SomeInstructionSequence
 
 data Label (shape :: LabelShape) = Label {
     arity :: SNat (Arity shape),
-    height :: SNat (Height shape)
-    -- continuation :: ...
+    height :: SNat (Height shape),
+    continuation :: SomeInstructionSequence
 }
 
 data Labels (newLabelsShape :: LabelStackShape) where
@@ -159,45 +161,35 @@ data RuntimeInstr (instr :: Instruction inputStack outputStack locals wasmModule
     RInstr :: Instruction inputStack outputStack locals wasmModule inputLabels outputLabels
            -> RuntimeInstr instr
 
-data RuntimeInstrSeq (instrSeq :: InstructionSequence inputStack outputStack locals wasmModule inputLabels outputLabels) where
-    REnd  :: RuntimeInstrSeq 'End
-    RCons :: RuntimeInstr (instr :: Instruction inputStack intermediateStack locals wasmModule inputLabels intermediateLabels)
-          -> RuntimeInstrSeq restInstrSeq
-          -> RuntimeInstrSeq (instr :| restInstrSeq)
+-- data RuntimeInstrSeq (instrSeq :: InstructionSequence inputStack outputStack locals wasmModule inputLabels outputLabels) where
+--     REnd  :: RuntimeInstrSeq 'End
+--     RCons :: RuntimeInstr (instr :: Instruction inputStack intermediateStack locals wasmModule inputLabels intermediateLabels)
+--           -> RuntimeInstrSeq restInstrSeq
+--           -> RuntimeInstrSeq (instr :| restInstrSeq)
 
 
--- executeBody :: forall inputStack outputStack locals wasmModule inputLabels outputLabels intermediateStack intermediateLabels .
---             -- ((firstInstr :: Instruction inputStack intermediateStack locals wasmModule inputLabels intermediateLabels) :| restInstr ~ totalInstr) => 
---             -- InstructionSequence inputStack outputStack locals wasmModule inputLabels outputLabels
---             -- RuntimeInstrSeq (totalInstr :: InstructionSequence inputStack outputStack locals wasmModule inputLabels outputLabels)
---             -- RuntimeInstrSeq ((firstInstr :: Instruction inputStack intermediateStack locals wasmModule inputLabels intermediateLabels) :| (restInstr :: InstructionSequence intermediateStack outputStack locals wasmModule intermediateLabels outputLabels))
---             Instruction inputStack intermediateStack locals wasmModule inputLabels intermediateLabels
---             -> InstructionSequence intermediateStack outputStack locals wasmModule intermediateLabels outputLabels
---             -> RuntimeContext inputStack locals wasmModule inputLabels
---             -> (InstructionSequence outputStack outputStack locals wasmModule outputLabels outputLabels, 
---                  RuntimeContext outputStack locals wasmModule outputLabels)
--- executeBody instr instrSeq prevCtxt = case instrSeq of
---     End -> (End, executeInstruction instr prevCtxt)
---         -- let intermediateCtxt = executeInstruction instr prevCtxt
---         -- in (REnd :: RuntimeInstrSeq restInstr,
---         --           intermediateCtxt :: RuntimeContext outputStack locals wasmModule outputLabels)
---     (Leave SZ) :| rest -> let (topLabel, restLabels) = popNthLabel SFZ (labels prevCtxt)
---         in undefined
---     (Leave index) :| rest -> undefined
---     (i :| rest) -> 
---         let intermediateCtxt = executeInstruction instr prevCtxt
---             (finalInstrSeq, finalCtxt) = executeBody i rest intermediateCtxt
---         in (finalInstrSeq, finalCtxt)
-
+executeInstruction :: forall inputStack outputStack locals wasmModule inputLabels outputLabels intermediateStack intermediateLabels .
+    Instruction inputStack intermediateStack locals wasmModule inputLabels intermediateLabels
+    -> RuntimeContext inputStack locals wasmModule inputLabels
+    -> (InstructionSequence intermediateStack outputStack locals wasmModule intermediateLabels intermediateLabels,
+        RuntimeContext intermediateStack locals wasmModule intermediateLabels)
+-- executeInstruction End _ = undefined -- TODO
+executeInstruction instr prevCtxt@(RuntimeContext prevStack prevLocals prevGlobal prevLabels prevMemory) =
+    case instr of
+        I32Const val -> 
+            -- (intermediateStack ~ outputStack) => 
+            (End ::  InstructionSequence intermediateStack outputStack locals wasmModule intermediateLabels intermediateLabels,
+            RuntimeContext (Push val prevStack) prevLocals prevGlobal prevLabels prevMemory)
+        _ -> undefined
 
 -- TODO
-executeInstruction :: forall inputStack outputStack locals wasmModule inputLabels outputLabels .
+executeInstruction1 :: forall inputStack outputStack locals wasmModule inputLabels outputLabels .
                       Instruction inputStack outputStack locals wasmModule inputLabels outputLabels
                    -> RuntimeContext inputStack locals wasmModule inputLabels
                    -> RuntimeContext outputStack locals wasmModule outputLabels
                 --    -> RuntimeContext inputStack locals wasmModule (LenLabelStackShape inputLabels)
                 --    -> RuntimeContext outputStack locals wasmModule (LenLabelStackShape outputLabels)
-executeInstruction instr prevCtxt@(RuntimeContext prevStack prevLocals prevGlobal prevLabels prevMemory) = case instr of
+executeInstruction1 instr prevCtxt@(RuntimeContext prevStack prevLocals prevGlobal prevLabels prevMemory) = case instr of
     I32Const val -> RuntimeContext (Push val prevStack) prevLocals prevGlobal prevLabels prevMemory
     I32Add       -> case prevStack of
                       Push val1 (Push val2 rest) ->
@@ -397,28 +389,28 @@ executeInstruction instr prevCtxt@(RuntimeContext prevStack prevLocals prevGloba
                         -- in RuntimeContext (Push val restStack) prevLocals prevGlobal prevLabels prevMemory :: RuntimeContext outputStack locals wasmModule inputLabels
     MemoryStore memIdx arg -> undefined
     Block (BTParamsResults _ (res :: KnownValStackShape resStack)) instrSeq -> 
-        let newLabels = ConsLabels (Label (knownStackShapeLen res) (stackLength prevStack)) (labels prevCtxt)
+        let newLabels = ConsLabels (Label (knownStackShapeLen res) (stackLength prevStack) (SomeInstructionSequence End)) (labels prevCtxt)
             newContext =
                 executeInstructionSequence instrSeq prevCtxt { labels = newLabels } -- :: RuntimeContext inputStack locals wasmModule ('(resStack, StackLength inputStack) :>: inputLabels)) 
         in newContext { labels = prevLabels } :: RuntimeContext outputStack locals wasmModule inputLabels
     Loop (BTParamsResults (params :: KnownValStackShape paramsStack) _) instrSeq -> 
-        let newLabels = ConsLabels (Label (knownStackShapeLen params) (stackLength prevStack)) (labels prevCtxt)
+        let newLabels = ConsLabels (Label (knownStackShapeLen params) (stackLength prevStack) (SomeInstructionSequence End)) (labels prevCtxt)
             newContext = executeInstructionSequence instrSeq (prevCtxt { labels = newLabels } ) --untimeContext inputStack locals wasmModule ('(paramsStack, StackLength inputStack) :>: inputLabels)) 
         in newContext { labels = prevLabels } :: RuntimeContext outputStack locals wasmModule inputLabels
     If (BTParamsResults _ (res :: KnownValStackShape resStack)) thenSeq elseSeq -> case prevStack of
         Push cond (rest :: Stack inputStackWOCond) -> 
             if cond /= 0
             then 
-                let newLabels = ConsLabels (Label (knownStackShapeLen res) (stackLength rest)) (labels prevCtxt)
+                let newLabels = ConsLabels (Label (knownStackShapeLen res) (stackLength rest) (SomeInstructionSequence End)) (labels prevCtxt)
                     newCtxt = executeInstructionSequence thenSeq (prevCtxt { labels = newLabels, stack = rest }) -- :: RuntimeContext inputStackWOCond locals wasmModule ('(resStack, StackLength inputStackWOCond) :>: inputLabels)) 
                 in newCtxt { labels = prevLabels } -- :: RuntimeContext outputStack locals wasmModule inputLabels
 
             else 
-                let newLabels = ConsLabels (Label (knownStackShapeLen res) (stackLength rest)) (labels prevCtxt)
+                let newLabels = ConsLabels (Label (knownStackShapeLen res) (stackLength rest) (SomeInstructionSequence End)) (labels prevCtxt)
                     newCtxt = executeInstructionSequence elseSeq (prevCtxt { labels = newLabels, stack = rest }) -- :: RuntimeContext inputStackWOCond locals wasmModule ('(resStack, StackLength inputStackWOCond) :>: inputLabels)) 
                 in newCtxt { labels = prevLabels } -- :: RuntimeContext outputStack locals wasmModule inputLabels
     Br labelIdx -> 
-        let Label labelType lenStackBeforeLabelCreation = getAtLabel labelIdx prevLabels
+        let Label labelType lenStackBeforeLabelCreation cont = getAtLabel labelIdx prevLabels
             (stackToKeep, _) = takeStack labelType prevStack
             baseStack  = reduceStackToLength lenStackBeforeLabelCreation prevStack
             finalStack = concatStacks stackToKeep baseStack
@@ -448,7 +440,7 @@ executeInstructionSequence :: InstructionSequence inputStack outputStack locals 
 executeInstructionSequence instrSeq prevCtxt@(RuntimeContext inputStack prevLocals prevWasmModule prevLabels prevMemory) = case instrSeq of
     End -> RuntimeContext inputStack prevLocals prevWasmModule prevLabels prevMemory
     (instr :| rest) ->
-        let intermediateContext = executeInstruction instr prevCtxt
+        let intermediateContext = executeInstruction1 instr prevCtxt
         in executeInstructionSequence rest intermediateContext
 
 executeFunction :: Function inputStack outputStack locals labels wasmModule
