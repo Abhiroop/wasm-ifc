@@ -4,9 +4,11 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE TypeFamilyDependencies #-}
+{-# LANGUAGE PatternSynonyms #-}
 
 module Utils where
 import Data.Type.Equality ((:~:)(Refl))
+import Data.Kind
 
 -----------------------------------------------------------------------------
 -- PEANO NATS
@@ -112,4 +114,14 @@ sexample2 :: SFin ('S 'Z) ('S ('S 'Z))   -- Specifically index 1, for length 2
 sexample2 = SFS SFZ
 
 
+--------------------------------------------------------------------------------
+-- Generic heterogeneous list parameterised by an "eval" function:
+--   eval :: k -> Type
+-- HListF eval '[x1,x2,...] stores values of types (eval x1), (eval x2), ...
+--------------------------------------------------------------------------------
 
+data HListF (eval :: k -> Type) (xs :: [k]) where
+  HNilF :: HListF eval '[]
+  (:#)  :: eval x -> HListF eval xs -> HListF eval (x ': xs)
+
+infixr 5 :#

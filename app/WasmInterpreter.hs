@@ -178,23 +178,22 @@ data RuntimeInstr (instr :: Instruction inputStack outputStack locals wasmModule
 --     in executeInstructionSequence1 (restInstrSeq :| rest) newCtxt
 
 
--- TODO: This one we want to implement
-executeInstruction :: forall inputStack outputStack locals wasmModule inputLabels outputLabels intermediateStack intermediateLabels .
-    Instruction inputStack intermediateStack locals wasmModule inputLabels intermediateLabels
-    -> RuntimeContext inputStack locals wasmModule inputLabels
-    -> (InstructionSequence intermediateStack outputStack locals wasmModule intermediateLabels intermediateLabels,
-        RuntimeContext intermediateStack locals wasmModule intermediateLabels)
--- executeInstruction End _ = undefined -- TODO
-executeInstruction instr prevCtxt@(RuntimeContext prevStack prevLocals prevGlobal prevLabels prevMemory) =
-    case instr of
-        I32Const val -> 
-            -- (intermediateStack ~ outputStack) => 
-            (End ::  InstructionSequence intermediateStack outputStack locals wasmModule intermediateLabels intermediateLabels,
-            RuntimeContext (Push val prevStack) prevLocals prevGlobal prevLabels prevMemory)
-        -- Loop (BTParamsResults (params :: KnownValStackShape paramsStack) _) instrSeq -> 
-        --     let (retSeq, retCtxt) = executeInstructionSequence1 -- where retSeq is either End or Br 
-        --     (undefined, undefined)
-        _ -> undefined
+
+
+
+data ExecutionResult inputStack locals wasmModule inputLabels where
+  ExecResult :: forall outputStack outputLabels intermediateStack locals wasmModule intermediateLabels inputStack inputLabels.
+                InstructionSequence intermediateStack outputStack locals wasmModule intermediateLabels outputLabels
+             -> RuntimeContext intermediateStack locals wasmModule intermediateLabels
+             -> ExecutionResult inputStack locals wasmModule inputLabels
+
+executeInstruction :: Instruction inputStack intermediateStack locals wasmModule inputLabels intermediateLabels
+                   -> RuntimeContext inputStack locals wasmModule inputLabels
+                   -> ExecutionResult inputStack locals wasmModule inputLabels
+executeInstruction (I32Const val) prevCtxt = 
+    ExecResult End (prevCtxt {stack = Push @I32 val (stack prevCtxt)})
+executeInstruction _ _ = undefined
+
 
 
 -- TODO
