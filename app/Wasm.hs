@@ -52,7 +52,9 @@ INSTRUCTIONS
 --   - inputStack: the stack shape before the instruction
 --   - outputStack: the stack shape after the instruction
 --   - locals: the local variable context (currently unchanged by most instructions)
-data Instruction (inputStack :: ValStackShape) (outputStack :: ValStackShape) (locals :: LocalsShape m) (wasmModule::WasmModule shape) (inputLabels:: LabelStackShape k) (outputLabels :: LabelStackShape l) where -- 
+type LabelShape = ([WasmType], Nat)
+
+data Instruction (inputStack :: ValStackShape) (outputStack :: ValStackShape) (locals :: LocalsShape m) (wasmModule::WasmModule shape) (inputLabels:: [LabelShape]) (outputLabels :: [LabelShape]) where -- 
 
     -- Constants: push a literal value onto the stack
     I32Const :: Int32 -> Instruction inputStack (I32 :> inputStack) locals wasmModule inputLabels inputLabels
@@ -138,13 +140,13 @@ data Instruction (inputStack :: ValStackShape) (outputStack :: ValStackShape) (l
     -- TODO: Handle uninitialized local variables according to WASM spec
 
     -- GlobalGet: push the value of a global variable onto the stack
-    GlobalGet :: forall (i :: Nat) (n :: Nat) (m :: Nat) (l :: Nat) (shape :: WasmModuleShape) (inputStack :: ValStackShape) (wasmModule :: WasmModule shape) (locals :: LocalsShape m) (inputLabels :: LabelStackShape l).
+    GlobalGet :: forall (i :: Nat) (n :: Nat) (m :: Nat) (l :: Nat) (shape :: WasmModuleShape) (inputStack :: ValStackShape) (wasmModule :: WasmModule shape) (locals :: LocalsShape m) (inputLabels :: [LabelShape]).
         (n ~ GetGlobalsShape shape) =>
         SFin i n
         -> Instruction inputStack (GlobalTypeToWasmType (Index i (GetGlobals wasmModule)) :> inputStack) locals wasmModule inputLabels inputLabels
 
     -- GlobalSet: pop a value from stack and store it in a global variable => global type must be mutable where do we check this
-    GlobalSet :: forall (i :: Nat) (n :: Nat) (m :: Nat) (l :: Nat) (shape :: WasmModuleShape) (inputStack :: ValStackShape) (wasmModule :: WasmModule shape) (locals :: LocalsShape m) (inputLabels :: LabelStackShape l).
+    GlobalSet :: forall (i :: Nat) (n :: Nat) (m :: Nat) (l :: Nat) (shape :: WasmModuleShape) (inputStack :: ValStackShape) (wasmModule :: WasmModule shape) (locals :: LocalsShape m) (inputLabels :: [LabelShape]).
         (n ~ GetGlobalsShape shape) =>
         SFin i n
         -> Instruction (GlobalTypeToWasmType (Index i (GetGlobals wasmModule)) :> inputStack) inputStack locals wasmModule inputLabels inputLabels
@@ -156,7 +158,7 @@ data Instruction (inputStack :: ValStackShape) (outputStack :: ValStackShape) (l
         -- this simply returns a memory type which includes the limits of the memory
     -- We need the forall in order to use MemoryLoad @I32
     -- type equality ~ or :~:
-    MemoryLoad :: forall (wasmtype::WasmType) (i :: Nat) (n :: Nat) (m :: Nat) (k :: Nat) (shape :: WasmModuleShape) (align :: Word32) (offset :: Word64) (inputStack :: ValStackShape) (wasmModule :: WasmModule shape) (locals :: LocalsShape m) (inputLabels :: LabelStackShape k) .
+    MemoryLoad :: forall (wasmtype::WasmType) (i :: Nat) (n :: Nat) (m :: Nat) (k :: Nat) (shape :: WasmModuleShape) (align :: Word32) (offset :: Word64) (inputStack :: ValStackShape) (wasmModule :: WasmModule shape) (locals :: LocalsShape m) (inputLabels :: [LabelShape]) .
         (n ~ GetMemoriesShape shape) => 
              SFin i n
              -> MemArg align offset  -- ignore alignment for now, also not 100% sure why i32 has to be on top of stack
@@ -190,7 +192,7 @@ data Instruction (inputStack :: ValStackShape) (outputStack :: ValStackShape) (l
     
     -- technically the type like this would be defined at a type index in the types module
     -- Alternatively we can define just a WasmType in BlockType and then it would be the same as the func type []->[WasmType] => how should we go about it ? implement the types module? however not quite sure how we add types to the type module.
-    Block :: forall (m :: Nat) (l :: Nat) (shape :: WasmModuleShape) (paramsStack :: ValStackShape) (resStack :: ValStackShape) (inputStack :: ValStackShape)(outputStack :: ValStackShape) (locals :: LocalsShape m) (wasmModule :: WasmModule shape) (inputLabels :: LabelStackShape l).
+    Block :: forall (m :: Nat) (l :: Nat) (shape :: WasmModuleShape) (paramsStack :: ValStackShape) (resStack :: ValStackShape) (inputStack :: ValStackShape)(outputStack :: ValStackShape) (locals :: LocalsShape m) (wasmModule :: WasmModule shape) (inputLabels :: [LabelShape]).
             (CheckTopEqual paramsStack inputStack ~ 'True,
                 CheckTopEqual resStack outputStack ~ 'True)  -- ensure that the parameters of the block are on top of the input stack
           => BlockType paramsStack resStack -- represents the optional valtype however what about the typeidx? can't know the function type
@@ -284,7 +286,7 @@ INSTRUCTION SEQUENCES
 -- This represents a linear sequence of instructions where the output stack
 -- of one instruction becomes the input stack of the next.
 infixr 5 :|  -- Right-associative, like list construction
-data InstructionSequence (inputStack :: ValStackShape) (outputStack :: ValStackShape) (locals :: LocalsShape n) (wasmModule :: WasmModule shape) (inputLabels :: LabelStackShape k) (outputLabels :: LabelStackShape l) where
+data InstructionSequence (inputStack :: ValStackShape) (outputStack :: ValStackShape) (locals :: LocalsShape n) (wasmModule :: WasmModule shape) (inputLabels :: [LabelShape]) (outputLabels :: [LabelShape]) where
     End  :: InstructionSequence inputStack inputStack locals wasmModule inputLabels inputLabels   -- Base case: empty sequence (identity)
     (:|) :: Instruction initialStack intermediateStack locals wasmModule inputLabels intermediateLabels               -- Inductive case: first instruction
          -> InstructionSequence intermediateStack finalStack locals wasmModule intermediateLabels outputLabels                          -- rest of sequence
@@ -313,7 +315,7 @@ LABEL THINGS
 =============================================================================
 -}
 
-type family GetLabelType (n :: Nat) (labels :: LabelStackShape l) :: ValStackShape where
+{- type family GetLabelType (n :: Nat) (labels :: LabelStackShape l) :: ValStackShape where
     GetLabelType 'Z ('(t, _) :>: ts)       = t
     GetLabelType ('S n) ('(t, _) :>: ts)   = GetLabelType n ts
 
@@ -360,7 +362,7 @@ type family IncludesLabelType (labelType :: ValStackShape) (labels :: LabelStack
 type family GetNthLabelType (n :: Nat) (labels :: LabelStackShape l) :: (ValStackShape, Nat) where
     GetNthLabelType 'Z ('(t, lenInput) :>: ts)       = '(t, lenInput)
     GetNthLabelType ('S n) ('(t, _) :>: ts)   = GetNthLabelType n ts
-
+ -}
 
 {-
 =============================================================================

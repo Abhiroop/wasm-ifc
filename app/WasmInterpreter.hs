@@ -67,8 +67,8 @@ concatStacks (Push val rest) s2 = Push val (concatStacks rest s2)
 --     RuntimeNoLabels :: RuntimeLabels 'NoLabels
 --     RuntimeConsLabels :: forall (a :: Nat) (h :: Nat) (l :: Nat) (labels:: Labels l) (arity :: SNat a) (height :: SNat h) . Label a h -> RuntimeLabels labels -> RuntimeLabels (ConsLabels '(arity, height) labels)
 
-type LabelShape = (Nat, Nat)
-type Label (x :: LabelShape) = (SNat (Fst x), SNat (Snd x)) -- (arity, height)
+type LabelShape = ([WasmType], Nat)
+type Label (x :: LabelShape) = (SNat (Length (Fst x)), SNat (Snd x)) -- (arity, height) -- TODO: add cont
 
 type family Fst (p :: (a, b)) :: a where
   Fst '(a, b) = a
@@ -187,7 +187,8 @@ data Globals (globalsShape :: GlobalsShape n) where
     NoLabels :: Labels 'Z
     ConsLabels :: Label a h -> Labels n -> Labels ('S n) 
  -}
-data Labels (arities :: [LabelShape]) where
+-- HList
+data Labels (shapes :: [LabelShape]) where
     NoLabels :: Labels '[]
     ConsLabels :: Label a -> Labels as -> Labels (a ': as)
 
@@ -288,8 +289,8 @@ data RuntimeInstrSeq (instrSeq :: InstructionSequence inputStack outputStack loc
 -- TODO
 executeInstruction :: forall inputStack outputStack locals wasmModule inputLabels outputLabels .
                       Instruction inputStack outputStack locals wasmModule inputLabels outputLabels
-                   -> RuntimeContext inputStack locals wasmModule (GetNatList inputLabels)
-                   -> RuntimeContext outputStack locals wasmModule (GetNatList outputLabels)
+                   -> RuntimeContext inputStack locals wasmModule inputLabels
+                   -> RuntimeContext outputStack locals wasmModule outputLabels
                 --    -> RuntimeContext inputStack locals wasmModule (LenLabelStackShape inputLabels)
                 --    -> RuntimeContext outputStack locals wasmModule (LenLabelStackShape outputLabels)
 executeInstruction instr prevCtxt@(RuntimeContext prevStack prevLocals prevGlobal prevLabels prevMemory) = case instr of
