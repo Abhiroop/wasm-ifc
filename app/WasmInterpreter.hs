@@ -168,6 +168,17 @@ data RuntimeInstr (instr :: Instruction inputStack outputStack locals wasmModule
 --           -> RuntimeInstrSeq (instr :| restInstrSeq)
 
 
+
+-- executeInstructionSequence1 :: InstructionSequence inputStack outputStack locals wasmModule inputLabels outputLabels
+--     -> RuntimeContext inputStack locals wasmModule inputLabels
+--     -> (InstructionSequence outputStack outputStack locals wasmModule outputLabels outputLabels, RuntimeContext outputStack locals wasmModule outputLabels)
+
+-- executeInstructionSequence1 (instr :| rest) ctxt = 
+--     let (restInstrSeq, newCtxt) = executeInstruction instr ctxt
+--     in executeInstructionSequence1 (restInstrSeq :| rest) newCtxt
+
+
+-- TODO: This one we want to implement
 executeInstruction :: forall inputStack outputStack locals wasmModule inputLabels outputLabels intermediateStack intermediateLabels .
     Instruction inputStack intermediateStack locals wasmModule inputLabels intermediateLabels
     -> RuntimeContext inputStack locals wasmModule inputLabels
@@ -180,7 +191,11 @@ executeInstruction instr prevCtxt@(RuntimeContext prevStack prevLocals prevGloba
             -- (intermediateStack ~ outputStack) => 
             (End ::  InstructionSequence intermediateStack outputStack locals wasmModule intermediateLabels intermediateLabels,
             RuntimeContext (Push val prevStack) prevLocals prevGlobal prevLabels prevMemory)
+        -- Loop (BTParamsResults (params :: KnownValStackShape paramsStack) _) instrSeq -> 
+        --     let (retSeq, retCtxt) = executeInstructionSequence1 -- where retSeq is either End or Br 
+        --     (undefined, undefined)
         _ -> undefined
+
 
 -- TODO
 executeInstruction1 :: forall inputStack outputStack locals wasmModule inputLabels outputLabels .
