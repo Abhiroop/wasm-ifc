@@ -67,7 +67,7 @@ concatStacks (Push val rest) s2 = Push val (concatStacks rest s2)
 --     RuntimeNoLabels :: RuntimeLabels 'NoLabels
 --     RuntimeConsLabels :: forall (a :: Nat) (h :: Nat) (l :: Nat) (labels:: Labels l) (arity :: SNat a) (height :: SNat h) . Label a h -> RuntimeLabels labels -> RuntimeLabels (ConsLabels '(arity, height) labels)
 
-type LabelShape = ([WasmType], Nat)
+
 type Label (x :: LabelShape) = (SNat (Length (Fst x)), SNat (Snd x)) -- (arity, height) -- TODO: add cont
 
 type family Fst (p :: (a, b)) :: a where
