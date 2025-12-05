@@ -76,8 +76,11 @@ data SomeLabels where
 data SomeLabel where
     SomeLabel :: Label a h -> SomeLabel
 
-type Label a h = (SNat a, SNat h)
--- type Label = (Nat, Nat) -- (arity, height)
+data Label (shape :: LabelShape) = Label {
+    arity :: SNat (Arity shape),
+    height :: SNat (Height shape)
+    -- continuation :: ...
+}
 
 -- popNthLabelFromTop ::
 --     -- (label ~ LabelIndex n (labels :: Labels (labelStackShape :: LabelStackShape l))) =>

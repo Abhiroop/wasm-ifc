@@ -76,13 +76,13 @@ infixr 5 :<|
 
 
 -- | Type-level indexing into vectors
-type family Index (i :: Nat) (v :: Vec n a) :: a where
-    Index 'Z (x :<| _)      =  x
-    Index ('S n) (_ :<| xs) = Index n xs
+type family Index (i :: Nat) (v :: [a]) :: a where
+    Index 'Z (x : _)      =  x
+    Index ('S n) (_ ': xs) = Index n xs
 
 -- | Type-level function to get the length of a vector
-type family GetVecLen (v :: Vec n a) :: Nat where
-    GetVecLen (v :: Vec n a) = n
+type family GetVecLen (v :: [a]) :: Nat where
+    GetVecLen (v :: [a]) = n
 
     
 

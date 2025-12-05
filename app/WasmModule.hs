@@ -47,7 +47,7 @@ type family GetMutability (g :: GlobalType) :: Mutability where
 -- this is in execution in validation it doesn't go throught the globaladdr
 
 -- type GlobalsShape = [GlobalType]
-type GlobalsShape n = Vec n GlobalType
+type GlobalsShape n = [GlobalType]
 
 type family GetGlobalsShape (m :: WasmModuleShape) :: Nat where
     GetGlobalsShape ('WasmModuleShapeR globalsShape _) = globalsShape
@@ -77,7 +77,7 @@ data WasmModule (shape :: WasmModuleShape) = WasmModuleR {
     -- types :: XYZ,
     }
 
-type family GetGlobals (m :: WasmModule shape) :: Vec (GetGlobalsShape shape) GlobalType where
+type family GetGlobals (m :: WasmModule shape) :: [GlobalType] where
     GetGlobals ('WasmModuleR globals _) = globals
 
 -- Type family to extract WasmType from GlobalType

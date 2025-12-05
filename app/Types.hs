@@ -15,17 +15,17 @@ import Utils(Nat(S, Z), (:-), type (:+), type (+:), (:==), SNat(..), Vec(..))
 import GHC.TypeError (ErrorMessage(Text))
 
 
-type family CheckSameVecType (xs :: Vec n a) (ys :: Vec m a) :: Bool where
-    CheckSameVecType (xs :: Vec n a) (ys :: Vec m a)
-        = (n :== m)
+type family CheckSameVecType (xs :: [a]) (ys :: [a]) :: Bool where
+    CheckSameVecType (xs :: [a]) (ys :: [a])
+        = Length xs :== Length ys
     -- CheckSameVecType _ _ = 'False
 
 type family CheckTopVecEqual (top :: SomeValStackShape) (stack :: SomeValStackShape) :: Bool where
-    CheckTopVecEqual ('SomeValStackShape VNil) s2 = 'True
-    CheckTopVecEqual ('SomeValStackShape (t :<| ts)) ('SomeValStackShape (t :<| ss)) = CheckTopVecEqual ('SomeValStackShape ts) ('SomeValStackShape ss)
+    CheckTopVecEqual ('SomeValStackShape '[]) s2 = 'True
+    CheckTopVecEqual ('SomeValStackShape (t ': ts)) ('SomeValStackShape (t ': ss)) = CheckTopVecEqual ('SomeValStackShape ts) ('SomeValStackShape ss)
     CheckTopVecEqual s1 s2 = 'False
 
-type family GetSpecificValVec (s :: SomeValStackShape) :: ValStackShape n where
+type family GetSpecificValVec (s :: SomeValStackShape) :: ValStackShape where
     GetSpecificValVec ('SomeValStackShape v) = v
 
 {-
@@ -35,8 +35,8 @@ FUNCTION TYPES
 -}
 type FuncName = [Char]
 
-data FuncTypeAnn (inputStack :: ValStackShape n) (outputStack :: ValStackShape m) where
-    FFuncTypeAnn :: ValStackShape n -> ValStackShape m -> FuncTypeAnn inputStack outputStack
+data FuncTypeAnn (inputStack :: ValStackShape) (outputStack :: ValStackShape) where
+    FFuncTypeAnn :: ValStackShape -> ValStackShape -> FuncTypeAnn inputStack outputStack
 
 
 {-
@@ -46,7 +46,7 @@ BLOCK TYPE
 -}
 -- BlockType has parameters and results of WasmType
 -- simplification of what actually happens in WASM Spec
-data BlockType (params :: ValStackShape s) (res :: ValStackShape t) where
+data BlockType (params :: ValStackShape) (res :: ValStackShape) where
     BTParamsResults :: KnownValStackShape params -> KnownValStackShape res -> BlockType params res
 
 
@@ -56,78 +56,94 @@ LABEL THINGS
 =============================================================================
 -}
 
+--- TODO move
+type family Length (list :: [a]) :: Nat where
+    Length '[] = Z
+    Length (x ': xs) = S (Length xs) 
+
+data LabelShape = LabelShape {
+    types :: [WasmType],
+    height :: Nat
+}
+
+type family Arity (shape :: LabelShape) :: Nat where
+    Arity ('LabelShape types height) = Length types
+
+type family Height (shape :: LabelShape) :: Nat where
+    Height ('LabelShape types height) = height
+
 type family GetLabelType (label :: (SomeValStackShape, Nat)) :: SomeValStackShape where
     GetLabelType '( t, _) = t
 
-type LabelStackShape (l :: Nat) = Vec l (SomeValStackShape, Nat)
+type LabelStackShape = [LabelShape]
     
 
 type family GetLabelCreationValStackLength (label :: (SomeValStackShape, Nat)) :: Nat where
     GetLabelCreationValStackLength '(t, lenInput)  
          = lenInput
 -- | Type family to remove top n labels from a LabelStackShape.
-type family RemoveLabels (i :: Nat) (labels :: LabelStackShape l) :: LabelStackShape (l :- 'S i) where
-    RemoveLabels 'Z ('(l, _) :<| ls) = ls
-    RemoveLabels ('S i) ('(t, _) :<| ts) = RemoveLabels i ts
+type family RemoveLabels (i :: Nat) (labels :: LabelStackShape) :: LabelStackShape where
+    RemoveLabels 'Z (_ ': ls) = ls
+    RemoveLabels ('S i) (_ ': ts) = RemoveLabels i ts
 
-type family IncludesLabelType (labelType :: ValStackShape lts) (labels :: LabelStackShape l) :: Bool where
-    IncludesLabelType labelType VNil = 'False
-    IncludesLabelType labelType ('( 'SomeValStackShape labelType, _) :<| ls) = 'True
-    IncludesLabelType labelType ('(t, _) :<| ls) = IncludesLabelType labelType ls
+{- type family IncludesLabelType (labelType :: [WasmType]) (labels :: LabelStackShape) :: Bool where
+    IncludesLabelType labelType '[] = 'False
+    IncludesLabelType labelType (LabelShape labelType height ': ls) = 'True
+    IncludesLabelType labelType ('(t, _) ': ls) = IncludesLabelType labelType ls -}
 
 
-knownStackShapeLen :: KnownValStackShape (v :: Vec n WasmType) -> SNat n
+knownStackShapeLen :: KnownValStackShape (v :: [WasmType]) -> SNat (Length v)
 knownStackShapeLen KnownValVNil         = SZ
 knownStackShapeLen (KnownValCons _kw rest) = SS (knownStackShapeLen rest)
 
 -- | Type-level representation of the WebAssembly stack.
--- The stack grows to the right: (I32 :<| I32 :<| VNil) means two I32s on stack.
-type ValStackShape n = Vec n WasmType
+-- The stack grows to the right: (I32 ': I32 ': []) means two I32s on stack.
+type ValStackShape = [WasmType]
 
 -- existential valstackshape type
 data SomeValStackShape where
-    SomeValStackShape :: ValStackShape n -> SomeValStackShape
+    SomeValStackShape :: ValStackShape -> SomeValStackShape
 
-data KnownValStackShape (s :: ValStackShape n) where
-    KnownValVNil :: KnownValStackShape 'VNil
-    KnownValCons :: KnownWasmType t -> KnownValStackShape ts -> KnownValStackShape (t :<| ts)
+data KnownValStackShape (s :: ValStackShape) where
+    KnownValVNil :: KnownValStackShape '[]
+    KnownValCons :: KnownWasmType t -> KnownValStackShape ts -> KnownValStackShape (t ': ts)
 
 type family AddComm (a :: Nat) (b :: Nat) :: Bool where
   AddComm a b = (a :+ b) :== (b :+ a)
 
 
 -- | Type family that reverses a ValStackShape.
-type family Reverse (s :: Vec n a) :: Vec n a where
-  Reverse VNil    = VNil
-  Reverse (t :<| (s :: Vec n a)) = Reverse s :+>+ (t :<| VNil)
+type family Reverse (s :: [a]) :: [a] where
+  Reverse '[]    = '[]
+  Reverse (t ': (s :: [a])) = Reverse s :+>+ (t ': '[])
 
 
-type family Take (n :: Nat) (s :: Vec m a) :: Vec n a where
-  Take 'Z       s         = 'VNil
-  Take ('S n)   (t :<| s)  = t :<| Take n s
-  Take ('S n)   'VNil    = TypeError ('Text "take: stack too small")
+type family Take (n :: Nat) (s :: [a]) :: [a] where
+  Take 'Z       s         = '[]
+  Take ('S n)   (t ': s)  = t ': Take n s
+  Take ('S n)   '[]    = TypeError ('Text "take: stack too small")
 
 -- | Type family that drops the top n elements from a ValStackShape.
-type family Drop (n :: Nat) (s :: Vec m a) :: Vec (m :- n) a where
+type family Drop (n :: Nat) (s :: [a]) :: [a] where
   Drop 'Z       s         = s
-  Drop ('S n)   (t :<| s)  = Drop n s
-  Drop ('S n)   'VNil    = TypeError ('Text "drop: stack too small")
+  Drop ('S n)   (t ': s)  = Drop n s
+  Drop ('S n)   '[]    = TypeError ('Text "drop: stack too small")
 
 
 -- | Stack concatenation at the type level.
 -- This combines two stack shapes: upper sits on top of lower.
 -- Once from the left and once from the right since we need it both directions.
-type family (lower :: Vec n a) :+>+ (upper :: Vec m a) :: Vec (n :+ m) a where
-    lower :+>+ VNil = lower
-    lower :+>+ (top :<| upper) = top :<| (lower :+>+ upper)
+type family (lower :: [a]) :+>+ (upper :: [a]) :: [a] where
+    lower :+>+ '[] = lower
+    lower :+>+ (top ': upper) = top ': (lower :+>+ upper)
 infixr 5 :+>+
 
-type family (upper :: Vec n a) +>+: (lower :: Vec m a) :: Vec (n +: m) a where
-    VNil +>+: lower = lower
-    (top :<| upper) +>+: lower = top :<| (upper +>+: lower)
+type family (upper :: [a]) +>+: (lower :: [a]) :: [a] where
+    '[] +>+: lower = lower
+    (top ': upper) +>+: lower = top ': (upper +>+: lower)
 infixl 5 +>+:
 
-type family (upper :: Vec n a) +<+: (lower :: Vec m a) :: Vec (n +: m) a where
+type family (upper :: [a]) +<+: (lower :: [a]) :: [a] where
 
 
 
