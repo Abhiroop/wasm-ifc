@@ -61,7 +61,7 @@ executable wasm-ifc
     main-is:          Main.hs
 
     -- Modules included in this executable, other than Main.
-    other-modules:    TinySecLang, Wasm, TypeExercise, WasmModule, Types, Utils, WasmInterpreter
+    other-modules:    TinySecLang, Wasm, TypeExercise, WasmModule, Types, Utils, WasmInterpreter, Branch
 
     -- LANGUAGE extensions used by modules in this package.
     -- other-extensions:
@@ -70,7 +70,7 @@ executable wasm-ifc
     build-depends:    base ^>=4.21.0.0, containers
 
     -- Directories containing source files.
-    hs-source-dirs:   app, exercises
+    hs-source-dirs:   app, exercises, discussions
 
 
     -- Base language which the package is written in.
