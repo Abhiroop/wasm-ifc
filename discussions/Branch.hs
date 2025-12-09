@@ -10,7 +10,7 @@ data Instr =
 
 type InstrSeq = [Instr]
 
-data Label = Label
+newtype Label = Label
     { continuation :: InstrSeq }
     deriving (Show)
 
@@ -42,7 +42,7 @@ step state ((current : rest) : parents) = case current of
         in (state', body : rest : parents)
 
     Loop body ->
-        let state' = pushLabel (Label body) state
+        let state' = pushLabel (Label [Loop body]) state
         in (state', body : rest : parents)
 
     Br depth ->
