@@ -15,7 +15,7 @@
 -- WebAssembly programs are stack-safe and type-correct at compile time.
 module Wasm where
 
-import Data.Int (Int32)
+import Data.Int (Int32, Int64)
 import Data.Word (Word32, Word64)
 import Types --(Length, WasmType(I64, I32), WasmType, ValStackShape, type (:+>+), CheckTopVecEqual, BlockType (..), FuncName, FuncTypeAnn (..), Take, FuncTypeAnn (..), Reverse, KnownWasmType (ForI32), LabelStackShape, GetLabelType, GetLabelCreationValStackLength, SomeValStackShape(..), KnownValStackShape (KnownValVNil, KnownValCons), GetSpecificValVec, LabelShape(..))
 import Utils
@@ -85,6 +85,9 @@ data Instruction (inputStack :: ValStackShape) (outputStack :: ValStackShape) (l
     -- more operators (e.g. bitwise negation, bitwise conjunction, ..., min, max)
 
     -- i64 arithmetic operators
+    I64Const :: Int64 -> Instruction inputStack ((I64 ': inputStack) :: ValStackShape) locals wasmModule inputLabels inputLabels
+     -- i64 arithmetic operators (all pop two values, push one result)
+
     I64Add :: Instruction (I64 ': I64 ': inputStack) (I64 ': inputStack) locals wasmModule inputLabels inputLabels
     I64Sub :: Instruction (I64 ': I64 ': inputStack) (I64 ': inputStack) locals wasmModule inputLabels inputLabels
     I64Mul :: Instruction (I64 ': I64 ': inputStack) (I64 ': inputStack) locals wasmModule inputLabels inputLabels
@@ -237,10 +240,26 @@ data Instruction (inputStack :: ValStackShape) (outputStack :: ValStackShape) (l
     -- This version compiles
     -- Checks whether the top of the input stack is equal to the label type as a constraint
 
-    Br    :: forall (i :: Nat) (l :: Nat) (shape :: WasmModuleShape) (inputLabels :: LabelStackShape) (inputStack :: ValStackShape) (outputStack :: ValStackShape)  (locals :: LocalsShape) (wasmModule :: WasmModule shape) .
+    -- Br    :: forall (i :: Nat) (l :: Nat) (shape :: WasmModuleShape) (inputLabels :: LabelStackShape) (inputStack :: ValStackShape) (outputStack :: ValStackShape)  (locals :: LocalsShape) (wasmModule :: WasmModule shape) .
+    --     (CheckTopVecEqual (GetLabelType (Index i inputLabels)) inputStack ~ 'True,
+    --     (Take (Arity (Index i inputLabels)) inputStack :+>+
+    --       Take (Height (Index i inputLabels)) (Reverse inputStack))
+    --       ~ outputStack,
+    --       l ~ Length inputLabels
+    --     ) => 
+    --         SFin i l
+    --         -> Instruction inputStack
+    --                        outputStack
+    --                        locals
+    --                        wasmModule
+    --                        inputLabels
+    --                        inputLabels
+
+    Br    :: forall (i :: Nat) (l :: Nat) (shape :: WasmModuleShape) (targetLabel :: LabelShape) (remainingLabels :: LabelStackShape) (inputLabels :: LabelStackShape) (inputStack :: ValStackShape) (outputStack :: ValStackShape)  (locals :: LocalsShape) (wasmModule :: WasmModule shape) .
         (CheckTopVecEqual (GetLabelType (Index i inputLabels)) inputStack ~ 'True,
-        (Take (Arity (Index i inputLabels)) inputStack :+>+
-          Take (Height (Index i inputLabels)) (Reverse inputStack))
+        targetLabel : remainingLabels ~ Drop i inputLabels,
+        (Take (Arity targetLabel) inputStack :+>+
+          Take (Height targetLabel) (Reverse inputStack))
           ~ outputStack,
           l ~ Length inputLabels
         ) => 
