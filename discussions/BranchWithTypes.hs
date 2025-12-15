@@ -21,86 +21,94 @@ data ValueStack (shape :: [WasmType]) where
     NoValues :: ValueStack '[]
     PushValue :: (RuntimeTypeOf top) -> ValueStack shape -> ValueStack (top ': shape)
 
-data Instr (values :: [WasmType]) (values' :: [WasmType]) where
-    I32Const :: Int -> Instr values (I32 ': values)
-    I32Add :: Instr (I32 ': I32 ': values) (I32 ': values)
-    Block :: InstrSeq values values' -> Instr values values'
-    Loop :: InstrSeq values values -> Instr values values
-    Br :: Int -> Instr values values
+data Label (initialVal :: [WasmType]) where
+    Label :: InstrSeq initialVal initialLab finalVal finalLab -> Label initialVal
 
-data InstrSeq initial final where
-    Halt :: InstrSeq initial initial
-    (:|) :: Instr initial middle -> InstrSeq middle final -> InstrSeq initial final
+data LabelStack (shape :: [[WasmType]]) where
+    NoLabels :: LabelStack '[]
+    PushLabel :: Label topShape -> LabelStack restShape -> LabelStack (topShape ': restShape)
 
-data SomeInstrSeq where
-    SomeInstrSeq :: InstrSeq initial final -> SomeInstrSeq
+data SomeLabelStack = forall top rest. SomeLabelStack (Label top) (LabelStack rest)
 
-newtype Label = Label
-    { continuation :: SomeInstrSeq }
+popNLabels :: Int -> LabelStack shape -> SomeLabelStack
+popNLabels 0 (PushLabel lab rest) = SomeLabelStack lab rest
+popNLabels n (PushLabel _ rest) = popNLabels (n-1) rest
+popNLabels _ NoLabels = error "Branch depth exceeds label stack"
 
-data State (valuesShape :: [WasmType]) = State
+data Instr (values :: [WasmType]) (labels :: [[WasmType]]) (values' :: [WasmType]) (labels' :: [[WasmType]]) where
+    I32Const :: Int -> Instr values labels (I32 ': values) labels
+    I32Add :: Instr (I32 ': I32 ': values) labels (I32 ': values) labels
+    Block :: InstrSeq values (values ': labels) values' labels -> Instr values labels values' labels
+    Loop :: InstrSeq values (values ': labels) values labels -> Instr values labels values labels
+    Br :: Int -> Instr values labels values' labels'
+
+data InstrSeq initialVal initialLab finalVal finalLab where
+    Halt :: InstrSeq initialVal initialLab initialVal initialLab
+    (:|) :: Instr initialVal initialLab middleVal middleLab 
+            -> InstrSeq middleVal middleLab finalVal finalLab 
+            -> InstrSeq initialVal initialLab finalVal finalLab
+
+data State (valuesShape :: [WasmType]) (labelsShape :: [[WasmType]]) = State
     { values :: ValueStack valuesShape
-    , labels :: [Label] 
+    , labels :: LabelStack labelsShape
     }
 
-pushValue :: RuntimeTypeOf top -> State values -> State (top ': values)
+pushValue :: RuntimeTypeOf top -> State values labels -> State (top ': values) labels
 pushValue value state = state { values = PushValue value (values state) }
 
-pushLabel :: Label -> State values -> State values
-pushLabel label state = state { labels = label : labels state }
+pushLabel :: Label top -> State values labels -> State values (top ': labels)
+pushLabel label state = state { labels = PushLabel label (labels state) }
 
--- Lean: inductive ControlStack : Shape -> Shape -> Type where
---   | single : InstrSeq i f -> ControlStack i f
---   | cons : InstrSeq i m -> ControlStack m f -> ControlStack i f
-data ControlStack (initial :: [WasmType]) (final :: [WasmType]) where
-    CSingle :: InstrSeq initial final -> ControlStack initial final
-    CCons   :: InstrSeq initial middle -> ControlStack middle final -> ControlStack initial final
+data ControlStack (initialVal :: [WasmType]) (initialLab :: [[WasmType]]) (finalVal :: [WasmType]) (finalLab :: [[WasmType]]) where
+    CSingle :: InstrSeq initialVal initialLab finalVal finalLab -> ControlStack initialVal initialLab finalVal finalLab
+    CCons   :: InstrSeq initialVal initialLab middleVal middleLab -> ControlStack middleVal middleLab finalVal finalLab -> ControlStack initialVal initialLab finalVal finalLab
 
-data SomeControlStack final = forall initial . SomeControlStack (ControlStack initial final)
+data SomeControlStack finalVal finalLab = forall initialVal initialLab. 
+    SomeControlStack (ControlStack initialVal initialLab finalVal finalLab)
 
-popNFrames :: Int -> ControlStack initial final -> SomeControlStack final
+popNFrames :: Int -> ControlStack initialVal initialLab finalVal finalLab -> SomeControlStack finalVal finalLab
 popNFrames 0 control = SomeControlStack control
 popNFrames n (CCons _ rest) = popNFrames (n-1) rest
 popNFrames _ (CSingle _) = error "Branch depth exceeds control stack"
 
--- Lean: def step (init : State i) (stack : ControlStack i f) : 
---         (m : Shape) × State m × ControlStack m f
-data StepResult (initial :: [WasmType]) (final :: [WasmType]) = forall middle .
-    StepResult (State middle) (ControlStack middle final)
+data StepResult (initialVal :: [WasmType]) (initialLab :: [[WasmType]]) (finalVal :: [WasmType]) (finalLab :: [[WasmType]]) = forall middleVal middleLab.
+    StepResult (State middleVal middleLab) (ControlStack middleVal middleLab finalVal finalLab)
 
 -- TODO
-step :: forall initial final . State initial -> ControlStack initial final -> StepResult initial final
+step :: forall initialVal initialLab finalVal finalLab. 
+    State initialVal initialLab
+    -> ControlStack initialVal initialLab finalVal finalLab
+    -> StepResult initialVal initialLab finalVal finalLab
 step state (CSingle Halt) = StepResult state (CSingle Halt)
 step state (CSingle (instruction :| rest)) = stepInternal state instruction (CSingle rest)
 step state (CCons Halt parents) = StepResult state parents
 step state (CCons (instruction :| rest) parents) = stepInternal state instruction (CCons rest parents)
 
-stepInternal :: forall initial middle final .
-    State initial ->
-    Instr initial middle ->
-    ControlStack middle final ->
-    StepResult initial final
+stepInternal :: forall initialVal initialLab middleVal middleLab finalVal finalLab.
+    State initialVal initialLab
+    -> Instr initialVal initialLab middleVal middleLab
+    -> ControlStack middleVal middleLab finalVal finalLab
+    -> StepResult initialVal initialLab finalVal finalLab
 stepInternal state instruction nextControl = case instruction of
     I32Const value -> 
         StepResult (pushValue value state) nextControl
     I32Add -> 
         case values state of
-            PushValue rhs (PushValue lhs restValues) -> 
-                let newState = state { values = PushValue (lhs + rhs) restValues } 
+            PushValue rhs (PushValue lhs restVal) -> 
+                let newState = state { values = PushValue (lhs + rhs) restVal } 
                 in StepResult newState nextControl
     Block body ->
-        let newState = pushLabel (Label (SomeInstrSeq Halt)) state
+        let newState = pushLabel (Label Halt) state
         in StepResult newState (CCons body nextControl)
     Loop body ->
-        let newState = pushLabel (Label (SomeInstrSeq (Loop body :| Halt))) state
+        let newState = pushLabel (Label (Loop body :| Halt)) state
         in StepResult newState (CCons body nextControl)
     Br depth -> 
-        case drop depth (labels state) of
-            [] -> undefined
-            targetLabel : restLabels ->
-                case continuation targetLabel of
-                    SomeInstrSeq next ->
+        case popNLabels depth (labels state) of
+            SomeLabelStack targetLab restLab ->
+                case targetLab of
+                    next ->
                         case popNFrames depth nextControl of
                             SomeControlStack nextParents ->
-                                let nextState = state { labels = restLabels }
+                                let nextState = state { labels = restLab }
                                 in StepResult nextState (CCons (unsafeCoerce next) nextParents)
