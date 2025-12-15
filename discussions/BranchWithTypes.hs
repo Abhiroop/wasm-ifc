@@ -105,8 +105,8 @@ stepInternal state instruction nextControl = case instruction of
         case popNLabels depth (labels state) of
             SomeLabelStack targetLab restLab ->
                 case targetLab of
-                    next ->
+                    Label next ->
                         case popNFrames depth nextControl of
                             SomeControlStack nextParents ->
                                 let nextState = state { labels = restLab }
-                                in StepResult nextState (CCons (unsafeCoerce next) nextParents)
+                                in StepResult nextState (CCons next nextParents)

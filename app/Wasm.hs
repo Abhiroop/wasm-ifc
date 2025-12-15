@@ -288,8 +288,6 @@ data Instruction (inputStack :: ValStackShape) (outputStack :: ValStackShape) (l
 
     -- TODO: missing WASM instructions
 
-    Leave :: SNat n -> Instruction inputStack inputStack locals wasmModule inputLabels inputLabels
-
 {-
 =============================================================================
 INSTRUCTION SEQUENCES

@@ -64,6 +64,10 @@ data LabelShape = LabelShape {
     height :: Nat
 }
 
+-- HACK: no automatic way of projecting at type level?
+type family Types (shape :: LabelShape) :: [WasmType] where
+    Types ('LabelShape types height) = types
+
 type family Arity (shape :: LabelShape) :: Nat where
     Arity ('LabelShape types height) = Length types
 
