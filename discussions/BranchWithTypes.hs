@@ -1,11 +1,16 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE StandaloneKindSignatures #-}
+{-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
 
 module BranchWithTypes where
 
 import Data.Kind (Type)
+import Unsafe.Coerce    --- !!! WARNING
 
 data WasmType = I32
 
@@ -23,9 +28,9 @@ data Instr (values :: [WasmType]) (values' :: [WasmType]) where
     Loop :: InstrSeq values values -> Instr values values
     Br :: Int -> Instr values values
 
-data InstrSeq values values' where
-    Halt :: InstrSeq values values
-    (:|) :: Instr values values'' -> InstrSeq values'' values' -> InstrSeq values values'
+data InstrSeq initial final where
+    Halt :: InstrSeq initial initial
+    (:|) :: Instr initial middle -> InstrSeq middle final -> InstrSeq initial final
 
 data SomeInstrSeq where
     SomeInstrSeq :: InstrSeq initial final -> SomeInstrSeq
@@ -44,46 +49,58 @@ pushValue value state = state { values = PushValue value (values state) }
 pushLabel :: Label -> State values -> State values
 pushLabel label state = state { labels = label : labels state }
 
-data SomeState where
-    SomeState :: State values -> SomeState
+-- Lean: inductive ControlStack : Shape -> Shape -> Type where
+--   | single : InstrSeq i f -> ControlStack i f
+--   | cons : InstrSeq i m -> ControlStack m f -> ControlStack i f
+data ControlStack (initial :: [WasmType]) (final :: [WasmType]) where
+    CSingle :: InstrSeq initial final -> ControlStack initial final
+    CCons   :: InstrSeq initial middle -> ControlStack middle final -> ControlStack initial final
+
+data SomeControlStack final = forall initial . SomeControlStack (ControlStack initial final)
+
+popNFrames :: Int -> ControlStack initial final -> SomeControlStack final
+popNFrames 0 control = SomeControlStack control
+popNFrames n (CCons _ rest) = popNFrames (n-1) rest
+popNFrames _ (CSingle _) = error "Branch depth exceeds control stack"
+
+-- Lean: def step (init : State i) (stack : ControlStack i f) : 
+--         (m : Shape) × State m × ControlStack m f
+data StepResult (initial :: [WasmType]) (final :: [WasmType]) = forall middle .
+    StepResult (State middle) (ControlStack middle final)
 
 -- TODO
-step :: State initial -> InstrSeq initial final -> [SomeInstrSeq] -> (SomeState, [SomeInstrSeq])
-step state Halt parents = (SomeState state, parents)
-step state (current :| rest) parents = case current of
-    I32Const value ->
-        (SomeState (pushValue value state), SomeInstrSeq rest : parents)
+step :: forall initial final . State initial -> ControlStack initial final -> StepResult initial final
+step state (CSingle Halt) = StepResult state (CSingle Halt)
+step state (CSingle (instruction :| rest)) = stepInternal state instruction (CSingle rest)
+step state (CCons Halt parents) = StepResult state parents
+step state (CCons (instruction :| rest) parents) = stepInternal state instruction (CCons rest parents)
 
-    I32Add ->
-        undefined
-
+stepInternal :: forall initial middle final .
+    State initial ->
+    Instr initial middle ->
+    ControlStack middle final ->
+    StepResult initial final
+stepInternal state instruction nextControl = case instruction of
+    I32Const value -> 
+        StepResult (pushValue value state) nextControl
+    I32Add -> 
+        case values state of
+            PushValue rhs (PushValue lhs restValues) -> 
+                let newState = state { values = PushValue (lhs + rhs) restValues } 
+                in StepResult newState nextControl
     Block body ->
-        let state' = pushLabel (Label $ SomeInstrSeq Halt) state
-        in (SomeState state', SomeInstrSeq body : SomeInstrSeq rest : parents)
-
+        let newState = pushLabel (Label (SomeInstrSeq Halt)) state
+        in StepResult newState (CCons body nextControl)
     Loop body ->
-        let state' = pushLabel (Label $ SomeInstrSeq body) state
-        in (SomeState state', SomeInstrSeq body : SomeInstrSeq rest : parents)
-
-    Br depth ->
-        let ((Label next) : restLabels) = drop depth (labels state)
-            (_ : nextParents) = drop depth (SomeInstrSeq rest : parents)
-            state' = state { labels = restLabels }
-        in (SomeState state', if next == SomeInstrSeq Halt then nextParents else next : nextParents) 
-
-run :: InstrSeq '[] final -> SomeState
-run program = stepToCompletion (State NoValues []) program []
-    where stepToCompletion :: State initial -> InstrSeq initial final ->  [SomeInstrSeq] -> SomeState
-          stepToCompletion state current parents =
-            let (state', parents') = step state current parents
-            in if null parents' then state' else stepToCompletion state' (head parents') (tail parents')
-
-test :: IO ()
-test = do
-    let program = 
-               I32Const 5
-            :| Block (I32Const 10 :| I32Add :| Br 0 :| I32Const 99)
-            :| I32Const 20
-            :| I32Add
-    let result = run program
-    print result
+        let newState = pushLabel (Label (SomeInstrSeq (Loop body :| Halt))) state
+        in StepResult newState (CCons body nextControl)
+    Br depth -> 
+        case drop depth (labels state) of
+            [] -> undefined
+            targetLabel : restLabels ->
+                case continuation targetLabel of
+                    SomeInstrSeq next ->
+                        case popNFrames depth nextControl of
+                            SomeControlStack nextParents ->
+                                let nextState = state { labels = restLabels }
+                                in StepResult nextState (CCons (unsafeCoerce next) nextParents)
