@@ -22,6 +22,7 @@ import Types -- (RuntimeTypeOf(..), ValStackShape(..), BlockType (..),  FuncType
 import Utils
 import WasmModule hiding (globals) -- HACK: ambiguous record fields
 import Wasm
+import Unsafe.Coerce
 
 {-
 =============================================================================
@@ -73,13 +74,13 @@ data Memory (memsShape :: MemoriesShape) where
     NoMems   :: Memory '[]
     ConsMems :: MemoryArray -> Memory memsShape -> Memory (memArray : memsShape)
 
--- data SomeInstrSeq where
---     SomeInstrSeq :: InstructionSequence inputStack outputStack locals wasmModule inputLabels outputLabels -> SomeInstrSeq
+data SomeInstrSeq where
+    SomeInstrSeq :: InstructionSequence initialVal finalVal locals wasmModule initialLab finalLab -> SomeInstrSeq
 
 -- HACK: no way of having record syntax with GADT features?
 data Label (shape :: LabelShape) where
-    --       height                 continuation
-    Label :: SNat (Height shape) -> InstructionSequence (Types shape) finalVal locals wasmModule initialLab finalLab -> Label shape
+    --       height                 arity                 continuation
+    Label :: SNat (Height shape) -> SNat (Arity shape) -> SomeInstrSeq -> Label shape
 
 data LabelStack (shape :: LabelStackShape) where
     NoLabels :: LabelStack '[]
@@ -181,19 +182,22 @@ data ControlStack (initialVal :: ValStackShape) (finalVal :: ValStackShape)
                -> ControlStack middleVal finalVal locals wasmModule middleLab finalLab
                -> ControlStack initialVal finalVal locals wasmModule initialLab finalLab
 
+
+cprepend :: Instruction initialVal middleVal locals wasmModule initialLab middleLab 
+         -> ControlStack middleVal finalVal locals wasmModule middleLab finalLab 
+         -> ControlStack initialVal finalVal locals wasmModule initialLab finalLab
+cprepend instruction (CSingle current) = CSingle (instruction :| current)
+cprepend instruction (CCons current parents) = CCons (instruction :| current) parents
+
 data ControlStackWithSomeInitial locals wasmModule finalVal finalLab = forall initialVal initialLab .
     ControlStackWithSomeInitial (ControlStack initialVal finalVal locals wasmModule initialLab finalLab)
-
--- Apply a function after converting both arguments and convert back
-via :: (c -> c -> c) -> (a -> c) -> (c -> a) -> a -> a -> a
-via f to from x y = from (f (to x) (to y))
 
 -- HACK: not using info in SFin
 dropControlFrames :: SFin n l
                   -> ControlStack initialVal finalVal locals wasmModule initialLab finalLab
                   -> ControlStackWithSomeInitial locals wasmModule finalVal finalLab
 dropControlFrames SFZ     frames         = ControlStackWithSomeInitial frames
-dropControlFrames (SFS n) (CCons _ rest) = dropControlFrames (n-1) rest
+dropControlFrames (SFS n) (CCons _ rest) = dropControlFrames n rest
 dropControlFrames _       (CSingle _)    = error "Branch depth exceeds control stack"
 
 data StepResult (initialVal :: ValStackShape) (finalVal :: ValStackShape)
@@ -207,10 +211,10 @@ data StepResult (initialVal :: ValStackShape) (finalVal :: ValStackShape)
 step :: RuntimeContext initialVal locals wasmModule initialLab
      -> ControlStack initialVal finalVal locals wasmModule initialLab finalLab
      -> StepResult initialVal finalVal locals wasmModule initialLab finalLab
-step state (CSingle End) = StepResult state (CSingle End)
-step state (CSingle (instruction :| rest)) = stepInternal state instruction (CSingle rest)
-step state (CCons End parents) = StepResult state parents
-step state (CCons (instruction :| rest) parents) = stepInternal state instruction (CCons rest parents)
+step ctx (CSingle End) = StepResult ctx (CSingle End)
+step ctx (CSingle (instruction :| rest)) = stepInternal ctx instruction (CSingle rest)
+step ctx (CCons End parents) = StepResult ctx parents
+step ctx (CCons (instruction :| rest) parents) = stepInternal ctx instruction (CCons rest parents)
 
 stepInternal :: RuntimeContext initialVal locals wasmModule initialLab
              -> Instruction initialVal middleVal locals wasmModule initialLab middleLab 
@@ -293,45 +297,42 @@ stepInternal ctx instruction nextControl = case instruction of
     MemoryLoad _ _ -> undefined
     MemoryStore _ _ -> undefined
 
-    Block unknown1 body ->
-        let newCtx = pushLabel (Label (stackLength $ values ctx) End) ctx
-        in StepResult newCtx (CCons body nextControl)
-    --Block (BTParamsResults _ (res :: KnownValStackShape resStack)) instrSeq -> 
-    --            let newCtxt = prevCtxt {
-    --                labels = ConsLabels (Label {
-    --                    arity = knownStackShapeLen res,
-    --                    WasmInterpreter.height = stackLength prevStack,
-    --                    continuation = SomeInstrSeq End
-    --                }) (labels prevCtxt)
-    --            }
-    --            in ExecResult2 (instrSeq, SomeInstrSeq rest : restInstrSeqs) newCtxt
-    Loop unknown1 body ->
-        let newCtx = pushLabel (Label (stackLength $ values ctx) (Loop body :| End)) ctx
-        in StepResult newCtx (CCons body nextControl)
-    --Loop (BTParamsResults (params :: KnownValStackShape paramsStack) _) instrSeq ->
-    --            let newCtxt = prevCtxt {
-    --                labels = ConsLabels (Label {
-    --                    arity = knownStackShapeLen params,
-    --                    WasmInterpreter.height = stackLength prevStack,
-    --                    continuation = SomeInstrSeq (current :| End) -- loop back to the beginning of the loop
-    --                }) (labels prevCtxt)
-    --            }
-    --            in ExecResult2 (instrSeq, SomeInstrSeq rest : restInstrSeqs) newCtxt
+    Block (BTParamsResults _ (res :: KnownValStackShape resStack)) body ->
+        let newCtx = pushLabel (Label (stackLength $ values ctx) (knownStackShapeLen res) (SomeInstrSeq End)) ctx
+        in StepResult newCtx (CCons body (cprepend Leave nextControl))
+    Loop blockType@(BTParamsResults (params :: KnownValStackShape paramsStack) _) body ->
+        let loopCont = SomeInstrSeq (Loop blockType body :| End)
+            newCtx = pushLabel (Label (stackLength $ values ctx) (knownStackShapeLen params) loopCont) ctx
+        in StepResult newCtx (CCons body (cprepend Leave nextControl))
 
-    If unknown1 body1 body2 -> undefined
+    If (BTParamsResults _ (res :: KnownValStackShape resStack)) thenBody elseBody ->
+        case values ctx of
+            ConsValues (cond :: RuntimeTypeOf I32) restVal ->
+                let newCtx = ctx {
+                        values = restVal,
+                        labels = ConsLabels (Label (stackLength restVal) (knownStackShapeLen res) (SomeInstrSeq End)) (labels ctx)
+                    }
+                    body = if cond /= 0 then thenBody else elseBody
+                in StepResult newCtx (CCons body (cprepend Leave nextControl))
 
     Br depth ->
-        case dropLabels depth (labels ctx) of
-            ConsLabels targetLab restLab ->
-                case targetLab of
-                    Label height next ->
-                        case dropControlFrames depth nextControl of
-                            ControlStackWithSomeInitial nextParents ->
-                                let nextState = ctx { labels = restLab }
-                                in StepResult nextState (CCons next nextParents)
+        case (dropLabels depth (labels ctx), dropControlFrames (SFS depth) nextControl) of
+            (ConsLabels (Label heightToPreserve arity someNext) restLab, ControlStackWithSomeInitial nextParents) ->  
+                let (valuesToKeep, _) = takeStack arity (values ctx)
+                    baseValues = reduceStackToLength heightToPreserve (values ctx)
+                    finalValues = concatStacks valuesToKeep baseValues
+                    nextCtx = ctx { values = finalValues, labels = restLab }
+                in case someNext of 
+                    SomeInstrSeq next -> StepResult nextCtx (CCons (unsafeCoerce next) nextParents)
     BrIf _ -> undefined
 
     Call _ _ -> undefined
+
+    Leave ->
+        case labels ctx of
+            ConsLabels _ restLabels ->
+                let newState = ctx { labels = restLabels }
+                in StepResult newState nextControl 
 
 stepUnaryOp :: (RuntimeTypeOf typeIn -> RuntimeTypeOf typeOut)
             -> RuntimeContext (typeIn ': initialVal) locals wasmModule initialLab

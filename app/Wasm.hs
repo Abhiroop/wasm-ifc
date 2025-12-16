@@ -286,6 +286,8 @@ data Instruction (inputStack :: ValStackShape) (outputStack :: ValStackShape) (l
     -- here we need to po
     -- Call  :: FuncName f -> Instruction (GetParamsOf (GetTypeOfFunc f wasmModule)) (GetResultsOf (GetTypeOfFunc f wasmModule)) locals wasmModule inputLabels outputLabels 
 
+    Leave :: Instruction inputStack inputStack locals wasmModule (topLabel ': outputLabels) outputLabels
+
     -- TODO: missing WASM instructions
 
 {-

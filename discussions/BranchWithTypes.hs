@@ -72,7 +72,6 @@ popNFrames _ (CSingle _) = error "Branch depth exceeds control stack"
 data StepResult (initialVal :: [WasmType]) (initialLab :: [[WasmType]]) (finalVal :: [WasmType]) (finalLab :: [[WasmType]]) = forall middleVal middleLab.
     StepResult (State middleVal middleLab) (ControlStack middleVal middleLab finalVal finalLab)
 
--- TODO
 step :: forall initialVal initialLab finalVal finalLab. 
     State initialVal initialLab
     -> ControlStack initialVal initialLab finalVal finalLab
@@ -102,11 +101,7 @@ stepInternal state instruction nextControl = case instruction of
         let newState = pushLabel (Label (Loop body :| Halt)) state
         in StepResult newState (CCons body nextControl)
     Br depth -> 
-        case popNLabels depth (labels state) of
-            SomeLabelStack targetLab restLab ->
-                case targetLab of
-                    Label next ->
-                        case popNFrames depth nextControl of
-                            SomeControlStack nextParents ->
-                                let nextState = state { labels = restLab }
-                                in StepResult nextState (CCons next nextParents)
+        case (popNLabels depth (labels state), popNFrames depth nextControl)  of
+            (SomeLabelStack (Label next) restLab, SomeControlStack nextParents) ->
+                let nextState = state { labels = restLab }
+                in StepResult nextState (CCons next nextParents)

@@ -1,0 +1,807 @@
+{-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE ConstraintKinds #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
+
+
+-- | A type-safe embedded domain-specific language (DSL) for WebAssembly.
+-- This module uses advanced Haskell type system features to ensure that
+-- WebAssembly programs are stack-safe and type-correct at compile time.
+module WasmInterpreter where
+
+import Data.Int (Int32, Int64)
+import Data.Word (Word32, Word64)
+import Types -- (RuntimeTypeOf(..), ValStackShape(..), BlockType (..),  FuncTypeAnn (..), knownStackShapeLen, Take, Drop, FuncTypeAnn (..), Reverse, WasmType (I32), KnownWasmType (ForI32, ForI64), RuntimeWasmTypes(..), (:+>+), type (+>+:), KnownValStackShape(..), LabelStackShape, SomeValStackShape(..), GetSpecificValVec, GetLabelType, GetLabelCreationValStackLength)
+import Utils
+import WasmModule (WasmModule(..), GetGlobals, GlobalTypeToWasmType, GlobalsShape, GlobalType (GlobalTypeMW), KnownMutability(SVar, SConst), GetMems, GetMemoriesShape, MemoriesShape, MemArg (SMemArg), MemoryArray) --, SomeWasmType (SomeWasmType))
+import Wasm
+
+{-
+=============================================================================
+INTERPRETER
+=============================================================================
+-}
+
+
+
+
+
+
+
+
+reduceStackToLength :: forall n stackShape.
+                       SNat n
+                    -> Stack stackShape
+                    -> Stack (Take n (Reverse stackShape))
+reduceStackToLength n = fst . takeStack n . reverseStack
+
+reverseStack :: Stack stackShape -> Stack (Reverse stackShape)
+reverseStack EmptyStack = EmptyStack
+reverseStack (Push @wasmType val rest) =
+  concatStacks (reverseStack rest) (Push @wasmType val EmptyStack)
+
+
+
+
+
+-- | Runtime representation of the WebAssembly stack.
+-- This is the actual data structure that holds stack values during execution.
+data Stack (stackShape :: ValStackShape) where
+    EmptyStack :: Stack '[]
+    Push       :: forall wasmType stackShape . RuntimeTypeOf wasmType -> Stack stackShape -> Stack (wasmType : stackShape)
+
+
+-- | Runtime representation of the WebAssembly locals.
+-- This is the actual data structure that holds local values during execution.
+data Locals (localsShape :: LocalsShape) where
+    NoLocals   :: Locals '[]
+    ConsLocals :: RuntimeTypeOf wasmType -> Locals localsShape -> Locals (wasmType : localsShape)
+
+data Globals (globalsShape :: GlobalsShape) where
+    NoGlobals   :: Globals '[]
+    ConsGlobals :: RuntimeTypeOf wasmType -> KnownMutability m -> Globals globalsShape -> Globals (GlobalTypeMW m wasmType : globalsShape)
+
+
+data Memory (memsShape :: MemoriesShape) where
+    NoMems   :: Memory '[]
+    ConsMems :: MemoryArray -> Memory memsShape -> Memory (memArray : memsShape)
+
+-- data SomeInstrSeq where
+--     SomeInstrSeq :: InstructionSequence inputStack outputStack locals wasmModule inputLabels outputLabels -> SomeInstrSeq
+
+data Label (shape :: LabelShape) = Label {
+    arity :: SNat (Arity shape),
+    height :: SNat (Height shape),
+    continuation :: SomeInstrSeq
+}
+
+data Labels (newLabelsShape :: LabelStackShape) where
+    NoLabels :: Labels '[]
+    ConsLabels :: 
+       Label shape 
+       -> Labels labelStackShape
+       -> Labels ( shape : labelStackShape) -- (newLabelsShape :: LabelStackShape ('S n))
+
+data RuntimeContext (stackShape :: ValStackShape) (localsShape :: LocalsShape) (wasmModule :: WasmModule shape) (labelsShape :: LabelStackShape) = RuntimeContext
+    { stack  :: Stack stackShape,
+      locals :: Locals localsShape,
+      globals :: Globals (GetGlobals wasmModule), -- :: GlobalsShape (GetGlobalsShape shape)),
+      labels :: Labels labelsShape,
+      memories :: Memory (GetMems wasmModule)
+      -- TODO: labels, tables, etc.
+    }
+
+
+stackLength :: Stack (stackShape :: ValStackShape) -> SNat (Length stackShape)
+stackLength EmptyStack       = SZ
+stackLength (Push _ rest) = SS (stackLength rest)
+
+
+takeStack :: () => SNat n -> Stack s -> (Stack (Take n s), Stack (Drop n s))
+takeStack SZ stk = (EmptyStack, stk)
+takeStack (SS n) (Push x xs) =
+  let (taken, rest) = takeStack n xs
+  in (Push x taken, rest)
+takeStack (SS _) EmptyStack = error "takeStack: stack underflow"
+
+
+concatStacks :: Stack s1 -> Stack s2 -> Stack (s1 :+>+ s2)
+concatStacks s2 EmptyStack      = s2
+concatStacks s2 (Push val rest) = Push val (concatStacks s2 rest)
+
+getAtLabel :: (l ~ Length labelStackShape) =>
+    SFin n l
+    -> Labels (labelStackShape :: LabelStackShape)
+    -> Label (Index n labelStackShape)
+getAtLabel SFZ (ConsLabels label _) = label
+getAtLabel (SFS idx) (ConsLabels _ rest) = getAtLabel idx rest
+
+dropLabels :: (l ~ Length labelStackShape) => SFin n l -> Labels labelStackShape -> Labels (Drop n labelStackShape)
+dropLabels SFZ (ConsLabels label remainingLabels) = (ConsLabels label remainingLabels)
+dropLabels (SFS n) (ConsLabels _ remainingLabels) = dropLabels n remainingLabels
+
+
+dropSomeInstrSeqs :: SFin n i -> [SomeInstrSeq] -> [SomeInstrSeq]
+dropSomeInstrSeqs SFZ instrSeqs = instrSeqs
+dropSomeInstrSeqs (SFS n) (_ : instrSeqs) = dropSomeInstrSeqs n instrSeqs
+dropSomeInstrSeqs _ [] = error "dropSomeInstrSeqs: not enough instruction sequences to drop"
+
+-- function to get the value of a local variable at a given index
+getLocalValue :: SFin i n -> Locals localsShape -> RuntimeTypeOf (Index i localsShape)
+getLocalValue SFZ (ConsLocals val _) = val
+getLocalValue (SFS idx) (ConsLocals _ rest) = getLocalValue idx rest
+getLocalValue _ NoLocals = error "Index out of bounds in getLocalValue"
+
+-- function to set the value of a local variable at a given index
+setLocalValue :: SFin i n -> RuntimeTypeOf (Index i localsShape) -> Locals localsShape -> Locals localsShape
+setLocalValue SFZ newVal (ConsLocals _ rest) = ConsLocals newVal rest
+setLocalValue (SFS idx) newVal (ConsLocals val rest) = ConsLocals val (setLocalValue idx newVal rest)
+setLocalValue _ _ NoLocals = error "Index out of bounds in setLocalValue"
+
+-- function to get the value of a global variable at a given index
+getGlobalValue :: SFin i n -> Globals globalsShape -> RuntimeTypeOf (GlobalTypeToWasmType (Index i globalsShape))
+getGlobalValue SFZ (ConsGlobals val _ _) = val
+getGlobalValue (SFS idx) (ConsGlobals _ _ rest) = getGlobalValue idx rest
+getGlobalValue _ NoGlobals = error "Index out of bounds in getGlobalValue"
+
+--function to set the value of a global variable at a given index, mutability has to be var
+setGlobalValue :: SFin i n -> RuntimeTypeOf (GlobalTypeToWasmType (Index i globalsShape)) -> Globals globalsShape -> Globals globalsShape
+setGlobalValue SFZ newVal (ConsGlobals _ SVar rest) = ConsGlobals newVal SVar rest
+setGlobalValue (SFS idx) newVal (ConsGlobals oldVal SVar rest) = ConsGlobals oldVal SVar (setGlobalValue idx newVal rest)
+setGlobalValue _ _ (ConsGlobals _ SConst _) = error "Cannot set value of a constant global variable" -- TODO: double check this
+setGlobalValue _ _ NoGlobals = error "Index out of bounds in setGlobalValue"
+
+
+-- function to get the array of a memory at a given index
+getMemoryArray :: SFin i n -> Memory memsShape -> MemoryArray
+getMemoryArray SFZ (ConsMems memArray _) = memArray
+getMemoryArray (SFS idx) (ConsMems _ rest) = getMemoryArray idx rest
+getMemoryArray _ NoMems = error "Index out of bounds in getMemoryArray"
+
+
+data RuntimeInstr (instr :: Instruction inputStack outputStack locals wasmModule inputLabels outputLabels) where
+    RInstr :: Instruction inputStack outputStack locals wasmModule inputLabels outputLabels
+           -> RuntimeInstr instr
+
+-- data RuntimeInstrSeq (instrSeq :: InstructionSequence inputStack outputStack locals wasmModule inputLabels outputLabels) where
+--     REnd  :: RuntimeInstrSeq 'End
+--     RCons :: RuntimeInstr (instr :: Instruction inputStack intermediateStack locals wasmModule inputLabels intermediateLabels)
+--           -> RuntimeInstrSeq restInstrSeq
+--           -> RuntimeInstrSeq (instr :| restInstrSeq)
+
+
+
+-- executeInstructionSequence1 :: InstructionSequence inputStack outputStack locals wasmModule inputLabels outputLabels
+--     -> RuntimeContext inputStack locals wasmModule inputLabels
+--     -> (InstructionSequence outputStack outputStack locals wasmModule outputLabels outputLabels, RuntimeContext outputStack locals wasmModule outputLabels)
+
+-- executeInstructionSequence1 (instr :| rest) ctxt = 
+--     let (restInstrSeq, newCtxt) = executeInstruction instr ctxt
+--     in executeInstructionSequence1 (restInstrSeq :| rest) newCtxt
+
+
+
+
+
+data ExecutionResult inputStack locals wasmModule inputLabels where
+  ExecResult :: forall outputStack outputLabels intermediateStack locals wasmModule intermediateLabels inputStack inputLabels.
+                InstructionSequence intermediateStack outputStack locals wasmModule intermediateLabels outputLabels
+             -> RuntimeContext intermediateStack locals wasmModule intermediateLabels
+             -> ExecutionResult inputStack locals wasmModule inputLabels
+
+data ExecutionResult2 inputStack locals wasmModule inputLabels where
+  ExecResult2 :: forall outputStack outputLabels intermediateStack locals wasmModule intermediateLabels inputStack inputLabels.
+                -- InstructionSequence intermediateStack outputStack locals wasmModule intermediateLabels outputLabels
+                (InstructionSequence intermediateStack outputStack locals wasmModule intermediateLabels outputLabels,[SomeInstrSeq])
+             -> RuntimeContext intermediateStack locals wasmModule intermediateLabels
+             -> ExecutionResult2 inputStack locals wasmModule inputLabels
+
+executeInstruction :: Instruction inputStack intermediateStack locals wasmModule inputLabels intermediateLabels
+                   -> RuntimeContext inputStack locals wasmModule inputLabels
+                   -> ExecutionResult inputStack locals wasmModule inputLabels
+executeInstruction (I32Const val) prevCtxt = 
+    ExecResult End (prevCtxt {stack = Push @I32 val (stack prevCtxt)})
+executeInstruction _ _ = undefined
+
+data SomeInstrSeq where
+    SomeInstrSeq :: forall inputStack outputStack locals wasmModule inputLabels outputLabels . InstructionSequence inputStack outputStack locals wasmModule inputLabels outputLabels
+                 -> SomeInstrSeq
+
+data SomeRC where
+    SomeRC :: 
+            -- forall stackShape localsShape wasmModule labelsShape .
+              RuntimeContext stackShape localsShape wasmModule labelsShape
+           -> SomeRC
+data SomeRC3 (wasmModule :: WasmModule shape) (labelsShape :: LabelStackShape) (inputStack :: ValStackShape) (locals :: LocalsShape) where
+    SomeRC3 :: 
+            -- forall stackShape localsShape wasmModule labelsShape .
+              RuntimeContext stackShape localsShape wasmModule labelsShape
+           -> SomeRC3 wasmModule labelsShape inputStack locals
+data ExecutionResult3 (wasmModule :: WasmModule shape) (inputLabels :: LabelStackShape) (inputStack :: ValStackShape) (locals :: LocalsShape) where
+  ExecResult3 :: -- forall outputStack outputLabels intermediateStack locals wasmModule intermediateLabels inputStack inputLabels.
+                -- InstructionSequence intermediateStack outputStack locals wasmModule intermediateLabels outputLabels
+                [SomeInstrSeq]
+             -> SomeRC3 wasmModule intermediateLabels intermediateStack locals
+             -> ExecutionResult3 wasmModule inputStack inputLabels locals
+
+data ExecutionResult4 inputStack locals wasmModule inputLabels where
+  ExecResult4 :: forall outputStack outputLabels intermediateStack locals wasmModule intermediateLabels inputStack inputLabels.
+                InstructionSequence intermediateStack outputStack locals wasmModule intermediateLabels outputLabels
+             -> RuntimeContext intermediateStack locals wasmModule intermediateLabels
+             -> ExecutionResult4 inputStack locals wasmModule inputLabels
+-------------------------------------------------------------------------------------------
+-- executeInstruction4
+-- This version makes everything existential -> 
+    -- however then const and add breaks pretty quickly
+--------------------------------------------------------------------------------------
+-- executeInstruction4 :: [SomeInstrSeq]
+--                         -> SomeRC
+--                         -> ([SomeInstrSeq], SomeRC)
+-- executeInstruction4 [] (SomeRC prevCtxt) = 
+--     ([], SomeRC prevCtxt)
+-- executeInstruction4 (SomeInstrSeq End : restInstrSeqs) (SomeRC prevCtxt) = 
+--     (restInstrSeqs, SomeRC prevCtxt)
+-- executeInstruction4 ((SomeInstrSeq (current :| rest)) : restInstrSeqs) (SomeRC prevCtxt@(RuntimeContext prevStack prevLocals prevGlobal prevLabels prevMemory)) =
+--         case current of
+--             I32Const val -> 
+--                 -- let newCtxt = prevCtxt {stack = Push val (stack prevCtxt)}
+--                 ((SomeInstrSeq rest : restInstrSeqs), (SomeRC (prevCtxt {stack=Push @I32 val prevStack}))) -- WasmInterpreter.globals=prevGlobal, locals=prevLocals, labels=prevLabels, memories=prevMemory}))
+--             I32Add -> case stack prevCtxt of
+--                 Push val1 (Push val2 restStack) ->
+--                     let result = val2 + val1
+--                         newCtxt = prevCtxt {stack = Push @I32 result restStack}
+--                     in ((SomeInstrSeq rest : restInstrSeqs), (SomeRC newCtxt))
+--             _ -> error "executeInstruction4: instruction not implemented"
+-- executeInstruction4 _ _ = undefined
+-- executeInstruction3
+-- This version tries make everything in output existential but keeps information
+-- in the input in order to make Add for example work
+--------------------------------------------------------------------------------------
+{-
+executeInstruction3 :: (InstructionSequence inputStack outputStack locals wasmModule inputLabels outputLabels, [SomeInstrSeq])
+                     -> RuntimeContext inputStack locals wasmModule inputLabels
+                     -> ExecutionResult3 wasmModule intermediateLabels inputStack locals
+executeInstruction3 (End, []) prevCtxt = 
+    ExecResult3 [] (SomeRC3 prevCtxt)
+executeInstruction3 (End,  parents) prevCtxt = 
+    ExecResult3 parents (SomeRC3 prevCtxt)
+executeInstruction3 (current :| rest, restInstrSeqs) 
+    prevCtxt@(RuntimeContext prevStack prevLocals prevGlobal prevLabels prevMemory) = -- :: RuntimeContext intermediateStack locals wasmModule intermediateLabels)) = 
+        case current of
+            I32Const val -> 
+                -- let newCtxt = prevCtxt {stack = Push val prevStack}
+                ExecResult3 (SomeInstrSeq rest : restInstrSeqs) (SomeRC3 (prevCtxt {stack=Push @I32 val prevStack})) -- WasmInterpreter.globals=prevGlobal, locals=prevLocals, labels=prevLabels, memories=prevMemory}))
+            I32Add -> case prevStack of
+                Push val1 (Push val2 restStack) ->
+                    let result = val2 + val1
+                        newCtxt = prevCtxt {stack = Push @I32 result restStack}
+                    in ExecResult3 (SomeInstrSeq rest : restInstrSeqs) (SomeRC3 newCtxt)
+            
+            Block (BTParamsResults _ (res :: KnownValStackShape resStack)) instrSeq -> 
+                let newLabels = ConsLabels (Label {
+                        arity = knownStackShapeLen res,
+                        WasmInterpreter.height = stackLength prevStack, -- TODO: compute the correct height
+                        continuation = SomeInstrSeq End
+                    }) (labels prevCtxt)
+                    newCtxt = prevCtxt {
+                    labels = newLabels
+                    }
+                in ExecResult3 (SomeInstrSeq instrSeq : SomeInstrSeq rest : restInstrSeqs) (SomeRC3 newCtxt)
+            _ -> undefined
+-}
+--------------------------------------------------------------------------------
+-- executeInstruction2
+-- This version uses a tuple => however we then have a problem in branch
+-- since we get cont which is an existential and therefore we cannot match the types
+--------------------------------------------------------------------------------
+
+executeInstruction2 :: (InstructionSequence inputStack outputStack locals wasmModule inputLabels outputLabels, [SomeInstrSeq])
+                   -> RuntimeContext inputStack locals wasmModule inputLabels
+                --    -> ([SomeInstrSeq], RuntimeContext intermediateStack locals wasmModule intermediateLabels)
+                   -> ExecutionResult2 inputStack locals wasmModule inputLabels
+executeInstruction2 (End ,[]) prevCtxt = 
+    ExecResult2 (End, []) prevCtxt
+executeInstruction2 (End, restInstrSeqs) prevCtxt = 
+    ExecResult2 (End, restInstrSeqs) prevCtxt
+    -- :: InstructionSequence intermediateStack outputStack locals wasmModule intermediateLabels outputLabels (type of rest)
+executeInstruction2 (current :| rest, restInstrSeqs) 
+    prevCtxt@(RuntimeContext prevStack prevLocals prevGlobal prevLabels prevMemory) = -- :: RuntimeContext intermediateStack locals wasmModule intermediateLabels)) = 
+        case current of
+            I32Const val -> ExecResult2 (rest, restInstrSeqs) (prevCtxt {stack = Push @I32 val prevStack})
+            I32Add -> case prevStack of
+                Push val1 (Push val2 restStack) ->
+                    let result = val2 + val1
+                    in ExecResult2 (rest, restInstrSeqs) (prevCtxt {stack = Push result restStack})
+            I32Sub -> case prevStack of
+                Push val1 (Push val2 restStack) ->
+                    let result = val2 - val1 -- TODO double check the order!!
+                    in ExecResult2 (rest, restInstrSeqs) (prevCtxt {stack = Push result restStack})
+            I32Mul -> case prevStack of
+                Push val1 (Push val2 restStack) ->
+                    let result = val2 * val1
+                    in ExecResult2 (rest, restInstrSeqs) (prevCtxt {stack = Push result restStack})
+            I32Div -> case prevStack of
+                Push val1 (Push val2 restStack) ->
+                    let result = val2 `div` val1 -- TODO double check the order!!
+                    in ExecResult2 (rest, restInstrSeqs) (prevCtxt {stack = Push result restStack})
+            I32RemU -> case prevStack of
+                Push val1 (Push val2 restStack) ->
+                    let result = (fromIntegral val2 :: Word32) `mod` (fromIntegral val1 :: Word32) -- TODO double check the order & also double check the result!!
+                    in ExecResult2 (rest, restInstrSeqs) (prevCtxt {stack = Push (fromIntegral result :: Int32) restStack})
+            I32RemS -> case prevStack of
+                Push val1 (Push val2 restStack) ->
+                    let result = val2 `mod` val1 -- TODO double check the order!!
+                    in ExecResult2 (rest, restInstrSeqs) (prevCtxt {stack = Push result restStack})
+            I32EqZ -> case prevStack of
+                Push val restStack ->
+                    let result = if val == 0 then (1 :: Int32) else (0 :: Int32)
+                    in ExecResult2 (rest, restInstrSeqs) (prevCtxt {stack = Push result restStack})
+            I32Eq -> case prevStack of
+                Push val1 (Push val2 restStack) ->
+                    let result = if val1 == val2 then (1 :: Int32) else (0 :: Int32)
+                    in ExecResult2 (rest, restInstrSeqs) (prevCtxt {stack = Push result restStack})
+            I32Neq -> case prevStack of
+                Push val1 (Push val2 restStack) ->
+                    let result = if val1 /= val2 then (1 :: Int32) else (0 :: Int32)
+                    in ExecResult2 (rest, restInstrSeqs) (prevCtxt {stack = Push result restStack})
+            I32LtS -> case prevStack of
+                Push val1 (Push val2 restStack) ->
+                    let result = if val2 < val1 then (1 :: Int32) else (0 :: Int32)
+                    in ExecResult2 (rest, restInstrSeqs) (prevCtxt {stack = Push result restStack})
+            I32LtU -> case prevStack of
+                Push val1 (Push val2 restStack) ->
+                    let result = if (fromIntegral val2 :: Word32) < (fromIntegral val1 :: Word32) then 1 else 0
+                    in ExecResult2 (rest, restInstrSeqs) (prevCtxt {stack = Push result restStack})
+            I32LeS -> case prevStack of
+                Push val1 (Push val2 restStack) ->
+                    let result = if val2 <= val1 then (1 :: Int32) else (0 :: Int32)
+                    in ExecResult2 (rest, restInstrSeqs) (prevCtxt {stack = Push result restStack})
+            I32LeU -> case prevStack of
+                Push val1 (Push val2 restStack) ->
+                    let result = if (fromIntegral val2 :: Word32) <= (fromIntegral val1 :: Word32) then 1 else 0
+                    in ExecResult2 (rest, restInstrSeqs) (prevCtxt {stack = Push result restStack})
+            I32GtS -> case prevStack of
+                Push val1 (Push val2 restStack) ->
+                    let result = if val2 > val1 then 1 else 0
+                    in ExecResult2 (rest, restInstrSeqs) (prevCtxt {stack = Push result restStack})
+            I32GtU -> case prevStack of
+                Push val1 (Push val2 restStack) ->
+                    let result = if (fromIntegral val2 :: Word32) > (fromIntegral val1 :: Word32) then 1 else 0
+                    in ExecResult2 (rest, restInstrSeqs) (prevCtxt {stack = Push result restStack})
+            I32GeS -> case prevStack of
+                Push val1 (Push val2 restStack) ->
+                    let result = if val2 >= val1 then 1 else 0
+                    in ExecResult2 (rest, restInstrSeqs) (prevCtxt {stack = Push result restStack})
+            I32GeU -> case prevStack of
+                Push val1 (Push val2 restStack) ->
+                    let result = if (fromIntegral val2 :: Word32) >= (fromIntegral val1 :: Word32) then 1 else 0
+                    in ExecResult2 (rest, restInstrSeqs) (prevCtxt {stack = Push result restStack})
+            Drop -> case prevStack of
+                Push _ restStack -> ExecResult2 (rest, restInstrSeqs) (prevCtxt {stack = restStack})
+            I64Const val -> ExecResult2 (rest, restInstrSeqs) (prevCtxt {stack = Push val prevStack})
+            I64Add -> case prevStack of
+                Push val1 (Push val2 restStack) ->
+                    let result = val2 + val1
+                    in ExecResult2 (rest, restInstrSeqs) (prevCtxt {stack = Push result restStack})
+            I64Sub -> case prevStack of
+                Push val1 (Push val2 restStack) ->
+                    let result = val2 - val1 -- TODO double check the order!!
+                    in ExecResult2 (rest, restInstrSeqs) (prevCtxt {stack = Push result restStack})
+            I64Mul -> case prevStack of
+                Push val1 (Push val2 restStack) ->
+                    let result = val2 * val1
+                    in ExecResult2 (rest, restInstrSeqs) (prevCtxt {stack = Push result restStack})
+            I64Div -> case prevStack of
+                Push val1 (Push val2 restStack) ->
+                    let result = val2 `div` val1 -- TODO double check the order!!
+                    in ExecResult2 (rest, restInstrSeqs) (prevCtxt {stack = Push result restStack})
+            I64RemU -> case prevStack of
+                Push val1 (Push val2 restStack) ->
+                    let result = (fromIntegral val2 :: Word64) `mod` (fromIntegral val1 :: Word64) -- TODO double check the order & also double check the result!!
+                    in ExecResult2 (rest, restInstrSeqs) (prevCtxt {stack = Push (fromIntegral result :: Int64) restStack})
+            I64RemS -> case prevStack of
+                Push val1 (Push val2 restStack) ->
+                    let result = val2 `mod` val1 -- TODO double check the order!!
+                    in ExecResult2 (rest, restInstrSeqs) (prevCtxt {stack = Push result restStack})
+            I64EqZ -> case prevStack of
+                Push val restStack ->
+                    let result = if val == 0 then (1 :: Int64) else (0 :: Int64)
+                    in ExecResult2 (rest, restInstrSeqs) (prevCtxt {stack = Push result restStack})
+            I64Eq -> case prevStack of
+                Push val1 (Push val2 restStack) ->
+                    let result = if val1 == val2 then (1 :: Int64) else (0 :: Int64)
+                    in ExecResult2 (rest, restInstrSeqs) (prevCtxt {stack = Push result restStack})
+            I64Neq -> case prevStack of
+                Push val1 (Push val2 restStack) ->
+                    let result = if val1 /= val2 then (1 :: Int64) else (0 :: Int64)
+                    in ExecResult2 (rest, restInstrSeqs) (prevCtxt {stack = Push result restStack})
+            I64LtS -> case prevStack of
+                Push val1 (Push val2 restStack) ->
+                    let result = if val2 < val1 then (1 :: Int64) else (0 :: Int64)
+                    in ExecResult2 (rest, restInstrSeqs) (prevCtxt {stack = Push result restStack})
+            I64LtU -> case prevStack of
+                Push val1 (Push val2 restStack) ->
+                    let result = if (fromIntegral val2 :: Word64) < (fromIntegral val1 :: Word64) then 1 else 0
+                    in ExecResult2 (rest, restInstrSeqs) (prevCtxt {stack = Push result restStack})
+            I64LeS -> case prevStack of
+                Push val1 (Push val2 restStack) ->
+                    let result = if val2 <= val1 then (1 :: Int64) else (0 :: Int64)
+                    in ExecResult2 (rest, restInstrSeqs) (prevCtxt {stack = Push result restStack})
+            I64LeU -> case prevStack of
+                Push val1 (Push val2 restStack) ->
+                    let result = if (fromIntegral val2 :: Word64) <= (fromIntegral val1 :: Word64) then 1 else 0
+                    in ExecResult2 (rest, restInstrSeqs) (prevCtxt {stack = Push result restStack})
+            I64GtS -> case prevStack of
+                Push val1 (Push val2 restStack) ->
+                    let result = if val2 > val1 then 1 else 0
+                    in ExecResult2 (rest, restInstrSeqs) (prevCtxt {stack = Push result restStack})
+            I64GtU -> case prevStack of
+                Push val1 (Push val2 restStack) ->
+                    let result = if (fromIntegral val2 :: Word64) > (fromIntegral val1 :: Word64) then 1 else 0
+                    in ExecResult2 (rest, restInstrSeqs) (prevCtxt {stack = Push result restStack})
+            I64GeS -> case prevStack of
+                Push val1 (Push val2 restStack) ->
+                    let result = if val2 >= val1 then 1 else 0
+                    in ExecResult2 (rest, restInstrSeqs) (prevCtxt {stack = Push result restStack})
+            I64GeU -> case prevStack of
+                Push val1 (Push val2 restStack) ->
+                    let result = if (fromIntegral val2 :: Word64) >= (fromIntegral val1 :: Word64) then 1 else 0
+                    in ExecResult2 (rest, restInstrSeqs) (prevCtxt {stack = Push result restStack}) 
+            LocalGet idx -> 
+                let localVal = getLocalValue idx prevLocals
+                in ExecResult2 (rest, restInstrSeqs) (prevCtxt {stack = Push localVal prevStack})
+            LocalSet idx -> case prevStack of
+                Push val restStack ->
+                    let newLocals = setLocalValue idx val prevLocals
+                    in ExecResult2 (rest, restInstrSeqs) (prevCtxt {stack = restStack, locals = newLocals})
+            LocalTee idx -> case prevStack of
+                Push val restStack ->
+                    let newLocals = setLocalValue idx val prevLocals
+                    in ExecResult2 (rest, restInstrSeqs) (prevCtxt {stack = Push val restStack, locals = newLocals})
+            GlobalGet idx -> 
+                let globalVal = getGlobalValue idx prevGlobal
+                in ExecResult2 (rest, restInstrSeqs) (prevCtxt {stack = Push globalVal prevStack})
+            GlobalSet idx -> case prevStack of
+                Push val restStack ->
+                    let newGlobals = setGlobalValue idx val prevGlobal
+                    in ExecResult2 (rest, restInstrSeqs) (prevCtxt {stack = restStack, WasmInterpreter.globals = newGlobals})
+            MemoryLoad idx memArg -> undefined
+            MemoryStore idx memArg -> undefined
+            Block (BTParamsResults _ (res :: KnownValStackShape resStack)) instrSeq -> 
+                let newCtxt = prevCtxt {
+                    labels = ConsLabels (Label {
+                        arity = knownStackShapeLen res,
+                        WasmInterpreter.height = stackLength prevStack,
+                        continuation = SomeInstrSeq End
+                    }) (labels prevCtxt)
+                }
+                in ExecResult2 (instrSeq, SomeInstrSeq rest : restInstrSeqs) newCtxt
+            Loop (BTParamsResults (params :: KnownValStackShape paramsStack) _) instrSeq ->
+                let newCtxt = prevCtxt {
+                    labels = ConsLabels (Label {
+                        arity = knownStackShapeLen params,
+                        WasmInterpreter.height = stackLength prevStack,
+                        continuation = SomeInstrSeq (current :| End) -- loop back to the beginning of the loop
+                    }) (labels prevCtxt)
+                }
+                in ExecResult2 (instrSeq, SomeInstrSeq rest : restInstrSeqs) newCtxt
+            If (BTParamsResults _ (res :: KnownValStackShape resStack)) thenSeq elseSeq -> case prevStack of
+                Push cond (restStack :: Stack inputStackWOCond) ->
+                    if cond /= 0 then
+                        let newCtxt = prevCtxt {labels = ConsLabels (Label (knownStackShapeLen res) (stackLength restStack) (SomeInstrSeq End)) (labels prevCtxt), stack = restStack}
+                        in ExecResult2 (thenSeq, SomeInstrSeq rest : restInstrSeqs) newCtxt
+                    else
+                        let newCtxt = prevCtxt {labels = ConsLabels (Label (knownStackShapeLen res) (stackLength restStack) (SomeInstrSeq End)) (labels prevCtxt), stack = restStack}
+                        in ExecResult2 (elseSeq, SomeInstrSeq rest : restInstrSeqs) newCtxt
+            Br (labelIdx :: (SFin i n)) -> -- undefined
+                case dropLabels labelIdx prevLabels of
+                    ConsLabels targetLabel restLabels ->
+                        let
+                            parents = dropSomeInstrSeqs labelIdx restInstrSeqs
+                            next = continuation targetLabel
+                            (stackToKeep, _) = takeStack (arity targetLabel) prevStack
+                            baseStack  = reduceStackToLength (WasmInterpreter.height targetLabel) prevStack
+                            finalStack = concatStacks stackToKeep baseStack
+                            newCtxt = prevCtxt {
+                                stack = finalStack,
+                                labels = restLabels
+                            }
+                        in case next of 
+                            SomeInstrSeq End ->
+                                ExecResult2 (End, parents) newCtxt
+                            SomeInstrSeq cont -> ExecResult2 (cont :: InstructionSequence intermediateStack outputStack locals wasmModule restLabels restLabels
+                                                                , parents) 
+                                                                newCtxt
+            BrIf labelIdx -> undefined
+            Call name annot -> undefined
+            Leave idx -> undefined
+
+{-}
+-----------------------------------------------------------------------------------------
+-- executeInstruction1
+-- old Version that doesn't return instruction sequences
+-- currently also does not compile because I changed the definition of branch slightly
+-- TODO
+executeInstruction1 :: forall inputStack outputStack locals wasmModule inputLabels outputLabels .
+                      Instruction inputStack outputStack locals wasmModule inputLabels outputLabels
+                   -> RuntimeContext inputStack locals wasmModule inputLabels
+                   -> RuntimeContext outputStack locals wasmModule outputLabels
+                --    -> RuntimeContext inputStack locals wasmModule (LenLabelStackShape inputLabels)
+                --    -> RuntimeContext outputStack locals wasmModule (LenLabelStackShape outputLabels)
+executeInstruction1 instr prevCtxt@(RuntimeContext prevStack prevLocals prevGlobal prevLabels prevMemory) = case instr of
+    I32Const val -> RuntimeContext (Push val prevStack) prevLocals prevGlobal prevLabels prevMemory
+    I32Add       -> case prevStack of
+                      Push val1 (Push val2 rest) ->
+                          let result = val2 + val1
+                          in RuntimeContext (Push result rest) prevLocals prevGlobal prevLabels prevMemory
+    I32Sub       -> case prevStack of
+                      Push val1 (Push val2 rest) ->
+                          let result = val1 - val2 -- TODO double check the order!!
+                          in RuntimeContext (Push result rest) prevLocals prevGlobal prevLabels prevMemory
+    I32Mul       -> case prevStack of
+                      Push val1 (Push val2 rest) ->
+                          let result = val2 * val1
+                          in RuntimeContext (Push result rest) prevLocals prevGlobal prevLabels prevMemory
+    I32Div       -> case prevStack of
+                      Push val1 (Push val2 rest) ->
+                          let result = val2 `div` val1 -- TODO double check the order!!
+                          in RuntimeContext (Push result rest) prevLocals prevGlobal prevLabels prevMemory
+    I32RemU      -> case prevStack of
+                      Push val1 (Push val2 rest) ->
+                          let result = (fromIntegral val2 :: Word32) `mod` (fromIntegral val1 :: Word32) -- TODO double check the order & also double check the result!!
+                          in RuntimeContext (Push (fromIntegral result :: Int32) rest) prevLocals prevGlobal prevLabels prevMemory
+    I32RemS      -> case prevStack of
+                      Push val1 (Push val2 rest) ->
+                          let result = val2 `mod` val1 -- TODO double check the order!!
+                          in RuntimeContext (Push result rest) prevLocals prevGlobal prevLabels prevMemory
+    I32EqZ       -> case prevStack of
+                      Push val rest ->
+                          let result = if val == 0 then (1 :: Int32) else (0 :: Int32)
+                          in RuntimeContext (Push result rest) prevLocals prevGlobal prevLabels prevMemory
+    I32Eq        -> case prevStack of
+                      Push val1 (Push val2 rest) ->
+                          let result = if val1 == val2 then (1 :: Int32) else (0 :: Int32)
+                          in RuntimeContext (Push result rest) prevLocals prevGlobal prevLabels prevMemory
+
+    I32Neq       -> case prevStack of
+                      Push val1 (Push val2 rest) ->
+                          let result = if val1 /= val2 then (1 :: Int32) else (0 :: Int32)
+                          in RuntimeContext (Push result rest) prevLocals prevGlobal prevLabels prevMemory
+
+    I32LtS       -> case prevStack of
+                      Push val1 (Push val2 rest) ->
+                          let result = if val2 < val1 then (1 :: Int32) else (0 :: Int32)
+                          in RuntimeContext (Push result rest) prevLocals prevGlobal prevLabels prevMemory
+
+    I32LtU       -> case prevStack of
+                      Push val1 (Push val2 rest) ->
+                          let result = if (fromIntegral val2 :: Word32) < (fromIntegral val1 :: Word32) then 1 else 0
+                          in RuntimeContext (Push result rest) prevLocals prevGlobal prevLabels prevMemory
+
+    I32LeS       -> case prevStack of
+                      Push val1 (Push val2 rest) ->
+                          let result = if val2 <= val1 then (1 :: Int32) else (0 :: Int32)
+                          in RuntimeContext (Push result rest) prevLocals prevGlobal prevLabels prevMemory
+
+    I32LeU       -> case prevStack of
+                      Push val1 (Push val2 rest) ->
+                          let result = if (fromIntegral val2 :: Word32) <= (fromIntegral val1 :: Word32) then 1 else 0
+                          in RuntimeContext (Push result rest) prevLocals prevGlobal prevLabels prevMemory
+
+    I32GtS       -> case prevStack of
+                      Push val1 (Push val2 rest) ->
+                          let result = if val2 > val1 then 1 else 0
+                          in RuntimeContext (Push result rest) prevLocals prevGlobal prevLabels prevMemory
+ 
+    I32GtU       -> case prevStack of
+                      Push val1 (Push val2 rest) ->
+                          let result = if (fromIntegral val2 :: Word32) > (fromIntegral val1 :: Word32) then 1 else 0
+                          in RuntimeContext (Push result rest) prevLocals prevGlobal prevLabels prevMemory
+ 
+    I32GeS       -> case prevStack of
+                      Push val1 (Push val2 rest) ->
+                          let result = if val2 >= val1 then 1 else 0
+                          in RuntimeContext (Push result rest) prevLocals prevGlobal prevLabels prevMemory
+ 
+    I32GeU       -> case prevStack of
+                      Push val1 (Push val2 rest) ->
+                          let result = if (fromIntegral val2 :: Word32) >= (fromIntegral val1 :: Word32) then 1 else 0
+                          in RuntimeContext (Push result rest) prevLocals prevGlobal prevLabels prevMemory
+ 
+    I64Const val -> RuntimeContext (Push val prevStack) prevLocals prevGlobal prevLabels prevMemory
+
+    I64Add       -> case prevStack of
+                      Push val1 (Push val2 rest) ->
+                          let result = val2 + val1
+                          in RuntimeContext (Push result rest) prevLocals prevGlobal prevLabels prevMemory
+ 
+    I64Sub       -> case prevStack of
+                      Push val1 (Push val2 rest) ->
+                          let result = val2 - val1 -- TODO double check the order!!
+                          in RuntimeContext (Push result rest) prevLocals prevGlobal prevLabels prevMemory
+ 
+    I64Mul       -> case prevStack of
+                      Push val1 (Push val2 rest) ->
+                          let result = val2 * val1
+                          in RuntimeContext (Push result rest) prevLocals prevGlobal prevLabels prevMemory  
+ 
+    I64Div       -> case prevStack of
+                      Push val1 (Push val2 rest) ->
+                          let result = val2 `div` val1 -- TODO double check the order!!
+                          in RuntimeContext (Push result rest) prevLocals prevGlobal prevLabels prevMemory
+ 
+    I64RemU      -> case prevStack of
+                      Push val1 (Push val2 rest) ->
+                          let result = (fromIntegral val2 :: Word64) `mod` (fromIntegral val1 :: Word64) -- TODO double check the order & also double check the result!!
+                          in RuntimeContext (Push (fromIntegral result :: Int64) rest) prevLocals prevGlobal prevLabels prevMemory
+ 
+    I64RemS      -> case prevStack of
+                      Push val1 (Push val2 rest) ->
+                          let result = val2 `mod` val1 -- TODO double check the order!!
+                          in RuntimeContext (Push result rest) prevLocals prevGlobal prevLabels prevMemory
+ 
+    I64EqZ       -> case prevStack of
+                      Push val rest ->
+                          let result = if val == 0 then (1 :: Int64) else (0 :: Int64)
+                          in RuntimeContext (Push result rest) prevLocals prevGlobal prevLabels prevMemory
+ 
+    I64Eq        -> case prevStack of
+                      Push val1 (Push val2 rest) ->
+                          let result = if val1 == val2 then 1 else 0
+                          in RuntimeContext (Push result rest) prevLocals prevGlobal prevLabels prevMemory
+ 
+    I64Neq       -> case prevStack of
+                      Push val1 (Push val2 rest) ->
+                          let result = if val1 /= val2 then 1 else 0
+                          in RuntimeContext (Push result rest) prevLocals prevGlobal prevLabels prevMemory
+ 
+    I64LtS       -> case prevStack of
+                      Push val1 (Push val2 rest) ->
+                          let result = if val2 < val1 then 1 else 0
+                          in RuntimeContext (Push result rest) prevLocals prevGlobal prevLabels prevMemory
+ 
+    I64LtU       -> case prevStack of
+                      Push val1 (Push val2 rest) ->
+                          let result = if (fromIntegral val2 :: Word64) < (fromIntegral val1 :: Word64) then 1 else 0
+                          in RuntimeContext (Push result rest) prevLocals prevGlobal prevLabels prevMemory
+ 
+    I64LeS       -> case prevStack of
+                      Push val1 (Push val2 rest) ->
+                          let result = if val2 <= val1 then 1 else 0
+                          in RuntimeContext (Push result rest) prevLocals prevGlobal prevLabels prevMemory
+ 
+    I64LeU       -> case prevStack of
+                      Push val1 (Push val2 rest) ->
+                          let result = if (fromIntegral val2 :: Word64) <= (fromIntegral val1 :: Word64) then 1 else 0
+                          in RuntimeContext (Push result rest) prevLocals prevGlobal prevLabels prevMemory
+ 
+    I64GtS       -> case prevStack of
+                      Push val1 (Push val2 rest) ->
+                          let result = if val2 > val1 then 1 else 0
+                          in RuntimeContext (Push result rest) prevLocals prevGlobal prevLabels prevMemory
+ 
+    I64GtU       -> case prevStack of
+                      Push val1 (Push val2 rest) ->
+                          let result = if (fromIntegral val2 :: Word64) > (fromIntegral val1 :: Word64) then 1 else 0
+                          in RuntimeContext (Push result rest) prevLocals prevGlobal prevLabels prevMemory
+ 
+    I64GeS       -> case prevStack of
+                      Push val1 (Push val2 rest) ->
+                          let result = if val2 >= val1 then 1 else 0
+                          in RuntimeContext (Push result rest) prevLocals prevGlobal prevLabels prevMemory
+ 
+    I64GeU       -> case prevStack of
+                      Push val1 (Push val2 rest) ->
+                          let result = if (fromIntegral val2 :: Word64) >= (fromIntegral val1 :: Word64) then 1 else 0
+                          in RuntimeContext (Push result rest) prevLocals prevGlobal prevLabels prevMemory
+ 
+    Drop         -> case prevStack of
+                      Push _ rest -> RuntimeContext rest prevLocals prevGlobal prevLabels prevMemory
+
+    LocalGet idx -> case getLocalValue idx prevLocals of
+                      val -> RuntimeContext (Push val prevStack) prevLocals prevGlobal prevLabels prevMemory
+
+    LocalSet idx -> case prevStack of
+                      Push val rest ->
+                          let newLocals = setLocalValue idx val prevLocals
+                          in RuntimeContext rest newLocals prevGlobal prevLabels prevMemory
+
+    LocalTee idx -> case prevStack of
+                      Push val rest ->
+                          let newLocals = setLocalValue idx val prevLocals
+                          in RuntimeContext (Push val rest) newLocals prevGlobal prevLabels prevMemory
+
+    GlobalGet idx -> case getGlobalValue idx prevGlobal of
+                      val -> RuntimeContext (Push val prevStack) prevLocals prevGlobal prevLabels prevMemory
+    GlobalSet idx -> case prevStack of
+                      Push val rest -> RuntimeContext rest prevLocals (setGlobalValue idx val prevGlobal) prevLabels prevMemory
+    MemoryLoad @wasmType memIdx (SMemArg alignment offset) -> undefined
+        -- let memArray = getMemoryArray memIdx prevMemory
+        --     in case prevStack of
+        --         Push i32addr restStack -> 
+        --             let
+        --                 inputAddr = fromIntegral i32addr
+        --                 addr = fromIntegral (inputAddr + offset)
+        --                 val = memArray !! addr 
+        --                 in RuntimeContext (Push (val :: RuntimeTypeOf wasmType) restStack) prevLocals prevGlobal prevLabels prevMemory
+                        -- in case val of
+                        --     SomeWasmType (RInt32 loadedVal) -> RuntimeContext (Push (loadedVal :: RuntimeTypeOf wasmType) restStack) prevLocals prevGlobal prevLabels prevMemory :: RuntimeContext outputStack locals wasmModule inputLabels
+                        --     SomeWasmType (RInt64 loadedVal) -> RuntimeContext (Push (loadedVal :: RuntimeTypeOf wasmType) restStack) prevLocals prevGlobal prevLabels prevMemory :: RuntimeContext outputStack locals wasmModule inputLabels
+                        -- in RuntimeContext (Push val restStack) prevLocals prevGlobal prevLabels prevMemory :: RuntimeContext outputStack locals wasmModule inputLabels
+    MemoryStore memIdx arg -> undefined
+    Block (BTParamsResults _ (res :: KnownValStackShape resStack)) instrSeq -> 
+        let newLabels = ConsLabels (Label (knownStackShapeLen res) (stackLength prevStack) (SomeInstrSeq End)) (labels prevCtxt)
+            newContext =
+                executeInstructionSequence instrSeq prevCtxt { labels = newLabels } -- :: RuntimeContext inputStack locals wasmModule ('(resStack, StackLength inputStack) :>: inputLabels)) 
+        in newContext { labels = prevLabels } :: RuntimeContext outputStack locals wasmModule inputLabels
+    Loop (BTParamsResults (params :: KnownValStackShape paramsStack) _) instrSeq -> 
+        let newLabels = ConsLabels (Label (knownStackShapeLen params) (stackLength prevStack) (SomeInstrSeq End)) (labels prevCtxt)
+            newContext = executeInstructionSequence instrSeq (prevCtxt { labels = newLabels } ) --untimeContext inputStack locals wasmModule ('(paramsStack, StackLength inputStack) :>: inputLabels)) 
+        in newContext { labels = prevLabels } :: RuntimeContext outputStack locals wasmModule inputLabels
+    If (BTParamsResults _ (res :: KnownValStackShape resStack)) thenSeq elseSeq -> case prevStack of
+        Push cond (rest :: Stack inputStackWOCond) -> 
+            if cond /= 0
+            then 
+                let newLabels = ConsLabels (Label (knownStackShapeLen res) (stackLength rest) (SomeInstrSeq End)) (labels prevCtxt)
+                    newCtxt = executeInstructionSequence thenSeq (prevCtxt { labels = newLabels, stack = rest }) -- :: RuntimeContext inputStackWOCond locals wasmModule ('(resStack, StackLength inputStackWOCond) :>: inputLabels)) 
+                in newCtxt { labels = prevLabels } -- :: RuntimeContext outputStack locals wasmModule inputLabels
+
+            else 
+                let newLabels = ConsLabels (Label (knownStackShapeLen res) (stackLength rest) (SomeInstrSeq End)) (labels prevCtxt)
+                    newCtxt = executeInstructionSequence elseSeq (prevCtxt { labels = newLabels, stack = rest }) -- :: RuntimeContext inputStackWOCond locals wasmModule ('(resStack, StackLength inputStackWOCond) :>: inputLabels)) 
+                in newCtxt { labels = prevLabels } -- :: RuntimeContext outputStack locals wasmModule inputLabels
+    Br labelIdx -> 
+        let Label labelType lenStackBeforeLabelCreation cont = getAtLabel labelIdx prevLabels
+            (stackToKeep, _) = takeStack labelType prevStack
+            baseStack  = reduceStackToLength lenStackBeforeLabelCreation prevStack
+            finalStack = concatStacks stackToKeep baseStack
+         in prevCtxt {
+              stack = finalStack
+             } :: RuntimeContext outputStack locals wasmModule inputLabels
+
+
+    BrIf (labelIdx :: SFin i n) -> case prevStack of
+        Push cond (rest :: Stack restStackShape) ->
+            if cond == 0
+            then prevCtxt { stack = rest } -- :: RuntimeContext restStackShape locals wasmModule inputLabels
+            else prevCtxt { stack = rest
+                          } --  :: RuntimeContext restStackShape locals wasmModule inputLabels
+
+
+    Call funcName (FFuncTypeAnn params res) -> undefined -- executeFunction (Function Empty outputStack params (ConsLabels res prevLabels)) (RuntimeContext prevStack prevLocals prevGlobal prevLabels)
+    Leave labelIdx -> undefined
+-}
+
+
+executeInstructionSequence :: InstructionSequence inputStack outputStack locals wasmModule inputLabels outputLabels
+                           -> RuntimeContext inputStack locals wasmModule inputLabels
+                           -> RuntimeContext outputStack locals wasmModule outputLabels
+                        --    -> RuntimeContext inputStack locals wasmModule (LenLabelStackShape inputLabels)
+                        --    -> RuntimeContext outputStack locals wasmModule (LenLabelStackShape outputLabels)
+executeInstructionSequence instrSeq prevCtxt@(RuntimeContext inputStack prevLocals prevWasmModule prevLabels prevMemory) = case instrSeq of
+    End -> RuntimeContext inputStack prevLocals prevWasmModule prevLabels prevMemory
+    (instr :| rest) ->
+        let intermediateContext = executeInstruction1 instr prevCtxt
+        in executeInstructionSequence rest intermediateContext
+
+executeFunction :: Function inputStack outputStack locals labels wasmModule
+                   -> RuntimeContext inputStack locals globals labels
+                   -> RuntimeContext outputStack locals globals labels
+                --    -> RuntimeContext inputStack locals globals (LenLabelStackShape labels)
+                --    -> RuntimeContext outputStack locals globals (LenLabelStackShape labels)
+executeFunction func@(Function (FFuncTypeAnn params res) instrSeq) prevCtxt = undefined
+    -- let newCtxt = executeInstructionSequence instrSeq (prevCtxt { stack = EmptyStack, locals = params }) :: RuntimeContext Empty locals globals labels
+    -- in newCtxt { stack = concatStacks res (stack prevCtxt) }
+
+
+
+-- =============================================================================
+-- Initializations
+-- =============================================================================
+
