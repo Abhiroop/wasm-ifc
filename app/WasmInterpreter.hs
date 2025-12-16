@@ -74,27 +74,27 @@ data Memory (memsShape :: MemoriesShape) where
     NoMems   :: Memory '[]
     ConsMems :: MemoryArray -> Memory memsShape -> Memory (memArray : memsShape)
 
-data SomeInstrSeq where
-    SomeInstrSeq :: InstructionSequence initialVal finalVal locals wasmModule initialLab finalLab -> SomeInstrSeq
+data SomeInstrSeq locals wasmModule where
+    SomeInstrSeq :: InstructionSequence initialVal finalVal locals wasmModule initialLab finalLab -> SomeInstrSeq locals wasmModule
 
 -- HACK: no way of having record syntax with GADT features?
-data Label (shape :: LabelShape) where
+data Label (shape :: LabelShape) locals wasmModule where
     --       height                 arity                 continuation
-    Label :: SNat (Height shape) -> SNat (Arity shape) -> SomeInstrSeq -> Label shape
+    Label :: SNat (Height shape) -> SNat (Arity shape) -> SomeInstrSeq locals wasmModule -> Label shape locals wasmModule
 
-data LabelStack (shape :: LabelStackShape) where
-    NoLabels :: LabelStack '[]
-    ConsLabels :: Label topShape 
-               -> LabelStack restShape
-               -> LabelStack (topShape ': restShape)
+data LabelStack (shape :: LabelStackShape) locals wasmModule where
+    NoLabels :: LabelStack '[] locals wasmModule
+    ConsLabels :: Label topShape locals wasmModule
+               -> LabelStack restShape locals wasmModule
+               -> LabelStack (topShape ': restShape) locals wasmModule
 
-data SomeLabelStack = forall shape. SomeLabelStack (LabelStack shape)
+data SomeLabelStack locals wasmModule = forall shape. SomeLabelStack (LabelStack shape locals wasmModule)
 
 data RuntimeContext (valuesShape :: ValStackShape) (localsShape :: LocalsShape) (wasmModule :: WasmModule shape) (labelsShape :: LabelStackShape) = RuntimeContext
     { values :: ValueStack valuesShape,
       locals :: Locals localsShape,
       globals :: Globals (GetGlobals wasmModule), -- :: GlobalsShape (GetGlobalsShape shape)),
-      labels :: LabelStack labelsShape,
+      labels :: LabelStack labelsShape localsShape wasmModule,
       memories :: Memory (GetMems wasmModule)
       -- TODO: tables, etc.
     }
@@ -119,12 +119,12 @@ concatStacks s2 (ConsValues val rest) = ConsValues val (concatStacks s2 rest)
 
 getAtLabel :: (l ~ Length labelStackShape) =>
     SFin n l
-    -> LabelStack (labelStackShape :: LabelStackShape)
-    -> Label (Index n labelStackShape)
+    -> LabelStack (labelStackShape :: LabelStackShape) locals wasmModule
+    -> Label (Index n labelStackShape) locals wasmModule
 getAtLabel SFZ (ConsLabels label _) = label
 getAtLabel (SFS idx) (ConsLabels _ rest) = getAtLabel idx rest
 
-dropLabels :: (l ~ Length shape) => SFin n l -> LabelStack shape -> LabelStack (Drop n shape)
+dropLabels :: (l ~ Length shape) => SFin n l -> LabelStack shape locals wasmModule -> LabelStack (Drop n shape) locals wasmModule
 dropLabels SFZ (ConsLabels label rest) = ConsLabels label rest
 dropLabels (SFS n) (ConsLabels _ rest) = dropLabels n rest
 
@@ -167,7 +167,7 @@ pushValue :: RuntimeTypeOf top
           -> RuntimeContext (top ': values) locals wasmModule labels
 pushValue value ctx = ctx { values = ConsValues value (values ctx) }
 
-pushLabel :: Label top
+pushLabel :: Label top locals wasmModule
           -> RuntimeContext values locals wasmModule labels
           -> RuntimeContext values locals wasmModule (top ': labels)
 pushLabel label ctx = ctx { labels = ConsLabels label (labels ctx) }
@@ -323,7 +323,8 @@ stepInternal ctx instruction nextControl = case instruction of
                     finalValues = concatStacks valuesToKeep baseValues
                     nextCtx = ctx { values = finalValues, labels = restLab }
                 in case someNext of 
-                    SomeInstrSeq next -> StepResult nextCtx (CCons (unsafeCoerce next) nextParents)
+                    SomeInstrSeq (next :: InstructionSequence (Take (Arity targetLabel) initialVal) finalVal locals wasmModule initialLab finalLab) -> 
+                        StepResult nextCtx (CCons next nextParents)
     BrIf _ -> undefined
 
     Call _ _ -> undefined
