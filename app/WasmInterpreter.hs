@@ -366,16 +366,23 @@ compareI64 op x y = fromIntegral (fromEnum (op x y))
 compareU64 :: (Word64 -> Word64 -> Bool) -> Int64 -> Int64 -> Int64
 compareU64 op = compareI64 (op `on` fromIntegral)
 
---executeInstructionSequence :: InstructionSequence inputStack outputStack locals wasmModule inputLabels outputLabels
+-- executeInstructionSequence :: InstructionSequence inputStack outputStack locals wasmModule inputLabels outputLabels
 --                           -> RuntimeContext inputStack locals wasmModule inputLabels
 --                           -> RuntimeContext outputStack locals wasmModule outputLabels
 --                        --    -> RuntimeContext inputStack locals wasmModule (LenLabelStackShape inputLabels)
 --                        --    -> RuntimeContext outputStack locals wasmModule (LenLabelStackShape outputLabels)
---executeInstructionSequence instrSeq prevCtxt@(RuntimeContext inputStack prevLocals prevWasmModule prevLabels prevMemory) = case --instrSeq of
+-- executeInstructionSequence instrSeq prevCtxt@(RuntimeContext inputStack prevLocals prevWasmModule prevLabels prevMemory) = case instrSeq of
 --    End -> RuntimeContext inputStack prevLocals prevWasmModule prevLabels prevMemory
 --    (instr :| rest) ->
---        let intermediateContext = executeInstruction1 instr prevCtxt
+--        let intermediateContext = step prevCtxt instr 
 --        in executeInstructionSequence rest intermediateContext
+
+stepMany ctx program = stepManyHelper ctx (CSingle program)
+stepManyHelper ctx control = let StepResult newCtx newControl = step ctx control
+                       in case newControl of
+                            CSingle End -> _finish
+                            newControl -> stepManyHelper newCtx newControl
+
 --
 --executeFunction :: Function inputStack outputStack locals labels wasmModule
 --                   -> RuntimeContext inputStack locals globals labels
