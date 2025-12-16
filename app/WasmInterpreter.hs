@@ -377,11 +377,22 @@ compareU64 op = compareI64 (op `on` fromIntegral)
 --        let intermediateContext = step prevCtxt instr 
 --        in executeInstructionSequence rest intermediateContext
 
+stepMany :: forall {shape :: WasmModuleShape} {initialVal :: ValStackShape} {locals :: LocalsShape} {wasmModule :: WasmModule shape} {initialLab :: LabelStackShape} {finalVal :: ValStackShape} {finalLab :: LabelStackShape}. 
+    RuntimeContext initialVal locals wasmModule initialLab 
+    -> InstructionSequence initialVal finalVal locals wasmModule initialLab finalLab
+    -> RuntimeContext finalVal locals wasmModule finalLab
 stepMany ctx program = stepManyHelper ctx (CSingle program)
-stepManyHelper ctx control = let StepResult newCtx newControl = step ctx control
-                       in case newControl of
-                            CSingle End -> _finish
-                            newControl -> stepManyHelper newCtx newControl
+
+
+stepManyHelper :: forall {shape :: WasmModuleShape} {initialVal :: ValStackShape} {locals :: LocalsShape} {wasmModule :: WasmModule shape} {initialLab :: LabelStackShape} {finalVal :: ValStackShape} {finalLab :: LabelStackShape}. 
+    RuntimeContext initialVal locals wasmModule initialLab
+    -> ControlStack initialVal finalVal locals wasmModule initialLab finalLab
+    -> RuntimeContext finalVal locals wasmModule finalLab
+stepManyHelper ctx control = 
+                    let res = step ctx control
+                    in case res of
+                            StepResult newCtx (CSingle End) -> newCtx
+                            StepResult newCtx newControl -> stepManyHelper newCtx newControl
 
 --
 --executeFunction :: Function inputStack outputStack locals labels wasmModule
