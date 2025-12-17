@@ -324,7 +324,12 @@ stepInternal ctx instruction nextControl = case instruction of
                     nextCtx = ctx { values = finalValues, labels = restLab }
                 in case someNext of 
                     SomeInstrSeq next -> StepResult nextCtx (CCons (unsafeCoerce next) nextParents)
-    BrIf _ -> undefined
+    BrIf (labelIdx :: SFin i n) -> 
+        case values ctx of
+            ConsValues cond rest ->
+                if cond == 0
+                    then StepResult (ctx {values = rest}) (cprepend (Br labelIdx) nextControl)
+                    else StepResult (ctx {values = rest}) nextControl
 
     Call _ _ -> undefined
 
@@ -333,6 +338,7 @@ stepInternal ctx instruction nextControl = case instruction of
             ConsLabels _ restLabels ->
                 let newState = ctx { labels = restLabels }
                 in StepResult newState nextControl 
+
 
 stepUnaryOp :: (RuntimeTypeOf typeIn -> RuntimeTypeOf typeOut)
             -> RuntimeContext (typeIn ': initialVal) locals wasmModule initialLab
