@@ -274,11 +274,12 @@ data Instruction (inputStack :: ValStackShape) (outputStack :: ValStackShape) (l
     -- BrIf: conditional branch (pops i32 condition)
     -- DINA: Problem => either we branch then we have the conditions below for the outputStack or we don't branch
     -- and then the outputStack is just the inputStack minus the i32 condition
-    BrIf  :: forall (i :: Nat) (l :: Nat) (shape :: WasmModuleShape) (inputLabels :: LabelStackShape) (inputStack :: ValStackShape) (locals :: LocalsShape) (wasmModule :: WasmModule shape) .
+    BrIf  :: forall (i :: Nat) (l :: Nat) (shape :: WasmModuleShape) (targetLabel :: LabelShape) (remainingLabels :: LabelStackShape) (inputLabels :: LabelStackShape) (inputStack :: ValStackShape) (locals :: LocalsShape) (wasmModule :: WasmModule shape) .
     -- inputStack ~ outputStack =>
         -- (CheckTopVecEqual (GetLabelType (Index i inputLabels)) (  inputStack) ~ 'True) =>
-        (l ~ Length inputLabels) => 
-        SFin i l 
+        (targetLabel : remainingLabels ~ Drop i inputLabels,
+         l ~ Length inputLabels) =>
+        SFin i l
         -> Instruction (I32 ': inputStack) inputStack locals wasmModule inputLabels inputLabels
 
     -- "naive" way

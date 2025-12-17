@@ -317,19 +317,31 @@ stepInternal ctx instruction nextControl = case instruction of
 
     Br depth ->
         case (dropLabels depth (labels ctx), dropControlFrames (SFS depth) nextControl) of
-            (ConsLabels (Label heightToPreserve arity someNext) restLab, ControlStackWithSomeInitial nextParents) ->  
+            (ConsLabels (Label heightToPreserve arity someNext) restLab, ControlStackWithSomeInitial nextParents) ->
                 let (valuesToKeep, _) = takeStack arity (values ctx)
                     baseValues = reduceStackToLength heightToPreserve (values ctx)
                     finalValues = concatStacks valuesToKeep baseValues
                     nextCtx = ctx { values = finalValues, labels = restLab }
                 in case someNext of 
                     SomeInstrSeq next -> StepResult nextCtx (CCons (unsafeCoerce next) nextParents)
-    BrIf (labelIdx :: SFin i n) -> 
+    -- TODO: In future instead of inlining Br's code investigate how can we call `Br`
+    BrIf (depth :: SFin i n) ->
         case values ctx of
             ConsValues cond rest ->
                 if cond == 0
-                    then StepResult (ctx {values = rest}) (cprepend (Br labelIdx) nextControl)
+                    then
+                      case (dropLabels depth (labels ctx), dropControlFrames (SFS depth) nextControl) of
+                        (ConsLabels (Label heightToPreserve arity someNext) restLab, ControlStackWithSomeInitial nextParents) ->  
+                            let (valuesToKeep, _) = takeStack arity (values ctx)
+                                baseValues = reduceStackToLength heightToPreserve (values ctx)
+                                finalValues = concatStacks valuesToKeep baseValues
+                                nextCtx = ctx { values = finalValues, labels = restLab }
+                             in case someNext of
+                                  SomeInstrSeq next -> StepResult nextCtx (CCons (unsafeCoerce next) nextParents)
+
                     else StepResult (ctx {values = rest}) nextControl
+
+
 
     Call _ _ -> undefined
 
@@ -338,6 +350,10 @@ stepInternal ctx instruction nextControl = case instruction of
             ConsLabels _ restLabels ->
                 let newState = ctx { labels = restLabels }
                 in StepResult newState nextControl 
+
+
+unreachable :: a
+unreachable = undefined
 
 
 stepUnaryOp :: (RuntimeTypeOf typeIn -> RuntimeTypeOf typeOut)
