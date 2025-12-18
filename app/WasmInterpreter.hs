@@ -23,19 +23,13 @@ import Utils
 import WasmModule hiding (globals) -- HACK: ambiguous record fields
 import Wasm
 import Unsafe.Coerce
+import GHC.Stack (errorWithStackTrace)
 
 {-
 =============================================================================
 INTERPRETER
 =============================================================================
 -}
-
-
-
-
-
-
-
 
 reduceStackToLength :: forall n valuesShape.
                        SNat n
@@ -189,6 +183,21 @@ cprepend :: Instruction initialVal middleVal locals wasmModule initialLab middle
 cprepend instruction (CSingle current) = CSingle (instruction :| current)
 cprepend instruction (CCons current parents) = CCons (instruction :| current) parents
 
+appendInstructionSeq :: InstructionSequence initialVal middleVal locals wasmModule initialLab middleLab
+                   -> Instruction middleVal finalVal locals wasmModule middleLab finalLab 
+                   -> InstructionSequence initialVal finalVal locals wasmModule initialLab finalLab
+appendInstructionSeq instrSeq instruction = case instrSeq of
+    End -> instruction :| End
+    (instr :| rest) -> instr :| appendInstructionSeq rest instruction
+
+-- I think I need a cappend function since actually we want it as the last thing we do inside the body not the first thing we do outside the body
+-- because if we have it as the first thing we might branch and leave but if we branch we do not want to leave!
+cappend :: ControlStack initialVal middleVal locals wasmModule initialLab middleLab
+        -> Instruction middleVal finalVal locals wasmModule middleLab finalLab 
+        -> ControlStack initialVal finalVal locals wasmModule initialLab finalLab
+cappend (CSingle current) instruction = CSingle (appendInstructionSeq current instruction)
+cappend (CCons current parents) instruction = CCons current (cappend parents instruction)
+
 data ControlStackWithSomeInitial locals wasmModule finalVal finalLab = forall initialVal initialLab .
     ControlStackWithSomeInitial (ControlStack initialVal finalVal locals wasmModule initialLab finalLab)
 
@@ -299,11 +308,11 @@ stepInternal ctx instruction nextControl = case instruction of
 
     Block (BTParamsResults _ (res :: KnownValStackShape resStack)) body ->
         let newCtx = pushLabel (Label (stackLength $ values ctx) (knownStackShapeLen res) (SomeInstrSeq End)) ctx
-        in StepResult newCtx (CCons body (cprepend Leave nextControl))
+        in StepResult newCtx (CCons (appendInstructionSeq body Leave) nextControl)
     Loop blockType@(BTParamsResults (params :: KnownValStackShape paramsStack) _) body ->
         let loopCont = SomeInstrSeq (Loop blockType body :| End)
             newCtx = pushLabel (Label (stackLength $ values ctx) (knownStackShapeLen params) loopCont) ctx
-        in StepResult newCtx (CCons body (cprepend Leave nextControl))
+        in StepResult newCtx (CCons (appendInstructionSeq body Leave) nextControl)
 
     If (BTParamsResults _ (res :: KnownValStackShape resStack)) thenBody elseBody ->
         case values ctx of
@@ -313,8 +322,10 @@ stepInternal ctx instruction nextControl = case instruction of
                         labels = ConsLabels (Label (stackLength restVal) (knownStackShapeLen res) (SomeInstrSeq End)) (labels ctx)
                     }
                     body = if cond /= 0 then thenBody else elseBody
-                in StepResult newCtx (CCons body (cprepend Leave nextControl))
+                in StepResult newCtx (CCons (appendInstructionSeq body Leave) nextControl)
 
+    -- The first drop is correct since we drop the label anyways with the leave instruction that we added in the block instruction
+    -- For the controlFrames I have to drop depth frames +1 to get to the right instruction sequence
     Br depth ->
         case (dropLabels depth (labels ctx), dropControlFrames (SFS depth) nextControl) of
             (ConsLabels (Label heightToPreserve arity someNext) restLab, ControlStackWithSomeInitial nextParents) ->
@@ -349,7 +360,7 @@ stepInternal ctx instruction nextControl = case instruction of
         case labels ctx of
             ConsLabels _ restLabels ->
                 let newState = ctx { labels = restLabels }
-                in StepResult newState nextControl 
+                in StepResult newState nextControl
 
 
 unreachable :: a
@@ -432,3 +443,30 @@ stepManyHelper ctx control =
 -- Initializations
 -- =============================================================================
 
+-- instance Show (StepResult initialVal finalVal locals wasmModule initialLab finalLab) where
+--     show (StepResult ctx controlStack) =
+--         "StepResult {\n" ++
+--         "  RuntimeContext: " ++ show ctx ++ ",\n" ++
+--         "  ControlStack: " ++ show controlStack ++
+--         "}\n"
+
+-- instance Show (ValueStack shape) where
+--   show NoValues =
+--     "NoValues"
+--   show (ConsValues v rest) =
+--     "ConsValues " ++ show v ++ " (" ++ show rest ++ ")"
+
+instance Show (ValueStack shape) where
+  show NoValues = "[]"
+  show (ConsValues v rest) =
+    show (unsafeCoerce v :: Int32) ++ " : " ++ show rest
+    -- show v ++ " : " ++ show rest
+
+instance Show (RuntimeContext valuesShape localsShape wasmModule labelsShape) where
+  show ctxt =
+    "RuntimeContext { values = " ++ show (values ctxt) ++ ",\n" ++
+    -- "locals = " ++ show (locals ctxt) ++ ",\n" ++
+    -- "globals = " ++ show (globals ctxt) ++ ",\n" ++
+    -- "labels = " ++ show (labels ctxt) ++ ",\n" ++
+    -- "memories = " ++ show (memories ctxt) ++
+    " }\n"
