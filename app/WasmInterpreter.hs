@@ -1,3 +1,16 @@
+{-
+TODO Summary:
+1. Line 95: tables, etc.
+2. Line 149: double check this
+3. Line 248: double check the operand order
+4. Line 249: double check the operand order
+5. Line 270: double check the operand order
+6. Line 271: double check the operand order
+7. Line 315: How do we want to define the memory array?
+8. Line 395: In future instead of inlining Br's code investigate how can we call `Br`
+9. Line 437: double check the operand order
+-}
+
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
@@ -8,6 +21,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE InstanceSigs #-}
 
 
 -- | A type-safe embedded domain-specific language (DSL) for WebAssembly.
@@ -16,14 +30,15 @@
 module WasmInterpreter where
 
 import Data.Int (Int32, Int64)
-import Data.Word (Word32, Word64)
+import Data.Word (Word8, Word32, Word64)
 import Data.Function (on)
+import Data.Bits
 import Types -- (RuntimeTypeOf(..), ValStackShape(..), BlockType (..),  FuncTypeAnn (..), knownStackShapeLen, Take, Drop, FuncTypeAnn (..), Reverse, WasmType (I32), KnownWasmType (ForI32, ForI64), RuntimeWasmTypes(..), (:+>+), type (+>+:), KnownValStackShape(..), LabelStackShape, SomeValStackShape(..), GetSpecificValVec, GetLabelType, GetLabelCreationValStackLength)
 import Utils
 import WasmModule hiding (globals) -- HACK: ambiguous record fields
 import Wasm
 import Unsafe.Coerce
-import GHC.Stack (errorWithStackTrace)
+import Debug.Trace (traceShow)
 
 {-
 =============================================================================
@@ -176,6 +191,13 @@ data ControlStack (initialVal :: ValStackShape) (finalVal :: ValStackShape)
                -> ControlStack middleVal finalVal locals wasmModule middleLab finalLab
                -> ControlStack initialVal finalVal locals wasmModule initialLab finalLab
 
+insertMemory :: SFin i n 
+             -> MemoryArray
+             -> Memory memsShape
+             -> Memory memsShape
+insertMemory SFZ memArray (ConsMems _ memshape) = ConsMems memArray memshape
+insertMemory (SFS idx) memArray (ConsMems mem rest) = ConsMems mem (insertMemory idx memArray rest)
+insertMemory _ _ _ = error "Index out of bounds in insertMemory"
 
 cprepend :: Instruction initialVal middleVal locals wasmModule initialLab middleLab 
          -> ControlStack middleVal finalVal locals wasmModule middleLab finalLab 
@@ -225,7 +247,7 @@ step ctx (CSingle (instruction :| rest)) = stepInternal ctx instruction (CSingle
 step ctx (CCons End parents) = StepResult ctx parents
 step ctx (CCons (instruction :| rest) parents) = stepInternal ctx instruction (CCons rest parents)
 
-stepInternal :: RuntimeContext initialVal locals wasmModule initialLab
+stepInternal :: forall initialVal locals wasmModule middleVal initialLab middleLab finalVal finalLab. RuntimeContext initialVal locals wasmModule initialLab
              -> Instruction initialVal middleVal locals wasmModule initialLab middleLab 
              -> ControlStack middleVal finalVal locals wasmModule middleLab finalLab
              -> StepResult initialVal finalVal locals wasmModule initialLab finalLab
@@ -303,8 +325,56 @@ stepInternal ctx instruction nextControl = case instruction of
                 }
             in StepResult newCtx nextControl
 
-    MemoryLoad _ _ -> undefined
-    MemoryStore _ _ -> undefined
+    -- TODO: How do we want to define the memory array?
+    -- Two Options: either have it as a list of WasmTypes where every element is 64 bytes, just so it fits everything
+    -- Other Option: Have it as a list of bytes and then we cast it when we load/store
+        -- So F64 and I64 would read 8 bytes (8 consecutive elements) and cast them to the right type
+        -- and F32 and I32 would read 4 bytes (4 consecutive elements) and cast them to the right type
+    MemoryLoad @(wasmType :: WasmType) memidx (SMemArg alignment offset) -> case values ctx of
+        ConsValues addr rest -> 
+            let memoryArray = getMemoryArray memidx (memories ctx)
+                addrAsWord64 = fromIntegral addr :: Word64
+            in case (byteSize @wasmType) of
+                I32 -> 
+                    -- first check bounds of memory
+                    if addrAsWord64 + offset + 4 >= (fromIntegral (length memoryArray) :: Word64)
+                        then error "Memory access out of bounds in MemoryLoad I32"
+                        else 
+                            let value = load @wasmType memoryArray (addrAsWord64 + offset)
+                            in StepResult (ctx { values = ConsValues value rest }) nextControl
+                I64 -> 
+                    if addrAsWord64 + offset + 8 >= (fromIntegral (length memoryArray) :: Word64)
+                        then error "Memory access out of bounds in MemoryLoad I64"
+                        else 
+                            let value = load @wasmType memoryArray (addrAsWord64 + offset)
+                            in StepResult (ctx { values = ConsValues value rest }) nextControl
+    MemoryStore @(wasmType :: WasmType) (memidx :: SFin i n) (SMemArg alignment offset) -> case values ctx of
+        ConsValues (addr :: Int32) (ConsValues (value :: RuntimeTypeOf wasmType) rest) -> 
+            let memoryArray = getMemoryArray memidx (memories ctx)
+                addrAsWord64 = fromIntegral addr :: Word64
+            in case (byteSize @wasmType) of
+                I32 -> 
+                    if addrAsWord64 + offset + 4 > (fromIntegral (length memoryArray) :: Word64)
+                        then error "Memory access out of bounds in MemoryStore I32"
+                        else 
+                            let newMemoryArray = store @wasmType memoryArray (addrAsWord64 + offset) value
+                                -- newMemories = ConsMems newMemoryArray (memories ctx)
+                                newCtx = ctx { 
+                                    values = rest,
+                                    memories = insertMemory memidx newMemoryArray (memories ctx) :: Memory (GetMems wasmModule)
+                                    -- memories = take memidx (memories ctx) ++ newMemoryArray ++ drop (SFS memidx) (memories ctx)
+                                } :: RuntimeContext middleVal locals wasmModule initialLab
+                            in StepResult newCtx nextControl
+                I64 -> 
+                    if addrAsWord64 + offset + 8 > (fromIntegral (length memoryArray) :: Word64)
+                        then error "Memory access out of bounds in MemoryStore I64"
+                        else 
+                            let newMemoryArray = store @wasmType memoryArray (addrAsWord64 + offset) value
+                                newCtx = ctx { 
+                                    values = rest,
+                                    memories = insertMemory memidx newMemoryArray (memories ctx) :: Memory (GetMems wasmModule)
+                                } :: RuntimeContext middleVal locals wasmModule initialLab
+                            in StepResult newCtx nextControl
 
     Block (BTParamsResults _ (res :: KnownValStackShape resStack)) body ->
         let newCtx = pushLabel (Label (stackLength $ values ctx) (knownStackShapeLen res) (SomeInstrSeq End)) ctx
@@ -361,6 +431,7 @@ stepInternal ctx instruction nextControl = case instruction of
             ConsLabels _ restLabels ->
                 let newState = ctx { labels = restLabels }
                 in StepResult newState nextControl
+
 
 
 unreachable :: a
@@ -443,30 +514,58 @@ stepManyHelper ctx control =
 -- Initializations
 -- =============================================================================
 
--- instance Show (StepResult initialVal finalVal locals wasmModule initialLab finalLab) where
---     show (StepResult ctx controlStack) =
---         "StepResult {\n" ++
---         "  RuntimeContext: " ++ show ctx ++ ",\n" ++
---         "  ControlStack: " ++ show controlStack ++
---         "}\n"
-
--- instance Show (ValueStack shape) where
---   show NoValues =
---     "NoValues"
---   show (ConsValues v rest) =
---     "ConsValues " ++ show v ++ " (" ++ show rest ++ ")"
-
+-- change the unsafe coerce depending on which example your testing to Int32 or Int64
 instance Show (ValueStack shape) where
   show NoValues = "[]"
   show (ConsValues v rest) =
     show (unsafeCoerce v :: Int32) ++ " : " ++ show rest
-    -- show v ++ " : " ++ show rest
+
+instance Show (Locals shape) where
+  show NoLocals = "[]"
+  show (ConsLocals v rest) =
+    show (unsafeCoerce v :: Int32) ++ " : " ++ show rest
+
+instance Show (KnownMutability m) where
+    show SConst = "const"
+    show SVar   = "var"
+
+instance Show (Globals shape) where
+  show NoGlobals = "[]"
+  show (ConsGlobals v mut rest) =
+    show (unsafeCoerce v :: Int32) ++ " (" ++ show mut ++ ") : " ++ show rest
+
+printMemArray :: MemoryArray -> String
+printMemArray memArray = "[" ++ concatMap (\b -> if b /= 0 then show b ++ "," else ".") memArray ++ "]"
+
+instance Show (Memory shape) where
+  show NoMems = ""
+  show (ConsMems m rest) =
+    "MemArray : " ++ printMemArray m ++ show rest
+
+calcSNat :: SNat n -> Int
+calcSNat SZ     = 0
+calcSNat (SS n) = 1 + calcSNat n
+
+instance Show (SNat n) where
+    show n     = show (calcSNat n)
+
+instance Show (Label shape) where
+  show :: Label shape -> String
+  show (Label lHeight arity _) =
+    "Label { height = " ++ show lHeight ++
+    ", arity = " ++ show arity ++
+    ", continuation = <instr seq> }"
+
+instance Show (LabelStack labelshape) where
+  show NoLabels = "[]"
+  show (ConsLabels label rest) =
+    "Label : " ++ show label ++ " : " ++ show rest
 
 instance Show (RuntimeContext valuesShape localsShape wasmModule labelsShape) where
   show ctxt =
     "RuntimeContext { values = " ++ show (values ctxt) ++ ",\n" ++
-    -- "locals = " ++ show (locals ctxt) ++ ",\n" ++
-    -- "globals = " ++ show (globals ctxt) ++ ",\n" ++
-    -- "labels = " ++ show (labels ctxt) ++ ",\n" ++
-    -- "memories = " ++ show (memories ctxt) ++
+    "locals = " ++ show (locals ctxt) ++ ",\n" ++
+    "globals = " ++ show (globals ctxt) ++ ",\n" ++
+    "labels = " ++ show (labels ctxt) ++ ",\n" ++
+    "memories = " ++ show (memories ctxt) ++
     " }\n"

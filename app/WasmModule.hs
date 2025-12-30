@@ -1,3 +1,8 @@
+{-
+TODO Summary:
+1. Line 106: ignore alignment for now
+-}
+
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -10,8 +15,10 @@ module WasmModule where
 -- import GHC.TypeLits (Nat)  
 import Types (WasmType(..), RuntimeTypeOf, KnownWasmType(..), RuntimeWasmTypes)    
 import Utils 
-import Data.Word (Word32, Word64)
+import Data.Word (Word8, Word32, Word64)
 import Data.Int (Int64, Int32)
+import Data.Bits
+import qualified Data.Vector.Mutable as MV
 import Data.Kind (Type)
 import Data.List (List)
 -- https://webassembly.github.io/spec/core/syntax/modules.html#syntax-global
@@ -111,14 +118,14 @@ type GlobalSlot = Nat
 
 -- data SomeWasmType where
 --     SomeWasmType :: RuntimeWasmTypes t -> SomeWasmType
-type MemoryArray = List Int32
+type MemoryArray = [Word8]
 data Limits = LimitsR Word64 (Maybe Word64)
 -- data MemoryType (n::Nat) where
 --      MemoryTypeR :: SNat n -> Limits -> MemoryArray n -> MemoryType n
 
-data SWord64 (n :: Word64) where
-    ZWord64 :: SWord64 (fromIntegral 0)
-    SWord64 :: Word64 -> SWord64 n
+-- data SWord64 (n :: Word64) where
+--     ZWord64 :: SWord64 (fromIntegral 0)
+--     SWord64 :: Word64 -> SWord64 n
 
 
 {-
@@ -133,6 +140,13 @@ data ValStackShape where
 --     ConsMemShape :: (SWord64 n,Maybe (SWord64 m)) -> MemoriesShapeStack -> MemoriesShapeStack
 
 type MemoriesShape = [MemoryArray]
+
+data SMemArray (memArray :: MemoryArray) where
+    SMemArray :: MemoryArray -> SMemArray memArray
+
+type family InsertMemory (idx :: Nat) (memArray :: MemoryArray) (memsShape :: MemoriesShape) :: MemoriesShape where
+    InsertMemory Z memArray memsShape = memArray : memsShape
+    InsertMemory (S idx) memArray (mem ': memsShape) = mem : InsertMemory idx memArray memsShape
 
 data MemArg (alignment :: Word32) (offset :: Word64) where -- Memory Offset Alignment
     SMemArg :: Word32 -> Word64 -> MemArg alignment offset

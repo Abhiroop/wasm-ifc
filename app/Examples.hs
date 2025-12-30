@@ -1,3 +1,9 @@
+{-
+TODO Summary:
+1. Line 39: tables, etc.
+2. Line 196: BUG: in validation this instruction is not removed and therefore the types do not agree
+-}
+
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
@@ -16,8 +22,7 @@
 module Examples where
 
 import Data.Int (Int32, Int64)
-import Data.Word (Word32, Word64)
-import Types --(Length, WasmType(I64, I32), WasmType, ValStackShape, type (:+>+), CheckTopVecEqual, BlockType (..), FuncName, FuncTypeAnn (..), Take, FuncTypeAnn (..), Reverse, KnownWasmType (ForI32), LabelStackShape, GetLabelType, GetLabelCreationValStackLength, SomeValStackShape(..), KnownValStackShape (KnownValVNil, KnownValCons), GetSpecificValVec, LabelShape(..))
+import Types 
 import Utils
 import WasmModule
 import Wasm
@@ -84,24 +89,130 @@ callExample = Function (FFuncTypeAnn [] (I32 : [])) $
 -- Example MemoryLoad
 -- the locals are the two I32 integers that are used to compute the address of the memory load
 -- memLoadSequence :: Function EmptyValStack (I64 :> EmptyValStack) (I32 ': I32 ': VNil) EmptyLabels ((WasmModuleR VNil ('[ 'SomeWasmType ( RInt32 (fromIntegral 10 :: Int32)), 'SomeWasmType ( RInt32 (fromIntegral 20 :: Int32))] ': VNil)) :: WasmModule ( WasmModuleShapeR Z (S Z)))
+createMemory :: Int -> MemoryArray
+createMemory size = replicate size 0
 
-memLoadSequence :: Function '[] (I64 ': '[]) (I32 ': I32 ': '[]) '[] ((WasmModuleR '[] ('[ fromIntegral 10::Int32, fromIntegral 20::Int32 ] ': '[])) :: WasmModule ( WasmModuleShapeR Z (S Z)))
-memLoadSequence = Function (FFuncTypeAnn [] (I64 : [])) $
+currMem1 :: MemoryArray
+-- currMem =  [10 :: Word8, 0, 0, 0, 20 :: Word8, 0, 0, 0] ++ 
+currMem1 = createMemory 65536 -- 65528 -- create a memory with 1 page (64KiB)
+currMem2 :: MemoryArray
+currMem2 = store @I32 currMem1 0 (20 :: Int32)
+currMem :: MemoryArray
+currMem = store @I32 currMem2 4 (10 :: Int32)
+
+memLoadSequence :: InstructionSequence '[] '[I32] '[I32, I32] ((WasmModuleR '[] (
+            currMem
+            -- '[ fromIntegral 10 :: Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8, fromIntegral 20::Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8] 
+        ': '[])) :: WasmModule ( WasmModuleShapeR Z (S (S Z)))) '[] '[]
+memLoadSequence =
        LocalGet SFZ
-    :| MemoryLoad @I64 SFZ (SMemArg 0 0) 
+    :| MemoryLoad @I32 SFZ (SMemArg 0 0) 
     :| LocalGet (SFS SFZ)
-    :| MemoryLoad @I64 SFZ (SMemArg 0 0)
-    :| I64Add 
+    :| MemoryLoad @I32 SFZ (SMemArg 0 0)
+    :| I32Add 
     :| End
+
+
+
+memLoad :: Function '[] (I32 ': '[]) (I32 ': I32 ': '[]) '[] 
+    ((WasmModuleR '[] (
+            currMem
+            -- '[ fromIntegral 10 :: Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8, fromIntegral 20::Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8] 
+        ': '[])) :: WasmModule ( WasmModuleShapeR Z (S (S Z))))
+memLoad = Function (FFuncTypeAnn [] [I32])
+       memLoadSequence
+
+executeMemLoad :: RuntimeContext @(WasmModuleShapeR Z (S (S Z))) '[I32] '[I32, I32] (WasmModuleR '[] (
+            currMem
+            -- '[ fromIntegral 10 :: Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8, fromIntegral 20::Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8] 
+        ': '[])) '[]
+executeMemLoad = stepMany (RuntimeContext {values = NoValues, locals = ConsLocals 4 (ConsLocals 0 NoLocals), WasmInterpreter.globals = WasmInterpreter.NoGlobals, labels = NoLabels, memories = WasmInterpreter.ConsMems currMem NoMems} :: RuntimeContext '[] '[I32, I32] ((WasmModuleR '[] (
+            currMem
+            -- '[ fromIntegral 10 :: Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8, fromIntegral 20::Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8] 
+        ': '[])) :: WasmModule ( WasmModuleShapeR Z (S (S Z)))) '[]) 
+                memLoadSequence
+
+memLoadSequence1 :: InstructionSequence '[] '[I32, I32] '[I32, I32] ((WasmModuleR '[] (
+            currMem
+            -- '[ fromIntegral 10 :: Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8, fromIntegral 20::Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8] 
+        ': '[])) :: WasmModule ( WasmModuleShapeR Z (S (S Z)))) '[] '[]
+memLoadSequence1 =
+       LocalGet SFZ
+    :| MemoryLoad @I32 SFZ (SMemArg 0 0) 
+    :| LocalGet (SFS SFZ)
+    :| MemoryLoad @I32 SFZ (SMemArg 0 0)
+    :| End
+
+executeMemLoadSequence1 :: RuntimeContext @(WasmModuleShapeR Z (S (S Z))) '[I32, I32] '[I32, I32] (WasmModuleR '[] (
+            currMem
+            -- '[ fromIntegral 10 :: Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8, fromIntegral 20::Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8] 
+        ': '[])) '[]
+executeMemLoadSequence1 = stepMany (RuntimeContext {values = NoValues, locals = ConsLocals 4 (ConsLocals 0 NoLocals), WasmInterpreter.globals = WasmInterpreter.NoGlobals, labels = NoLabels, memories = WasmInterpreter.ConsMems currMem NoMems} :: RuntimeContext '[] '[I32, I32] ((WasmModuleR '[] (
+            currMem
+            -- '[ fromIntegral 10 :: Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8, fromIntegral 20::Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8] 
+        ': '[])) :: WasmModule ( WasmModuleShapeR Z (S (S Z)))) '[]) 
+                memLoadSequence1
 
 -- Example MemoryStore
 -- memstoresequence :: Function EmptyValStack EmptyValStack (I32 ': I64 ': VNil) EmptyLabels ((WasmModuleR VNil (MemoryTypeR (LimitsR (fromIntegral 0 Word64) Nothing) '[] ': VNil)) :: WasmModule ( WasmModuleShapeR Z (S Z)))
-memstoresequence :: Function '[] '[] (I32 ': I64 ': '[]) '[] ((WasmModuleR '[] ('[] ': '[])) :: WasmModule ( WasmModuleShapeR Z (S Z)))
-memstoresequence = Function (FFuncTypeAnn [] []) $
-       LocalGet (SFS SFZ)  -- get the address
-    :| LocalGet SFZ      -- get the value to store
-    :| MemoryStore @I64 SFZ (SMemArg 0 0)
+memStoreSequence :: InstructionSequence '[] '[] '[I32, I32] ((WasmModuleR '[] (storeMem ': '[])) :: WasmModule ( WasmModuleShapeR Z (S (S Z)))) '[] '[]
+memStoreSequence =
+       LocalGet SFZ  -- get the value to store
+    :| LocalGet (SFS SFZ)      -- get the address
+    :| MemoryStore @I32 SFZ (SMemArg 0 0)
     :| End
+
+memStore :: Function '[] '[] '[I32, I32] '[] ((WasmModuleR '[] ('[] ': '[])) :: WasmModule ( WasmModuleShapeR Z (S (S Z))))
+memStore = Function (FFuncTypeAnn [] [])
+    memStoreSequence
+
+storeMem :: MemoryArray
+storeMem = createMemory 65536
+executeMemStore :: RuntimeContext @(WasmModuleShapeR Z (S (S Z))) '[] '[I32, I32] (WasmModuleR '[] (
+            storeMem
+        ': '[])) '[]
+executeMemStore = stepMany (RuntimeContext {values = NoValues, locals = ConsLocals 255 (ConsLocals 65532 NoLocals), WasmInterpreter.globals = WasmInterpreter.NoGlobals, labels = NoLabels, memories = WasmInterpreter.ConsMems storeMem NoMems} :: RuntimeContext '[] '[I32, I32] ((WasmModuleR '[] (
+            storeMem
+        ': '[])) :: WasmModule ( WasmModuleShapeR Z (S (S Z)))) '[])
+                memStoreSequence
+
+memLoadStoreSequence :: InstructionSequence '[] '[I32] '[I32] ((WasmModuleR '[] (
+            storeMem
+        ': '[])) :: WasmModule ( WasmModuleShapeR Z (S (S Z)))) '[] '[]
+memLoadStoreSequence =
+       LocalGet SFZ  -- get the value to store
+    :| I32Const 0      -- get the address
+    :| MemoryStore @I32 SFZ (SMemArg 0 0)
+    :| I32Const 0
+    :| MemoryLoad @I32 SFZ (SMemArg 0 0)
+    :| End
+
+executeMemLoadStore :: RuntimeContext @(WasmModuleShapeR Z (S (S Z))) '[I32] '[I32] (WasmModuleR '[] (
+            storeMem
+        ': '[])) '[]
+executeMemLoadStore = stepMany (RuntimeContext {values = NoValues, locals = ConsLocals (2147483647 :: Int32) NoLocals, WasmInterpreter.globals = WasmInterpreter.NoGlobals, labels = NoLabels, memories = WasmInterpreter.ConsMems storeMem NoMems} :: RuntimeContext '[] '[I32] ((WasmModuleR '[] (
+            storeMem
+        ': '[])) :: WasmModule ( WasmModuleShapeR Z (S (S Z)))) '[])
+                memLoadStoreSequence
+
+memLoadStore64Sequence :: InstructionSequence '[] '[I64] '[I64] ((WasmModuleR '[] (
+            storeMem
+        ': '[])) :: WasmModule ( WasmModuleShapeR Z (S (S Z)))) '[] '[]
+memLoadStore64Sequence =
+       LocalGet SFZ  -- get the value to store
+    :| I32Const 0      -- get the address
+    :| MemoryStore @I64 SFZ (SMemArg 0 0)
+    :| I32Const 0
+    :| MemoryLoad @I64 SFZ (SMemArg 0 0)
+    :| End
+
+executeMemLoadStore64 :: RuntimeContext @(WasmModuleShapeR Z (S (S Z))) '[I64] '[I64] (WasmModuleR '[] (
+            storeMem
+        ': '[])) '[]
+executeMemLoadStore64 = stepMany (RuntimeContext {values = NoValues, locals = ConsLocals (9223372036854775807 :: Int64) NoLocals, WasmInterpreter.globals = WasmInterpreter.NoGlobals, labels = NoLabels, memories = WasmInterpreter.ConsMems storeMem NoMems} :: RuntimeContext '[] '[I64] ((WasmModuleR '[] (
+            storeMem
+        ': '[])) :: WasmModule ( WasmModuleShapeR Z (S (S Z)))) '[])
+                memLoadStore64Sequence
 
 -- Example GlobalGet and GlobalSet
 -- have to force the WasmModuleShape so :: WasmModule (WasmModuleShapeR (S Z) Z) is necessary!!!
@@ -136,7 +247,7 @@ executeAddSub = stepMany (RuntimeContext {values = ConsValues 10 (ConsValues 5 (
 
 -- example function for Br instruction
 branchExampleSeq :: forall {shape :: WasmModuleShape} {inputStack :: ValStackShape} {locals :: LocalsShape} {wasmModule :: WasmModule shape} {outputLabels :: LabelStackShape}.
-    InstructionSequence   inputStack   ('[] :+>+ Take (Length inputStack) (Reverse inputStack))   locals   wasmModule   outputLabels   outputLabels
+    InstructionSequence   inputStack   ('[] +>+: Take (Length inputStack) (Reverse inputStack))   locals   wasmModule   outputLabels   outputLabels
 branchExampleSeq = Block (BTParamsResults KnownValVNil KnownValVNil) (
                     Br SFZ 
                     :| End)
@@ -150,21 +261,27 @@ executeBranchExample = stepMany (RuntimeContext {values = NoValues, locals = NoL
                 branchExampleSeq
 
     -- example function for Br instruction
-branchExample2Seq :: forall {shape :: WasmModuleShape} {inputStack :: ValStackShape} {locals :: LocalsShape} {wasmModule :: WasmModule shape} {outputLabels :: LabelStackShape}.
-    InstructionSequence '[] '[] (I32 ': '[]) wasmModule ('LabelShape '[] Z ': '[]) ('LabelShape '[] Z ': '[])
+branchExample2Seq :: forall {shape :: WasmModuleShape}{wasmModule :: WasmModule shape} .
+    InstructionSequence '[] '[] '[] wasmModule ('LabelShape '[] Z ': '[]) ('LabelShape '[] Z ': '[])
 branchExample2Seq = Block (BTParamsResults KnownValVNil KnownValVNil) (
         Br SFZ
         :| End)
     :| Br SFZ
     :| End
-branchExample2 ::forall (s :: WasmModuleShape) (wm :: WasmModule s) . (s ~ WasmModuleShapeR Z Z) =>  Function '[] '[] (I32 ': '[]) ('LabelShape '[] Z ': '[]) wm
+branchExample2 ::forall (s :: WasmModuleShape) (wm :: WasmModule s) . (s ~ WasmModuleShapeR Z Z) =>  Function '[] '[] '[] ('LabelShape '[] Z ': '[]) wm
 branchExample2 = Function (FFuncTypeAnn [] []) branchExample2Seq
+-- this does not make sense for execution since we assume the first control frame and in execution we cannot drop it!
+-- executeBranchExample2 :: RuntimeContext @(WasmModuleShapeR Z Z) '[] '[] (WasmModuleR '[] '[]) '[]
+-- In validation we do not remove the label therefore have to type it like this! The above without a label should be more correct
+-- executeBranchExample2 :: RuntimeContext @(WasmModuleShapeR Z Z) '[] '[] (WasmModuleR '[] '[]) '[ 'LabelShape '[] Z]
+-- executeBranchExample2 = stepMany (RuntimeContext {values = NoValues, locals = NoLocals, WasmInterpreter.globals = WasmInterpreter.NoGlobals, labels = ConsLabels (Label SZ SZ (SomeInstrSeq End) :: Label ('LabelShape '[] 'Z) ) NoLabels, memories = NoMems} :: RuntimeContext '[] '[] ((WasmModuleR '[] '[]) :: WasmModule (WasmModuleShapeR Z Z)) '[ 'LabelShape '[] Z])
+--                 branchExample2Seq
 
-
-    -- example function for Br instruction
-branchExample3 :: forall (s :: WasmModuleShape) (wm :: WasmModule s) . (s ~ WasmModuleShapeR Z Z) =>  Function '[] (I32 ': '[]) (I32 ': '[]) '[] wm
-branchExample3 = Function (FFuncTypeAnn [] []) $
-       Block (BTParamsResults KnownValVNil (KnownValCons ForI32 KnownValVNil)) (
+branchExample3Seq :: forall {inputStack :: ValStackShape} {shape :: WasmModuleShape} {locals :: LocalsShape} {wasmModule :: WasmModule shape} {outputLabels :: LabelStackShape}.
+    InstructionSequence   inputStack  ('[I32] +>+: Take (Length inputStack)
+                         (I32 : Reverse (Take (Length inputStack) (Reverse inputStack)))) -- This is correct because we drop everything that was not on the stack before the block and then we add the arity of the label back onto the stack!
+                          locals   wasmModule   outputLabels   outputLabels    -- example function for Br instruction
+branchExample3Seq = Block (BTParamsResults KnownValVNil (KnownValCons ForI32 KnownValVNil)) (
         Block (BTParamsResults KnownValVNil KnownValVNil) (
             Br SFZ
             :| End)
@@ -173,6 +290,12 @@ branchExample3 = Function (FFuncTypeAnn [] []) $
         :| End
         )
     :| End
+branchExample3 :: forall (s :: WasmModuleShape) (wm :: WasmModule s) . (s ~ WasmModuleShapeR Z Z) =>  Function '[] (I32 ': '[]) (I32 ': '[]) '[] wm
+branchExample3 = Function (FFuncTypeAnn [] []) 
+       branchExample3Seq
+executeBranchExample3 :: RuntimeContext @(WasmModuleShapeR Z Z) '[I32] '[] (WasmModuleR '[] '[]) '[]
+executeBranchExample3 = stepMany RuntimeContext {values = NoValues, locals = NoLocals, WasmInterpreter.globals = WasmInterpreter.NoGlobals, labels = NoLabels, memories = NoMems}
+                branchExample3Seq
 
 -- example function for Br instruction
 
@@ -181,7 +304,7 @@ branchExample4Seq = Block (BTParamsResults KnownValVNil (KnownValCons ForI32 Kno
                     Block (BTParamsResults KnownValVNil KnownValVNil) (
                         I32Const 42
                         :| Br (SFS SFZ)
-                        :| I32Const 7
+                        -- :| I32Const 7 -- TODO BUG: in validation this instruction is not removed and therefore the types do not agree
                         :| End)
                     :| End
                     )
@@ -197,18 +320,23 @@ executeBranchExample4 = stepMany RuntimeContext {values = NoValues, locals = NoL
 
 -- | Example 1: Add two integers
 -- Takes two i32 parameters (slots 0 and 1), returns their sum
-add2 :: forall (s :: WasmModuleShape) (wm :: WasmModule s) . (s ~ WasmModuleShapeR Z Z) => Function '[] (I32 ': '[]) (I32 ': I32 ': '[]) '[] wm -- Function resultStack locals (repr the function parameters)
-add2 = Function (FFuncTypeAnn [] (I32 : [])) $
-    -- Local slots: (0) first parameter, (1) second parameter
-       LocalGet SFZ    -- Push first parameter
+add2Seq :: InstructionSequence '[] '[I32] '[I32, I32] wasmModule outputLabels outputLabels
+add2Seq = LocalGet SFZ    -- Push first parameter
     :| LocalGet (SFS SFZ)     -- Push second parameter
     :| I32Add               -- Add them (pops 2, pushes 1 result)
     :| End
+add2 :: forall (s :: WasmModuleShape) (wm :: WasmModule s) . (s ~ WasmModuleShapeR Z Z) => Function '[] (I32 ': '[]) (I32 ': I32 ': '[]) '[] wm -- Function resultStack locals (repr the function parameters)
+add2 = Function (FFuncTypeAnn [] [I32])
+    -- Local slots: (0) first parameter, (1) second parameter
+      add2Seq
+executeAdd2 :: RuntimeContext @(WasmModuleShapeR Z Z) '[I32] '[I32, I32] (WasmModuleR '[] '[]) '[]
+executeAdd2 = stepMany (RuntimeContext {values = NoValues, locals = ConsLocals 5 (ConsLocals 2 NoLocals), WasmInterpreter.globals = WasmInterpreter.NoGlobals, labels = NoLabels, memories = NoMems} :: RuntimeContext '[] '[I32, I32] ((WasmModuleR '[] '[]) :: WasmModule (WasmModuleShapeR Z Z)) '[])
+                add2Seq
 
 -- | Example 2: Factorial function using iteration
 -- Takes one i32 parameter, returns its factorial
-factorial :: forall (s :: WasmModuleShape) (wm :: WasmModule s) . (s ~ WasmModuleShapeR Z Z) => Function '[] (I32 ': '[]) (I32 ': I32 ': '[]) '[] wm
-factorial = Function (FFuncTypeAnn [] (I32 : [])) $
+factorialSeq :: forall (s :: WasmModuleShape) (wm :: WasmModule s) (outputLabels :: LabelStackShape) . (s ~ WasmModuleShapeR Z Z) => InstructionSequence '[] (I32 ': '[]) (I32 ': I32 ': '[]) wm outputLabels outputLabels
+factorialSeq =
     -- Local slots: (0) input parameter (also used as counter), (1) accumulator
     -- Initialize accumulator to 1
        I32Const 1
@@ -217,8 +345,8 @@ factorial = Function (FFuncTypeAnn [] (I32 : [])) $
     -- Main computation block
     :| Block (BTParamsResults KnownValVNil KnownValVNil) (
         -- Check if n <= 1 (base case)
-           LocalGet SFZ
-        :| I32Const 1
+           I32Const 1
+        :| LocalGet SFZ
         :| I32LeS
         :| BrIf SFZ             -- Exit block if n <= 1
         -- Iterative loop for factorial computation
@@ -234,21 +362,28 @@ factorial = Function (FFuncTypeAnn [] (I32 : [])) $
             :| I32Sub
             :| LocalSet SFZ
             -- Continue if n > 1
-            :| LocalGet SFZ
             :| I32Const 1
+            :| LocalGet SFZ
             :| I32GtS
-            :| BrIf (SFS SFZ)             -- Branch back to loop start
+            :| BrIf SFZ           -- Branch back to loop start
             :| End)
         :| End)
     -- Return the accumulated result
     :| LocalGet (SFS SFZ)
     :| End
+factorial :: forall (s :: WasmModuleShape) (wm :: WasmModule s) . (s ~ WasmModuleShapeR Z Z) => Function '[] (I32 ': '[]) (I32 ': I32 ': '[]) '[] wm
+factorial = Function (FFuncTypeAnn [] [I32])
+    factorialSeq
+executeFactorial :: RuntimeContext @(WasmModuleShapeR Z Z) '[I32] '[I32, I32] (WasmModuleR '[] '[]) '[]
+-- we put as input 4 so the expected result is 24
+executeFactorial = stepMany (RuntimeContext {values = NoValues, locals = ConsLocals 4 (ConsLocals 0 NoLocals), WasmInterpreter.globals = WasmInterpreter.NoGlobals, labels = NoLabels, memories = NoMems} :: RuntimeContext '[] '[I32, I32] ((WasmModuleR '[] '[]) :: WasmModule (WasmModuleShapeR Z Z)) '[])
+                factorialSeq
 
 -- | Example 3: Function that returns nothing (void function).
 -- Demonstrates different return types - this one returns Empty stack.
-printNumber :: forall (s :: WasmModuleShape) (wm :: WasmModule s) . (s ~ WasmModuleShapeR Z Z) => Function '[] '[] (I32 ': '[]) '[] wm
-printNumber = Function (FFuncTypeAnn [] []) $
-    -- Just consume the parameter without returning anything
+printNumberSeq :: forall (s :: WasmModuleShape) (wm :: WasmModule s) (outputLabels :: LabelStackShape) . (s ~ WasmModuleShapeR Z Z) => InstructionSequence '[] '[] '[I32, I32] wm outputLabels outputLabels
+printNumberSeq =
+        -- Just consume the parameter without returning anything
        LocalGet slotZero
     :| Drop
     :| End
@@ -258,11 +393,17 @@ printNumber = Function (FFuncTypeAnn [] []) $
       -- a vector of size 2
       slotZero :: SFin 'Z ('S ('S 'Z))
       slotZero = SFZ
+printNumber :: forall (s :: WasmModuleShape) (wm :: WasmModule s) . (s ~ WasmModuleShapeR Z Z) => Function '[] '[] '[I32, I32] '[] wm
+printNumber = Function (FFuncTypeAnn [] [])
+    printNumberSeq
+executePrintNumber :: RuntimeContext @(WasmModuleShapeR Z Z) '[] '[I32, I32] (WasmModuleR '[] '[]) '[]
+executePrintNumber = stepMany (RuntimeContext {values = NoValues, locals = ConsLocals 7 (ConsLocals 42 NoLocals), WasmInterpreter.globals = WasmInterpreter.NoGlobals, labels = NoLabels, memories = NoMems} :: RuntimeContext '[] '[I32, I32] ((WasmModuleR '[] '[]) :: WasmModule (WasmModuleShapeR Z Z)) '[])
+                printNumberSeq
 
 -- | Example 4: Function with more complex local variable patterns.
 -- Takes one parameter, uses three local variables for intermediate calculations.
-complexCalculation :: forall (s :: WasmModuleShape) (wm :: WasmModule s) . (s ~ WasmModuleShapeR Z Z) => Function '[] (I32 ': '[]) (I32 ': I32 ': I32 ': I32 ': '[]) '[] wm
-complexCalculation = Function (FFuncTypeAnn [] (I32 : [])) $
+complexCalculationSeq :: forall (s :: WasmModuleShape) (wm :: WasmModule s) (outputLabels :: LabelStackShape) . (s ~ WasmModuleShapeR Z Z) => InstructionSequence '[] '[I32] (I32 ': I32 ': I32 ': I32 ': '[]) wm outputLabels outputLabels
+complexCalculationSeq =
     -- Local slots: (0) input, (1) temp1, (2) temp2, (3) result
     -- temp1 = input * 2
        LocalGet SFZ
@@ -273,14 +414,27 @@ complexCalculation = Function (FFuncTypeAnn [] (I32 : [])) $
     :| LocalGet SFZ
     :| I32Const 10
     :| I32Add
-    -- TODO: Need more slot witnesses for slots 2 and 3
-    -- This is incomplete but shows the pattern
+    :| LocalSet (SFS (SFS SFZ))
+    -- result = temp1 + temp2
+    :| LocalGet (SFS SFZ)
+    :| LocalGet (SFS (SFS SFZ))
+    :| I32Add
+    :| LocalSet (SFS (SFS (SFS SFZ)))
+    :| LocalGet (SFS (SFS (SFS SFZ)))  -- return result on top of stack
     :| End
+
+complexCalculation :: forall (s :: WasmModuleShape) (wm :: WasmModule s) . (s ~ WasmModuleShapeR Z Z) => Function '[] '[I32] (I32 ': I32 ': I32 ': I32 ': '[]) '[] wm
+complexCalculation = Function (FFuncTypeAnn [] [I32]) 
+    complexCalculationSeq
+
+executeComplexCalculation :: RuntimeContext @(WasmModuleShapeR Z Z) '[I32] (I32 ': I32 ': I32 ': I32 ': '[]) (WasmModuleR '[] '[]) '[]
+executeComplexCalculation = stepMany (RuntimeContext {values = NoValues, locals = ConsLocals 5 (ConsLocals 0 (ConsLocals 0 (ConsLocals 0 NoLocals))), WasmInterpreter.globals = WasmInterpreter.NoGlobals, labels = NoLabels, memories = NoMems} :: RuntimeContext '[] (I32 ': I32 ': I32 ': I32 ': '[]) ((WasmModuleR '[] '[]) :: WasmModule (WasmModuleShapeR Z Z)) '[])
+                complexCalculationSeq
 
 -- | Example 5: Conditional logic with If instruction.
 -- Returns the absolute value of the input.
-absoluteValue :: forall (s :: WasmModuleShape) (wm :: WasmModule s) . (s ~ WasmModuleShapeR Z Z) => Function '[] (I32 ': '[]) (I32 ': '[]) '[] wm
-absoluteValue = Function (FFuncTypeAnn [] (I32 : [])) $
+absoluteValueSeq :: forall (s :: WasmModuleShape) (wm :: WasmModule s) (outputLabels :: LabelStackShape) . (s ~ WasmModuleShapeR Z Z) => InstructionSequence '[] (I32 ': '[]) (I32 ': '[]) wm outputLabels outputLabels
+absoluteValueSeq =
     -- Check if input is negative
        LocalGet SFZ
     :| I32Const 0
@@ -295,6 +449,12 @@ absoluteValue = Function (FFuncTypeAnn [] (I32 : [])) $
         (  LocalGet SFZ
         :| End)
     :| End
+absoluteValue :: forall (s :: WasmModuleShape) (wm :: WasmModule s) . (s ~ WasmModuleShapeR Z Z) => Function '[] (I32 ': '[]) (I32 ': '[]) '[] wm
+absoluteValue = Function (FFuncTypeAnn [] [I32]) 
+    absoluteValueSeq
+executeAbsoluteValue :: RuntimeContext @(WasmModuleShapeR Z Z) '[I32] '[I32] (WasmModuleR '[] '[]) '[]
+executeAbsoluteValue = stepMany (RuntimeContext {values = NoValues, locals = ConsLocals (-42) NoLocals, WasmInterpreter.globals = WasmInterpreter.NoGlobals, labels = NoLabels, memories = NoMems} :: RuntimeContext '[] '[I32] ((WasmModuleR '[] '[]) :: WasmModule (WasmModuleShapeR Z Z)) '[])
+                absoluteValueSeq
 
 -- Bad example (fails at compile time)
 --nestedControlFlow :: Function (I32 :> Empty) (I32 ': I32 ': '[])

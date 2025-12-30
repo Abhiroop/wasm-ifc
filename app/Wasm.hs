@@ -8,6 +8,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE InstanceSigs #-}
 
 
 -- | A type-safe embedded domain-specific language (DSL) for WebAssembly.
@@ -16,10 +17,19 @@
 module Wasm where
 
 import Data.Int (Int32, Int64)
-import Data.Word (Word32, Word64)
+import Data.Word (Word8, Word32, Word64)
 import Types --(Length, WasmType(I64, I32), WasmType, ValStackShape, type (:+>+), CheckTopVecEqual, BlockType (..), FuncName, FuncTypeAnn (..), Take, FuncTypeAnn (..), Reverse, KnownWasmType (ForI32), LabelStackShape, GetLabelType, GetLabelCreationValStackLength, SomeValStackShape(..), KnownValStackShape (KnownValVNil, KnownValCons), GetSpecificValVec, LabelShape(..))
 import Utils
-import WasmModule (WasmModule(..), GetGlobals, GlobalTypeToWasmType, MemArg(SMemArg), WasmModuleShape(..), GetMemoriesShape, GetGlobalsShape, GlobalType(..), Mutability(..))
+import WasmModule 
+import Data.Bits
+
+{-
+TODO Summary:
+1. Line 37: Better error messages
+2. Line 66: Handle division by zero at type level if WASM spec allows
+3. Line 139: Handle uninitialized local variables according to WASM spec
+4. Line 297: missing WASM instructions
+-}
 
 {-
 =============================================================================
@@ -117,11 +127,11 @@ data Instruction (inputStack :: ValStackShape) (outputStack :: ValStackShape) (l
 
     -- Local variable operations
     -- LocalGet: push the value of a local variable onto the stack
-    LocalGet :: SFin i n
+    LocalGet :: (n ~ Length locals) => SFin i n
              -> Instruction inputStack (Index i locals ': inputStack) locals wasmModule inputLabels inputLabels
 
     -- LocalSet: pop a value from stack and store it in a local variable
-    LocalSet :: SFin i n
+    LocalSet :: (n ~ Length locals) => SFin i n
              -> Instruction (Index i locals ': inputStack) inputStack locals wasmModule inputLabels inputLabels
     -- LocalTee:
     -- pop val from stack
@@ -155,8 +165,8 @@ data Instruction (inputStack :: ValStackShape) (outputStack :: ValStackShape) (l
         -- this simply returns a memory type which includes the limits of the memory
     -- We need the forall in order to use MemoryLoad @I32
     -- type equality ~ or :~:
-    MemoryLoad :: forall (wasmtype::WasmType) (i :: Nat) (n :: Nat) (m :: Nat) (k :: Nat) (ivs :: Nat) (shape :: WasmModuleShape) (align :: Word32) (offset :: Word64) (inputStack :: ValStackShape) (wasmModule :: WasmModule shape) (locals :: LocalsShape) (inputLabels :: LabelStackShape) .
-        (n ~ GetMemoriesShape shape) => 
+    MemoryLoad :: forall (wasmtype::WasmType) (i :: Nat) (n :: Nat) (shape :: WasmModuleShape) (align :: Word32) (offset :: Word64) (inputStack :: ValStackShape) (wasmModule :: WasmModule shape) (locals :: LocalsShape) (inputLabels :: LabelStackShape) .
+        (Loadable wasmtype, n ~ GetMemoriesShape shape) => 
              SFin i n
              -> MemArg align offset  -- ignore alignment for now, also not 100% sure why i32 has to be on top of stack
              -> Instruction (I32 ': inputStack) (wasmtype ': inputStack) locals wasmModule inputLabels inputLabels
@@ -166,11 +176,13 @@ data Instruction (inputStack :: ValStackShape) (outputStack :: ValStackShape) (l
     --          -> Instruction (I32 :> wasmtype :> inputStack) inputStack locals wasmModule
 
     -- MemoryStore with annotation to specify the type that is stored
-    MemoryStore :: forall (wasmtype :: WasmType) (i :: Nat) (n :: Nat) (shape :: WasmModuleShape) align offset inputStack (wasmModule :: WasmModule shape) locals inputLabels outputLabels.
-        (n ~ GetMemoriesShape shape) => 
+    MemoryStore :: forall (wasmtype :: WasmType) (i :: Nat) (n :: Nat) (shape :: WasmModuleShape) align offset inputStack (wasmModule :: WasmModule shape) locals inputLabels .
+        (n ~ GetMemoriesShape shape,
+        -- GetMems wasmModule ~ InsertMemory i memoryArray (GetMems wasmModule),
+        Loadable wasmtype) => 
         SFin i n
         -> MemArg align offset
-        -> Instruction (I32 ': wasmtype ': inputStack) inputStack locals wasmModule inputLabels outputLabels
+        -> Instruction (I32 ': wasmtype ': inputStack) inputStack locals wasmModule inputLabels inputLabels
 
 
     -- Control flow instructions
@@ -258,7 +270,7 @@ data Instruction (inputStack :: ValStackShape) (outputStack :: ValStackShape) (l
     Br    :: forall (i :: Nat) (l :: Nat) (shape :: WasmModuleShape) (targetLabel :: LabelShape) (remainingLabels :: LabelStackShape) (inputLabels :: LabelStackShape) (inputStack :: ValStackShape) (outputStack :: ValStackShape)  (locals :: LocalsShape) (wasmModule :: WasmModule shape) .
         (CheckTopVecEqual (GetLabelType (Index i inputLabels)) inputStack ~ 'True,
         targetLabel : remainingLabels ~ Drop i inputLabels,
-        (Take (Arity targetLabel) inputStack :+>+
+        (Take (Arity targetLabel) inputStack +>+:
           Take (Height targetLabel) (Reverse inputStack))
           ~ outputStack,
           l ~ Length inputLabels
@@ -291,6 +303,79 @@ data Instruction (inputStack :: ValStackShape) (outputStack :: ValStackShape) (l
     Leave :: Instruction inputStack inputStack locals wasmModule (topLabel ': outputLabels) outputLabels
 
     -- TODO: missing WASM instructions
+
+class Loadable (wasmType :: WasmType) where
+  byteSize :: WasmType
+  load :: MemoryArray -> Word64 -> RuntimeTypeOf wasmType
+  store :: MemoryArray -> Word64 -> RuntimeTypeOf wasmType -> MemoryArray
+
+
+readByte :: MemoryArray -> Int -> Word8
+readByte mem addr = mem !! addr
+
+instance Loadable I32 where
+    byteSize = I32
+    load memArray addr = 
+            let byte0 = readByte memArray (fromIntegral addr)
+                byte1 = readByte memArray (fromIntegral (addr + 1))
+                byte2 = readByte memArray (fromIntegral (addr + 2))
+                byte3 = readByte memArray (fromIntegral (addr + 3))
+            in  fromIntegral 
+            (
+                (fromIntegral byte0 :: RuntimeTypeOf I32)
+                + (fromIntegral byte1 `shiftL` 8 :: RuntimeTypeOf I32)
+               + (fromIntegral byte2 `shiftL` 16 :: RuntimeTypeOf I32)
+               + (fromIntegral byte3 `shiftL` 24 :: RuntimeTypeOf I32)
+               ) :: RuntimeTypeOf I32
+    store memArray addr value =
+            let byte0 = fromIntegral (value .&. 0xFF) :: Word8
+                byte1 = fromIntegral ((value `shiftR` 8) .&. 0xFF) :: Word8
+                byte2 = fromIntegral ((value `shiftR` 16) .&. 0xFF) :: Word8
+                byte3 = fromIntegral ((value `shiftR` 24) .&. 0xFF) :: Word8
+                --take addr mem ++ [val] ++ drop (addr + 1) mem
+                memArray1 = take (fromIntegral addr) memArray ++ [byte0] ++ drop (fromIntegral addr + 1) memArray
+                memArray2 = take (fromIntegral (addr + 1)) memArray1 ++ [byte1] ++ drop (fromIntegral (addr + 1) + 1) memArray1
+                memArray3 = take (fromIntegral (addr + 2)) memArray2 ++ [byte2] ++ drop (fromIntegral (addr + 2) + 1) memArray2
+                memArray4 = take (fromIntegral (addr + 3)) memArray3 ++ [byte3] ++ drop (fromIntegral (addr + 3) + 1) memArray3
+            in memArray4
+
+instance Loadable I64 where
+    byteSize = I64
+    load memArray addr = 
+          let byte0 = readByte memArray (fromIntegral addr)
+              byte1 = readByte memArray (fromIntegral (addr + 1))
+              byte2 = readByte memArray (fromIntegral (addr + 2))
+              byte3 = readByte memArray (fromIntegral (addr + 3))
+              byte4 = readByte memArray (fromIntegral (addr + 4))
+              byte5 = readByte memArray (fromIntegral (addr + 5))
+              byte6 = readByte memArray (fromIntegral (addr + 6))
+              byte7 = readByte memArray (fromIntegral (addr + 7))
+          in fromIntegral byte0
+             + (fromIntegral byte1 `shiftL` 8)
+             + (fromIntegral byte2 `shiftL` 16)
+             + (fromIntegral byte3 `shiftL` 24)
+             + (fromIntegral byte4 `shiftL` 32)
+             + (fromIntegral byte5 `shiftL` 40)
+             + (fromIntegral byte6 `shiftL` 48)
+             + (fromIntegral byte7 `shiftL` 56) :: RuntimeTypeOf I64
+    store memArray addr value =
+            let byte0 = fromIntegral (value .&. 0xFF) :: Word8
+                byte1 = fromIntegral ((value `shiftR` 8) .&. 0xFF) :: Word8
+                byte2 = fromIntegral ((value `shiftR` 16) .&. 0xFF) :: Word8
+                byte3 = fromIntegral ((value `shiftR` 24) .&. 0xFF) :: Word8
+                byte4 = fromIntegral ((value `shiftR` 32) .&. 0xFF) :: Word8
+                byte5 = fromIntegral ((value `shiftR` 40) .&. 0xFF) :: Word8
+                byte6 = fromIntegral ((value `shiftR` 48) .&. 0xFF) :: Word8
+                byte7 = fromIntegral ((value `shiftR` 56) .&. 0xFF) :: Word8
+                memArray1 = take (fromIntegral addr) memArray ++ [byte0] ++ drop (fromIntegral addr + 1) memArray
+                memArray2 = take (fromIntegral (addr + 1)) memArray1 ++ [byte1] ++ drop (fromIntegral (addr + 1) + 1) memArray1
+                memArray3 = take (fromIntegral (addr + 2)) memArray2 ++ [byte2] ++ drop (fromIntegral (addr + 2) + 1) memArray2
+                memArray4 = take (fromIntegral (addr + 3)) memArray3 ++ [byte3] ++ drop (fromIntegral (addr + 3) + 1) memArray3
+                memArray5 = take (fromIntegral (addr + 4)) memArray4 ++ [byte4] ++ drop (fromIntegral (addr + 4) + 1) memArray4
+                memArray6 = take (fromIntegral (addr + 5)) memArray5 ++ [byte5] ++ drop (fromIntegral (addr + 5) + 1) memArray5
+                memArray7 = take (fromIntegral (addr + 6)) memArray6 ++ [byte6] ++ drop (fromIntegral (addr + 6) + 1) memArray6
+                memArray8 = take (fromIntegral (addr + 7)) memArray7 ++ [byte7] ++ drop (fromIntegral (addr + 7) + 1) memArray7
+            in memArray8
 
 {-
 =============================================================================
