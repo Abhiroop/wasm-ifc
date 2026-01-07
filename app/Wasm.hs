@@ -142,19 +142,19 @@ data Instruction (inputStack :: ValStackShape) (outputStack :: ValStackShape) (l
         -- local[i] = val
     -- => in the end value is still on top of the stack as well as saved in the locals
         -- => technically the stack looks the same at the start and at the end?
-    LocalTee :: SFin i n
+    LocalTee :: (n ~ Length locals) => SFin i n
              -> Instruction (Index i locals ': inputStack) (Index i locals ': inputStack) locals wasmModule inputLabels inputLabels
     -- TODO: Handle uninitialized local variables according to WASM spec
 
     -- GlobalGet: push the value of a global variable onto the stack
-    GlobalGet :: forall (i :: Nat) (n :: Nat) (m :: Nat) (l :: Nat) (ivs :: Nat) (shape :: WasmModuleShape) (inputStack :: ValStackShape) (wasmModule :: WasmModule shape) (locals :: LocalsShape) (inputLabels :: LabelStackShape).
+    GlobalGet :: forall (i :: Nat) (n :: Nat) (shape :: WasmModuleShape) (inputStack :: ValStackShape) (wasmModule :: WasmModule shape) (locals :: LocalsShape) (inputLabels :: LabelStackShape).
         (n ~ GetGlobalsShape shape) =>
         SFin i n
         -> Instruction inputStack (GlobalTypeToWasmType (Index i (GetGlobals wasmModule)) ': inputStack) locals wasmModule inputLabels inputLabels
 
     -- GlobalSet: pop a value from stack and store it in a global variable => global type must be mutable where do we check this
-    GlobalSet :: forall (i :: Nat) (n :: Nat) (m :: Nat) (l :: Nat) (ivs :: Nat) (shape :: WasmModuleShape) (inputStack :: ValStackShape) (wasmModule :: WasmModule shape) (locals :: LocalsShape) (inputLabels :: LabelStackShape).
-        (n ~ GetGlobalsShape shape) =>
+    GlobalSet :: forall (i :: Nat) (n :: Nat) (shape :: WasmModuleShape) (inputStack :: ValStackShape) (wasmModule :: WasmModule shape) (locals :: LocalsShape) (inputLabels :: LabelStackShape).
+        (n ~ GetGlobalsShape shape, IsVarMutability (GetMutability (Index i (GetGlobals wasmModule))) ~ 'True) =>
         SFin i n
         -> Instruction (GlobalTypeToWasmType (Index i (GetGlobals wasmModule)) ': inputStack) inputStack locals wasmModule inputLabels inputLabels
 

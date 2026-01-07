@@ -232,6 +232,12 @@ executeGlobalGetSetSequence :: RuntimeContext @(WasmModuleShapeR (S Z) Z)    '[I
 executeGlobalGetSetSequence = stepMany (RuntimeContext {values = NoValues, locals = NoLocals, WasmInterpreter.globals = WasmInterpreter.ConsGlobals 5 SVar NoGlobals, labels = NoLabels, memories = NoMems} :: RuntimeContext '[] '[] ((WasmModuleR (GlobalTypeMW Var I32 ': '[]) '[]) :: WasmModule (WasmModuleShapeR (S Z) Z)) '[])
                 globalGetSetSequence
 
+globalSetConstSeq :: InstructionSequence (I32 ': '[]) '[] locals ((WasmModuleR '[GlobalTypeMW Const I32, GlobalTypeMW Var I32] '[]) :: WasmModule (WasmModuleShapeR (S (S Z)) Z)) outputLabels   outputLabels
+globalSetConstSeq = 
+    GlobalSet (SFS SFZ)
+    -- :| GlobalSet SFZ      -- set global at index 0 should fail if uncommented
+    :| End
+
 
 add1Sequence :: forall {shape :: WasmModuleShape} {inputStack :: ValStackShape} {locals :: LocalsShape} {wasmModule :: WasmModule shape} {inputLabels :: LabelStackShape}. InstructionSequence (I32 ': (I32 ': inputStack)) (I32 ': inputStack) locals wasmModule inputLabels inputLabels
 add1Sequence = I32Add :| End

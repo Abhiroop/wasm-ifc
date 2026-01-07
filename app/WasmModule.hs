@@ -31,6 +31,10 @@ import Data.List (List)
 
 data Mutability = Const | Var
 
+type family IsVarMutability (m :: Mutability) :: Bool where
+    IsVarMutability 'Const = 'False
+    IsVarMutability 'Var   = 'True
+
 data KnownMutability (m :: Mutability) where
     SConst :: KnownMutability 'Const
     SVar   :: KnownMutability 'Var
