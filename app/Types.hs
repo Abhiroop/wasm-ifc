@@ -114,7 +114,7 @@ type family AddComm (a :: Nat) (b :: Nat) :: Bool where
 -- | Type family that reverses a ValStackShape.
 type family Reverse (s :: [a]) :: [a] where
   Reverse '[]    = '[]
-  Reverse (t ': (s :: [a])) = Reverse s :+>+ (t ': '[])
+  Reverse (t ': (s :: [a])) = Reverse s +>+: (t ': '[])
 
 
 type family Take (n :: Nat) (s :: [a]) :: [a] where

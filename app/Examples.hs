@@ -253,7 +253,7 @@ executeAddSub = stepMany (RuntimeContext {values = ConsValues 10 (ConsValues 5 (
 
 -- example function for Br instruction
 branchExampleSeq :: forall {shape :: WasmModuleShape} {inputStack :: ValStackShape} {locals :: LocalsShape} {wasmModule :: WasmModule shape} {outputLabels :: LabelStackShape}.
-    InstructionSequence   inputStack   ('[] +>+: Take (Length inputStack) (Reverse inputStack))   locals   wasmModule   outputLabels   outputLabels
+    InstructionSequence   inputStack   ('[] +>+: Reverse (Take (Length inputStack) (Reverse inputStack)))   locals   wasmModule   outputLabels   outputLabels
 branchExampleSeq = Block (BTParamsResults KnownValVNil KnownValVNil) (
                     Br SFZ 
                     :| End)
@@ -283,10 +283,10 @@ branchExample2 = Function (FFuncTypeAnn [] []) branchExample2Seq
 -- executeBranchExample2 = stepMany (RuntimeContext {values = NoValues, locals = NoLocals, WasmInterpreter.globals = WasmInterpreter.NoGlobals, labels = ConsLabels (Label SZ SZ (SomeInstrSeq End) :: Label ('LabelShape '[] 'Z) ) NoLabels, memories = NoMems} :: RuntimeContext '[] '[] ((WasmModuleR '[] '[]) :: WasmModule (WasmModuleShapeR Z Z)) '[ 'LabelShape '[] Z])
 --                 branchExample2Seq
 
-branchExample3Seq :: forall {inputStack :: ValStackShape} {shape :: WasmModuleShape} {locals :: LocalsShape} {wasmModule :: WasmModule shape} {outputLabels :: LabelStackShape}.
-    InstructionSequence   inputStack  ('[I32] +>+: Take (Length inputStack)
-                         (I32 : Reverse (Take (Length inputStack) (Reverse inputStack)))) -- This is correct because we drop everything that was not on the stack before the block and then we add the arity of the label back onto the stack!
-                          locals   wasmModule   outputLabels   outputLabels    -- example function for Br instruction
+branchExample3Seq :: forall {shape :: WasmModuleShape} {locals :: LocalsShape} {wasmModule :: WasmModule shape} {outputLabels :: LabelStackShape}.
+    InstructionSequence   '[I32,I64]
+        '[I32, I32, I64]
+        locals   wasmModule   outputLabels   outputLabels    -- example function for Br instruction
 branchExample3Seq = Block (BTParamsResults KnownValVNil (KnownValCons ForI32 KnownValVNil)) (
         Block (BTParamsResults KnownValVNil KnownValVNil) (
             Br SFZ
@@ -296,16 +296,16 @@ branchExample3Seq = Block (BTParamsResults KnownValVNil (KnownValCons ForI32 Kno
         :| End
         )
     :| End
-branchExample3 :: forall (s :: WasmModuleShape) (wm :: WasmModule s) . (s ~ WasmModuleShapeR Z Z) =>  Function '[] (I32 ': '[]) (I32 ': '[]) '[] wm
+branchExample3 :: forall (s :: WasmModuleShape) (wm :: WasmModule s) . (s ~ WasmModuleShapeR Z Z) =>  Function '[I32, I64] (I32 ': '[I32, I64]) (I32 ': '[]) '[] wm
 branchExample3 = Function (FFuncTypeAnn [] []) 
        branchExample3Seq
-executeBranchExample3 :: RuntimeContext @(WasmModuleShapeR Z Z) '[I32] '[] (WasmModuleR '[] '[]) '[]
-executeBranchExample3 = stepMany RuntimeContext {values = NoValues, locals = NoLocals, WasmInterpreter.globals = WasmInterpreter.NoGlobals, labels = NoLabels, memories = NoMems}
+executeBranchExample3 :: RuntimeContext @(WasmModuleShapeR Z Z) '[I32, I32, I64] '[] (WasmModuleR '[] '[]) '[]
+executeBranchExample3 = stepMany RuntimeContext {values = ConsValues (3 :: Int32) (ConsValues (2 :: Int64) NoValues), locals = NoLocals, WasmInterpreter.globals = WasmInterpreter.NoGlobals, labels = NoLabels, memories = NoMems}
                 branchExample3Seq
 
 -- example function for Br instruction
 
-branchExample4Seq :: InstructionSequence '[] ('[I32] :+>+ Take (Length '[]) (I32 : Reverse '[])) locals wasmModule outputLabels outputLabels
+branchExample4Seq :: InstructionSequence '[] '[I32] locals wasmModule outputLabels outputLabels
 branchExample4Seq = Block (BTParamsResults KnownValVNil (KnownValCons ForI32 KnownValVNil)) (
                     Block (BTParamsResults KnownValVNil KnownValVNil) (
                         I32Const 42

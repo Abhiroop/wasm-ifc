@@ -170,15 +170,17 @@ data Instruction (inputStack :: ValStackShape) (outputStack :: ValStackShape) (l
              SFin i n
              -> MemArg align offset  -- ignore alignment for now, also not 100% sure why i32 has to be on top of stack
              -> Instruction (I32 ': inputStack) (wasmtype ': inputStack) locals wasmModule inputLabels inputLabels
+             -- TODO: If we use I64 addresses we need to change this here to a I64!!!!!!!!!!
     -- MemoryStore: pop address and value from stack, store value at address in memory
         -- should we also make this annoted with the wasmtype?
     -- MemoryStore :: MemArg offset alignment -- add  constraint on limit of memory
     --          -> Instruction (I32 :> wasmtype :> inputStack) inputStack locals wasmModule
 
     -- MemoryStore with annotation to specify the type that is stored
-    MemoryStore :: forall (wasmtype :: WasmType) (i :: Nat) (n :: Nat) (shape :: WasmModuleShape) align offset inputStack (wasmModule :: WasmModule shape) locals inputLabels .
+    MemoryStore :: forall (wasmtype :: WasmType) (i :: Nat) (n :: Nat) (shape :: WasmModuleShape) (align :: Word32) offset inputStack (wasmModule :: WasmModule shape) locals inputLabels .
         (n ~ GetMemoriesShape shape,
-        -- GetMems wasmModule ~ InsertMemory i memoryArray (GetMems wasmModule),
+        -- alignment must be multiple of 4 if wasmtype is I32 and multiple of 8 if wasmtype is I64
+        --ModEq align (ByteSize wasmtype) ~ 0, This one would only work with alignment also were a Nat not a word => however maybe we can evendo this at tha type level and keep it as a Word32 at execution time.
         Loadable wasmtype) => 
         SFin i n
         -> MemArg align offset
@@ -217,8 +219,8 @@ data Instruction (inputStack :: ValStackShape) (outputStack :: ValStackShape) (l
           -> Instruction inputStack outputStack locals wasmModule inputLabels inputLabels
 
     -- If: conditional execution (pops i32 condition, executes one of two branches)
-    If    :: (CheckTopVecEqual ( paramsStack) ( inputStack) ~ 'True,
-                CheckTopVecEqual ( resStack) ( outputStack) ~ 'True)  -- ensure that the parameters of the block are on top of the input stack
+    If    :: (CheckTopVecEqual paramsStack inputStack ~ 'True,
+                CheckTopVecEqual resStack outputStack ~ 'True)  -- ensure that the parameters of the block are on top of the input stack
           => BlockType paramsStack resStack
           -> InstructionSequence inputStack outputStack locals wasmModule ('LabelShape resStack (Length inputStack) ': inputLabels) ('LabelShape resStack (Length inputStack) ': inputLabels)     -- then branch
           -> InstructionSequence inputStack outputStack locals wasmModule ('LabelShape resStack (Length inputStack) ': inputLabels) ('LabelShape resStack (Length inputStack) ': inputLabels)     -- else branch
@@ -271,7 +273,7 @@ data Instruction (inputStack :: ValStackShape) (outputStack :: ValStackShape) (l
         (CheckTopVecEqual (GetLabelType (Index i inputLabels)) inputStack ~ 'True,
         targetLabel : remainingLabels ~ Drop i inputLabels,
         (Take (Arity targetLabel) inputStack +>+:
-          Take (Height targetLabel) (Reverse inputStack))
+          Reverse (Take (Height targetLabel) (Reverse inputStack)))
           ~ outputStack,
           l ~ Length inputLabels
         ) => 

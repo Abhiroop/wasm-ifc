@@ -1,6 +1,7 @@
 {-
 TODO Summary:
 1. Line 106: ignore alignment for now
+2. Line 143: Maybe we still need to not the limits here to check whether the memory can grow or whether we have a maximum size!
 -}
 
 {-# LANGUAGE DataKinds #-}
@@ -143,6 +144,7 @@ data ValStackShape where
 --     EmptyMemShape :: MemoriesShapeStack
 --     ConsMemShape :: (SWord64 n,Maybe (SWord64 m)) -> MemoriesShapeStack -> MemoriesShapeStack
 
+-- TODO: Maybe we still need to not the limits here to check whether the memory can grow or whether we have a maximum size!
 type MemoriesShape = [MemoryArray]
 
 data SMemArray (memArray :: MemoryArray) where

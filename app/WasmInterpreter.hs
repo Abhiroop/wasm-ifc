@@ -122,9 +122,9 @@ takeStack (SS n) (ConsValues x xs) =
 takeStack (SS _) NoValues = error "takeStack: stack underflow"
 
 
-concatStacks :: ValueStack s1 -> ValueStack s2 -> ValueStack (s1 :+>+ s2)
-concatStacks s2 NoValues      = s2
-concatStacks s2 (ConsValues val rest) = ConsValues val (concatStacks s2 rest)
+concatStacks :: ValueStack s1 -> ValueStack s2 -> ValueStack (s1 +>+: s2)
+concatStacks NoValues s2     = s2
+concatStacks (ConsValues val rest) s2  = ConsValues val (concatStacks rest s2)
 
 getAtLabel :: (l ~ Length labelStackShape) =>
     SFin n l
