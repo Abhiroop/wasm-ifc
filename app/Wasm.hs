@@ -22,6 +22,7 @@ import Types --(Length, WasmType(I64, I32), WasmType, ValStackShape, type (:+>+)
 import Utils
 import WasmModule 
 import Data.Bits
+import qualified GHC.TypeLits as NatNum
 
 {-
 TODO Summary:
@@ -29,7 +30,13 @@ TODO Summary:
 2. Line 66: Handle division by zero at type level if WASM spec allows
 3. Line 139: Handle uninitialized local variables according to WASM spec
 4. Line 297: missing WASM instructions
+5. Line 430: If we use I64 addresses we need to change this here to a I64!!!!!!!!!!
 -}
+
+
+-- | Type-level modulus equality constraint
+-- type family ModEq (x :: Word32) (y :: NatNum.Nat):: NatNum.Nat where
+--     ModEq x y = ((x :: NatNum.Nat) `NatNum.Mod` y)
 
 {-
 =============================================================================
@@ -215,7 +222,7 @@ data Instruction (inputStack :: ValStackShape) (outputStack :: ValStackShape) (l
             (CheckTopVecEqual paramsStack inputStack ~ 'True,
                 CheckTopVecEqual resStack outputStack ~ 'True)  -- ensure that the parameters of the block are on top of the input stack
           => BlockType paramsStack resStack
-          -> InstructionSequence inputStack outputStack locals wasmModule ('LabelShape paramsStack (Length inputStack) ': inputLabels) ( 'LabelShape paramsStack (Length inputStack) ': inputLabels)
+          -> InstructionSequence inputStack outputStack locals wasmModule ('LabelShape paramsStack (Length inputStack) ': inputLabels) ('LabelShape paramsStack (Length inputStack) ': inputLabels)
           -> Instruction inputStack outputStack locals wasmModule inputLabels inputLabels
 
     -- If: conditional execution (pops i32 condition, executes one of two branches)
@@ -289,10 +296,12 @@ data Instruction (inputStack :: ValStackShape) (outputStack :: ValStackShape) (l
     -- DINA: Problem => either we branch then we have the conditions below for the outputStack or we don't branch
     -- and then the outputStack is just the inputStack minus the i32 condition
     BrIf  :: forall (i :: Nat) (l :: Nat) (shape :: WasmModuleShape) (targetLabel :: LabelShape) (remainingLabels :: LabelStackShape) (inputLabels :: LabelStackShape) (inputStack :: ValStackShape) (locals :: LocalsShape) (wasmModule :: WasmModule shape) .
-    -- inputStack ~ outputStack =>
-        -- (CheckTopVecEqual (GetLabelType (Index i inputLabels)) (  inputStack) ~ 'True) =>
         (targetLabel : remainingLabels ~ Drop i inputLabels,
-         l ~ Length inputLabels) =>
+        CheckTopVecEqual (GetLabelType (Index i inputLabels)) inputStack ~ 'True, -- this is constraint given by validation.
+        -- actually can also check whether the input stack is tall enough for the bottom to be the same
+        LessEqThan (Arity targetLabel :+ Height targetLabel) (Length inputStack) ~ 'True,
+        LessEqThan ('S 'Z) (Length inputLabels) ~ 'True, -- ensure that there is at least one label to branch to
+        l ~ Length inputLabels) =>
         SFin i l
         -> Instruction (I32 ': inputStack) inputStack locals wasmModule inputLabels inputLabels
 
@@ -302,9 +311,18 @@ data Instruction (inputStack :: ValStackShape) (outputStack :: ValStackShape) (l
     -- here we need to po
     -- Call  :: FuncName f -> Instruction (GetParamsOf (GetTypeOfFunc f wasmModule)) (GetResultsOf (GetTypeOfFunc f wasmModule)) locals wasmModule inputLabels outputLabels 
 
-    Leave :: Instruction inputStack inputStack locals wasmModule (topLabel ': outputLabels) outputLabels
+    Leave :: forall (shape :: WasmModuleShape) (targetLabel :: LabelShape) (remainingLabels :: LabelStackShape) (inputLabels :: LabelStackShape) (inputStack :: ValStackShape) (locals :: LocalsShape) (wasmModule :: WasmModule shape) .
+        (inputLabels ~ (targetLabel ': remainingLabels),
+        CheckTopVecEqual (GetLabelType targetLabel) inputStack ~ 'True
+        ) =>
+        Instruction inputStack inputStack locals wasmModule (targetLabel ': remainingLabels) remainingLabels
 
     -- TODO: missing WASM instructions
+
+type family ByteSize (wasmType :: WasmType) :: NatNum.Nat where
+    ByteSize I32 = 4
+    ByteSize I64 = 8
+    -- add more types when needed
 
 class Loadable (wasmType :: WasmType) where
   byteSize :: WasmType
@@ -391,9 +409,9 @@ INSTRUCTION SEQUENCES
 infixr 5 :|  -- Right-associative, like list construction
 data InstructionSequence (inputStack :: ValStackShape) (outputStack :: ValStackShape) (locals :: LocalsShape) (wasmModule :: WasmModule shape) (inputLabels :: LabelStackShape) (outputLabels :: LabelStackShape) where
     End  :: InstructionSequence inputStack inputStack locals wasmModule inputLabels inputLabels   -- Base case: empty sequence (identity)
-    (:|) :: Instruction initialStack intermediateStack locals wasmModule inputLabels intermediateLabels               -- Inductive case: first instruction
-         -> InstructionSequence intermediateStack finalStack locals wasmModule intermediateLabels outputLabels                          -- rest of sequence
-         -> InstructionSequence initialStack finalStack locals wasmModule inputLabels outputLabels                              -- combined sequence
+    (:|) :: Instruction initialStack intermediateStack locals wasmModule inputLabels inputLabels               -- Inductive case: first instruction
+         -> InstructionSequence intermediateStack finalStack locals wasmModule inputLabels inputLabels                          -- rest of sequence
+         -> InstructionSequence initialStack finalStack locals wasmModule inputLabels inputLabels                              -- combined sequence
 
 {-
 =============================================================================

@@ -267,15 +267,15 @@ executeBranchExample = stepMany (RuntimeContext {values = NoValues, locals = NoL
                 branchExampleSeq
 
     -- example function for Br instruction
-branchExample2Seq :: forall {shape :: WasmModuleShape}{wasmModule :: WasmModule shape} .
-    InstructionSequence '[] '[] '[] wasmModule ('LabelShape '[] Z ': '[]) ('LabelShape '[] Z ': '[])
-branchExample2Seq = Block (BTParamsResults KnownValVNil KnownValVNil) (
-        Br SFZ
-        :| End)
-    :| Br SFZ
-    :| End
-branchExample2 ::forall (s :: WasmModuleShape) (wm :: WasmModule s) . (s ~ WasmModuleShapeR Z Z) =>  Function '[] '[] '[] ('LabelShape '[] Z ': '[]) wm
-branchExample2 = Function (FFuncTypeAnn [] []) branchExample2Seq
+-- branchExample2Seq :: forall {shape :: WasmModuleShape}{wasmModule :: WasmModule shape} .
+--     InstructionSequence '[] '[] '[] wasmModule ('LabelShape '[] Z ': '[]) '[]
+-- branchExample2Seq = Block (BTParamsResults KnownValVNil KnownValVNil) (
+--         Br SFZ
+--         :| End)
+--     :| Br SFZ
+--     :| End
+-- branchExample2 ::forall (s :: WasmModuleShape) (wm :: WasmModule s) . (s ~ WasmModuleShapeR Z Z) =>  Function '[] '[] '[] ('LabelShape '[] Z ': '[]) wm
+-- branchExample2 = Function (FFuncTypeAnn [] []) branchExample2Seq
 -- this does not make sense for execution since we assume the first control frame and in execution we cannot drop it!
 -- executeBranchExample2 :: RuntimeContext @(WasmModuleShapeR Z Z) '[] '[] (WasmModuleR '[] '[]) '[]
 -- In validation we do not remove the label therefore have to type it like this! The above without a label should be more correct
@@ -307,14 +307,16 @@ executeBranchExample3 = stepMany RuntimeContext {values = ConsValues (3 :: Int32
 
 branchExample4Seq :: InstructionSequence '[] '[I32] locals wasmModule outputLabels outputLabels
 branchExample4Seq = Block (BTParamsResults KnownValVNil (KnownValCons ForI32 KnownValVNil)) (
-                    Block (BTParamsResults KnownValVNil KnownValVNil) (
-                        I32Const 42
-                        :| Br (SFS SFZ)
-                        -- :| I32Const 7 -- TODO BUG: in validation this instruction is not removed and therefore the types do not agree
-                        :| End)
+                        Block (BTParamsResults KnownValVNil (KnownValCons ForI32 KnownValVNil)) (
+                            I32Const 42
+                            :| Br (SFS SFZ)
+                            :| I32Const 7 -- TODO BUG: in validation this instruction is not removed and therefore the types do not agree
+                            -- :| I32Const 8
+                            :| End)
+                        :| I32Add
+                        :| End
+                        )
                     :| End
-                    )
-                :| End
 
 branchExample4 :: forall (s :: WasmModuleShape) (wm :: WasmModule s) . (s ~ WasmModuleShapeR Z Z) => Function '[] (I32 ': '[]) (I32 ': '[]) '[] wm
 branchExample4 = Function (FFuncTypeAnn [] []) branchExample4Seq
@@ -371,7 +373,7 @@ factorialSeq =
             :| I32Const 1
             :| LocalGet SFZ
             :| I32GtS
-            :| BrIf SFZ           -- Branch back to loop start
+            :| BrIf SFZ      -- Branch back to loop start
             :| End)
         :| End)
     -- Return the accumulated result

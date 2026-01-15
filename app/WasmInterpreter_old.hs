@@ -13,7 +13,7 @@
 -- | A type-safe embedded domain-specific language (DSL) for WebAssembly.
 -- This module uses advanced Haskell type system features to ensure that
 -- WebAssembly programs are stack-safe and type-correct at compile time.
-module WasmInterpreter where
+module WasmInterpreter_old where
 
 import Data.Int (Int32, Int64)
 import Data.Word (Word32, Word64)

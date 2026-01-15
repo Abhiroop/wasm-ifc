@@ -35,6 +35,11 @@ type family LessThan (i :: Nat) (j :: Nat) :: Bool where
     LessThan _ 'Z       = 'False -- So it also returns False if i == j
     LessThan ('S i) ('S j)   = LessThan i j
 
+type family LessEqThan (i :: Nat) (j :: Nat) :: Bool where
+    LessEqThan 'Z j           = 'True
+    LessEqThan ('S i) 'Z      = 'False
+    LessEqThan ('S i) ('S j)  = LessEqThan i j
+
 type family IsEqual (i :: Nat) (j :: Nat) :: Bool where
     IsEqual 'Z 'Z             = 'True
     IsEqual 'Z ('S j)        = 'False
