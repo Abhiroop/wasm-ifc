@@ -46,6 +46,13 @@ type family IsEqual (i :: Nat) (j :: Nat) :: Bool where
     IsEqual ('S i) 'Z        = 'False
     IsEqual ('S i) ('S j)    = IsEqual i j
 
+-- type level Peano Nat Equality check
+pEqual :: Nat -> Nat -> Bool
+pEqual Z Z = True
+pEqual Z (S _) = False
+pEqual (S _) Z = False
+pEqual (S m) (S n) = pEqual m n
+
 
 -- Peano Nat subtraction
 infixr 5 :-
@@ -61,6 +68,16 @@ type family (m :: Nat) +: (n :: Nat) :: Nat where
 type family (m :: Nat) :+ (n :: Nat) :: Nat where
     m :+ 'Z         = m
     m :+ 'S n = 'S (m :+ n)
+
+-- term level addition and subtraction
+addPNats :: Nat -> Nat -> Nat
+addPNats a Z = a
+addPNats a (S m) = S (addPNats a m)
+
+subPNats :: Nat -> Nat -> Nat
+subPNats a Z = a
+subPNats (S m) (S n) = subPNats m n
+subPNats Z (S _) = error "subPNats: negative result"
 
 -- (.+.) :: SNat a -> SNat b -> SNat (a :+ b)
 -- SZ .+. b    = b

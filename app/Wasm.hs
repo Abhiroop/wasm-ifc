@@ -290,7 +290,7 @@ data Instruction (inputStack :: ValStackShape) (outputStack :: ValStackShape) (l
                            locals
                            wasmModule
                            inputLabels
-                           inputLabels
+                           remainingLabels
 
     -- BrIf: conditional branch (pops i32 condition)
     -- DINA: Problem => either we branch then we have the conditions below for the outputStack or we don't branch

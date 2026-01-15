@@ -11,7 +11,6 @@
       ;; Never executed
       i32.const 5
       i32.add
-      end
     )
 
     ;; Stack now contains the block result: [10]

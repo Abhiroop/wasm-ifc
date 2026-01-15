@@ -58,7 +58,9 @@ reverseStack (ConsValues @wasmType val rest) =
   concatStacks (reverseStack rest) (ConsValues @wasmType val NoValues)
 
 
-
+extractIndex :: SFin i n -> Nat
+extractIndex SFZ     = Z
+extractIndex (SFS idx) = S (extractIndex idx)
 
 
 -- | Runtime representation of the WebAssembly stack.
@@ -181,17 +183,17 @@ pushLabel :: Label top
           -> RuntimeContext values locals wasmModule (top ': labels)
 pushLabel label ctx = ctx { labels = ConsLabels label (labels ctx) }
 
-data ControlStack (depth :: Nat) (initialVal :: ValStackShape) (finalVal :: ValStackShape)
+data ControlStack (initialVal :: ValStackShape) (finalVal :: ValStackShape)
                   (locals :: LocalsShape) (wasmModule :: WasmModule shape)
                   (initialLab :: LabelStackShape) (finalLab :: LabelStackShape) 
     where
     CSingle :: InstructionSequence initialVal finalVal locals wasmModule initialLab initialLab
             --    -> Nat -- this is to keep track of the depth
-               -> ControlStack 'Z initialVal finalVal locals wasmModule initialLab initialLab
-    CCons   :: InstructionSequence initialVal middleVal locals wasmModule (initialLabel ': middleLab) (initialLabel ': middleLab)
-            --    -> Nat -- this is to keep track of the depth
-               -> ControlStack d middleVal finalVal locals wasmModule middleLab finalLab
-               -> ControlStack (d :+ S 'Z) initialVal finalVal locals wasmModule (initialLabel ': middleLab) finalLab
+               -> ControlStack initialVal finalVal locals wasmModule initialLab initialLab
+    -- CCons   :: InstructionSequence initialVal middleVal locals wasmModule (initialLabel ': middleLab) (initialLabel ': middleLab)
+    --         --    -> Nat -- this is to keep track of the depth
+    --            -> ControlStack d middleVal finalVal locals wasmModule middleLab finalLab
+    --            -> ControlStack (d :+ S 'Z) initialVal finalVal locals wasmModule (initialLabel ': middleLab) finalLab
 
 insertMemory :: SFin i n 
              -> MemoryArray
@@ -202,20 +204,20 @@ insertMemory (SFS idx) memArray (ConsMems mem rest) = ConsMems mem (insertMemory
 insertMemory _ _ _ = error "Index out of bounds in insertMemory"
 
 cprepend :: Instruction initialVal middleVal locals wasmModule initialLab initialLab 
-         -> ControlStack depth middleVal finalVal locals wasmModule initialLab finalLab 
-         -> ControlStack depth initialVal finalVal locals wasmModule initialLab finalLab
+         -> ControlStack middleVal finalVal locals wasmModule initialLab finalLab 
+         -> ControlStack initialVal finalVal locals wasmModule initialLab finalLab
 cprepend instruction (CSingle current) = CSingle (instruction :| current)
-cprepend instruction (CCons current parents) = CCons (instruction :| current) parents
+-- cprepend instruction (CCons current parents) = CCons (instruction :| current) parents
 
 -- this function is intended to prepent the continuation which up until now can only be either a loop
 -- instruction or empty
 cprependCont :: InstructionSequence initialVal middleVal locals wasmModule initialLab middleLab
-            -> ControlStack depth middleVal finalVal locals wasmModule middleLab finalLab
-            -> ControlStack depth initialVal finalVal locals wasmModule initialLab finalLab
+            -> ControlStack middleVal finalVal locals wasmModule middleLab finalLab
+            -> ControlStack initialVal finalVal locals wasmModule initialLab finalLab
 cprependCont End (CSingle current) = CSingle current
-cprependCont End (CCons current parents) = CCons current parents
+-- cprependCont End (CCons current parents) = CCons current parents
 cprependCont (Loop btype body :| End) (CSingle current) = CSingle (Loop btype body :| current)
-cprependCont (Loop btype body :| End) (CCons current parents) = CCons (Loop btype body :| current) parents
+-- cprependCont (Loop btype body :| End) (CCons current parents) = CCons (Loop btype body :| current) parents
 cprependCont _ _ = error "cprependCont: unexpected pattern"
 appendInstructionSeq :: InstructionSequence initialVal middleVal locals wasmModule initialLab initialLab
                    -> Instruction middleVal finalVal locals wasmModule initialLab initialLab 
@@ -226,25 +228,25 @@ appendInstructionSeq instrSeq instruction = case instrSeq of
 
 -- I think I need a cappend function since actually we want it as the last thing we do inside the body not the first thing we do outside the body
 -- because if we have it as the first thing we might branch and leave but if we branch we do not want to leave!
-cappend :: ControlStack depth initialVal middleVal locals wasmModule initialLab finalLab
+cappend :: ControlStack initialVal middleVal locals wasmModule initialLab finalLab
         -> Instruction middleVal finalVal locals wasmModule finalLab finalLab 
-        -> ControlStack depth initialVal finalVal locals wasmModule initialLab finalLab
+        -> ControlStack initialVal finalVal locals wasmModule initialLab finalLab
 cappend (CSingle current) instruction = CSingle (appendInstructionSeq current instruction)
-cappend (CCons current parents) instruction = CCons current (cappend parents instruction)
+-- cappend (CCons current parents) instruction = CCons current (cappend parents instruction)
 
 data ControlStackWithSomeInitial d locals wasmModule finalVal finalLab = forall initialVal initialLab .
-    ControlStackWithSomeInitial (ControlStack d initialVal finalVal locals wasmModule initialLab finalLab)
+    ControlStackWithSomeInitial (ControlStack initialVal finalVal locals wasmModule initialLab finalLab)
 
 -- HACK: not using info in SFin
-dropControlFrames :: SFin n l
-                  -> ControlStack d initialVal finalVal locals wasmModule initialLab finalLab
-                  -> ControlStackWithSomeInitial (d :- n) locals wasmModule finalVal  finalLab
-dropControlFrames SFZ     frames         = ControlStackWithSomeInitial frames
-dropControlFrames (SFS n) (CCons _ rest) = dropControlFrames n rest
-dropControlFrames _       (CSingle _)    = error "Branch depth exceeds control stack"
+-- dropControlFrames :: SFin n l
+--                   -> ControlStack d initialVal finalVal locals wasmModule initialLab finalLab
+--                   -> ControlStackWithSomeInitial (d :- n) locals wasmModule finalVal  finalLab
+-- dropControlFrames SFZ     frames         = ControlStackWithSomeInitial frames
+-- -- dropControlFrames (SFS n) (CCons _ rest) = dropControlFrames n rest
+-- dropControlFrames _       (CSingle _)    = error "Branch depth exceeds control stack"
 
-data ControlStackWithSomeFinal d locals wasmModule initialVal initialLab = forall finalVal finalLab .
-    ControlStackWithSomeFinal (ControlStack d initialVal finalVal locals wasmModule initialLab finalLab)
+-- data ControlStackWithSomeFinal d locals wasmModule initialVal initialLab = forall finalVal finalLab .
+--     ControlStackWithSomeFinal (ControlStack d initialVal finalVal locals wasmModule initialLab finalLab)
 
 -- endCurrControlFrame :: ControlStack initialVal finalVal locals wasmModule initialLab finalLab
 --                         -- -> ControlStackWithSomeFinal locals wasmModule initialVal initialLab
@@ -255,118 +257,123 @@ data ControlStackWithSomeFinal d locals wasmModule initialVal initialLab = foral
 data StepResult (initialVal :: ValStackShape) (middleVal :: ValStackShape) (finalVal :: ValStackShape)
                 (locals :: LocalsShape) (wasmModule :: WasmModule shape)
                 (initialLab :: LabelStackShape) (middleLab :: LabelStackShape) (finalLab :: LabelStackShape)
-                (d :: Nat)
+                
     =           
         -- forall middleVal middleLab.
         StepResult 
             (RuntimeContext middleVal locals wasmModule middleLab) 
-            (ControlStack d middleVal finalVal locals wasmModule middleLab finalLab)
+            (ControlStack middleVal finalVal locals wasmModule middleLab finalLab)
 
 data SomeIntermediateStepResult (initialVal :: ValStackShape) (finalVal :: ValStackShape)
                 (locals :: LocalsShape) (wasmModule :: WasmModule shape)
-                (initialLab :: LabelStackShape) (finalLab :: LabelStackShape)
-                (d :: Nat)
-    = forall middleVal middleLab.
+                (initialLab :: LabelStackShape) --(finalLab :: LabelStackShape)
+    = forall middleVal.
         SomeIntermediateStepResult 
-            (RuntimeContext middleVal locals wasmModule middleLab) 
-            (ControlStack d middleVal finalVal locals wasmModule middleLab finalLab)
+            (RuntimeContext middleVal locals wasmModule initialLab) 
+            (ControlStack middleVal finalVal locals wasmModule initialLab initialLab)
 
-step :: RuntimeContext initialVal locals wasmModule initialLab
-     -> ControlStack depth initialVal finalVal locals wasmModule initialLab finalLab
+step :: 
+    Nat -- depth
+     -> RuntimeContext initialVal locals wasmModule initialLab
+     -> ControlStack initialVal finalVal locals wasmModule initialLab initialLab
     --  -> StepResult initialVal middleVal finalVal locals wasmModule initialLab finalLab
-     -> SomeIntermediateStepResult initialVal finalVal locals wasmModule initialLab finalLab newDepth
-step ctx (CSingle (End :: InstructionSequence initialVal middleVal locals wasmModule initialLab initialLab)) = let 
-    (StepResult resCtx resCStack) = StepResult ctx (CSingle End)
-    in SomeIntermediateStepResult resCtx resCStack
-step ctx (CSingle ((instruction :: Instruction initialVal middleVal locals wasmModule initialLab initialLab) :| rest)) = let
-    (StepResult resCtx resCStack) = stepInternal ctx instruction (CSingle rest)
-    in SomeIntermediateStepResult resCtx resCStack
-step ctx (CCons End parents) = 
-    case labels ctx of
-        ConsLabels label restLabels -> let (StepResult resCtx resCStack) = StepResult (d + 1) (ctx {labels=restLabels}) parents
-            in SomeIntermediateStepResult resCtx resCStack
-step ctx (CCons (instruction :| rest) parents) = let 
-    (StepResult resCtx resCStack) = stepInternal ctx instruction (CCons rest parents)
-    in SomeIntermediateStepResult resCtx resCStack
+     -> (Nat, SomeIntermediateStepResult initialVal finalVal locals wasmModule initialLab)
+    --  -> (Nat, StepResult initialVal middleVal finalVal locals wasmModule initialLab initialLab initialLab)
+step depth ctx (CSingle (End :: InstructionSequence initialVal middleVal locals wasmModule initialLab initialLab)) = 
+    let 
+        (StepResult resCtx resCStack) = StepResult ctx (CSingle End)
+        -- (depth, StepResult ctx (CSingle End))
+    in (depth, SomeIntermediateStepResult resCtx resCStack)
+    -- in (depth, StepResult resCtx resCStack)
+step depth ctx (CSingle ((instruction :: Instruction initialVal middleVal locals wasmModule initialLab initialLab) :| rest)) = let
+    (newDepth, StepResult resCtx resCStack) = stepInternal depth ctx instruction (CSingle rest)
+    in (newDepth, SomeIntermediateStepResult resCtx resCStack)
+-- step ctx (CCons End parents) = 
+--     case labels ctx of
+--         ConsLabels label restLabels -> let (StepResult resCtx resCStack) = StepResult (d + 1) (ctx {labels=restLabels}) parents
+--             in SomeIntermediateStepResult resCtx resCStack
+-- step ctx (CCons (instruction :| rest) parents) = let 
+--     (StepResult resCtx resCStack) = stepInternal ctx instruction (CCons rest parents)
+--     in SomeIntermediateStepResult resCtx resCStack
 -- Here actually the initialVal is given by the runtime context
-stepInternal :: forall initialVal locals wasmModule middleVal initialLab middleLab finalVal finalLab depth.
-            RuntimeContext initialVal locals wasmModule initialLab
+stepInternal :: forall initialVal locals wasmModule middleVal initialLab middleLab finalVal finalLab.
+            Nat
+             -> RuntimeContext initialVal locals wasmModule initialLab
              -> Instruction initialVal middleVal locals wasmModule initialLab middleLab 
-             -> ControlStack depth middleVal finalVal locals wasmModule middleLab finalLab
-             -> StepResult initialVal middleVal finalVal locals wasmModule initialLab middleLab finalLab depth
-stepInternal (ctx :: RuntimeContext initialVal locals wasmModule initialLab) instruction nextControl = case instruction of
-    I32Const value -> StepResult (pushValue value ctx) nextControl
+             -> ControlStack middleVal finalVal locals wasmModule middleLab finalLab
+             -> (Nat, StepResult initialVal middleVal finalVal locals wasmModule initialLab middleLab finalLab)
+stepInternal depth (ctx :: RuntimeContext initialVal locals wasmModule initialLab) instruction nextControl = case instruction of
+    I32Const value -> (depth, StepResult (pushValue value ctx) nextControl)
 
-    I32Add -> stepBinaryOp (+) ctx nextControl
-    I32Sub -> stepBinaryOp (-) ctx nextControl
-    I32Mul -> stepBinaryOp (*) ctx nextControl
-    I32Div -> stepBinaryOp div ctx nextControl
-    I32RemU -> stepBinaryOp mod ctx nextControl     -- TODO: double check the operand order
-    I32RemS -> stepBinaryOp unsignedMod ctx nextControl     -- TODO: double check the operand order
+    I32Add -> (depth, stepBinaryOp (+) ctx nextControl)
+    I32Sub -> (depth, stepBinaryOp (-) ctx nextControl)
+    I32Mul -> (depth, stepBinaryOp (*) ctx nextControl)
+    I32Div -> (depth, stepBinaryOp div ctx nextControl)
+    I32RemU -> (depth, stepBinaryOp mod ctx nextControl)     -- TODO: double check the operand order
+    I32RemS -> (depth, stepBinaryOp unsignedMod ctx nextControl)     -- TODO: double check the operand order
                 where unsignedMod lhs rhs = fromIntegral $ (mod `on` (fromIntegral :: Int32 -> Word32)) lhs rhs
 
-    I32EqZ -> stepUnaryOp (\x -> fromIntegral (fromEnum (x == 0))) ctx nextControl
-    I32Eq  -> stepBinaryOp (compareI32 (==)) ctx nextControl
-    I32Neq -> stepBinaryOp (compareI32 (/=)) ctx nextControl
-    I32LtS -> stepBinaryOp (compareI32 (<)) ctx nextControl
-    I32LtU -> stepBinaryOp (compareU32 (<)) ctx nextControl
-    I32LeS -> stepBinaryOp (compareI32 (<=)) ctx nextControl
-    I32LeU -> stepBinaryOp (compareU32 (<=)) ctx nextControl
-    I32GtS -> stepBinaryOp (compareI32 (>)) ctx nextControl
-    I32GtU -> stepBinaryOp (compareU32 (>)) ctx nextControl
-    I32GeS -> stepBinaryOp (compareI32 (>)) ctx nextControl
-    I32GeU -> stepBinaryOp (compareU32 (>=)) ctx nextControl
+    I32EqZ -> (depth, stepUnaryOp (\x -> fromIntegral (fromEnum (x == 0))) ctx nextControl)
+    I32Eq  -> (depth, stepBinaryOp (compareI32 (==)) ctx nextControl)
+    I32Neq -> (depth, stepBinaryOp (compareI32 (/=)) ctx nextControl)
+    I32LtS -> (depth, stepBinaryOp (compareI32 (<)) ctx nextControl)
+    I32LtU -> (depth, stepBinaryOp (compareU32 (<)) ctx nextControl)
+    I32LeS -> (depth, stepBinaryOp (compareI32 (<=)) ctx nextControl)
+    I32LeU -> (depth, stepBinaryOp (compareU32 (<=)) ctx nextControl)
+    I32GtS -> (depth, stepBinaryOp (compareI32 (>)) ctx nextControl)
+    I32GtU -> (depth, stepBinaryOp (compareU32 (>)) ctx nextControl)
+    I32GeS -> (depth, stepBinaryOp (compareI32 (>)) ctx nextControl)
+    I32GeU -> (depth, stepBinaryOp (compareU32 (>=)) ctx nextControl)
 
-    I64Const value -> StepResult (pushValue value ctx) nextControl
+    I64Const value -> (depth, StepResult (pushValue value ctx) nextControl)
 
-    I64Add -> stepBinaryOp (+) ctx nextControl
-    I64Sub -> stepBinaryOp (-) ctx nextControl
-    I64Mul -> stepBinaryOp (*) ctx nextControl
-    I64Div -> stepBinaryOp div ctx nextControl
-    I64RemU -> stepBinaryOp mod ctx nextControl     -- TODO: double check the operand order
-    I64RemS -> stepBinaryOp unsignedMod ctx nextControl     -- TODO: double check the operand order
+    I64Add -> (depth, stepBinaryOp (+) ctx nextControl)
+    I64Sub -> (depth, stepBinaryOp (-) ctx nextControl)
+    I64Mul -> (depth, stepBinaryOp (*) ctx nextControl)
+    I64Div -> (depth, stepBinaryOp div ctx nextControl)
+    I64RemU -> (depth, stepBinaryOp mod ctx nextControl)     -- TODO: double check the operand order
+    I64RemS -> (depth, stepBinaryOp unsignedMod ctx nextControl)     -- TODO: double check the operand order
                 where unsignedMod lhs rhs = fromIntegral $ (mod `on` (fromIntegral :: Int64 -> Word64)) lhs rhs
 
-    I64EqZ -> stepUnaryOp (\x -> fromIntegral (fromEnum (x == 0))) ctx nextControl
-    I64Eq  -> stepBinaryOp (compareI64 (==)) ctx nextControl
-    I64Neq -> stepBinaryOp (compareI64 (/=)) ctx nextControl
-    I64LtS -> stepBinaryOp (compareI64 (<)) ctx nextControl
-    I64LtU -> stepBinaryOp (compareU64 (<)) ctx nextControl
-    I64LeS -> stepBinaryOp (compareI64 (<=)) ctx nextControl
-    I64LeU -> stepBinaryOp (compareU64 (<=)) ctx nextControl
-    I64GtS -> stepBinaryOp (compareI64 (>)) ctx nextControl
-    I64GtU -> stepBinaryOp (compareU64 (>)) ctx nextControl
-    I64GeS -> stepBinaryOp (compareI64 (>)) ctx nextControl
-    I64GeU -> stepBinaryOp (compareU64 (>=)) ctx nextControl
+    I64EqZ -> (depth, stepUnaryOp (\x -> fromIntegral (fromEnum (x == 0))) ctx nextControl)
+    I64Eq  -> (depth, stepBinaryOp (compareI64 (==)) ctx nextControl)
+    I64Neq -> (depth, stepBinaryOp (compareI64 (/=)) ctx nextControl)
+    I64LtS -> (depth, stepBinaryOp (compareI64 (<)) ctx nextControl)
+    I64LtU -> (depth, stepBinaryOp (compareU64 (<)) ctx nextControl)
+    I64LeS -> (depth, stepBinaryOp (compareI64 (<=)) ctx nextControl)
+    I64LeU -> (depth, stepBinaryOp (compareU64 (<=)) ctx nextControl)
+    I64GtS -> (depth, stepBinaryOp (compareI64 (>)) ctx nextControl)
+    I64GtU -> (depth, stepBinaryOp (compareU64 (>)) ctx nextControl)
+    I64GeS -> (depth, stepBinaryOp (compareI64 (>)) ctx nextControl)
+    I64GeU -> (depth, stepBinaryOp (compareU64 (>=)) ctx nextControl)
 
     Drop -> case values ctx of
         ConsValues _ rest ->
             let newCtx = ctx { values = rest }
-            in StepResult newCtx nextControl
+            in (depth, StepResult newCtx nextControl)
 
     LocalGet slot -> case getLocal slot (locals ctx) of
-        val -> StepResult (pushValue val ctx) nextControl
+        val -> (depth, StepResult (pushValue val ctx) nextControl)
     LocalSet slot -> case values ctx of
         ConsValues val rest ->
             let newCtx = ctx { 
                 values = rest,
                 locals = setLocal slot val (locals ctx)
             }
-            in StepResult newCtx nextControl
+            in (depth, StepResult newCtx nextControl)
     LocalTee slot -> case values ctx of
         ConsValues val _ ->
             let newCtx = ctx { locals = setLocal slot val (locals ctx) }
-            in StepResult newCtx nextControl
-
+            in (depth, StepResult newCtx nextControl)
     GlobalGet slot -> case getGlobal slot (globals ctx) of
-        val -> StepResult (pushValue val ctx) nextControl
+        val -> (depth, StepResult (pushValue val ctx) nextControl)
     GlobalSet slot -> case values ctx of
         ConsValues val rest ->
             let newCtx = ctx { 
                     values = rest,
                     globals = setGlobal slot val (globals ctx)
                 }
-            in StepResult newCtx nextControl
+            in (depth, StepResult newCtx nextControl)
 
     -- TODO: How do we want to define the memory array?
     -- Two Options: either have it as a list of WasmTypes where every element is 64 bytes, just so it fits everything
@@ -384,13 +391,13 @@ stepInternal (ctx :: RuntimeContext initialVal locals wasmModule initialLab) ins
                         then error "Memory access out of bounds in MemoryLoad I32"
                         else 
                             let value = load @wasmType memoryArray (addrAsWord64 + offset)
-                            in StepResult (ctx { values = ConsValues value rest }) nextControl
+                            in (depth, StepResult (ctx { values = ConsValues value rest }) nextControl)
                 I64 -> 
                     if addrAsWord64 + offset + 8 >= (fromIntegral (length memoryArray) :: Word64)
                         then error "Memory access out of bounds in MemoryLoad I64"
                         else 
                             let value = load @wasmType memoryArray (addrAsWord64 + offset)
-                            in StepResult (ctx { values = ConsValues value rest }) nextControl
+                            in (depth, StepResult (ctx { values = ConsValues value rest }) nextControl)
     MemoryStore @(wasmType :: WasmType) (memidx :: SFin i n) (SMemArg alignment offset) -> case values ctx of
         ConsValues (addr :: Int32) (ConsValues (value :: RuntimeTypeOf wasmType) rest) -> 
             let memoryArray = getMemoryArray memidx (memories ctx)
@@ -407,7 +414,7 @@ stepInternal (ctx :: RuntimeContext initialVal locals wasmModule initialLab) ins
                                     memories = insertMemory memidx newMemoryArray (memories ctx) :: Memory (GetMems wasmModule)
                                     -- memories = take memidx (memories ctx) ++ newMemoryArray ++ drop (SFS memidx) (memories ctx)
                                 } :: RuntimeContext middleVal locals wasmModule initialLab
-                            in StepResult newCtx nextControl
+                            in (depth, StepResult newCtx nextControl)
                 I64 -> 
                     if addrAsWord64 + offset + 8 > (fromIntegral (length memoryArray) :: Word64)
                         then error "Memory access out of bounds in MemoryStore I64"
@@ -417,12 +424,14 @@ stepInternal (ctx :: RuntimeContext initialVal locals wasmModule initialLab) ins
                                     values = rest,
                                     memories = insertMemory memidx newMemoryArray (memories ctx) :: Memory (GetMems wasmModule)
                                 } :: RuntimeContext middleVal locals wasmModule initialLab
-                            in StepResult newCtx nextControl
+                            in (depth, StepResult newCtx nextControl)
 
     Block (BTParamsResults _ (res :: KnownValStackShape resStack)) body ->
         let newCtx = pushLabel (Label (stackLength (values ctx)) (knownStackShapeLen res) (SomeInstrSeq End)) ctx
         -- in StepResult newCtx (CCons (appendInstructionSeq body Leave) nextControl)
-        in StepResult newCtx (CCons body nextControl)
+            (newDepth, bodyCtx) = stepMany depth newCtx body
+            resCtx = bodyCtx { labels = labels ctx }
+        in (newDepth, StepResult resCtx nextControl)
         --     bodyCtx = stepMany newCtx body 
         --     resCtx = bodyCtx { labels = labels ctx }
         -- in StepResult resCtx nextControl
@@ -430,7 +439,9 @@ stepInternal (ctx :: RuntimeContext initialVal locals wasmModule initialLab) ins
         let loopCont = SomeInstrSeq (Loop blockType body :| End)
             newCtx = pushLabel (Label (stackLength (values ctx)) (knownStackShapeLen params) loopCont) ctx
         -- in StepResult newCtx (CCons (appendInstructionSeq body Leave) nextControl)
-        in StepResult newCtx (CCons body nextControl)
+            (newDepth, bodyCtx) = stepMany depth newCtx body
+            resCtx = bodyCtx { labels = labels ctx }
+        in (newDepth, StepResult resCtx nextControl)
 
     If (BTParamsResults _ (res :: KnownValStackShape resStack)) thenBody elseBody ->
         case values ctx of
@@ -440,13 +451,16 @@ stepInternal (ctx :: RuntimeContext initialVal locals wasmModule initialLab) ins
                         labels = ConsLabels (Label (stackLength restVal) (knownStackShapeLen res) (SomeInstrSeq End)) (labels ctx)
                     }
                     body = if cond /= 0 then thenBody else elseBody
-                in StepResult newCtx (CCons body nextControl)
+                    (newDepth, bodyCtx) = stepMany depth newCtx body
+                    resCtx = bodyCtx { labels = labels ctx }
+                in (newDepth, StepResult resCtx nextControl)
+                -- in StepResult newCtx (CCons body nextControl)
 
     -- The first drop is correct since we drop the label anyways with the leave instruction that we added in the block instruction
     -- For the controlFrames I have to drop depth frames +1 to get to the right instruction sequence
-    Br depth ->
-        case (dropLabels depth (labels ctx), dropControlFrames (SFS depth) nextControl) of
-            (ConsLabels (Label heightToPreserve arity someNext :: Label targetLabel) restLab, ControlStackWithSomeInitial nextParents) ->
+    Br brDepth ->
+        case dropLabels brDepth (labels ctx) of --, dropControlFrames (SFS brDepth) nextControl) of
+            ConsLabels (Label heightToPreserve arity someNext :: Label targetLabel) restLab -> --, ControlStackWithSomeInitial nextParents) ->
                 let (valuesToKeep, _) = takeStack arity (values ctx)
                     baseValues = reduceStackToLength heightToPreserve (values ctx)
                     finalValues = (concatStacks valuesToKeep baseValues :: ValueStack
@@ -462,67 +476,70 @@ stepInternal (ctx :: RuntimeContext initialVal locals wasmModule initialLab) ins
                     -- also shouldn't we prepend it on the top instructionsequence instead of making a new stack ontop of the stack
                 in case someNext of 
                     -- SomeInstrSeq next -> StepResult nextCtx (CCons (unsafeCoerce next) nextParents)
-                    SomeInstrSeq next -> StepResult nextCtx (
+                    SomeInstrSeq next -> (subPNats (addPNats depth (extractIndex brDepth)) (S Z), StepResult nextCtx (
                         cprependCont (unsafeCoerce next)
                             -- :: InstructionSequence (Take (Arity targetLabel) initialVal
                             -- +>+: Take (Height targetLabel) (Reverse initialVal)) (Take (Arity targetLabel) initialVal
                             -- +>+: Take (Height targetLabel) (Reverse initialVal)) locals wasmModule middleLab middleLab)
                             
-                                nextParents
+                                (CSingle End)
+                                    
+                                    
                                     -- :: ControlStack  
                                     -- (Take (Arity targetLabel) initialVal
                                     -- +>+: Take (Height targetLabel) (Reverse initialVal)) finalVal locals wasmModule restLab restLab
                             
-                        ) :: StepResult initialVal middleVal finalVal locals wasmModule initialLab middleLab finalLab depth --(CCons (unsafeCoerce next) nextParents)
+                        ) :: StepResult initialVal middleVal finalVal locals wasmModule initialLab middleLab finalLab) --(CCons (unsafeCoerce next) nextParents)
     -- TODO: In future instead of inlining Br's code investigate how can we call `Br`
-    BrIf (depth :: SFin i n) ->
-        case values ctx of
-            ConsValues cond (rest :: ValueStack intermediateVal) ->
-                if cond == 0
-                    then
-                      case (dropLabels depth (labels ctx), dropControlFrames (SFS depth) nextControl) of
-                        (ConsLabels (Label heightToPreserve arity someNext :: Label targetLabel) restLab, ControlStackWithSomeInitial nextParents) ->
-                            let (valuesToKeep, _) = takeStack arity rest
-                                baseValues = reduceStackToLength heightToPreserve rest
-                                finalValues = (concatStacks valuesToKeep baseValues :: ValueStack
-                                    (Take (Arity targetLabel) intermediateVal
-                                    +>+: Reverse (Take (Height targetLabel) (Reverse intermediateVal))))
-                                nextCtx = ctx { values = rest} -- :: RuntimeContext middleVal locals wasmModule initialLab
-                            in case someNext of 
-                                SomeInstrSeq next -> StepResult nextCtx (
-                                    cprependCont (Br depth :| End) nextControl
+    BrIf (depth :: SFin i n) -> undefined
+        -- case values ctx of
+        --     ConsValues cond (rest :: ValueStack intermediateVal) ->
+        --         if cond == 0
+        --             then
+        --               case (dropLabels depth (labels ctx), dropControlFrames (SFS depth) nextControl) of
+        --                 (ConsLabels (Label heightToPreserve arity someNext :: Label targetLabel) restLab, ControlStackWithSomeInitial nextParents) ->
+        --                     let (valuesToKeep, _) = takeStack arity rest
+        --                         baseValues = reduceStackToLength heightToPreserve rest
+        --                         finalValues = (concatStacks valuesToKeep baseValues :: ValueStack
+        --                             (Take (Arity targetLabel) intermediateVal
+        --                             +>+: Reverse (Take (Height targetLabel) (Reverse intermediateVal))))
+        --                         nextCtx = ctx { values = rest} -- :: RuntimeContext middleVal locals wasmModule initialLab
+        --                     in case someNext of 
+        --                         SomeInstrSeq next -> StepResult nextCtx (
+        --                             cprependCont (Br depth :| End) nextControl
                                         
-                                    ) :: StepResult initialVal intermediateVal finalVal locals wasmModule initialLab middleLab finalLab depth
+        --                             ) :: StepResult initialVal intermediateVal finalVal locals wasmModule initialLab middleLab finalLab
 
-                        -- attempt to add the Br instruction but does not work since the middle values do not match up of the rest of the control frame and the new Branch instruction
-                        -- case nextControl of
-                        --     CSingle _ -> error "BrIf: cannot branch to empty control stack"
-                        --     CCons (Leave :| restInstr) restControl -> StepResult (ctx {values = rest}) (CCons (Br depth :| restInstr) restControl)
-                        --     CCons (_ :| restInstr) restControl -> StepResult (ctx {values = rest}) (CCons (Br depth :| restInstr) restControl)
-                        --     CCons _ _ -> error "There needs to be at least 2 instructions left in BrIf (Leave and End)"
+        --                 -- attempt to add the Br instruction but does not work since the middle values do not match up of the rest of the control frame and the new Branch instruction
+        --                 -- case nextControl of
+        --                 --     CSingle _ -> error "BrIf: cannot branch to empty control stack"
+        --                 --     CCons (Leave :| restInstr) restControl -> StepResult (ctx {values = rest}) (CCons (Br depth :| restInstr) restControl)
+        --                 --     CCons (_ :| restInstr) restControl -> StepResult (ctx {values = rest}) (CCons (Br depth :| restInstr) restControl)
+        --                 --     CCons _ _ -> error "There needs to be at least 2 instructions left in BrIf (Leave and End)"
 
-                        -- this is nearly good however, we have the incoming as the outputValue stack from BrIf which is the same as the input Valstack for the ControlStack
-                        -- => therefore branch is expected to not change the input value stack at all.
-                        -- case (dropLabels depth (labels ctx), nextControl) of
-                        --     (ConsLabels (Label heightToPreserve arity someNext) restLab, CCons currSeq restControl) ->
-                        --         let (valuesToKeep, _) = takeStack arity rest
-                        --             baseValues = reduceStackToLength heightToPreserve rest
-                        --             finalValues = concatStacks valuesToKeep baseValues
-                        --             nextCtx = ctx { values = rest }
-                        --         in StepResult nextCtx (CCons (Br depth :| currSeq) restControl)
-                        --     _ -> error "BrIf: cannot branch to empty control stack"
-                    else StepResult (ctx {values = rest}) nextControl
+        --                 -- this is nearly good however, we have the incoming as the outputValue stack from BrIf which is the same as the input Valstack for the ControlStack
+        --                 -- => therefore branch is expected to not change the input value stack at all.
+        --                 -- case (dropLabels depth (labels ctx), nextControl) of
+        --                 --     (ConsLabels (Label heightToPreserve arity someNext) restLab, CCons currSeq restControl) ->
+        --                 --         let (valuesToKeep, _) = takeStack arity rest
+        --                 --             baseValues = reduceStackToLength heightToPreserve rest
+        --                 --             finalValues = concatStacks valuesToKeep baseValues
+        --                 --             nextCtx = ctx { values = rest }
+        --                 --         in StepResult nextCtx (CCons (Br depth :| currSeq) restControl)
+        --                 --     _ -> error "BrIf: cannot branch to empty control stack"
+
+        --             else StepResult (ctx {values = rest}) nextControl
 
 
 
     Call _ _ -> undefined
 
-    Leave ->
-        case labels ctx of
-            (ConsLabels _ restLab) ->  
-                let
-                    nextCtx = ctx { labels = restLab }
-                    in StepResult nextCtx nextControl
+    Leave -> undefined
+        -- case labels ctx of
+        --     (ConsLabels _ restLab) ->  
+        --         let
+        --             nextCtx = ctx { labels = restLab }
+        --             in StepResult nextCtx nextControl
 
 
 
@@ -532,19 +549,19 @@ unreachable = undefined
 
 stepUnaryOp :: (RuntimeTypeOf typeIn -> RuntimeTypeOf typeOut)
             -> RuntimeContext (typeIn ': initialVal) locals wasmModule initialLab
-            -> ControlStack depth (typeOut ': initialVal) finalVal locals wasmModule initialLab finalLab
-            -> StepResult (typeIn ': initialVal) (typeOut ': initialVal) finalVal locals wasmModule initialLab middleLab finalLab depth
+            -> ControlStack (typeOut ': initialVal) finalVal locals wasmModule initialLab finalLab
+            -> StepResult (typeIn ': initialVal) (typeOut ': initialVal) finalVal locals wasmModule initialLab initialLab finalLab
 stepUnaryOp op ctx nextControl = case values ctx of
     ConsValues val rest ->
         let newCtx = ctx { values = ConsValues (op val) rest }
         in StepResult newCtx nextControl
 
 -- TODO: double check the operand order
-stepBinaryOp :: forall depth typeRhs typeLhs typeResult restStack locals wasmModule initialLab finalVal middleLab finalLab.
+stepBinaryOp :: forall typeRhs typeLhs typeResult restStack locals wasmModule initialLab finalVal finalLab.
                 (RuntimeTypeOf typeLhs -> RuntimeTypeOf typeRhs -> RuntimeTypeOf typeResult)
              -> RuntimeContext (typeRhs ': typeLhs ': restStack) locals wasmModule initialLab
-             -> ControlStack depth (typeResult ': restStack) finalVal locals wasmModule initialLab finalLab
-             -> StepResult (typeRhs ': typeLhs ': restStack) (typeResult ': restStack) finalVal locals wasmModule initialLab middleLab finalLab depth
+             -> ControlStack (typeResult ': restStack) finalVal locals wasmModule initialLab finalLab
+             -> StepResult (typeRhs ': typeLhs ': restStack) (typeResult ': restStack) finalVal locals wasmModule initialLab initialLab finalLab
 stepBinaryOp op ctx nextControl = case values ctx of
     ConsValues rhs (ConsValues lhs restVal) ->
         let newCtx = ctx { values = ConsValues (op lhs rhs) restVal }
@@ -573,22 +590,31 @@ compareU64 op = compareI64 (op `on` fromIntegral)
 --        let intermediateContext = step prevCtxt instr 
 --        in executeInstructionSequence rest intermediateContext
 
-stepMany :: forall {shape :: WasmModuleShape} {initialVal :: ValStackShape} {locals :: LocalsShape} {wasmModule :: WasmModule shape} {initialLab :: LabelStackShape} {finalVal :: ValStackShape} {finalLab :: LabelStackShape}. 
-    RuntimeContext initialVal locals wasmModule initialLab 
+stepMany :: forall {middleVal :: ValStackShape} {middleLab :: LabelStackShape} {shape :: WasmModuleShape} {initialVal :: ValStackShape} {locals :: LocalsShape} {wasmModule :: WasmModule shape} {initialLab :: LabelStackShape} {finalVal :: ValStackShape} {finalLab :: LabelStackShape}. 
+    Nat -- depth
+    -> RuntimeContext initialVal locals wasmModule initialLab 
     -> InstructionSequence initialVal finalVal locals wasmModule initialLab initialLab
-    -> RuntimeContext finalVal locals wasmModule initialLab
-stepMany ctx program = stepManyHelper ctx (CSingle program)
+    -> (Nat, RuntimeContext finalVal locals wasmModule initialLab)
+stepMany depth ctx program = stepManyHelper depth ctx (CSingle program)
 
-
-stepManyHelper :: forall {depth :: Nat} {shape :: WasmModuleShape} {initialVal :: ValStackShape} {locals :: LocalsShape} {wasmModule :: WasmModule shape} {initialLab :: LabelStackShape} {finalVal :: ValStackShape} {finalLab :: LabelStackShape}. 
-    RuntimeContext initialVal locals wasmModule initialLab
-    -> ControlStack depth initialVal finalVal locals wasmModule initialLab finalLab
-    -> RuntimeContext finalVal locals wasmModule finalLab
-stepManyHelper ctx control = 
-                    let res = step ctx control
-                    in case res of
-                            SomeIntermediateStepResult newCtx (CSingle End) -> newCtx
-                            SomeIntermediateStepResult newCtx newControl -> stepManyHelper newCtx newControl
+-- Problem here is that in the case that we brnach out, the values do not have to match the finalVal valstackshape since we are just passing through anyways.
+-- However, this is a problem for typing.
+stepManyHelper :: forall {anyVal :: ValStackShape} {middleLab :: LabelStackShape} {shape :: WasmModuleShape} {initialVal :: ValStackShape} {locals :: LocalsShape} {wasmModule :: WasmModule shape} {initialLab :: LabelStackShape} {finalVal :: ValStackShape} {finalLab :: LabelStackShape}. 
+    Nat -- depth
+    -> RuntimeContext initialVal locals wasmModule initialLab
+    -> ControlStack initialVal finalVal locals wasmModule initialLab initialLab
+    -> (Nat, RuntimeContext anyVal locals wasmModule initialLab)
+stepManyHelper depth ctx control = 
+                    let (newDepth, res) = step depth ctx control
+                    in if pEqual newDepth depth
+                        then
+                            case (newDepth, res) of
+                                (Z, SomeIntermediateStepResult currCtx (CSingle End)) -> (Z, currCtx)
+                                (currDepth, SomeIntermediateStepResult currCtx currControl) -> stepManyHelper currDepth currCtx currControl
+                        else
+                            case res of
+                                SomeIntermediateStepResult currCtx _ -> (subPNats newDepth (S Z), currCtx)
+                            
 
 --
 --executeFunction :: Function inputStack outputStack locals labels wasmModule
@@ -661,3 +687,64 @@ instance Show (RuntimeContext valuesShape localsShape wasmModule labelsShape) wh
     "labels = " ++ show (labels ctxt) ++ ",\n" ++
     "memories = " ++ show (memories ctxt) ++
     " }\n"
+
+-- Global variable to track the depth of nested blocks/loops/ifs
+-- {-# NOINLINE globalDepth #-}
+-- globalDepth :: Int
+-- globalDepth = 0
+
+-- -- Helper functions to modify the depth
+-- incrementDepth = let
+--     globalDepth = globalDepth + 1
+    
+
+-- decrementDepth = let
+--     globalDepth = globalDepth - 1
+
+-- getDepth :: Int
+-- getDepth = globalDepth
+
+-- Modify stepInternal to handle depth tracking
+-- stepInternal :: forall initialVal locals wasmModule middleVal initialLab middleLab finalVal finalLab depth.
+--             RuntimeContext initialVal locals wasmModule initialLab
+--              -> Instruction initialVal middleVal locals wasmModule initialLab middleLab 
+--              -> ControlStack depth middleVal finalVal locals wasmModule middleLab finalLab
+--              -> StepResult initialVal middleVal finalVal locals wasmModule initialLab middleLab finalLab depth
+-- stepInternal ctx instruction nextControl = case instruction of
+--     Block blockType body -> unsafePerformIO $ do
+--         incrementDepth
+--         let result = StepResult (pushLabel (Label (stackLength (values ctx)) (knownStackShapeLen res) (SomeInstrSeq End)) ctx) (CCons body nextControl)
+--         decrementDepth
+--         return result
+--       where
+--         BTParamsResults _ res = blockType
+
+--     Loop blockType body -> unsafePerformIO $ do
+--         incrementDepth
+--         let result = StepResult (pushLabel (Label (stackLength (values ctx)) (knownStackShapeLen params) loopCont) ctx) (CCons body nextControl)
+--         decrementDepth
+--         return result
+--       where
+--         BTParamsResults params _ = blockType
+--         loopCont = SomeInstrSeq (Loop blockType body :| End)
+
+--     If blockType thenBody elseBody -> unsafePerformIO $ do
+--         incrementDepth
+--         let result = case values ctx of
+--                 ConsValues (cond :: RuntimeTypeOf I32) restVal ->
+--                     let newCtx = ctx {
+--                             values = restVal,
+--                             labels = ConsLabels (Label (stackLength restVal) (knownStackShapeLen res) (SomeInstrSeq End)) (labels ctx)
+--                         }
+--                         body = if cond /= 0 then thenBody else elseBody
+--                     in StepResult newCtx (CCons body nextControl)
+--         decrementDepth
+--         return result
+--       where
+--         BTParamsResults _ res = blockType
+
+--     End -> unsafePerformIO $ do
+--         decrementDepth
+--         return $ StepResult ctx nextControl
+
+--     _ -> stepInternal ctx instruction nextControl -- Default case for other instructions

@@ -250,9 +250,9 @@ data ControlStackWithSomeFinal locals wasmModule initialVal initialLab = forall 
 -- endCurrControlFrame (CSingle _) = CSingle End
 -- endCurrControlFrame (CCons _ rest) = CCons (End :: InstructionSequence middleVal middleVal locals wasmModule middleLab middleLab) rest
 
-data StepResult (initialVal :: ValStackShape) (middleVal :: ValStackShape) (finalVal :: ValStackShape)
+data StepResult (initialVal :: ValStackShape) (finalVal :: ValStackShape) (middleVal :: ValStackShape)
                 (locals :: LocalsShape) (wasmModule :: WasmModule shape)
-                (initialLab :: LabelStackShape) (middleLab :: LabelStackShape) (finalLab :: LabelStackShape)
+                (initialLab :: LabelStackShape) (finalLab :: LabelStackShape) (middleLab :: LabelStackShape)
     = 
         -- forall middleVal middleLab.
         StepResult 
