@@ -57,7 +57,7 @@ instance CanFlowInto 'Low 'Low
 instance CanFlowInto 'Low 'High
 instance CanFlowInto 'High 'High
 
-infixl 7 :/\
+infixl 7 :/\ -- combination operator for security levels of WASM types
 type family (:/\) (l :: SecLevel) (l' :: SecLevel) :: SecLevel where
     Low :/\ Low = Low
     _ :/\ _ = High

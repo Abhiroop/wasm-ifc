@@ -667,7 +667,6 @@ data
     --                        wasmModule
     --                        inputLabels
     --                        inputLabels
-
     Br ::
         forall
             (i :: Nat)
@@ -695,7 +694,7 @@ data
             locals
             wasmModule
             inputLabels
-            inputLabels
+            remainingLabels
     -- BrIf: conditional branch (pops i32 condition)
     -- DINA: Problem => either we branch then we have the conditions below for the outputStack or we don't branch
     -- and then the outputStack is just the inputStack minus the i32 condition
@@ -731,14 +730,14 @@ data
     -- here we need to po
     -- Call  :: FuncName f -> Instruction (GetParamsOf (GetTypeOfFunc f wasmModule)) (GetResultsOf (GetTypeOfFunc f wasmModule)) locals wasmModule inputLabels outputLabels
 
-    Leave ::
-        Instruction
-            inputStack
-            inputStack
-            locals
-            wasmModule
-            (topLabel ': outputLabels)
-            outputLabels
+    -- Leave ::
+    --     Instruction
+    --         inputStack
+    --         inputStack
+    --         locals
+    --         wasmModule
+    --         (topLabel ': outputLabels)
+    --         outputLabels
 
 -- TODO: missing WASM instructions
 
@@ -880,6 +879,15 @@ data
             wasmModule
             inputLabels
             inputLabels -- Base case: empty sequence (identity)
+    
+    Leave :: 
+        InstructionSequence 
+            inputStack 
+            inputStack 
+            locals 
+            wasmModule 
+            inputLabels 
+            inputLabels -- Base case: empty sequence, marks end of block
     (:|) ::
         Instruction
             initialStack
@@ -887,21 +895,21 @@ data
             locals
             wasmModule
             inputLabels
-            intermediateLabels -> -- Inductive case: first instruction
+            inputLabels -> -- Inductive case: first instruction
         InstructionSequence
             intermediateStack
             finalStack
             locals
             wasmModule
-            intermediateLabels
-            outputLabels -> -- rest of sequence
+            inputLabels
+            inputLabels -> -- rest of sequence
         InstructionSequence
             initialStack
             finalStack
             locals
             wasmModule
             inputLabels
-            outputLabels -- combined sequence
+            inputLabels -- combined sequence
 
 {-
 =============================================================================
