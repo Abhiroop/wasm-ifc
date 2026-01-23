@@ -368,9 +368,7 @@ stepInternal ctx instruction nextControl = case instruction of
                         , globals = setGlobal slot val (globals ctx)
                         }
              in StepResult newCtx nextControl
-    -- TODO: How do we want to define the memory array?
-    -- Two Options: either have it as a list of WasmTypes where every element is 64 bytes, just so it fits everything
-    -- Other Option: Have it as a list of bytes and then we cast it when we load/store
+    -- Have memory array as a list of bytes and then we cast it when we load/store
     -- So F64 and I64 would read 8 bytes (8 consecutive elements) and cast them to the right type
     -- and F32 and I32 would read 4 bytes (4 consecutive elements) and cast them to the right type
     MemoryLoad @(wasmType :: WasmType) memidx (SMemArg alignment offset) -> case values ctx of
@@ -395,7 +393,7 @@ stepInternal ctx instruction nextControl = case instruction of
         @(wasmType :: WasmType)
         (memidx :: SFin i n)
         (SMemArg alignment offset) -> case values ctx of
-        ConsValues (addr :: Int32) (ConsValues (value :: RuntimeTypeOf wasmType) rest) ->
+        ConsValues (addr :: Int64) (ConsValues (value :: RuntimeTypeOf wasmType) rest) ->
             let memoryArray = getMemoryArray memidx (memories ctx)
                 addrAsWord64 = fromIntegral addr :: Word64
              in case (byteSize @wasmType) of
@@ -467,7 +465,7 @@ stepInternal ctx instruction nextControl = case instruction of
                     finalValues = concatStacks valuesToKeep baseValues
                     nextCtx = ctx{values = finalValues, labels = restLab}
                  in case someNext of
-                        SomeInstrSeq next -> StepResult nextCtx (CCons (unsafeCoerce next) nextParents)
+                        SomeInstrSeq next -> StepResult nextCtx (cprepend (unsafeCoerce next) nextParents)
     -- TODO: In future instead of inlining Br's code investigate how can we call `Br`
     BrIf (depth :: SFin i n) ->
         case values ctx of
@@ -482,7 +480,7 @@ stepInternal ctx instruction nextControl = case instruction of
                                 finalValues = concatStacks valuesToKeep baseValues
                                 nextCtx = ctx{values = finalValues, labels = restLab}
                              in case someNext of
-                                    SomeInstrSeq next -> StepResult nextCtx (CCons (unsafeCoerce next) nextParents)
+                                    SomeInstrSeq next -> StepResult nextCtx (cprepend (unsafeCoerce next) nextParents)
                     else StepResult (ctx{values = rest}) nextControl
     Call _ _ -> undefined
     Leave ->

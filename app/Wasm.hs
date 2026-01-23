@@ -499,7 +499,7 @@ data
         SFin i n ->
         MemArg align offset -> -- ignore alignment for now, also not 100% sure why i32 has to be on top of stack
         Instruction
-            (I32 ': inputStack)
+            (I64 ': inputStack)
             (wasmtype ': inputStack)
             locals
             wasmModule
@@ -532,7 +532,7 @@ data
         SFin i n ->
         MemArg align offset ->
         Instruction
-            (I32 ': wasmtype ': inputStack)
+            (I64 ': wasmtype ': inputStack)
             inputStack
             locals
             wasmModule

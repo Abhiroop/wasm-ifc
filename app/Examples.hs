@@ -143,7 +143,7 @@ memLoadSequence ::
     InstructionSequence
         '[]
         '[I32]
-        '[I32, I32]
+        '[I64, I64]
         ( ( WasmModuleR
                 '[]
                 ( currMem
@@ -167,7 +167,7 @@ memLoad ::
     Function
         '[]
         (I32 ': '[])
-        (I32 ': I32 ': '[])
+        (I64 ': I64 ': '[])
         '[]
         ( ( WasmModuleR
                 '[]
@@ -186,7 +186,7 @@ memLoad =
 executeMemLoad ::
     RuntimeContext @(WasmModuleShapeR Z (S (S Z)))
         '[I32]
-        '[I32, I32]
+        '[I64, I64]
         ( WasmModuleR
             '[]
             ( currMem
@@ -199,14 +199,14 @@ executeMemLoad =
     stepMany
         ( RuntimeContext
             { values = NoValues
-            , locals = ConsLocals 4 (ConsLocals 0 NoLocals)
+            , locals = ConsLocals (4 :: Int64) (ConsLocals (0 :: Int64) NoLocals)
             , WasmInterpreter.globals = WasmInterpreter.NoGlobals
             , labels = NoLabels
             , memories = WasmInterpreter.ConsMems currMem NoMems
             } ::
             RuntimeContext
                 '[]
-                '[I32, I32]
+                '[I64, I64]
                 ( ( WasmModuleR
                         '[]
                         ( currMem
@@ -224,7 +224,7 @@ memLoadSequence1 ::
     InstructionSequence
         '[]
         '[I32, I32]
-        '[I32, I32]
+        '[I64, I64]
         ( ( WasmModuleR
                 '[]
                 ( currMem
@@ -246,7 +246,7 @@ memLoadSequence1 =
 executeMemLoadSequence1 ::
     RuntimeContext @(WasmModuleShapeR Z (S (S Z)))
         '[I32, I32]
-        '[I32, I32]
+        '[I64, I64]
         ( WasmModuleR
             '[]
             ( currMem
@@ -266,7 +266,7 @@ executeMemLoadSequence1 =
             } ::
             RuntimeContext
                 '[]
-                '[I32, I32]
+                '[I64, I64]
                 ( ( WasmModuleR
                         '[]
                         ( currMem
@@ -286,7 +286,7 @@ memStoreSequence ::
     InstructionSequence
         '[]
         '[]
-        '[I32, I32]
+        '[I32, I64]
         ( (WasmModuleR '[] (storeMem ': '[])) ::
             WasmModule (WasmModuleShapeR Z (S (S Z)))
         )
@@ -302,7 +302,7 @@ memStore ::
     Function
         '[]
         '[]
-        '[I32, I32]
+        '[I32, I64]
         '[]
         ((WasmModuleR '[] ('[] ': '[])) :: WasmModule (WasmModuleShapeR Z (S (S Z))))
 memStore =
@@ -315,7 +315,7 @@ storeMem = createMemory 65536
 executeMemStore ::
     RuntimeContext @(WasmModuleShapeR Z (S (S Z)))
         '[]
-        '[I32, I32]
+        '[I32, I64]
         ( WasmModuleR
             '[]
             ( storeMem
@@ -334,7 +334,7 @@ executeMemStore =
             } ::
             RuntimeContext
                 '[]
-                '[I32, I32]
+                '[I32, I64]
                 ( ( WasmModuleR
                         '[]
                         ( storeMem
@@ -364,9 +364,9 @@ memLoadStoreSequence ::
         '[]
 memLoadStoreSequence =
     LocalGet SFZ -- get the value to store
-        :| I32Const 0 -- get the address
+        :| I64Const 0 -- get the address
         :| MemoryStore @I32 SFZ (SMemArg 0 0)
-        :| I32Const 0
+        :| I64Const 0
         :| MemoryLoad @I32 SFZ (SMemArg 0 0)
         :| End
 
@@ -422,9 +422,9 @@ memLoadStore64Sequence ::
         '[]
 memLoadStore64Sequence =
     LocalGet SFZ -- get the value to store
-        :| I32Const 0 -- get the address
+        :| I64Const 0 -- get the address
         :| MemoryStore @I64 SFZ (SMemArg 0 0)
-        :| I32Const 0
+        :| I64Const 0
         :| MemoryLoad @I64 SFZ (SMemArg 0 0)
         :| End
 
