@@ -4,6 +4,8 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+
 
 module Types where
 
@@ -24,6 +26,34 @@ type family CheckTopVecEqual (top :: ValStackShape) (stack :: ValStackShape) :: 
     CheckTopVecEqual '[] s2 = 'True
     CheckTopVecEqual (t ': ts) (t ': ss) = CheckTopVecEqual ts ss
     CheckTopVecEqual s1 s2 = 'False
+
+    
+type LocalsShape = [SecWasmType]
+
+type family SetSecLevelLocals (i :: Nat) (l :: SecLevel) (locals :: LocalsShape) :: LocalsShape where
+    SetSecLevelLocals 'Z l ((w :~ oldL) ': locals) = ((w :~ l) ': locals)
+    SetSecLevelLocals ('S i) l (currLocal ': rest) =
+        currLocal ': SetSecLevelLocals i l rest
+
+-- type family to combine two LocalsShapes sec type => needed for if instructions
+-- this is overly careful but works
+type family CombineSecTypes (l1 :: LocalsShape) (l2 :: LocalsShape) :: LocalsShape where
+    CombineSecTypes '[] '[] = '[]
+    CombineSecTypes ((t :~ l1) ': rest1) ((t :~ l2) ': rest2) =
+        (t :~ (l1 :/\ l2)) ': CombineSecTypes rest1 rest2
+    CombineSecTypes l1 l2 =
+        TypeError ('Text "CombineSecTypes: LocalsShapes have different WasmTypes")
+
+type family CheckWasmTypesInLocalsEqual (l1 :: LocalsShape) (l2 :: LocalsShape) :: Bool where
+    CheckWasmTypesInLocalsEqual '[] '[] = 'True
+    CheckWasmTypesInLocalsEqual l l = 'True
+    CheckWasmTypesInLocalsEqual ((t :~ l1) ': rest1) ((t :~ l2) ': rest2) =
+        CheckWasmTypesInLocalsEqual rest1 rest2
+    CheckWasmTypesInLocalsEqual (sect ': rest1) (sect ': rest2) =
+        CheckWasmTypesInLocalsEqual rest1 rest2
+    CheckWasmTypesInLocalsEqual ((t1 :~ l1) ': rest1) ((t2 :~ l2) ': rest1) =
+        False
+        
 
 {-
 =============================================================================
@@ -59,12 +89,12 @@ type family Length (list :: [a]) :: Nat where
     Length (x ': xs) = S (Length xs)
 
 data LabelShape = LabelShape
-    { types :: [WasmType]
+    { types :: [SecWasmType]
     , height :: Nat
     }
 
 -- HACK: no automatic way of projecting at type level?
-type family Types (shape :: LabelShape) :: [WasmType] where
+type family Types (shape :: LabelShape) :: [SecWasmType] where
     Types ('LabelShape types height) = types
 
 type family Arity (shape :: LabelShape) :: Nat where
@@ -92,19 +122,27 @@ type family RemoveLabels (i :: Nat) (labels :: LabelStackShape) :: LabelStackSha
     IncludesLabelType labelType (LabelShape labelType height ': ls) = 'True
     IncludesLabelType labelType ('(t, _) ': ls) = IncludesLabelType labelType ls -}
 
-knownStackShapeLen :: KnownValStackShape (v :: [WasmType]) -> SNat (Length v)
+knownStackShapeLen :: KnownValStackShape (v :: [SecWasmType]) -> SNat (Length v)
 knownStackShapeLen KnownValVNil = SZ
-knownStackShapeLen (KnownValCons _kw rest) = SS (knownStackShapeLen rest)
+knownStackShapeLen (KnownValCons (_sec, _kw) rest) = SS (knownStackShapeLen rest)
 
 {- | Type-level representation of the WebAssembly stack.
 The stack grows to the right: (I32 ': I32 ': []) means two I32s on stack.
 -}
-type ValStackShape = [WasmType]
+type ValStackShape = [SecWasmType]
 
 data KnownValStackShape (s :: ValStackShape) where
     KnownValVNil :: KnownValStackShape '[]
     KnownValCons ::
-        KnownWasmType t -> KnownValStackShape ts -> KnownValStackShape (t ': ts)
+        (KnownSecLevel l,KnownWasmType t) -> KnownValStackShape ts -> KnownValStackShape ((t :~ l) ': ts)
+
+type family CombineValSecTypes (vs1 :: ValStackShape) (vs2 :: ValStackShape) :: ValStackShape where
+    CombineValSecTypes '[] '[] = '[]
+    CombineValSecTypes ((t :~ l1) ': rest1) ((t :~ l2) ': rest2) =
+        (t :~ (l1 :/\ l2)) ': CombineValSecTypes rest1 rest2
+    CombineValSecTypes v1 v2 =
+        TypeError ('Text "CombineValSecTypes: ValStackShapes have different WasmTypes")
+        
 
 type family AddComm (a :: Nat) (b :: Nat) :: Bool where
     AddComm a b = (a :+ b) :== (b :+ a)
@@ -183,3 +221,42 @@ This is how we connect the type-level WebAssembly types to actual runtime values
 type family RuntimeTypeOf (wasmType :: WasmType) :: Type where
     RuntimeTypeOf I32 = Int32
     RuntimeTypeOf I64 = Int64
+
+{-
+=============================================================================
+IFC
+=============================================================================
+-}
+
+data SecLevel = Low | High
+
+infix 6 :~
+data SecWasmType = (:~) WasmType SecLevel
+
+data KnownSecLevel (l :: SecLevel) where
+    IsLow  :: KnownSecLevel Low
+    IsHigh :: KnownSecLevel High
+
+class CanFlowInto (l :: SecLevel) (l' :: SecLevel)
+instance CanFlowInto 'Low 'Low
+instance CanFlowInto 'Low 'High
+instance CanFlowInto 'High 'High
+
+infixl 7 :/\
+type family (:/\) (l :: SecLevel) (l' :: SecLevel) :: SecLevel where
+    Low :/\ Low = Low
+    _ :/\ _ = High
+
+type family GetWasmType (swt :: SecWasmType) :: WasmType where
+    GetWasmType (t :~ l) = t
+
+type family RuntimeSecTypeOf (swt :: SecWasmType) :: Type where
+    RuntimeSecTypeOf (t :~ l) = (KnownSecLevel l, RuntimeTypeOf t)
+
+combineSecLevels ::
+    KnownSecLevel l1 ->
+    KnownSecLevel l2 ->
+    KnownSecLevel (l1 :/\ l2)
+combineSecLevels IsLow IsLow = IsLow
+combineSecLevels IsHigh _ = IsHigh
+combineSecLevels _ IsHigh = IsHigh

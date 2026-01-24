@@ -42,6 +42,7 @@ import Unsafe.Coerce
 import Utils
 import Wasm
 import WasmModule hiding (globals)
+import Data.Char (GeneralCategory(Control))
 
 {-
 =============================================================================
@@ -53,20 +54,22 @@ reduceStackToLength ::
     forall n valuesShape.
     SNat n ->
     ValueStack valuesShape ->
-    ValueStack (Take n (Reverse valuesShape))
-reduceStackToLength n = fst . takeStack n . reverseStack
+    ValueStack (Reverse (Take n (Reverse valuesShape)))
+    -- ValueStack ( (Take n (Reverse valuesShape)))
+-- reduceStackToLength n = fst . takeStack n . reverseStack
+reduceStackToLength n vals = reverseStack (fst (takeStack n (reverseStack vals)))
 
 reverseStack :: ValueStack valuesShape -> ValueStack (Reverse valuesShape)
 reverseStack NoValues = NoValues
-reverseStack (ConsValues @wasmType val rest) =
-    concatStacks (reverseStack rest) (ConsValues @wasmType val NoValues)
+reverseStack (ConsValues @wasmType secV rest) =
+    concatStacks (reverseStack rest) (ConsValues @wasmType secV NoValues)
 
 {- | Runtime representation of the WebAssembly stack.
 This is the actual data structure that holds stack values during execution.
 -}
 data ValueStack (shape :: ValStackShape) where
     NoValues :: ValueStack '[]
-    ConsValues :: RuntimeTypeOf top -> ValueStack shape -> ValueStack (top : shape)
+    ConsValues :: RuntimeSecTypeOf top -> ValueStack shape -> ValueStack (top ': shape)
 
 {- | Runtime representation of the WebAssembly locals.
 This is the actual data structure that holds local values during execution.
@@ -74,23 +77,23 @@ This is the actual data structure that holds local values during execution.
 data Locals (localsShape :: LocalsShape) where
     NoLocals :: Locals '[]
     ConsLocals ::
-        RuntimeTypeOf wasmType -> Locals localsShape -> Locals (wasmType : localsShape)
+        (KnownSecLevel l, RuntimeTypeOf wasmType) -> Locals localsShape -> Locals (wasmType :~ l ': localsShape)
 
 data Globals (globalsShape :: GlobalsShape) where
     NoGlobals :: Globals '[]
     ConsGlobals ::
-        RuntimeTypeOf wasmType ->
+        (KnownSecLevel l,
+        RuntimeTypeOf wasmType) ->
         KnownMutability m ->
         Globals globalsShape ->
-        Globals (GlobalTypeMW m wasmType : globalsShape)
-
+        Globals (GlobalTypeMW m (wasmType :~ l) ': globalsShape)
 data Memory (memsShape :: MemoriesShape) where
     NoMems :: Memory '[]
     ConsMems :: MemoryArray -> Memory memsShape -> Memory (memArray : memsShape)
 
 data SomeInstrSeq where
     SomeInstrSeq ::
-        InstructionSequence initialVal finalVal locals wasmModule initialLab finalLab ->
+        InstructionSequence initialVal finalVal locals outLocals wasmModule outWasmModule initialLab finalLab ->
         SomeInstrSeq
 
 -- HACK: no way of having record syntax with GADT features?
@@ -130,14 +133,14 @@ stackLength (ConsValues _ rest) = SS (stackLength rest)
 takeStack ::
     () => SNat n -> ValueStack s -> (ValueStack (Take n s), ValueStack (Drop n s))
 takeStack SZ stk = (NoValues, stk)
-takeStack (SS n) (ConsValues x xs) =
+takeStack (SS n) (ConsValues secX xs) =
     let (taken, rest) = takeStack n xs
-     in (ConsValues x taken, rest)
+     in (ConsValues secX taken, rest)
 takeStack (SS _) NoValues = error "takeStack: stack underflow"
 
 concatStacks :: ValueStack s1 -> ValueStack s2 -> ValueStack (s1 +>+: s2)
 concatStacks NoValues s2 = s2
-concatStacks (ConsValues val rest) s2 = ConsValues val (concatStacks rest s2)
+concatStacks (ConsValues secX rest) s2 = ConsValues secX (concatStacks rest s2)
 
 getAtLabel ::
     (l ~ Length labelStackShape) =>
@@ -154,26 +157,26 @@ dropLabels (SFS n) (ConsLabels _ rest) = dropLabels n rest
 
 -- function to get the value of a local variable at a given index
 getLocal ::
-    SFin i n -> Locals localsShape -> RuntimeTypeOf (Index i localsShape)
-getLocal SFZ (ConsLocals val _) = val
+    SFin i n -> Locals localsShape -> RuntimeSecTypeOf (Index i localsShape)
+getLocal SFZ (ConsLocals (secLevel, val) _) = (secLevel, val)
 getLocal (SFS idx) (ConsLocals _ rest) = getLocal idx rest
 getLocal _ NoLocals = error "Index out of bounds in getLocal"
 
 -- function to set the value of a local variable at a given index
-setLocal ::
+setLocal :: -- ((KnownSecLevel l, w) ~ RuntimeSecTypeOf (Index i localsShape)) =>
     SFin i n ->
-    RuntimeTypeOf (Index i localsShape) ->
+    (KnownSecLevel newSecLevel, RuntimeTypeOf (GetWasmType (Index i localsShape))) -> -- TODO: not sure whether here we also somehow need to set the sec level
     Locals localsShape ->
-    Locals localsShape
-setLocal SFZ newVal (ConsLocals _ rest) = ConsLocals newVal rest
-setLocal (SFS idx) newVal (ConsLocals val rest) = ConsLocals val (setLocal idx newVal rest)
+    Locals (SetSecLevelLocals i newSecLevel localsShape)
+setLocal SFZ (newSecLevel, newVal) (ConsLocals _ rest) = ConsLocals (newSecLevel, newVal) rest
+setLocal (SFS idx) (newSecLevel, newVal) (ConsLocals (secLevel, val) rest) = ConsLocals (secLevel, val) (setLocal idx (newSecLevel, newVal) rest)
 setLocal _ _ NoLocals = error "Index out of bounds in setLocal"
 
 -- function to get the value of a global variable at a given index
 getGlobal ::
     SFin i n ->
     Globals globalsShape ->
-    RuntimeTypeOf (GlobalTypeToWasmType (Index i globalsShape))
+    RuntimeSecTypeOf (GlobalTypeToWasmType (Index i globalsShape))
 getGlobal SFZ (ConsGlobals val _ _) = val
 getGlobal (SFS idx) (ConsGlobals _ _ rest) = getGlobal idx rest
 getGlobal _ NoGlobals = error "Index out of bounds in getGlobal"
@@ -181,9 +184,10 @@ getGlobal _ NoGlobals = error "Index out of bounds in getGlobal"
 -- function to set the value of a global variable at a given index, mutability has to be var
 setGlobal ::
     SFin i n ->
-    RuntimeTypeOf (GlobalTypeToWasmType (Index i globalsShape)) ->
+    -- RuntimeSecTypeOf (GlobalTypeToWasmType (Index i globalsShape)) ->
+    (KnownSecLevel newSecLevel, RuntimeTypeOf (GetWasmType (GlobalTypeToWasmType (Index i globalsShape)))) ->
     Globals globalsShape ->
-    Globals globalsShape
+    Globals (SetSecLevelGlobals i newSecLevel globalsShape)
 setGlobal SFZ newVal (ConsGlobals _ SVar rest) = ConsGlobals newVal SVar rest
 setGlobal (SFS idx) newVal (ConsGlobals oldVal SVar rest) = ConsGlobals oldVal SVar (setGlobal idx newVal rest)
 setGlobal _ _ (ConsGlobals _ SConst _) = error "Cannot set value of a constant global variable" -- TODO: double check this
@@ -196,10 +200,10 @@ getMemoryArray (SFS idx) (ConsMems _ rest) = getMemoryArray idx rest
 getMemoryArray _ NoMems = error "Index out of bounds in getMemoryArray"
 
 pushValue ::
-    RuntimeTypeOf top ->
+    RuntimeSecTypeOf top ->
     RuntimeContext values locals wasmModule labels ->
     RuntimeContext (top ': values) locals wasmModule labels
-pushValue value ctx = ctx{values = ConsValues value (values ctx)}
+pushValue secValue ctx = ctx{values = ConsValues secValue (values ctx)}
 
 pushLabel ::
     Label top ->
@@ -212,17 +216,19 @@ data
         (initialVal :: ValStackShape)
         (finalVal :: ValStackShape)
         (locals :: LocalsShape)
+        (outLocals :: LocalsShape)
         (wasmModule :: WasmModule shape)
+        (finalWasmModule :: WasmModule shape)
         (initialLab :: LabelStackShape)
         (finalLab :: LabelStackShape)
     where
     CSingle ::
-        InstructionSequence initialVal finalVal locals wasmModule initialLab finalLab ->
-        ControlStack initialVal finalVal locals wasmModule initialLab finalLab
-    CCons ::
-        InstructionSequence initialVal middleVal locals wasmModule initialLab middleLab ->
-        ControlStack middleVal finalVal locals wasmModule middleLab finalLab ->
-        ControlStack initialVal finalVal locals wasmModule initialLab finalLab
+        InstructionSequence initialVal finalVal locals outLocals wasmModule outWasmModule initialLab finalLab ->
+        ControlStack initialVal finalVal locals outLocals wasmModule outWasmModule initialLab finalLab
+    CCons :: -- TODO: maybe also have to have in and out locals here
+        InstructionSequence initialVal middleVal locals middleLocals wasmModule middleWasmModule initialLab middleLab ->
+        ControlStack middleVal finalVal middleLocals outLocals middleWasmModule finalWasmModule middleLab finalLab ->
+        ControlStack initialVal finalVal locals outLocals wasmModule finalWasmModule initialLab finalLab
 
 insertMemory ::
     SFin i n ->
@@ -234,16 +240,16 @@ insertMemory (SFS idx) memArray (ConsMems mem rest) = ConsMems mem (insertMemory
 insertMemory _ _ _ = error "Index out of bounds in insertMemory"
 
 cprepend ::
-    Instruction initialVal middleVal locals wasmModule initialLab middleLab ->
-    ControlStack middleVal finalVal locals wasmModule middleLab finalLab ->
-    ControlStack initialVal finalVal locals wasmModule initialLab finalLab
+    Instruction initialVal middleVal locals middleLocals wasmModule middleWasmModule initialLab middleLab ->
+    ControlStack middleVal finalVal middleLocals outLocals middleWasmModule finalWasmModule middleLab finalLab ->
+    ControlStack initialVal finalVal locals outLocals wasmModule finalWasmModule initialLab finalLab
 cprepend instruction (CSingle current) = CSingle (instruction :| current)
 cprepend instruction (CCons current parents) = CCons (instruction :| current) parents
 
 appendInstructionSeq ::
-    InstructionSequence initialVal middleVal locals wasmModule initialLab middleLab ->
-    Instruction middleVal finalVal locals wasmModule middleLab finalLab ->
-    InstructionSequence initialVal finalVal locals wasmModule initialLab finalLab
+    InstructionSequence initialVal middleVal locals middleLocals wasmModule middleWasmModule initialLab middleLab ->
+    Instruction middleVal finalVal middleLocals finalLocals middleWasmModule finalWasmModule middleLab finalLab ->
+    InstructionSequence initialVal finalVal locals finalLocals wasmModule finalWasmModule initialLab finalLab
 appendInstructionSeq instrSeq instruction = case instrSeq of
     End -> instruction :| End
     (instr :| rest) -> instr :| appendInstructionSeq rest instruction
@@ -251,22 +257,22 @@ appendInstructionSeq instrSeq instruction = case instrSeq of
 -- I think I need a cappend function since actually we want it as the last thing we do inside the body not the first thing we do outside the body
 -- because if we have it as the first thing we might branch and leave but if we branch we do not want to leave!
 cappend ::
-    ControlStack initialVal middleVal locals wasmModule initialLab middleLab ->
-    Instruction middleVal finalVal locals wasmModule middleLab finalLab ->
-    ControlStack initialVal finalVal locals wasmModule initialLab finalLab
+    ControlStack initialVal middleVal locals middleLocals wasmModule middleWasmModule initialLab middleLab ->
+    Instruction middleVal finalVal middleLocals finalLocals middleWasmModule finalWasmModule middleLab finalLab ->
+    ControlStack initialVal finalVal locals finalLocals wasmModule finalWasmModule initialLab finalLab
 cappend (CSingle current) instruction = CSingle (appendInstructionSeq current instruction)
 cappend (CCons current parents) instruction = CCons current (cappend parents instruction)
 
 data ControlStackWithSomeInitial locals wasmModule finalVal finalLab
-    = forall initialVal initialLab.
+    = forall initialVal initialLab initialLocals initialWasmModule.
         ControlStackWithSomeInitial
-        (ControlStack initialVal finalVal locals wasmModule initialLab finalLab)
+        (ControlStack initialVal finalVal initialLocals locals initialWasmModule wasmModule initialLab finalLab)
 
 -- HACK: not using info in SFin
 dropControlFrames ::
     SFin n l ->
-    ControlStack initialVal finalVal locals wasmModule initialLab finalLab ->
-    ControlStackWithSomeInitial locals wasmModule finalVal finalLab
+    ControlStack initialVal finalVal locals outLocals wasmModule finalWasmModule initialLab finalLab ->
+    ControlStackWithSomeInitial outLocals finalWasmModule finalVal finalLab
 dropControlFrames SFZ frames = ControlStackWithSomeInitial frames
 dropControlFrames (SFS n) (CCons _ rest) = dropControlFrames n rest
 dropControlFrames _ (CSingle _) = error "Branch depth exceeds control stack"
@@ -276,31 +282,33 @@ data
         (initialVal :: ValStackShape)
         (finalVal :: ValStackShape)
         (locals :: LocalsShape)
+        (outLocals :: LocalsShape)
         (wasmModule :: WasmModule shape)
+        (finalWasmModule :: WasmModule shape)
         (initialLab :: LabelStackShape)
         (finalLab :: LabelStackShape)
-    = forall middleVal middleLab.
+    = forall middleVal middleLab middleLocals middleWasmModule.
         StepResult
-        (RuntimeContext middleVal locals wasmModule middleLab)
-        (ControlStack middleVal finalVal locals wasmModule middleLab finalLab)
+        (RuntimeContext middleVal middleLocals middleWasmModule middleLab)
+        (ControlStack middleVal finalVal middleLocals outLocals middleWasmModule finalWasmModule middleLab finalLab)
 
 step ::
     RuntimeContext initialVal locals wasmModule initialLab ->
-    ControlStack initialVal finalVal locals wasmModule initialLab finalLab ->
-    StepResult initialVal finalVal locals wasmModule initialLab finalLab
+    ControlStack initialVal finalVal locals outLocals wasmModule finalWasmModule initialLab finalLab ->
+    StepResult initialVal finalVal locals outLocals wasmModule finalWasmModule initialLab finalLab
 step ctx (CSingle End) = StepResult ctx (CSingle End)
 step ctx (CSingle (instruction :| rest)) = stepInternal ctx instruction (CSingle rest)
 step ctx (CCons End parents) = StepResult ctx parents
 step ctx (CCons (instruction :| rest) parents) = stepInternal ctx instruction (CCons rest parents)
 
 stepInternal ::
-    forall initialVal locals wasmModule middleVal initialLab middleLab finalVal finalLab.
-    RuntimeContext initialVal locals wasmModule initialLab ->
-    Instruction initialVal middleVal locals wasmModule initialLab middleLab ->
-    ControlStack middleVal finalVal locals wasmModule middleLab finalLab ->
-    StepResult initialVal finalVal locals wasmModule initialLab finalLab
+    forall initialVal initialLocals initialWasmModule middleVal middleLocals middleWasmModule finalVal finalLocals finalWasmModule initialLab middleLab finalLab.
+    RuntimeContext initialVal initialLocals initialWasmModule initialLab ->
+    Instruction initialVal middleVal initialLocals middleLocals initialWasmModule middleWasmModule initialLab middleLab ->
+    ControlStack middleVal finalVal middleLocals finalLocals middleWasmModule finalWasmModule middleLab finalLab ->
+    StepResult initialVal finalVal initialLocals finalLocals initialWasmModule finalWasmModule initialLab finalLab
 stepInternal ctx instruction nextControl = case instruction of
-    I32Const value -> StepResult (pushValue value ctx) nextControl
+    I32Const value -> StepResult (pushValue (IsLow,value) ctx) nextControl
     I32Add -> stepBinaryOp (+) ctx nextControl
     I32Sub -> stepBinaryOp (-) ctx nextControl
     I32Mul -> stepBinaryOp (*) ctx nextControl
@@ -320,7 +328,7 @@ stepInternal ctx instruction nextControl = case instruction of
     I32GtU -> stepBinaryOp (compareU32 (>)) ctx nextControl
     I32GeS -> stepBinaryOp (compareI32 (>)) ctx nextControl
     I32GeU -> stepBinaryOp (compareU32 (>=)) ctx nextControl
-    I64Const value -> StepResult (pushValue value ctx) nextControl
+    I64Const value -> StepResult (pushValue (IsLow,value) ctx) nextControl
     I64Add -> stepBinaryOp (+) ctx nextControl
     I64Sub -> stepBinaryOp (-) ctx nextControl
     I64Mul -> stepBinaryOp (*) ctx nextControl
@@ -347,32 +355,33 @@ stepInternal ctx instruction nextControl = case instruction of
     LocalGet slot -> case getLocal slot (locals ctx) of
         val -> StepResult (pushValue val ctx) nextControl
     LocalSet slot -> case values ctx of
-        ConsValues val rest ->
+        ConsValues (secLevel, newVal) rest ->
             let newCtx =
                     ctx
                         { values = rest
-                        , locals = setLocal slot val (locals ctx)
+                        , locals = setLocal slot (secLevel, newVal) (locals ctx)
                         }
              in StepResult newCtx nextControl
     LocalTee slot -> case values ctx of
-        ConsValues val _ ->
-            let newCtx = ctx{locals = setLocal slot val (locals ctx)}
+        ConsValues (secLevel, val) _ ->
+            let newCtx = ctx{locals = setLocal slot (secLevel, val) (locals ctx)}
              in StepResult newCtx nextControl
     GlobalGet slot -> case getGlobal slot (globals ctx) of
         val -> StepResult (pushValue val ctx) nextControl
     GlobalSet slot -> case values ctx of
-        ConsValues val rest ->
+        ConsValues (secLevel, val) rest ->
             let newCtx =
                     ctx
                         { values = rest
-                        , globals = setGlobal slot val (globals ctx)
+                        , globals = setGlobal slot (secLevel, val) (globals ctx) :: Globals (GetGlobals middleWasmModule)
+                        , memories = memories ctx :: Memory (GetMems middleWasmModule)
                         }
              in StepResult newCtx nextControl
     -- Have memory array as a list of bytes and then we cast it when we load/store
     -- So F64 and I64 would read 8 bytes (8 consecutive elements) and cast them to the right type
     -- and F32 and I32 would read 4 bytes (4 consecutive elements) and cast them to the right type
     MemoryLoad @(wasmType :: WasmType) memidx (SMemArg alignment offset) -> case values ctx of
-        ConsValues addr rest ->
+        ConsValues (secLevel, addr) rest ->
             let memoryArray = getMemoryArray memidx (memories ctx)
                 addrAsWord64 = fromIntegral addr :: Word64
              in case (byteSize @wasmType) of
@@ -382,18 +391,18 @@ stepInternal ctx instruction nextControl = case instruction of
                             then error "Memory access out of bounds in MemoryLoad I32"
                             else
                                 let value = load @wasmType memoryArray (addrAsWord64 + offset)
-                                 in StepResult (ctx{values = ConsValues value rest}) nextControl
+                                 in StepResult (ctx{values = ConsValues (IsHigh, value) rest}) nextControl
                     I64 ->
                         if addrAsWord64 + offset + 8 >= (fromIntegral (length memoryArray) :: Word64)
                             then error "Memory access out of bounds in MemoryLoad I64"
                             else
                                 let value = load @wasmType memoryArray (addrAsWord64 + offset)
-                                 in StepResult (ctx{values = ConsValues value rest}) nextControl
+                                 in StepResult (ctx{values = ConsValues (IsHigh, value) rest}) nextControl
     MemoryStore
         @(wasmType :: WasmType)
         (memidx :: SFin i n)
         (SMemArg alignment offset) -> case values ctx of
-        ConsValues (addr :: Int64) (ConsValues (value :: RuntimeTypeOf wasmType) rest) ->
+        ConsValues (secLevel, addr :: Int64) (ConsValues (secLevelVal, value :: RuntimeTypeOf wasmType) rest) ->
             let memoryArray = getMemoryArray memidx (memories ctx)
                 addrAsWord64 = fromIntegral addr :: Word64
              in case (byteSize @wasmType) of
@@ -407,10 +416,10 @@ stepInternal ctx instruction nextControl = case instruction of
                                         ctx
                                             { values = rest
                                             , memories =
-                                                insertMemory memidx newMemoryArray (memories ctx) :: Memory (GetMems wasmModule)
+                                                insertMemory memidx newMemoryArray (memories ctx) :: Memory (GetMems initialWasmModule)
                                                 -- memories = take memidx (memories ctx) ++ newMemoryArray ++ drop (SFS memidx) (memories ctx)
-                                            } ::
-                                            RuntimeContext middleVal locals wasmModule initialLab
+                                            }  ::
+                                             RuntimeContext middleVal initialLocals initialWasmModule initialLab
                                  in StepResult newCtx nextControl
                     I64 ->
                         if addrAsWord64 + offset + 8 > (fromIntegral (length memoryArray) :: Word64)
@@ -421,9 +430,9 @@ stepInternal ctx instruction nextControl = case instruction of
                                         ctx
                                             { values = rest
                                             , memories =
-                                                insertMemory memidx newMemoryArray (memories ctx) :: Memory (GetMems wasmModule)
+                                                insertMemory memidx newMemoryArray (memories ctx) :: Memory (GetMems initialWasmModule)
                                             } ::
-                                            RuntimeContext middleVal locals wasmModule initialLab
+                                            RuntimeContext middleVal initialLocals initialWasmModule initialLab
                                  in StepResult newCtx nextControl
     Block (BTParamsResults _ (res :: KnownValStackShape resStack)) body ->
         let newCtx =
@@ -442,7 +451,7 @@ stepInternal ctx instruction nextControl = case instruction of
          in StepResult newCtx (CCons (appendInstructionSeq body Leave) nextControl)
     If (BTParamsResults _ (res :: KnownValStackShape resStack)) thenBody elseBody ->
         case values ctx of
-            ConsValues (cond :: RuntimeTypeOf I32) restVal ->
+            ConsValues (secLevel, cond :: RuntimeTypeOf I32) restVal ->
                 let newCtx =
                         ctx
                             { values = restVal
@@ -451,34 +460,37 @@ stepInternal ctx instruction nextControl = case instruction of
                                     (Label (stackLength restVal) (knownStackShapeLen res) (SomeInstrSeq End))
                                     (labels ctx)
                             }
+                    -- TODO: need to merge the security levels here of the locals and globals and the stack?
+                    -- TODO: also need to handle the condition thing...
                     body = if cond /= 0 then thenBody else elseBody
                  in StepResult newCtx (CCons (appendInstructionSeq body Leave) nextControl)
     -- The first drop is correct since we drop the label anyways with the leave instruction that we added in the block instruction
     -- For the controlFrames I have to drop depth frames +1 to get to the right instruction sequence
     Br depth ->
         case (dropLabels depth (labels ctx), dropControlFrames (SFS depth) nextControl) of
-            ( ConsLabels (Label heightToPreserve arity someNext) restLab
+            ( ConsLabels (Label heightToPreserve arity someNext) (restLab :: LabelStack restLabShape)
                 , ControlStackWithSomeInitial nextParents
                 ) ->
                 let (valuesToKeep, _) = takeStack arity (values ctx)
                     baseValues = reduceStackToLength heightToPreserve (values ctx)
                     finalValues = concatStacks valuesToKeep baseValues
-                    nextCtx = ctx{values = finalValues, labels = restLab}
+                    nextCtx = ctx{values = finalValues, labels = restLab, globals = globals ctx, memories = memories ctx} :: RuntimeContext middleVal initialLocals middleWasmModule restLabShape
                  in case someNext of
                         SomeInstrSeq next -> StepResult nextCtx (cprepend (unsafeCoerce next) nextParents)
     -- TODO: In future instead of inlining Br's code investigate how can we call `Br`
     BrIf (depth :: SFin i n) ->
         case values ctx of
-            ConsValues cond rest ->
+            ConsValues (secLevel, cond) rest ->
                 if cond == 0
                     then case (dropLabels depth (labels ctx), dropControlFrames (SFS depth) nextControl) of
-                        ( ConsLabels (Label heightToPreserve arity someNext) restLab
+                        ( ConsLabels ((Label heightToPreserve arity someNext) :: Label  targetLabel) (restLab :: LabelStack restLabShape)
                             , ControlStackWithSomeInitial nextParents
                             ) ->
-                            let (valuesToKeep, _) = takeStack arity (values ctx)
-                                baseValues = reduceStackToLength heightToPreserve (values ctx)
+                            let (valuesToKeep, _) = takeStack arity rest
+                                baseValues = reduceStackToLength heightToPreserve rest
                                 finalValues = concatStacks valuesToKeep baseValues
-                                nextCtx = ctx{values = finalValues, labels = restLab}
+                                nextCtx = ctx{values = finalValues, labels = restLab, globals = globals ctx, memories = memories ctx}  :: 
+                                    RuntimeContext (Take (Arity targetLabel) middleVal +>+: Reverse (Take (Height targetLabel) (Reverse middleVal))) initialLocals middleWasmModule restLabShape
                              in case someNext of
                                     SomeInstrSeq next -> StepResult nextCtx (cprepend (unsafeCoerce next) nextParents)
                     else StepResult (ctx{values = rest}) nextControl
@@ -494,52 +506,65 @@ unreachable = undefined
 
 stepUnaryOp ::
     (RuntimeTypeOf typeIn -> RuntimeTypeOf typeOut) ->
-    RuntimeContext (typeIn ': initialVal) locals wasmModule initialLab ->
+    RuntimeContext (typeIn :~ l ': initialVal) locals wasmModule initialLab ->
     ControlStack
-        (typeOut ': initialVal)
+        (typeOut :~ l ': initialVal)
         finalVal
         locals
+        finalLocals
         wasmModule
+        finalWasmModule
         initialLab
         finalLab ->
-    StepResult (typeIn ': initialVal) finalVal locals wasmModule initialLab finalLab
+    StepResult (typeIn :~ l ': initialVal) finalVal locals finalLocals wasmModule finalWasmModule initialLab finalLab
 stepUnaryOp op ctx nextControl = case values ctx of
-    ConsValues val rest ->
-        let newCtx = ctx{values = ConsValues (op val) rest}
+    ConsValues (_secLevel, val) rest ->
+        let newCtx = ctx{values = ConsValues (_secLevel, op val) rest}
          in StepResult newCtx nextControl
 
 -- TODO: double check the operand order
 stepBinaryOp ::
     forall
+        lRhs
         typeRhs
+        lLhs
         typeLhs
         typeResult
         restStack
         locals
+        finalLocals
         wasmModule
+        finalWasmModule
         initialLab
         finalVal
         finalLab.
     (RuntimeTypeOf typeLhs -> RuntimeTypeOf typeRhs -> RuntimeTypeOf typeResult) ->
-    RuntimeContext (typeRhs ': typeLhs ': restStack) locals wasmModule initialLab ->
+    RuntimeContext ((typeRhs :~ lRhs) ': (typeLhs :~ lLhs) ': restStack) locals wasmModule initialLab ->
     ControlStack
-        (typeResult ': restStack)
+        ((typeResult :~ (lRhs :/\ lLhs)) ': restStack)
         finalVal
         locals
+        finalLocals
         wasmModule
+        finalWasmModule
         initialLab
         finalLab ->
     StepResult
-        (typeRhs ': typeLhs ': restStack)
+        ((typeRhs :~ lRhs) ': (typeLhs :~ lLhs) ': restStack)
         finalVal
         locals
+        finalLocals
         wasmModule
+        finalWasmModule
         initialLab
         finalLab
 stepBinaryOp op ctx nextControl = case values ctx of
-    ConsValues rhs (ConsValues lhs restVal) ->
-        let newCtx = ctx{values = ConsValues (op lhs rhs) restVal}
+    ConsValues (secRhs, valRhs) (ConsValues (secLhs, valLhs) restVal) ->
+        let newCtx = ctx{values = ConsValues (combineSecLevels secRhs secLhs, op valLhs valRhs) restVal}
          in StepResult newCtx nextControl
+
+
+
 
 compareI32 :: (Int32 -> Int32 -> Bool) -> Int32 -> Int32 -> Int32
 compareI32 op x y = fromIntegral (fromEnum (op x y))
@@ -569,13 +594,15 @@ stepMany ::
         {shape :: WasmModuleShape}
         {initialVal :: ValStackShape}
         {locals :: LocalsShape}
+        {outLocals :: LocalsShape}
         {wasmModule :: WasmModule shape}
+        {finalWasmModule :: WasmModule shape}
         {initialLab :: LabelStackShape}
         {finalVal :: ValStackShape}
         {finalLab :: LabelStackShape}.
     RuntimeContext initialVal locals wasmModule initialLab ->
-    InstructionSequence initialVal finalVal locals wasmModule initialLab finalLab ->
-    RuntimeContext finalVal locals wasmModule finalLab
+    InstructionSequence initialVal finalVal locals outLocals wasmModule finalWasmModule initialLab finalLab ->
+    RuntimeContext finalVal outLocals finalWasmModule finalLab
 stepMany ctx program = stepManyHelper ctx (CSingle program)
 
 stepManyHelper ::
@@ -583,13 +610,15 @@ stepManyHelper ::
         {shape :: WasmModuleShape}
         {initialVal :: ValStackShape}
         {locals :: LocalsShape}
+        {outLocals :: LocalsShape}
         {wasmModule :: WasmModule shape}
+        {finalWasmModule :: WasmModule shape}
         {initialLab :: LabelStackShape}
         {finalVal :: ValStackShape}
         {finalLab :: LabelStackShape}.
     RuntimeContext initialVal locals wasmModule initialLab ->
-    ControlStack initialVal finalVal locals wasmModule initialLab finalLab ->
-    RuntimeContext finalVal locals wasmModule finalLab
+    ControlStack initialVal finalVal locals outLocals wasmModule finalWasmModule initialLab finalLab ->
+    RuntimeContext finalVal outLocals finalWasmModule finalLab
 stepManyHelper ctx control =
     let res = step ctx control
      in case res of
@@ -610,6 +639,16 @@ stepManyHelper ctx control =
 -- Initializations
 -- =============================================================================
 
+
+
+-- combineSecLevelVal1 :: ValueStack finalVal1 
+--                  -> ValueStack finalVal2
+--                  -> ValueStack (CombineValSecTypes finalVal1 finalVal2)
+-- combineSecLevelVal1 NoValues NoValues = NoValues
+-- combineSecLevelVal1 (ConsValues (secLevel1, val1) rest1) (ConsValues (secLevel2, _val2) rest2) = ConsValues (combineSecLevels secLevel1 secLevel2, val1) (combineSecLevelVals rest1 rest2)
+--     --  in (ConsValues (combineSecLevels secLevel1 secLevel2, val1) res1, ConsValues (combineSecLevels secLevel1 secLevel2, val2) res2)
+-- combineSecLevelVal1 _ _ = error "combineSecLevelVals: stacks have different shapes"
+
 -- change the unsafe coerce depending on which example your testing to Int32 or Int64
 instance Show (ValueStack shape) where
     show NoValues = "[]"
@@ -618,7 +657,7 @@ instance Show (ValueStack shape) where
 
 instance Show (Locals shape) where
     show NoLocals = "[]"
-    show (ConsLocals v rest) =
+    show (ConsLocals (_secLevel, v) rest) =
         show (unsafeCoerce v :: Int32) ++ " : " ++ show rest
 
 instance Show (KnownMutability m) where
@@ -627,7 +666,7 @@ instance Show (KnownMutability m) where
 
 instance Show (Globals shape) where
     show NoGlobals = "[]"
-    show (ConsGlobals v mut rest) =
+    show (ConsGlobals (_secLevel, v) mut rest) =
         show (unsafeCoerce v :: Int32) ++ " (" ++ show mut ++ ") : " ++ show rest
 
 printMemArray :: MemoryArray -> String

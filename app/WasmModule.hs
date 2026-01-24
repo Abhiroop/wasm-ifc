@@ -21,8 +21,10 @@ import Data.Kind (Type)
 import Data.List (List)
 import qualified Data.Vector.Mutable as MV
 import Data.Word (Word32, Word64, Word8)
-import Types (KnownWasmType (..), RuntimeTypeOf, RuntimeWasmTypes, WasmType (..))
+import Types 
 import Utils
+import GHC.TypeError (ErrorMessage (Text))
+import GHC.TypeLits (TypeError)
 
 -- https://webassembly.github.io/spec/core/syntax/modules.html#syntax-global
 -- WebAssembly programs are organized into modules,
@@ -43,7 +45,7 @@ data KnownMutability (m :: Mutability) where
     SVar :: KnownMutability 'Var
 
 -- Global types classify global variables, which hold a value and can either be mutable or immutable.
-data GlobalType = GlobalTypeMW Mutability WasmType
+data GlobalType = GlobalTypeMW Mutability SecWasmType
 
 type family GetMutability (g :: GlobalType) :: Mutability where
     GetMutability (GlobalTypeMW m w) = m
@@ -97,10 +99,44 @@ type family GetGlobals (m :: WasmModule shape) :: [GlobalType] where
 -- Type family to extract WasmType from GlobalType
 -- ABHI: We need something here that discards the mutability information
 --      Define a type family called GlobalTypeToWasmType here.
-type family GlobalTypeToWasmType (g :: GlobalType) :: WasmType where
+type family GlobalTypeToWasmType (g :: GlobalType) :: SecWasmType where
     GlobalTypeToWasmType (GlobalTypeMW _ w) = w
 
 type GlobalSlot = Nat
+
+type family SetSecLevelsGlobalModule (i :: Nat) (newSecLevel :: SecLevel) (wasmModule :: WasmModule shape) :: WasmModule shape where
+    SetSecLevelsGlobalModule i newSecLevel ('WasmModuleR globals mems) =
+        'WasmModuleR (SetSecLevelGlobals i newSecLevel globals) mems
+
+type family SetSecLevelGlobals (i :: Nat) (newSecLevel :: SecLevel) (globalsShape :: GlobalsShape) :: GlobalsShape where
+    SetSecLevelGlobals 'Z newSecLevel (GlobalTypeMW mut (v :~ oldSecLevel) ': rest) =
+        GlobalTypeMW mut (v :~ newSecLevel) ': rest
+    SetSecLevelGlobals ('S i) newSecLevel (g ': rest) =
+        g ': SetSecLevelGlobals i newSecLevel rest
+
+type family CombineSecTypesGlobalModule (wasmModule1 :: WasmModule shape) (wasmModule2 :: WasmModule shape) :: WasmModule shape where
+    CombineSecTypesGlobalModule ('WasmModuleR globals1 mems) ('WasmModuleR globals2 mems) =
+        'WasmModuleR (CombineSecTypesGlobals globals1 globals2) mems -- mems unchanged
+
+type family CombineSecTypesGlobals (globals1 :: GlobalsShape) (globals2 :: GlobalsShape) :: GlobalsShape where
+    CombineSecTypesGlobals '[] '[] = '[]
+    CombineSecTypesGlobals (GlobalTypeMW mut (w :~ sec1) ': rest1) (GlobalTypeMW mut (w :~ sec2) ': rest2) =
+        GlobalTypeMW mut (w :~ sec1 :/\ sec2) ': CombineSecTypesGlobals rest1 rest2
+    CombineSecTypesGlobals g1 g2 =
+        TypeError ('Text "CombineSecTypesGlobals: GlobalsShapes have different GlobalTypes")
+
+-- TODO depending on what we do with memory
+-- type family CheckWasmTypesInModuleUnchanged (wasmModule1 :: WasmModule shape) (wasmModule2 :: WasmModule shape) :: Bool where
+--     CheckWasmTypesInModuleUnchanged ('WasmModuleR globals1 mems1) ('WasmModuleR globals2 mems2) =
+--         CheckGlobalsTypesUnchanged globals1 globals2 -- && CheckMemoriesTypesUnchanged mems1 mems2
+
+type family CheckGlobalsTypesUnchanged (globals1 :: GlobalsShape) (globals2 :: GlobalsShape) :: Bool where
+    CheckGlobalsTypesUnchanged '[] '[] = 'True
+    CheckGlobalsTypesUnchanged g g = 'True
+    CheckGlobalsTypesUnchanged (GlobalTypeMW mut (w :~ l1) ': rest1) (GlobalTypeMW mut (w :~ l2) ': rest2) = 
+        CheckGlobalsTypesUnchanged rest1 rest2
+    CheckGlobalsTypesUnchanged g1 g2 = 'False
+
 
 -----------------
 -- MEMORY
