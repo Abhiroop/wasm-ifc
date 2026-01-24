@@ -53,8 +53,8 @@ reduceStackToLength ::
     forall n valuesShape.
     SNat n ->
     ValueStack valuesShape ->
-    ValueStack (Take n (Reverse valuesShape))
-reduceStackToLength n = fst . takeStack n . reverseStack
+    ValueStack (Reverse (Take n (Reverse valuesShape)))
+reduceStackToLength n vals = reverseStack (fst (takeStack n (reverseStack vals)))
 
 reverseStack :: ValueStack valuesShape -> ValueStack (Reverse valuesShape)
 reverseStack NoValues = NoValues
