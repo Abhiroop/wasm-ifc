@@ -1108,6 +1108,78 @@ ifCondSeqSetLocalLow =
 EXAMPLE FOR BRIF WITH TAINTED COND
 -}
 
+brIfSeq ::
+    InstructionSequence
+        '[]
+        '[I32 :~ Low]
+        '[]
+        ( (WasmModuleR '[] '[]) ::
+            WasmModule (WasmModuleShapeR Z Z)
+        )
+        '[]
+        '[]
+        '[Low]
+brIfSeq =
+    Block
+        (BTParamsResults KnownValVNil KnownValVNil)
+        ( I32Const IsLow 42
+            :| I32Const IsLow 7
+            :| I32Add
+            :| I32Const IsLow 1
+            :| BrIf SFZ
+            :| I32Const IsLow 0
+            :| I32Add
+            :| End
+        )
+        :| End
+executeBrIf :: 
+    RuntimeContext @(WasmModuleShapeR Z Z)
+        '[I32 :~ Low]
+        '[]
+        (WasmModuleR '[] '[])
+        '[]
+executeBrIf =
+    stepMany
+        ( RuntimeContext
+            { values = NoValues
+            , locals = NoLocals
+            , WasmInterpreter.globals = WasmInterpreter.NoGlobals
+            , labels = NoLabels
+            , memories = NoMems
+            } ::
+            RuntimeContext
+                '[]
+                '[]
+                ((WasmModuleR '[] '[]) :: WasmModule (WasmModuleShapeR Z Z))
+                '[]
+        )
+        brIfSeq
+
+
+brIfSeqHigh ::
+    InstructionSequence
+        '[]
+        '[I32 :~ High]
+        '[]
+        ( (WasmModuleR '[] '[]) ::
+            WasmModule (WasmModuleShapeR Z Z)
+        )
+        '[]
+        '[]
+        '[Low]
+brIfSeqHigh =
+    Block -- TODO: BrIf not working because we have not input output secPC. To have one is however painful to implement in the controlStack and therefore not done yet.
+        (BTParamsResults KnownValVNil (KnownValCons (IsHigh, ForI32) KnownValVNil))
+        ( I32Const IsLow 42
+            :| I32Const IsLow 7
+            :| I32Add
+            :| I32Const IsHigh 1
+            :| BrIf SFZ
+            :| I32Const IsLow 0
+            :| I32Add
+            :| End :: InstructionSequence '[] '[I32 :~ High] '[] (WasmModuleR '[] '[]) '[ 'LabelShape '[I32 :~ High] Z] '[ 'LabelShape '[I32 :~ High] Z] '[High, Low]
+        )
+        :| End
 
 
 {- | Example 1: Add two integers
