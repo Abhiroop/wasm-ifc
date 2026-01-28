@@ -40,11 +40,11 @@ EXECUTION EXAMPLES
 --       memories :: Memory (GetMems wasmModule)
 --       -- TODO: tables, etc.
 --     }
-executeAddStep :: StepResult [I32 :~ Low, I32 :~ High] '[I32 :~ High] '[] '[] (WasmModuleR '[] '[]) (WasmModuleR '[] '[]) '[] '[]
+executeAddStep :: StepResult [I32 :~ Low, I32 :~ High] '[I32 :~ High] '[] (WasmModuleR '[] '[]) '[] '[]
 executeAddStep =
     step
         ( RuntimeContext
-            { values = ConsValues (IsLow, 5) (ConsValues (IsHigh, 10) NoValues)
+            { values = ConsValues 5 (ConsValues 10 NoValues)
             , locals = NoLocals
             , WasmInterpreter.globals = WasmInterpreter.NoGlobals
             , labels = NoLabels
@@ -144,16 +144,6 @@ memLoadSequence ::
         '[]
         '[I32 :~ Low]
         '[I64 :~ Low, I64 :~ Low]
-        '[I64 :~ Low, I64 :~ Low]
-        ( ( WasmModuleR
-                '[]
-                ( currMem
-                    -- '[ fromIntegral 10 :: Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8, fromIntegral 20::Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8]
-                    ': '[]
-                )
-          ) ::
-            WasmModule (WasmModuleShapeR Z (S (S Z)))
-        )
         ( ( WasmModuleR
                 '[]
                 ( currMem
@@ -209,7 +199,7 @@ executeMemLoad =
     stepMany
         ( RuntimeContext
             { values = NoValues
-            , locals = ConsLocals (IsLow, 4 :: Int64) (ConsLocals (IsLow, 0 :: Int64) NoLocals)
+            , locals = ConsLocals (4 :: Int64) (ConsLocals (0 :: Int64) NoLocals)
             , WasmInterpreter.globals = WasmInterpreter.NoGlobals
             , labels = NoLabels
             , memories = WasmInterpreter.ConsMems currMem NoMems
@@ -235,16 +225,6 @@ memLoadSequence1 ::
         '[]
         '[I32 :~ Low, I32 :~ Low]
         '[I64 :~ Low, I64 :~ Low]
-        '[I64 :~ Low, I64 :~ Low]
-        ( ( WasmModuleR
-                '[]
-                ( currMem
-                    -- '[ fromIntegral 10 :: Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8, fromIntegral 20::Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8]
-                    ': '[]
-                )
-          ) ::
-            WasmModule (WasmModuleShapeR Z (S (S Z)))
-        )
         ( ( WasmModuleR
                 '[]
                 ( currMem
@@ -307,10 +287,6 @@ memStoreSequence ::
         '[]
         '[]
         '[I32 :~ Low, I64 :~ Low]
-        '[I32 :~ Low, I64 :~ Low]
-        ( (WasmModuleR '[] (storeMem ': '[])) ::
-            WasmModule (WasmModuleShapeR Z (S (S Z)))
-        )
         ( (WasmModuleR '[] (storeMem ': '[])) ::
             WasmModule (WasmModuleShapeR Z (S (S Z)))
         )
@@ -376,15 +352,6 @@ memLoadStoreSequence ::
         '[]
         '[I32 :~ Low]
         '[I32 :~ Low]
-        '[I32 :~ Low]
-        ( ( WasmModuleR
-                '[]
-                ( storeMem
-                    ': '[]
-                )
-          ) ::
-            WasmModule (WasmModuleShapeR Z (S (S Z)))
-        )
         ( ( WasmModuleR
                 '[]
                 ( storeMem
@@ -418,7 +385,7 @@ executeMemLoadStore =
     stepMany
         ( RuntimeContext
             { values = NoValues
-            , locals = ConsLocals (IsLow, 2147483647 :: Int32) NoLocals
+            , locals = ConsLocals (2147483647 :: Int32) NoLocals
             , WasmInterpreter.globals = WasmInterpreter.NoGlobals
             , labels = NoLabels
             , memories = WasmInterpreter.ConsMems storeMem NoMems
@@ -443,15 +410,6 @@ memLoadStore64Sequence ::
         '[]
         '[I64 :~ Low]
         '[I64 :~ Low]
-        '[I64 :~ Low]
-        ( ( WasmModuleR
-                '[]
-                ( storeMem
-                    ': '[]
-                )
-          ) ::
-            WasmModule (WasmModuleShapeR Z (S (S Z)))
-        )
         ( ( WasmModuleR
                 '[]
                 ( storeMem
@@ -485,7 +443,7 @@ executeMemLoadStore64 =
     stepMany
         ( RuntimeContext
             { values = NoValues
-            , locals = ConsLocals (IsLow, 9223372036854775807 :: Int64) NoLocals
+            , locals = ConsLocals (9223372036854775807 :: Int64) NoLocals
             , WasmInterpreter.globals = WasmInterpreter.NoGlobals
             , labels = NoLabels
             , memories = WasmInterpreter.ConsMems storeMem NoMems
@@ -512,10 +470,6 @@ globalGetSetSequence ::
         '[]
         '[I32 :~ Low]
         locals
-        locals
-        ( (WasmModuleR (GlobalTypeMW Var (I32 :~ Low) ': '[]) '[]) ::
-            WasmModule (WasmModuleShapeR (S Z) Z)
-        )
         ( (WasmModuleR (GlobalTypeMW Var (I32 :~ Low) ': '[]) '[]) ::
             WasmModule (WasmModuleShapeR (S Z) Z)
         )
@@ -571,10 +525,6 @@ globalSetConstSeq ::
         '[I32 :~ Low]
         '[]
         locals
-        locals
-        ( (WasmModuleR '[GlobalTypeMW Const (I32 :~ Low), GlobalTypeMW Var (I32 :~ Low)] '[]) ::
-            WasmModule (WasmModuleShapeR (S (S Z)) Z)
-        )
         ( (WasmModuleR '[GlobalTypeMW Const (I32 :~ Low), GlobalTypeMW Var (I32 :~ Low)] '[]) ::
             WasmModule (WasmModuleShapeR (S (S Z)) Z)
         )
@@ -596,8 +546,6 @@ add1Sequence ::
         (I32 :~ Low ': (I32 :~ Low ': inputStack))
         (I32 :~ Low ': inputStack)
         locals
-        locals
-        wasmModule
         wasmModule
         inputLabels
         inputLabels
@@ -633,8 +581,6 @@ addSubSequence ::
         (I32 :~ Low ': (I32 :~ Low ': (I32 :~ Low ': inputStack)))
         (I32 :~ Low ': inputStack)
         locals
-        locals
-        wasmModule
         wasmModule
         inputLabels
         inputLabels
@@ -670,8 +616,6 @@ branchExampleSeq ::
         inputStack
         ('[] +>+: Reverse (Take (Length inputStack) (Reverse inputStack)))
         locals
-        locals
-        wasmModule
         wasmModule
         outputLabels
         outputLabels
@@ -717,8 +661,6 @@ branchExample2Seq ::
         '[]
         '[]
         '[]
-        '[]
-        wasmModule
         wasmModule
         ('LabelShape '[] Z ': '[])
         ('LabelShape '[] Z ': '[])
@@ -753,8 +695,6 @@ branchExample3Seq ::
         '[I32 :~ Low, I64 :~ Low]
         '[I32 :~ Low, I32 :~ Low, I64:~ Low]
         locals
-        locals
-        wasmModule
         wasmModule
         outputLabels
         outputLabels -- example function for Br instruction
@@ -788,7 +728,7 @@ executeBranchExample3 ::
 executeBranchExample3 =
     stepMany
         RuntimeContext
-            { values = ConsValues (IsLow, 3 :: Int32) (ConsValues (IsLow, 2 :: Int64) NoValues)
+            { values = ConsValues (3 :: Int32) (ConsValues (2 :: Int64) NoValues)
             , locals = NoLocals
             , WasmInterpreter.globals = WasmInterpreter.NoGlobals
             , labels = NoLabels
@@ -799,7 +739,7 @@ executeBranchExample3 =
 -- example function for Br instruction
 
 branchExample4Seq ::
-    InstructionSequence '[] '[I32 :~ Low] locals locals wasmModule wasmModule outputLabels outputLabels
+    InstructionSequence '[] '[I32 :~ Low] locals wasmModule outputLabels outputLabels
 branchExample4Seq =
     Block
         (BTParamsResults KnownValVNil (KnownValCons (IsLow, ForI32) KnownValVNil))
@@ -836,7 +776,7 @@ executeBranchExample4 =
 Takes two i32 parameters (slots 0 and 1), returns their sum
 -}
 add2Seq ::
-    InstructionSequence '[] '[I32 :~ Low] '[I32 :~ Low, I32 :~ Low] '[I32 :~ Low, I32 :~ Low] wasmModule wasmModule outputLabels outputLabels
+    InstructionSequence '[] '[I32 :~ Low] '[I32 :~ Low, I32 :~ Low] wasmModule outputLabels outputLabels
 add2Seq =
     LocalGet SFZ -- Push first parameter
         :| LocalGet (SFS SFZ) -- Push second parameter
@@ -885,8 +825,6 @@ factorialSeq ::
         '[]
         (I32 :~ Low ': '[])
         (I32 :~ Low ': I32 :~ Low ': '[])
-        (I32 :~ Low ': I32 :~ Low ': '[])
-        wm
         wm
         outputLabels
         outputLabels
@@ -968,7 +906,7 @@ Demonstrates different return types - this one returns Empty stack.
 printNumberSeq ::
     forall (s :: WasmModuleShape) (wm :: WasmModule s) (outputLabels :: LabelStackShape).
     (s ~ WasmModuleShapeR Z Z) =>
-    InstructionSequence '[] '[] '[I32 :~ Low, I32 :~ Low] '[I32 :~ Low, I32 :~ Low] wm wm outputLabels outputLabels
+    InstructionSequence '[] '[] '[I32 :~ Low, I32 :~ Low] wm outputLabels outputLabels
 printNumberSeq =
     -- Just consume the parameter without returning anything
     LocalGet slotZero
@@ -1017,8 +955,6 @@ complexCalculationSeq ::
         '[]
         '[I32 :~ Low]
         (I32 :~ Low ': I32 :~ Low ': I32 :~ Low ': I32 :~ Low ': '[])
-        (I32 :~ Low ': I32 :~ Low ': I32 :~ Low ': I32 :~ Low ': '[])
-        wm
         wm
         outputLabels
         outputLabels
@@ -1080,7 +1016,7 @@ Returns the absolute value of the input.
 absoluteValueSeq ::
     forall (s :: WasmModuleShape) (wm :: WasmModule s) (outputLabels :: LabelStackShape).
     (s ~ WasmModuleShapeR Z Z) =>
-    InstructionSequence '[] (I32 :~ Low ': '[]) (I32 :~ Low ': '[]) (I32 :~ Low ': '[]) wm wm outputLabels outputLabels
+    InstructionSequence '[] (I32 :~ Low ': '[]) (I32 :~ Low ': '[]) wm outputLabels outputLabels
 absoluteValueSeq =
     -- Check if input is negative
     LocalGet SFZ
