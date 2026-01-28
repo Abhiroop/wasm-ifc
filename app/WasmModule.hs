@@ -102,6 +102,9 @@ type family GetGlobals (m :: WasmModule shape) :: [GlobalType] where
 type family GlobalTypeToWasmType (g :: GlobalType) :: SecWasmType where
     GlobalTypeToWasmType (GlobalTypeMW _ w) = w
 
+type family CombineGlobalSecLevel (g :: GlobalType) (secPC :: SecLevel) :: SecWasmType where
+    CombineGlobalSecLevel (GlobalTypeMW _ (w :~ l)) secPC = w :~ (l :/\ secPC)
+
 type GlobalSlot = Nat
 
 type family SetSecLevelsGlobalModule (i :: Nat) (newSecLevel :: SecLevel) (wasmModule :: WasmModule shape) :: WasmModule shape where

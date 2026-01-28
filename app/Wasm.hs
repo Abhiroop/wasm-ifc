@@ -68,50 +68,63 @@ data
         (wasmModule :: WasmModule shape)
         (inputLabels :: LabelStackShape)
         (outputLabels :: LabelStackShape)
+        (inSecPC :: [SecLevel])
+        (outSecPC :: [SecLevel])
     where
     -- Constants: push a literal value onto the stack
     I32Const ::
+        KnownSecLevel l ->
         Int32 ->
         Instruction
             inputStack
-            ((I32 :~ Low ': inputStack) :: ValStackShape)
+            ((I32 :~ (l :/\ Index Z secPC) ': inputStack) :: ValStackShape)
             locals
             wasmModule
             inputLabels
             inputLabels
+            secPC
+            secPC
     -- i32 arithmetic operators (all pop two values, push one result)
     I32Add ::
         Instruction
             ((I32 :~ l1) ': (I32 :~ l2) ': inputStack)
-            ((I32 :~ (l1 :/\ l2)) ': inputStack)
+            ((I32 :~ (l1 :/\ l2) :/\ Index Z secPC) ': inputStack)
             locals
             wasmModule
             inputLabels
             inputLabels
+            secPC
+            secPC
     I32Sub ::
         Instruction
             ((I32 :~ l1) ': (I32 :~ l2) ': inputStack)
-            ((I32 :~ (l1 :/\ l2)) ': inputStack)
+            ((I32 :~ (l1 :/\ l2) :/\ Index Z secPC) ': inputStack)
             locals
             wasmModule
             inputLabels
             inputLabels
+            secPC
+            secPC
     I32Mul ::
         Instruction
             ((I32 :~ l1) ': (I32 :~ l2) ': inputStack)
-            ((I32 :~ (l1 :/\ l2)) ': inputStack)
+            ((I32 :~ (l1 :/\ l2) :/\ Index Z secPC) ': inputStack)
             locals
             wasmModule
             inputLabels
             inputLabels
+            secPC
+            secPC
     I32Div ::
         Instruction
             ((I32 :~ l1) ': (I32 :~ l2) ': inputStack)
-            ((I32 :~ (l1 :/\ l2)) ': inputStack)
+            ((I32 :~ (l1 :/\ l2) :/\ Index Z secPC) ': inputStack)
             locals
             wasmModule
             inputLabels
             inputLabels
+            secPC
+            secPC
     -- TODO: Handle division by zero at type level if WASM spec allows,
     --       otherwise document that this fails at runtime
     --       In spec it is defined as: if i2 is 0, then the result is undefined.
@@ -119,266 +132,329 @@ data
     I32RemU ::
         Instruction
             ((I32 :~ l1) ': (I32 :~ l2) ': inputStack)
-            ((I32 :~ (l1 :/\ l2)) ': inputStack)
+            ((I32 :~ (l1 :/\ l2) :/\ Index Z secPC) ': inputStack)
             locals
             wasmModule
             inputLabels
-            inputLabels -- remainder operation (unsigned)
+            inputLabels
+            secPC
+            secPC -- remainder operation (unsigned)
             --      if i2 is zero then the output is undefined
     I32RemS ::
         Instruction
             ((I32 :~ l1) ': (I32 :~ l2) ': inputStack)
-            ((I32 :~ (l1 :/\ l2)) ': inputStack)
+            ((I32 :~ (l1 :/\ l2) :/\ Index Z secPC) ': inputStack)
             locals
             wasmModule
             inputLabels
-            inputLabels -- remainder operation (signed)
+            inputLabels
+            secPC
+            secPC -- remainder operation (signed)
             --      if i2 is zero then the output is undefined -> the result has the sign of the first operator
 
     -- i32 comparison operators (pop two values, push i32 boolean result)
     I32EqZ ::
         Instruction
             ((I32 :~ l) ': inputStack)
-            ((I32 :~ l) ': inputStack)
+            ((I32 :~ l :/\ Index Z secPC) ': inputStack)
             locals
             wasmModule
             inputLabels
-            inputLabels -- test if zero
+            inputLabels
+            secPC
+            secPC -- test if zero
     I32Eq ::
         Instruction
             ((I32 :~ l1) ': (I32 :~ l2) ': inputStack)
-            ((I32 :~ (l1 :/\ l2)) ': inputStack)
+            ((I32 :~ (l1 :/\ l2) :/\ Index Z secPC) ': inputStack)
             locals
             wasmModule
             inputLabels
-            inputLabels -- equal
+            inputLabels
+            secPC
+            secPC -- equal
     I32Neq ::
         Instruction
             ((I32 :~ l1) ': (I32 :~ l2) ': inputStack)
-            ((I32 :~ (l1 :/\ l2)) ': inputStack)
+            ((I32 :~ (l1 :/\ l2) :/\ Index Z secPC) ': inputStack)
             locals
             wasmModule
             inputLabels
-            inputLabels -- inequality
+            inputLabels
+            secPC
+            secPC -- inequality
     I32LtS ::
         Instruction
             ((I32 :~ l1) ': (I32 :~ l2) ': inputStack)
-            ((I32 :~ (l1 :/\ l2)) ': inputStack)
+            ((I32 :~ (l1 :/\ l2) :/\ Index Z secPC) ': inputStack)
             locals
             wasmModule
             inputLabels
-            inputLabels -- less than (signed)
+            inputLabels
+            secPC
+            secPC -- less than (signed)
     I32LtU ::
         Instruction
             ((I32 :~ l1) ': (I32 :~ l2) ': inputStack)
-            ((I32 :~ (l1 :/\ l2)) ': inputStack)
+            ((I32 :~ (l1 :/\ l2) :/\ Index Z secPC) ': inputStack)
             locals
             wasmModule
             inputLabels
-            inputLabels -- less than (unsigned)
+            inputLabels
+            secPC 
+            secPC-- less than (unsigned)
     I32LeS ::
         Instruction
             ((I32 :~ l1) ': (I32 :~ l2) ': inputStack)
-            ((I32 :~ (l1 :/\ l2)) ': inputStack)
+            ((I32 :~ (l1 :/\ l2) :/\ Index Z secPC) ': inputStack)
             locals
             wasmModule
             inputLabels
-            inputLabels -- less or equal (signed)
+            inputLabels
+            secPC
+            secPC -- less or equal (signed)
     I32LeU ::
         Instruction
             ((I32 :~ l1) ': (I32 :~ l2) ': inputStack)
-            ((I32 :~ (l1 :/\ l2)) ': inputStack)
+            ((I32 :~ (l1 :/\ l2) :/\ Index Z secPC) ': inputStack)
             locals
             wasmModule
             inputLabels
-            inputLabels -- less or equal (unsigned)
+            inputLabels
+            secPC
+            secPC -- less or equal (unsigned)
     I32GtS ::
         Instruction
             ((I32 :~ l1) ': (I32 :~ l2) ': inputStack)
-            ((I32 :~ (l1 :/\ l2)) ': inputStack)
+            ((I32 :~ (l1 :/\ l2) :/\ Index Z secPC) ': inputStack)
             locals
             wasmModule
             inputLabels
-            inputLabels -- greater than (signed)
+            inputLabels
+            secPC
+            secPC -- greater than (signed)
     I32GtU ::
         Instruction
             ((I32 :~ l1) ': (I32 :~ l2) ': inputStack)
-            ((I32 :~ (l1 :/\ l2)) ': inputStack)
+            ((I32 :~ (l1 :/\ l2) :/\ Index Z secPC) ': inputStack)
             locals
             wasmModule
             inputLabels
-            inputLabels -- greater than (unsigned)
+            inputLabels
+            secPC
+            secPC -- greater than (unsigned)
     I32GeS ::
         Instruction
             ((I32 :~ l1) ': (I32 :~ l2) ': inputStack)
-            ((I32 :~ (l1 :/\ l2)) ': inputStack)
+            ((I32 :~ (l1 :/\ l2) :/\ Index Z secPC) ': inputStack)
             locals
             wasmModule
             inputLabels
-            inputLabels -- greater or equal (signed)
+            inputLabels
+            secPC
+            secPC -- greater or equal (signed)
     I32GeU ::
         Instruction
             ((I32 :~ l1) ': (I32 :~ l2) ': inputStack)
-            ((I32 :~ (l1 :/\ l2)) ': inputStack)
+            ((I32 :~ (l1 :/\ l2) :/\ Index Z secPC) ': inputStack)
             locals
             wasmModule
             inputLabels
-            inputLabels -- greater or equal (unsigned)
+            inputLabels
+            secPC
+            secPC -- greater or equal (unsigned)
             -- more operators (e.g. bitwise negation, bitwise conjunction, ..., min, max)
 
     -- i64 arithmetic operators
     I64Const ::
+        KnownSecLevel l ->
         Int64 ->
         Instruction
             inputStack
-            ((I64 :~ Low) ': inputStack)
+            ((I64 :~ (l :/\ t)) ': inputStack)
             locals
             wasmModule
             inputLabels
             inputLabels
+            (t ': secPC)
+            (t ': secPC)
     -- i64 arithmetic operators (all pop two values, push one result)
 
     I64Add ::
         Instruction
             ((I64 :~ l1) ': (I64 :~ l2) ': inputStack)
-            ((I64 :~ (l1 :/\ l2)) ': inputStack)
+            ((I64 :~ (l1 :/\ l2) :/\ Index Z secPC) ': inputStack)
             locals
             wasmModule
             inputLabels
             inputLabels
+            secPC
+            secPC
     I64Sub ::
         Instruction
             ((I64 :~ l1) ': (I64 :~ l2) ': inputStack)
-            ((I64 :~ (l1 :/\ l2)) ': inputStack)
+            ((I64 :~ (l1 :/\ l2) :/\ Index Z secPC) ': inputStack)
             locals
             wasmModule
             inputLabels
             inputLabels
+            secPC
+            secPC
     I64Mul ::
         Instruction
             ((I64 :~ l1) ': (I64 :~ l2) ': inputStack)
-            ((I64 :~ (l1 :/\ l2)) ': inputStack)
+            ((I64 :~ (l1 :/\ l2) :/\ Index Z secPC) ': inputStack)
             locals
             wasmModule
             inputLabels
             inputLabels
+            secPC
+            secPC
     I64Div ::
         Instruction
             ((I64 :~ l1) ': (I64 :~ l2) ': inputStack)
-            ((I64 :~ (l1 :/\ l2)) ': inputStack)
+            ((I64 :~ (l1 :/\ l2) :/\ Index Z secPC) ': inputStack)
             locals
             wasmModule
             inputLabels
             inputLabels
+            secPC
+            secPC
     -- differentiation signed vs unsigned?
     I64RemU ::
         Instruction
             ((I64 :~ l1) ': (I64 :~ l2) ': inputStack)
-            ((I64 :~ (l1 :/\ l2)) ': inputStack)
+            ((I64 :~ (l1 :/\ l2) :/\ Index Z secPC) ': inputStack)
             locals
             wasmModule
             inputLabels
-            inputLabels -- remainder operation (unsigned)
+            inputLabels
+            secPC 
+            secPC -- remainder operation (unsigned)
             --      if i2 is zero then the output is undefined
     I64RemS ::
         Instruction
             ((I64 :~ l1) ': (I64 :~ l2) ': inputStack)
-            ((I64 :~ (l1 :/\ l2)) ': inputStack)
+            ((I64 :~ (l1 :/\ l2) :/\ Index Z secPC) ': inputStack)
             locals
             wasmModule
             inputLabels
-            inputLabels -- remaidner operaton (signed)
+            inputLabels
+            secPC
+            secPC -- remaidner operaton (signed)
             --      if i2 is zero then the output is undefined -> the result has the sign of the first operator
 
     -- I64 comparison operators
     I64EqZ ::
         Instruction
             ((I64 :~ l) ': inputStack)
-            ((I64 :~ l) ': inputStack)
+            ((I64 :~ l :/\ Index Z secPC) ': inputStack)
             locals
             wasmModule
             inputLabels
-            inputLabels -- test if equal to zero
+            inputLabels
+            secPC
+            secPC -- test if equal to zero
     I64Eq ::
         Instruction
             ((I64 :~ l1) ': (I64 :~ l2) ': inputStack)
-            ((I64 :~ (l1 :/\ l2)) ': inputStack)
+            ((I64 :~ (l1 :/\ l2) :/\ Index Z secPC) ': inputStack)
             locals
             wasmModule
             inputLabels
-            inputLabels -- equal
+            inputLabels
+            secPC
+            secPC -- equal
     I64Neq ::
         Instruction
             ((I64 :~ l1) ': (I64 :~ l2) ': inputStack)
-            ((I64 :~ (l1 :/\ l2)) ': inputStack)
+            ((I64 :~ (l1 :/\ l2) :/\ Index Z secPC) ': inputStack)
             locals
             wasmModule
             inputLabels
-            inputLabels -- inequality
+            inputLabels
+            secPC
+            secPC -- inequality
     I64LeS ::
         Instruction
             ((I64 :~ l1) ': (I64 :~ l2) ': inputStack)
-            ((I64 :~ (l1 :/\ l2)) ': inputStack)
+            ((I64 :~ (l1 :/\ l2) :/\ Index Z secPC) ': inputStack)
             locals
             wasmModule
             inputLabels
-            inputLabels -- less or equal (signed)
+            inputLabels
+            secPC
+            secPC -- less or equal (signed)
     I64LeU ::
         Instruction
             ((I64 :~ l1) ': (I64 :~ l2) ': inputStack)
-            ((I64 :~ (l1 :/\ l2)) ': inputStack)
+            ((I64 :~ (l1 :/\ l2) :/\ Index Z secPC) ': inputStack)
             locals
             wasmModule
             inputLabels
-            inputLabels -- less or equal (unsigned)
+            inputLabels
+            secPC
+            secPC -- less or equal (unsigned)
     I64LtS ::
         Instruction
             ((I64 :~ l1) ': (I64 :~ l2) ': inputStack)
-            ((I64 :~ (l1 :/\ l2)) ': inputStack)
+            ((I64 :~ (l1 :/\ l2) :/\ Index Z secPC) ': inputStack)
             locals
             wasmModule
             inputLabels
-            inputLabels -- less than (signed)
+            inputLabels
+            secPC
+            secPC -- less than (signed)
     I64LtU ::
         Instruction
             ((I64 :~ l1) ': (I64 :~ l2) ': inputStack)
-            ((I64 :~ (l1 :/\ l2)) ': inputStack)
+            ((I64 :~ (l1 :/\ l2) :/\ Index Z secPC) ': inputStack)
             locals
             wasmModule
             inputLabels
-            inputLabels -- less than (unsigned)
+            inputLabels
+            secPC
+            secPC -- less than (unsigned)
     I64GtS ::
         Instruction
             ((I64 :~ l1) ': (I64 :~ l2) ': inputStack)
-            ((I64 :~ (l1 :/\ l2)) ': inputStack)
+            ((I64 :~ (l1 :/\ l2) :/\ Index Z secPC) ': inputStack)
             locals
             wasmModule
             inputLabels
-            inputLabels -- greater than (signed)
+            inputLabels
+            secPC
+            secPC -- greater than (signed)
     I64GtU ::
         Instruction
             ((I64 :~ l1) ': (I64 :~ l2) ': inputStack)
-            ((I64 :~ (l1 :/\ l2)) ': inputStack)
+            ((I64 :~ (l1 :/\ l2) :/\ Index Z secPC) ': inputStack)
             locals
             wasmModule
             inputLabels
-            inputLabels -- greater than (unsigned)
+            inputLabels
+            secPC
+            secPC -- greater than (unsigned)
     I64GeS ::
         Instruction
             ((I64 :~ l1) ': (I64 :~ l2) ': inputStack)
-            ((I64 :~ (l1 :/\ l2)) ': inputStack)
+            ((I64 :~ (l1 :/\ l2) :/\ Index Z secPC) ': inputStack)
             locals
             wasmModule
             inputLabels
-            inputLabels -- greater or equal (signed)
+            inputLabels
+            secPC
+            secPC -- greater or equal (signed)
     I64GeU ::
         Instruction
             ((I64 :~ l1) ': (I64 :~ l2) ': inputStack)
-            ((I64 :~ (l1 :/\ l2)) ': inputStack)
+            ((I64 :~ (l1 :/\ l2) :/\ Index Z secPC) ': inputStack)
             locals
             wasmModule
             inputLabels
-            inputLabels -- greater or equal (unsigned)
+            inputLabels
+            secPC
+            secPC -- greater or equal (unsigned)
 
     -- Stack manipulation
     Drop ::
@@ -388,32 +464,38 @@ data
             locals
             wasmModule
             inputLabels
-            inputLabels -- remove top value from stack
+            inputLabels
+            secPC
+            secPC -- remove top value from stack
 
     -- Local variable operations
     -- LocalGet: push the value of a local variable onto the stack
-    LocalGet ::
+    LocalGet :: -- TODO: either restrict this such that low can only be get in low and high in high or have the unsafeCoerce
         (n ~ Length locals) =>
         SFin i n ->
         Instruction
             inputStack
-            (Index i locals ': inputStack)
+            (CombineLocalSecLevel (Index i locals) t ': inputStack)
             locals
             wasmModule
             inputLabels
             inputLabels
-    -- LocalSet: pop a value from stack and store it in a local variable
-    LocalSet ::
-        (n ~ Length locals) =>
+            (t ': secPC)
+            (t ': secPC) -- pop a value from stack and store it in a local variable
+    LocalSet :: -- TODO actually comment below not quite accurate -> we can only set the exact security level and type since we have it typed that way
+        (n ~ Length locals
+        ,  CanFlow (Index Z secPC) (GetSecLevel (Index i locals)) ~ 'True) => -- we can only set a local if the current secPC is can flow into the level the local slot has
         SFin i n ->
         Instruction
             (Index i locals ': inputStack)
+            -- ( GetWasmType (Index i locals) :~ GetSecLevel (Index i locals) :/\ Index Z secPC ': inputStack) => could do it like this but then need unsafeCoerce
             inputStack
             locals
             wasmModule
             inputLabels
             inputLabels
-    -- LocalTee:
+            secPC
+            secPC -- pop val from stack
     -- pop val from stack
     -- push val to stack
     -- push val to stack
@@ -423,7 +505,8 @@ data
     -- => in the end value is still on top of the stack as well as saved in the locals
     -- => technically the stack looks the same at the start and at the end?
     LocalTee ::
-        (n ~ Length locals) =>
+        (n ~ Length locals
+        ,  CanFlow (Index Z secPC) (GetSecLevel (Index i locals)) ~ 'True) =>
         SFin i n ->
         Instruction
             (Index i locals ': inputStack)
@@ -432,9 +515,12 @@ data
             wasmModule
             inputLabels
             inputLabels
+            secPC
+            secPC
     -- TODO: Handle uninitialized local variables according to WASM spec
 
     -- GlobalGet: push the value of a global variable onto the stack
+    -- SAME HERE AS IN LOCALS
     GlobalGet ::
         forall
             (i :: Nat)
@@ -443,16 +529,19 @@ data
             (inputStack :: ValStackShape)
             (wasmModule :: WasmModule shape)
             (locals :: LocalsShape)
-            (inputLabels :: LabelStackShape).
+            (inputLabels :: LabelStackShape)
+            (secPC :: [SecLevel]).
         (n ~ GetGlobalsShape shape) =>
         SFin i n ->
         Instruction
             inputStack
-            (GlobalTypeToWasmType (Index i (GetGlobals wasmModule)) ': inputStack)
+            (CombineSecLevel (GlobalTypeToWasmType (Index i (GetGlobals wasmModule))) (Index Z secPC) ': inputStack)
             locals
             wasmModule
             inputLabels
             inputLabels
+            secPC
+            secPC
     -- GlobalSet: pop a value from stack and store it in a global variable => global type must be mutable where do we check this
     GlobalSet ::
         forall
@@ -462,9 +551,11 @@ data
             (inputStack :: ValStackShape)
             (wasmModule :: WasmModule shape)
             (locals :: LocalsShape)
-            (inputLabels :: LabelStackShape).
+            (inputLabels :: LabelStackShape)
+            (secPC :: [SecLevel]).
         ( n ~ GetGlobalsShape shape
         , IsVarMutability (GetMutability (Index i (GetGlobals wasmModule))) ~ 'True
+        , CanFlow (Index Z secPC) (GetSecLevel (GlobalTypeToWasmType (Index i (GetGlobals wasmModule)))) ~ 'True
         ) =>
         SFin i n ->
         Instruction
@@ -474,7 +565,8 @@ data
             wasmModule
             inputLabels
             inputLabels
-    -- MEMORY INSTRUCTIONS
+            secPC
+            secPC -- MEMORY INSTRUCTIONS
     -- need to make this an annotated Function such that we can know whether we load an I32, I64, F32, F64
     -- do we even have to access the memory like this: (Index offset (GetMems wasmModule))
     -- this simply returns a memory type which includes the limits of the memory
@@ -492,7 +584,8 @@ data
             (wasmModule :: WasmModule shape)
             (locals :: LocalsShape)
             (inputLabels :: LabelStackShape)
-            (lAddr :: SecLevel).
+            (lAddr :: SecLevel)
+            (secPC :: [SecLevel]).
         (Loadable wasmtype, n ~ GetMemoriesShape shape) =>
         SFin i n ->
         MemArg align offset -> -- ignore alignment for now, also not 100% sure why i32 has to be on top of stack
@@ -503,7 +596,8 @@ data
             wasmModule
             inputLabels
             inputLabels
-    -- MemoryStore: pop address and value from stack, store value at address in memory
+            secPC
+            secPC -- MemoryStore: pop address and value from stack, store value at address in memory
     -- should we also make this annoted with the wasmtype?
     -- MemoryStore :: MemArg offset alignment -- add  constraint on limit of memory
     --          -> Instruction (I64 :> wasmtype :> inputStack) inputStack locals wasmModule
@@ -522,7 +616,8 @@ data
             (locals :: LocalsShape)
             (inputLabels :: LabelStackShape)
             (lAddr :: SecLevel)
-            (lVal :: SecLevel).
+            (lVal :: SecLevel)
+            (secPC :: [SecLevel]).
         ( n ~ GetMemoriesShape shape
         , -- alignment must be multiple of 4 if wasmtype is I32 and multiple of 8 if wasmtype is I64
           -- ModEq align (ByteSize wasmtype) ~ 0, This one would only work with alignment also were a Nat not a word => however maybe we can evendo this at tha type level and keep it as a Word32 at execution time.
@@ -537,7 +632,8 @@ data
             wasmModule
             inputLabels
             inputLabels
-    -- Control flow instructions
+            secPC
+            secPC -- Control flow instructions
     -- Block: a sequence of instructions that can be exited early with 'br'
     -- The stack shape arithmetic (+>+) ensures the block result sits on top of the input stack
     -- typeidx|[valtype?] => typeidx points to a type in the type section.
@@ -561,9 +657,12 @@ data
             (outputStack :: ValStackShape)
             (locals :: LocalsShape)
             (wasmModule :: WasmModule shape)
-            (inputLabels :: LabelStackShape).
+            (inputLabels :: LabelStackShape)
+            (secPC :: [SecLevel])
+            (topSecPC :: SecLevel).
         ( CheckTopVecEqual paramsStack inputStack ~ 'True
         , CheckTopVecEqual resStack outputStack ~ 'True -- ensure that the parameters of the block are on top of the input stack
+        , topSecPC ~ Index Z secPC
         ) =>
         BlockType paramsStack resStack -> -- represents the optional valtype however what about the typeidx? can't know the function type
         InstructionSequence
@@ -572,9 +671,10 @@ data
             locals
             wasmModule
             ('LabelShape resStack (Length inputStack) ': inputLabels)
-            ('LabelShape resStack (Length inputStack) ': inputLabels) ->
+            ('LabelShape resStack (Length inputStack) ': inputLabels)
+            (topSecPC ': secPC) ->
         Instruction inputStack outputStack locals 
-            wasmModule inputLabels inputLabels
+            wasmModule inputLabels inputLabels secPC secPC
     -- Loop: a sequence of instructions that can be restarted with 'br'
     Loop ::
         forall
@@ -585,11 +685,12 @@ data
             (outputStack :: ValStackShape)
             (locals :: LocalsShape)
             (wasmModule :: WasmModule shape)
-            (inputLabels :: LabelStackShape).
+            (inputLabels :: LabelStackShape)
+            (secPC :: [SecLevel])
+            (topSecPC :: SecLevel).
         ( CheckTopVecEqual paramsStack inputStack ~ 'True
         , CheckTopVecEqual resStack outputStack ~ 'True -- ensure that the parameters of the block are on top of the input stack
-        -- , CheckWasmTypesInLocalsEqual locals outLocals ~ 'True
-        -- , CheckGlobalsTypesUnchanged (GetGlobals wasmModule) (GetGlobals outWasmModule) ~ 'True
+        , topSecPC ~ Index Z secPC
         ) =>
         BlockType paramsStack resStack ->
         InstructionSequence
@@ -598,9 +699,10 @@ data
             locals
             wasmModule
             ('LabelShape paramsStack (Length inputStack) ': inputLabels)
-            ('LabelShape paramsStack (Length inputStack) ': inputLabels) ->
+            ('LabelShape paramsStack (Length inputStack) ': inputLabels)
+            (topSecPC ': secPC) ->
         Instruction inputStack outputStack locals 
-            wasmModule inputLabels inputLabels
+            wasmModule inputLabels inputLabels secPC secPC
     -- If: conditional execution (pops i32 condition, executes one of two branches)
     If ::
         ( CheckTopVecEqual paramsStack inputStack ~ 'True
@@ -619,14 +721,16 @@ data
             locals
             wasmModule
             ('LabelShape resStack (Length inputStack) ': inputLabels)
-            ('LabelShape resStack (Length inputStack) ': inputLabels) -> -- then branch
+            ('LabelShape resStack (Length inputStack) ': inputLabels)
+            ((lCond :/\ Index Z secPC) ': secPC) -> -- then branch
         InstructionSequence
             inputStack
             outputStack2
             locals
             wasmModule
             ('LabelShape resStack (Length inputStack) ': inputLabels)
-            ('LabelShape resStack (Length inputStack) ': inputLabels) -> -- else branch
+            ('LabelShape resStack (Length inputStack) ': inputLabels)
+            ((lCond :/\ Index Z secPC) ': secPC) -> -- else branch
         Instruction
             (I32 :~ lCond ': inputStack) -- l condition says whether the condition itself is high or low security level
             outputStack
@@ -634,6 +738,8 @@ data
             wasmModule
             inputLabels
             inputLabels
+            secPC
+            secPC
     -- Br: unconditional branch to a label
     -- Nat is the nesting depth of how many nested blocks/loops to break out of
     -- I guess this means we need an additional stack or vector that stores the current
@@ -688,7 +794,8 @@ data
             (inputStack :: ValStackShape)
             (outputStack :: ValStackShape)
             (locals :: LocalsShape)
-            (wasmModule :: WasmModule shape).
+            (wasmModule :: WasmModule shape)
+            (secPC :: [SecLevel]).
         ( CheckTopVecEqual (GetLabelType (Index i inputLabels)) inputStack ~ 'True
         , targetLabel : remainingLabels ~ Drop i inputLabels
         , ( Take (Arity targetLabel) inputStack
@@ -696,6 +803,7 @@ data
           )
             ~ outputStack
         , l ~ Length inputLabels
+        , LessThan l (Length secPC) ~ 'True
         ) =>
         SFin i l ->
         Instruction
@@ -708,6 +816,8 @@ data
             wasmModule
             inputLabels
             inputLabels
+            secPC
+            secPC
     -- BrIf: conditional branch (pops i32 condition)
     -- DINA: Problem => either we branch then we have the conditions below for the outputStack or we don't branch
     -- and then the outputStack is just the inputStack minus the i32 condition
@@ -723,11 +833,15 @@ data
             (outputStack :: ValStackShape)
             (locals :: LocalsShape)
             (wasmModule :: WasmModule shape)
+            (secPC :: [SecLevel])
+            (topL :: SecLevel)
             (lCond :: SecLevel). -- whether condition is high or low security level
         -- inputStack ~ outputStack =>
         -- (CheckTopVecEqual (GetLabelType (Index i inputLabels)) (  inputStack) ~ 'True) =>
         ( targetLabel : remainingLabels ~ Drop i inputLabels
         , l ~ Length inputLabels
+        , LessThan l (S (Length secPC)) ~ 'True
+        , topL ~ Index Z secPC
         ) =>
         SFin i l ->
         Instruction
@@ -737,12 +851,15 @@ data
             wasmModule
             inputLabels
             inputLabels
+            (topL ': secPC)
+            ((lCond :/\ topL) ': secPC)
+
     -- "naive" way
     Call ::
         FuncName ->
         FuncTypeAnn inputStack outputStack ->
         Instruction inputStack outputStack locals
-            wasmModule inputLabels outputLabels
+            wasmModule inputLabels outputLabels secPC secPC
     -- here we need to po
     -- Call  :: FuncName f -> Instruction (GetParamsOf (GetTypeOfFunc f wasmModule)) (GetResultsOf (GetTypeOfFunc f wasmModule)) locals wasmModule inputLabels outputLabels
 
@@ -754,6 +871,8 @@ data
             wasmModule
             (topLabel ': outputLabels)
             outputLabels
+            secPC
+            secPC
 
 -- TODO: missing WASM instructions
 
@@ -886,6 +1005,7 @@ data
         (wasmModule :: WasmModule shape)
         (inputLabels :: LabelStackShape)
         (outputLabels :: LabelStackShape)
+        (inSecPC :: [SecLevel])
     where
     End ::
         InstructionSequence
@@ -894,29 +1014,35 @@ data
             locals
             wasmModule
             inputLabels
-            inputLabels -- Base case: empty sequence (identity)
-    (:|) ::
+            inputLabels
+            inSecPC -- Base case: empty sequence (identity)
+    (:|) :: (Length inSecPC ~ Length outSecPC) =>
         Instruction
             initialStack
             intermediateStack
             locals
             wasmModule
             inputLabels
-            intermediateLabels -> -- Inductive case: first instruction
+            intermediateLabels
+            inSecPC
+            outSecPC -- need this for branch if instructions
+             -> -- Inductive case: first instruction
         InstructionSequence
             intermediateStack
             finalStack
             locals
             wasmModule
             intermediateLabels
-            outputLabels -> -- rest of sequence
+            outputLabels
+            outSecPC -> -- rest of sequence
         InstructionSequence
             initialStack
             finalStack
             locals
             wasmModule
             inputLabels
-            outputLabels -- combined sequence
+            outputLabels
+            outSecPC -- combined sequence
 
 {-
 =============================================================================
@@ -935,6 +1061,7 @@ data
         (locals :: LocalsShape)
         (outputLabels :: LabelStackShape)
         (wasmModule :: WasmModule shape)
+        (secPC :: [SecLevel])
     where
     Function ::
         FuncTypeAnn inputStack resultStack ->
@@ -944,8 +1071,9 @@ data
             locals
             wasmModule
             outputLabels
-            outputLabels ->
-        Function inputStack resultStack locals outputLabels wasmModule
+            outputLabels
+            secPC ->
+        Function inputStack resultStack locals outputLabels wasmModule secPC
 
 -- add a new type that captures the function type annotation, i.e.
 -- FuncTypeAnn inputStack resultStack ->

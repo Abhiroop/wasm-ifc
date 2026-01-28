@@ -31,6 +31,9 @@ type family CheckTopVecEqual (top :: ValStackShape) (stack :: ValStackShape) :: 
     
 type LocalsShape = [SecWasmType]
 
+type family CombineLocalSecLevel (local :: SecWasmType) (secPC :: SecLevel) :: SecWasmType where
+    CombineLocalSecLevel (t :~ l1) l2 = (t :~ (l1 :/\ l2))
+
 type family SetSecLevelLocals (i :: Nat) (l :: SecLevel) (locals :: LocalsShape) :: LocalsShape where
     SetSecLevelLocals 'Z l ((w :~ oldL) ': locals) = ((w :~ l) ': locals)
     SetSecLevelLocals ('S i) l (currLocal ': rest) =
@@ -249,6 +252,12 @@ instance CanFlowInto 'Low 'Low
 instance CanFlowInto 'Low 'High
 instance CanFlowInto 'High 'High
 
+type family CanFlow (l :: SecLevel) (l' :: SecLevel) :: Bool where
+    CanFlow 'Low 'Low = 'True
+    CanFlow 'Low 'High = 'True
+    CanFlow 'High 'High = 'True
+    CanFlow 'High 'Low = 'False
+
 infixl 7 :/\
 type family (:/\) (l :: SecLevel) (l' :: SecLevel) :: SecLevel where
     Low :/\ Low = Low
@@ -257,8 +266,14 @@ type family (:/\) (l :: SecLevel) (l' :: SecLevel) :: SecLevel where
 type family GetWasmType (swt :: SecWasmType) :: WasmType where
     GetWasmType (t :~ l) = t
 
+type family GetSecLevel (swt :: SecWasmType) :: SecLevel where
+    GetSecLevel (t :~ l) = l
+
+type family CombineSecLevel (swt :: SecWasmType) (secPC :: SecLevel) :: SecWasmType where
+    CombineSecLevel (t :~ l1) l2 = (t :~ (l1 :/\ l2))
+
 type family RuntimeSecTypeOf (swt :: SecWasmType) :: Type where
-    RuntimeSecTypeOf (t :~ l) = RuntimeTypeOf t
+    RuntimeSecTypeOf (t :~ _) =  RuntimeTypeOf t
 
 combineSecLevels ::
     KnownSecLevel l1 ->
