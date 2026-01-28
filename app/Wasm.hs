@@ -65,9 +65,7 @@ data
         (inputStack :: ValStackShape)
         (outputStack :: ValStackShape)
         (locals :: LocalsShape)
-        (outLocals :: LocalsShape)
         (wasmModule :: WasmModule shape)
-        (outWasmModule :: WasmModule shape)
         (inputLabels :: LabelStackShape)
         (outputLabels :: LabelStackShape)
     where
@@ -78,8 +76,6 @@ data
             inputStack
             ((I32 :~ Low ': inputStack) :: ValStackShape)
             locals
-            locals
-            wasmModule
             wasmModule
             inputLabels
             inputLabels
@@ -89,8 +85,6 @@ data
             ((I32 :~ l1) ': (I32 :~ l2) ': inputStack)
             ((I32 :~ (l1 :/\ l2)) ': inputStack)
             locals
-            locals
-            wasmModule
             wasmModule
             inputLabels
             inputLabels
@@ -99,8 +93,6 @@ data
             ((I32 :~ l1) ': (I32 :~ l2) ': inputStack)
             ((I32 :~ (l1 :/\ l2)) ': inputStack)
             locals
-            locals
-            wasmModule
             wasmModule
             inputLabels
             inputLabels
@@ -109,8 +101,6 @@ data
             ((I32 :~ l1) ': (I32 :~ l2) ': inputStack)
             ((I32 :~ (l1 :/\ l2)) ': inputStack)
             locals
-            locals
-            wasmModule
             wasmModule
             inputLabels
             inputLabels
@@ -119,8 +109,6 @@ data
             ((I32 :~ l1) ': (I32 :~ l2) ': inputStack)
             ((I32 :~ (l1 :/\ l2)) ': inputStack)
             locals
-            locals
-            wasmModule
             wasmModule
             inputLabels
             inputLabels
@@ -133,8 +121,6 @@ data
             ((I32 :~ l1) ': (I32 :~ l2) ': inputStack)
             ((I32 :~ (l1 :/\ l2)) ': inputStack)
             locals
-            locals
-            wasmModule
             wasmModule
             inputLabels
             inputLabels -- remainder operation (unsigned)
@@ -144,8 +130,6 @@ data
             ((I32 :~ l1) ': (I32 :~ l2) ': inputStack)
             ((I32 :~ (l1 :/\ l2)) ': inputStack)
             locals
-            locals
-            wasmModule
             wasmModule
             inputLabels
             inputLabels -- remainder operation (signed)
@@ -157,8 +141,6 @@ data
             ((I32 :~ l) ': inputStack)
             ((I32 :~ l) ': inputStack)
             locals
-            locals
-            wasmModule
             wasmModule
             inputLabels
             inputLabels -- test if zero
@@ -167,8 +149,6 @@ data
             ((I32 :~ l1) ': (I32 :~ l2) ': inputStack)
             ((I32 :~ (l1 :/\ l2)) ': inputStack)
             locals
-            locals
-            wasmModule
             wasmModule
             inputLabels
             inputLabels -- equal
@@ -177,8 +157,6 @@ data
             ((I32 :~ l1) ': (I32 :~ l2) ': inputStack)
             ((I32 :~ (l1 :/\ l2)) ': inputStack)
             locals
-            locals
-            wasmModule
             wasmModule
             inputLabels
             inputLabels -- inequality
@@ -187,8 +165,6 @@ data
             ((I32 :~ l1) ': (I32 :~ l2) ': inputStack)
             ((I32 :~ (l1 :/\ l2)) ': inputStack)
             locals
-            locals
-            wasmModule
             wasmModule
             inputLabels
             inputLabels -- less than (signed)
@@ -197,8 +173,6 @@ data
             ((I32 :~ l1) ': (I32 :~ l2) ': inputStack)
             ((I32 :~ (l1 :/\ l2)) ': inputStack)
             locals
-            locals
-            wasmModule
             wasmModule
             inputLabels
             inputLabels -- less than (unsigned)
@@ -207,8 +181,6 @@ data
             ((I32 :~ l1) ': (I32 :~ l2) ': inputStack)
             ((I32 :~ (l1 :/\ l2)) ': inputStack)
             locals
-            locals
-            wasmModule
             wasmModule
             inputLabels
             inputLabels -- less or equal (signed)
@@ -217,8 +189,6 @@ data
             ((I32 :~ l1) ': (I32 :~ l2) ': inputStack)
             ((I32 :~ (l1 :/\ l2)) ': inputStack)
             locals
-            locals
-            wasmModule
             wasmModule
             inputLabels
             inputLabels -- less or equal (unsigned)
@@ -227,8 +197,6 @@ data
             ((I32 :~ l1) ': (I32 :~ l2) ': inputStack)
             ((I32 :~ (l1 :/\ l2)) ': inputStack)
             locals
-            locals
-            wasmModule
             wasmModule
             inputLabels
             inputLabels -- greater than (signed)
@@ -237,8 +205,6 @@ data
             ((I32 :~ l1) ': (I32 :~ l2) ': inputStack)
             ((I32 :~ (l1 :/\ l2)) ': inputStack)
             locals
-            locals
-            wasmModule
             wasmModule
             inputLabels
             inputLabels -- greater than (unsigned)
@@ -247,8 +213,6 @@ data
             ((I32 :~ l1) ': (I32 :~ l2) ': inputStack)
             ((I32 :~ (l1 :/\ l2)) ': inputStack)
             locals
-            locals
-            wasmModule
             wasmModule
             inputLabels
             inputLabels -- greater or equal (signed)
@@ -257,8 +221,6 @@ data
             ((I32 :~ l1) ': (I32 :~ l2) ': inputStack)
             ((I32 :~ (l1 :/\ l2)) ': inputStack)
             locals
-            locals
-            wasmModule
             wasmModule
             inputLabels
             inputLabels -- greater or equal (unsigned)
@@ -271,8 +233,6 @@ data
             inputStack
             ((I64 :~ Low) ': inputStack)
             locals
-            locals
-            wasmModule
             wasmModule
             inputLabels
             inputLabels
@@ -283,8 +243,6 @@ data
             ((I64 :~ l1) ': (I64 :~ l2) ': inputStack)
             ((I64 :~ (l1 :/\ l2)) ': inputStack)
             locals
-            locals
-            wasmModule
             wasmModule
             inputLabels
             inputLabels
@@ -293,8 +251,6 @@ data
             ((I64 :~ l1) ': (I64 :~ l2) ': inputStack)
             ((I64 :~ (l1 :/\ l2)) ': inputStack)
             locals
-            locals
-            wasmModule
             wasmModule
             inputLabels
             inputLabels
@@ -303,8 +259,6 @@ data
             ((I64 :~ l1) ': (I64 :~ l2) ': inputStack)
             ((I64 :~ (l1 :/\ l2)) ': inputStack)
             locals
-            locals
-            wasmModule
             wasmModule
             inputLabels
             inputLabels
@@ -313,8 +267,6 @@ data
             ((I64 :~ l1) ': (I64 :~ l2) ': inputStack)
             ((I64 :~ (l1 :/\ l2)) ': inputStack)
             locals
-            locals
-            wasmModule
             wasmModule
             inputLabels
             inputLabels
@@ -324,8 +276,6 @@ data
             ((I64 :~ l1) ': (I64 :~ l2) ': inputStack)
             ((I64 :~ (l1 :/\ l2)) ': inputStack)
             locals
-            locals
-            wasmModule
             wasmModule
             inputLabels
             inputLabels -- remainder operation (unsigned)
@@ -335,8 +285,6 @@ data
             ((I64 :~ l1) ': (I64 :~ l2) ': inputStack)
             ((I64 :~ (l1 :/\ l2)) ': inputStack)
             locals
-            locals
-            wasmModule
             wasmModule
             inputLabels
             inputLabels -- remaidner operaton (signed)
@@ -348,8 +296,6 @@ data
             ((I64 :~ l) ': inputStack)
             ((I64 :~ l) ': inputStack)
             locals
-            locals
-            wasmModule
             wasmModule
             inputLabels
             inputLabels -- test if equal to zero
@@ -358,8 +304,6 @@ data
             ((I64 :~ l1) ': (I64 :~ l2) ': inputStack)
             ((I64 :~ (l1 :/\ l2)) ': inputStack)
             locals
-            locals
-            wasmModule
             wasmModule
             inputLabels
             inputLabels -- equal
@@ -368,8 +312,6 @@ data
             ((I64 :~ l1) ': (I64 :~ l2) ': inputStack)
             ((I64 :~ (l1 :/\ l2)) ': inputStack)
             locals
-            locals
-            wasmModule
             wasmModule
             inputLabels
             inputLabels -- inequality
@@ -378,8 +320,6 @@ data
             ((I64 :~ l1) ': (I64 :~ l2) ': inputStack)
             ((I64 :~ (l1 :/\ l2)) ': inputStack)
             locals
-            locals
-            wasmModule
             wasmModule
             inputLabels
             inputLabels -- less or equal (signed)
@@ -388,8 +328,6 @@ data
             ((I64 :~ l1) ': (I64 :~ l2) ': inputStack)
             ((I64 :~ (l1 :/\ l2)) ': inputStack)
             locals
-            locals
-            wasmModule
             wasmModule
             inputLabels
             inputLabels -- less or equal (unsigned)
@@ -398,8 +336,6 @@ data
             ((I64 :~ l1) ': (I64 :~ l2) ': inputStack)
             ((I64 :~ (l1 :/\ l2)) ': inputStack)
             locals
-            locals
-            wasmModule
             wasmModule
             inputLabels
             inputLabels -- less than (signed)
@@ -408,8 +344,6 @@ data
             ((I64 :~ l1) ': (I64 :~ l2) ': inputStack)
             ((I64 :~ (l1 :/\ l2)) ': inputStack)
             locals
-            locals
-            wasmModule
             wasmModule
             inputLabels
             inputLabels -- less than (unsigned)
@@ -418,8 +352,6 @@ data
             ((I64 :~ l1) ': (I64 :~ l2) ': inputStack)
             ((I64 :~ (l1 :/\ l2)) ': inputStack)
             locals
-            locals
-            wasmModule
             wasmModule
             inputLabels
             inputLabels -- greater than (signed)
@@ -428,8 +360,6 @@ data
             ((I64 :~ l1) ': (I64 :~ l2) ': inputStack)
             ((I64 :~ (l1 :/\ l2)) ': inputStack)
             locals
-            locals
-            wasmModule
             wasmModule
             inputLabels
             inputLabels -- greater than (unsigned)
@@ -438,8 +368,6 @@ data
             ((I64 :~ l1) ': (I64 :~ l2) ': inputStack)
             ((I64 :~ (l1 :/\ l2)) ': inputStack)
             locals
-            locals
-            wasmModule
             wasmModule
             inputLabels
             inputLabels -- greater or equal (signed)
@@ -448,8 +376,6 @@ data
             ((I64 :~ l1) ': (I64 :~ l2) ': inputStack)
             ((I64 :~ (l1 :/\ l2)) ': inputStack)
             locals
-            locals
-            wasmModule
             wasmModule
             inputLabels
             inputLabels -- greater or equal (unsigned)
@@ -460,8 +386,6 @@ data
             (dropped ': inputStack)
             inputStack
             locals
-            locals
-            wasmModule
             wasmModule
             inputLabels
             inputLabels -- remove top value from stack
@@ -475,8 +399,6 @@ data
             inputStack
             (Index i locals ': inputStack)
             locals
-            locals
-            wasmModule
             wasmModule
             inputLabels
             inputLabels
@@ -485,11 +407,9 @@ data
         (n ~ Length locals) =>
         SFin i n ->
         Instruction
-            (GetWasmType (Index i locals) :~ secLevel ': inputStack)
+            (Index i locals ': inputStack)
             inputStack
             locals
-            (SetSecLevelLocals i secLevel locals)
-            wasmModule
             wasmModule
             inputLabels
             inputLabels
@@ -506,11 +426,9 @@ data
         (n ~ Length locals) =>
         SFin i n ->
         Instruction
-            (GetWasmType (Index i locals) :~ secLevel ': inputStack)
-            (GetWasmType (Index i locals) :~ secLevel ': inputStack)
+            (Index i locals ': inputStack)
+            (Index i locals ': inputStack)
             locals
-            (SetSecLevelLocals i secLevel locals)
-            wasmModule
             wasmModule
             inputLabels
             inputLabels
@@ -532,8 +450,6 @@ data
             inputStack
             (GlobalTypeToWasmType (Index i (GetGlobals wasmModule)) ': inputStack)
             locals
-            locals
-            wasmModule
             wasmModule
             inputLabels
             inputLabels
@@ -545,25 +461,17 @@ data
             (shape :: WasmModuleShape)
             (inputStack :: ValStackShape)
             (wasmModule :: WasmModule shape)
-            (outputWasmModule :: WasmModule shape)
             (locals :: LocalsShape)
-            (inputLabels :: LabelStackShape)
-            (secLevel :: SecLevel).
+            (inputLabels :: LabelStackShape).
         ( n ~ GetGlobalsShape shape
         , IsVarMutability (GetMutability (Index i (GetGlobals wasmModule))) ~ 'True
-        , GetMems wasmModule ~ GetMems outputWasmModule
-        , GetGlobals outputWasmModule ~ GetGlobals (SetSecLevelsGlobalModule i secLevel wasmModule)
-        , outputWasmModule ~ SetSecLevelsGlobalModule i secLevel wasmModule
         ) =>
         SFin i n ->
         Instruction
-            ((GetWasmType (GlobalTypeToWasmType (Index i (GetGlobals wasmModule))) :~ secLevel)  ': inputStack)
+            (GlobalTypeToWasmType (Index i (GetGlobals wasmModule)) ': inputStack)
             inputStack
             locals
-            locals
             wasmModule
-            -- (SetSecLevelsGlobalModule i secLevel wasmModule)
-            (WasmModuleR (SetSecLevelGlobals i secLevel (GetGlobals wasmModule)) (GetMems wasmModule))
             inputLabels
             inputLabels
     -- MEMORY INSTRUCTIONS
@@ -592,8 +500,6 @@ data
             (I64 :~ lAddr ': inputStack) -- TODO: what happens if the address somehow have highsecurity level? Should it influence the value?
             (wasmtype :~ High ': inputStack) -- TODO: No way to know if what we just loaded has high security level so just mark it as high for now?
             locals
-            locals
-            wasmModule
             wasmModule
             inputLabels
             inputLabels
@@ -628,8 +534,6 @@ data
             (I64 :~ lAddr ': wasmtype :~ lVal ': inputStack) -- But we cannot store the security level of that value. So are we just overly cautious and mark everything coming from memory as high security level?
             inputStack
             locals
-            locals
-            wasmModule
             wasmModule
             inputLabels
             inputLabels
@@ -656,27 +560,21 @@ data
             (inputStack :: ValStackShape)
             (outputStack :: ValStackShape)
             (locals :: LocalsShape)
-            (outLocals :: LocalsShape)
             (wasmModule :: WasmModule shape)
-            (outWasmModule :: WasmModule shape)
             (inputLabels :: LabelStackShape).
         ( CheckTopVecEqual paramsStack inputStack ~ 'True
         , CheckTopVecEqual resStack outputStack ~ 'True -- ensure that the parameters of the block are on top of the input stack
-        , CheckWasmTypesInLocalsEqual locals outLocals ~ 'True
-        , CheckGlobalsTypesUnchanged (GetGlobals wasmModule) (GetGlobals outWasmModule) ~ 'True
         ) =>
         BlockType paramsStack resStack -> -- represents the optional valtype however what about the typeidx? can't know the function type
         InstructionSequence
             inputStack
             outputStack
             locals
-            outLocals
             wasmModule
-            outWasmModule
             ('LabelShape resStack (Length inputStack) ': inputLabels)
             ('LabelShape resStack (Length inputStack) ': inputLabels) ->
         Instruction inputStack outputStack locals 
-            outLocals wasmModule outWasmModule inputLabels inputLabels
+            wasmModule inputLabels inputLabels
     -- Loop: a sequence of instructions that can be restarted with 'br'
     Loop ::
         forall
@@ -686,62 +584,54 @@ data
             (inputStack :: ValStackShape)
             (outputStack :: ValStackShape)
             (locals :: LocalsShape)
-            (outLocals :: LocalsShape)
             (wasmModule :: WasmModule shape)
-            (outWasmModule :: WasmModule shape)
             (inputLabels :: LabelStackShape).
         ( CheckTopVecEqual paramsStack inputStack ~ 'True
         , CheckTopVecEqual resStack outputStack ~ 'True -- ensure that the parameters of the block are on top of the input stack
-        , CheckWasmTypesInLocalsEqual locals outLocals ~ 'True
-        , CheckGlobalsTypesUnchanged (GetGlobals wasmModule) (GetGlobals outWasmModule) ~ 'True
+        -- , CheckWasmTypesInLocalsEqual locals outLocals ~ 'True
+        -- , CheckGlobalsTypesUnchanged (GetGlobals wasmModule) (GetGlobals outWasmModule) ~ 'True
         ) =>
         BlockType paramsStack resStack ->
         InstructionSequence
             inputStack
             outputStack
             locals
-            outLocals
             wasmModule
-            outWasmModule
             ('LabelShape paramsStack (Length inputStack) ': inputLabels)
             ('LabelShape paramsStack (Length inputStack) ': inputLabels) ->
         Instruction inputStack outputStack locals 
-            outLocals wasmModule outWasmModule inputLabels inputLabels
+            wasmModule inputLabels inputLabels
     -- If: conditional execution (pops i32 condition, executes one of two branches)
     If ::
         ( CheckTopVecEqual paramsStack inputStack ~ 'True
-        , CheckTopVecEqual resStack outputStack ~ 'True -- ensure that the parameters of the block are on top of the input stack
-        , CheckWasmTypesInLocalsEqual locals outLocals1 ~ 'True
-        , CheckWasmTypesInLocalsEqual locals outLocals2 ~ 'True
-        , CheckGlobalsTypesUnchanged (GetGlobals wasmModule) (GetGlobals wasmModule1) ~ 'True
-        , CheckGlobalsTypesUnchanged (GetGlobals wasmModule) (GetGlobals wasmModule2) ~ 'True
+        , CheckTopVecEqual resStack outputStack1 ~ 'True -- ensure that the parameters of the block are on top of the input stack
+        , CheckTopVecEqual resStack outputStack2 ~ 'True
+        , CheckTopVecEqual outputStack1 outputStack2 ~ 'True
+        , CheckTopVecEqual outputStack2 outputStack2 ~ 'True
+        , CheckValStackShapesEqual outputStack outputStack1 ~ 'True
+        , CheckValStackShapesEqual outputStack outputStack2 ~ 'True
+        , outputStack ~ CombineValSecTypes outputStack1 outputStack2
         ) =>
         BlockType paramsStack resStack ->
         InstructionSequence
             inputStack
-            outputStack
+            outputStack1
             locals
-            outLocals1
             wasmModule
-            wasmModule1
             ('LabelShape resStack (Length inputStack) ': inputLabels)
             ('LabelShape resStack (Length inputStack) ': inputLabels) -> -- then branch
         InstructionSequence
             inputStack
-            outputStack
+            outputStack2
             locals
-            outLocals2
             wasmModule
-            wasmModule2
             ('LabelShape resStack (Length inputStack) ': inputLabels)
             ('LabelShape resStack (Length inputStack) ': inputLabels) -> -- else branch
         Instruction
             (I32 :~ lCond ': inputStack) -- l condition says whether the condition itself is high or low security level
             outputStack
             locals
-            (CombineSecTypes outLocals1 outLocals2)
             wasmModule
-            (CombineSecTypesGlobalModule wasmModule1 wasmModule2)
             inputLabels
             inputLabels
     -- Br: unconditional branch to a label
@@ -815,8 +705,6 @@ data
         --         +>+: Reverse (Take (Height targetLabel) (Reverse inputStack))
         --   )
             locals
-            locals
-            wasmModule
             wasmModule
             inputLabels
             inputLabels
@@ -846,8 +734,6 @@ data
             (I32 :~ lCond ': inputStack)
             inputStack
             locals
-            locals
-            wasmModule
             wasmModule
             inputLabels
             inputLabels
@@ -856,7 +742,7 @@ data
         FuncName ->
         FuncTypeAnn inputStack outputStack ->
         Instruction inputStack outputStack locals
-            locals wasmModule wasmModule inputLabels outputLabels
+            wasmModule inputLabels outputLabels
     -- here we need to po
     -- Call  :: FuncName f -> Instruction (GetParamsOf (GetTypeOfFunc f wasmModule)) (GetResultsOf (GetTypeOfFunc f wasmModule)) locals wasmModule inputLabels outputLabels
 
@@ -865,8 +751,6 @@ data
             inputStack
             inputStack
             locals
-            locals
-            wasmModule
             wasmModule
             (topLabel ': outputLabels)
             outputLabels
@@ -999,9 +883,7 @@ data
         (inputStack :: ValStackShape)
         (outputStack :: ValStackShape)
         (locals :: LocalsShape)
-        (finalLocals :: LocalsShape)
         (wasmModule :: WasmModule shape)
-        (finalWasmModule :: WasmModule shape)
         (inputLabels :: LabelStackShape)
         (outputLabels :: LabelStackShape)
     where
@@ -1010,8 +892,6 @@ data
             inputStack
             inputStack
             locals
-            locals
-            wasmModule
             wasmModule
             inputLabels
             inputLabels -- Base case: empty sequence (identity)
@@ -1020,27 +900,21 @@ data
             initialStack
             intermediateStack
             locals
-            intermediateLocals
             wasmModule
-            intermediateWasmModule
             inputLabels
             intermediateLabels -> -- Inductive case: first instruction
         InstructionSequence
             intermediateStack
             finalStack
-            intermediateLocals
-            finalLocals
-            intermediateWasmModule
-            finalWasmModule
+            locals
+            wasmModule
             intermediateLabels
             outputLabels -> -- rest of sequence
         InstructionSequence
             initialStack
             finalStack
             locals
-            finalLocals
             wasmModule
-            finalWasmModule
             inputLabels
             outputLabels -- combined sequence
 
@@ -1068,9 +942,7 @@ data
             inputStack
             resultStack
             locals
-            outLocals
             wasmModule
-            outWasmModule
             outputLabels
             outputLabels ->
         Function inputStack resultStack locals outputLabels wasmModule

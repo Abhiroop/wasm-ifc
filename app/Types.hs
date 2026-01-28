@@ -24,8 +24,9 @@ type family CheckSameVecType (xs :: [a]) (ys :: [a]) :: Bool where
 
 type family CheckTopVecEqual (top :: ValStackShape) (stack :: ValStackShape) :: Bool where
     CheckTopVecEqual '[] s2 = 'True
-    CheckTopVecEqual (t ': ts) (t ': ss) = CheckTopVecEqual ts ss
-    CheckTopVecEqual s1 s2 = 'False
+    CheckTopVecEqual s s = 'True
+    CheckTopVecEqual (t :~ l1 ': ts) (t :~ l2 ': ss) = CheckTopVecEqual ts ss
+    CheckTopVecEqual (t1 :~ _ ': _) (t2 :~ _ ': _) = False
 
     
 type LocalsShape = [SecWasmType]
@@ -142,6 +143,12 @@ type family CombineValSecTypes (vs1 :: ValStackShape) (vs2 :: ValStackShape) :: 
         (t :~ (l1 :/\ l2)) ': CombineValSecTypes rest1 rest2
     CombineValSecTypes v1 v2 =
         TypeError ('Text "CombineValSecTypes: ValStackShapes have different WasmTypes")
+
+type family CheckValStackShapesEqual (vs1 :: ValStackShape) (vs2 :: ValStackShape) :: Bool where
+    CheckValStackShapesEqual '[] '[] = 'True
+    CheckValStackShapesEqual ((t :~ l1) ': rest1) ((t :~ l2) ': rest2) =
+        CheckValStackShapesEqual rest1 rest2
+    CheckValStackShapesEqual (t1 :~ _ ': _) (t2 :~ _ ': _) = 'False
         
 
 type family AddComm (a :: Nat) (b :: Nat) :: Bool where
@@ -251,7 +258,7 @@ type family GetWasmType (swt :: SecWasmType) :: WasmType where
     GetWasmType (t :~ l) = t
 
 type family RuntimeSecTypeOf (swt :: SecWasmType) :: Type where
-    RuntimeSecTypeOf (t :~ l) = (KnownSecLevel l, RuntimeTypeOf t)
+    RuntimeSecTypeOf (t :~ l) = RuntimeTypeOf t
 
 combineSecLevels ::
     KnownSecLevel l1 ->
