@@ -562,9 +562,12 @@ data
             (outputStack :: ValStackShape)
             (locals :: LocalsShape)
             (wasmModule :: WasmModule shape)
-            (inputLabels :: LabelStackShape).
+            (inputLabels :: LabelStackShape)
+            (untouchableStack :: ValStackShape).
         ( CheckTopVecEqual paramsStack inputStack ~ 'True
-        , CheckTopVecEqual resStack outputStack ~ 'True -- ensure that the parameters of the block are on top of the input stack
+        , CheckTopVecEqual resStack outputStack ~ 'True
+        , inputStack ~ paramsStack +>+:untouchableStack
+        , outputStack ~ resStack +>+: untouchableStack -- ensure that the parameters of the block are on top of the input stack
         ) =>
         BlockType paramsStack resStack -> -- represents the optional valtype however what about the typeidx? can't know the function type
         InstructionSequence
@@ -585,9 +588,12 @@ data
             (outputStack :: ValStackShape)
             (locals :: LocalsShape)
             (wasmModule :: WasmModule shape)
-            (inputLabels :: LabelStackShape).
+            (inputLabels :: LabelStackShape)
+            (untouchableStack :: ValStackShape).
         ( CheckTopVecEqual paramsStack inputStack ~ 'True
-        , CheckTopVecEqual resStack outputStack ~ 'True -- ensure that the parameters of the block are on top of the input stack
+        , CheckTopVecEqual resStack outputStack ~ 'True
+        , inputStack ~ paramsStack +>+: untouchableStack
+        , outputStack ~ resStack +>+: untouchableStack -- ensure that the parameters of the block are on top of the input stack
         ) =>
         BlockType paramsStack resStack ->
         InstructionSequence
@@ -601,7 +607,9 @@ data
     -- If: conditional execution (pops i32 condition, executes one of two branches)
     If ::
         ( CheckTopVecEqual paramsStack inputStack ~ 'True
-        , CheckTopVecEqual resStack outputStack ~ 'True -- ensure that the parameters of the block are on top of the input stack
+        , CheckTopVecEqual resStack outputStack ~ 'True
+        , inputStack ~ paramsStack +>+:untouchableStack
+        , outputStack ~ resStack +>+: untouchableStack -- ensure that the parameters of the block are on top of the input stack
         ) =>
         BlockType paramsStack resStack ->
         InstructionSequence

@@ -613,8 +613,10 @@ branchExampleSeq ::
         {wasmModule :: WasmModule shape}
         {outputLabels :: LabelStackShape}.
     InstructionSequence
-        inputStack
-        ('[] +>+: Reverse (Take (Length inputStack) (Reverse inputStack)))
+        -- inputStack
+        -- ('[] +>+: Reverse (Take (Length inputStack) (Reverse inputStack)))
+        '[]
+        '[]
         locals
         wasmModule
         outputLabels
@@ -744,7 +746,7 @@ branchExample4Seq =
     Block
         (BTParamsResults KnownValVNil (KnownValCons ForI32 KnownValVNil))
         ( Block
-            (BTParamsResults KnownValVNil KnownValVNil)
+            (BTParamsResults KnownValVNil (KnownValCons ForI32 KnownValVNil))
             ( I32Const 42
                 :| Br (SFS SFZ)
                 -- :| I32Const 7 -- TODO BUG: in validation this instruction is not removed and therefore the types do not agree
@@ -1023,7 +1025,7 @@ absoluteValueSeq =
         :| I32Const 0
         :| I32LtS -- Is input < 0?
         :| If
-            (BTParamsResults KnownValVNil KnownValVNil)
+            (BTParamsResults KnownValVNil (KnownValCons ForI32 KnownValVNil))
             -- Then branch: negate the number (0 - input)
             ( I32Const 0
                 :| LocalGet SFZ

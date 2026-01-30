@@ -234,11 +234,19 @@ insertMemory (SFS idx) memArray (ConsMems mem rest) = ConsMems mem (insertMemory
 insertMemory _ _ _ = error "Index out of bounds in insertMemory"
 
 cprepend ::
-    Instruction initialVal middleVal locals wasmModule initialLab middleLab ->
+    InstructionSequence initialVal middleVal locals wasmModule initialLab middleLab  ->
     ControlStack middleVal finalVal locals wasmModule middleLab finalLab ->
     ControlStack initialVal finalVal locals wasmModule initialLab finalLab
-cprepend instruction (CSingle current) = CSingle (instruction :| current)
-cprepend instruction (CCons current parents) = CCons (instruction :| current) parents
+cprepend instrs (CSingle current) = CSingle (concatInstrSeq instrs current)
+cprepend instrs (CCons current parents) = CCons (concatInstrSeq instrs current) parents
+
+concatInstrSeq ::
+    InstructionSequence s1 s2 locals wasmModule l1 l2 ->
+    InstructionSequence s2 s3 locals wasmModule l2 l3 ->
+    InstructionSequence s1 s3 locals wasmModule l1 l3
+concatInstrSeq End seq2 = seq2
+concatInstrSeq (instr :| rest) seq2 = instr :| concatInstrSeq rest seq2
+
 
 appendInstructionSeq ::
     InstructionSequence initialVal middleVal locals wasmModule initialLab middleLab ->
@@ -433,8 +441,9 @@ stepInternal ctx instruction nextControl = case instruction of
          in StepResult newCtx (CCons (appendInstructionSeq body Leave) nextControl)
     Loop
         blockType@(BTParamsResults (params :: KnownValStackShape paramsStack) _)
-        body ->
-        let loopCont = SomeInstrSeq (Loop blockType body :| End)
+        (body :: InstructionSequence initialVal middleVal locals wasmModule (topLabel ': initialLab) (topLabel ': initialLab)) ->
+        let loopInstr = instruction --Loop blockType body :: Instruction initialVal middleVal locals wasmModule initialLab initialLab
+            loopCont = SomeInstrSeq (loopInstr :| End)
             newCtx =
                 pushLabel
                     (Label (stackLength $ values ctx) (knownStackShapeLen params) loopCont)
@@ -677,3 +686,4 @@ instance Show (RuntimeContext valuesShape localsShape wasmModule labelsShape) wh
             ++ "memories = "
             ++ show (memories ctxt)
             ++ " }\n"
+
