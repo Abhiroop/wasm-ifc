@@ -660,12 +660,14 @@ data
             (inputLabels :: LabelStackShape)
             (secPC :: [SecLevel])
             (topSecPC :: SecLevel)
-            (untouchableStack :: ValStackShape).
+            (untouchableStack :: ValStackShape)
+            (topSecPCOut :: SecLevel).
         ( CheckTopVecEqual paramsStack inputStack ~ 'True
         , CheckTopVecEqual resStack outputStack ~ 'True -- ensure that the parameters of the block are on top of the input stack
         , inputStack ~ paramsStack +>+:untouchableStack
         , outputStack ~ resStack +>+: untouchableStack
         , topSecPC ~ Index Z secPC
+        , CanFlow topSecPC topSecPCOut ~ 'True
         ) =>
         BlockType paramsStack resStack -> -- represents the optional valtype however what about the typeidx? can't know the function type
         InstructionSequence
@@ -675,7 +677,8 @@ data
             wasmModule
             ('LabelShape resStack (Length inputStack) ': inputLabels)
             ('LabelShape resStack (Length inputStack) ': inputLabels)
-            (topSecPC ': secPC) ->
+            (topSecPC ': secPC)
+            (topSecPCOut ': secPC) ->
         Instruction inputStack outputStack locals 
             wasmModule inputLabels inputLabels secPC secPC
     -- Loop: a sequence of instructions that can be restarted with 'br'
@@ -691,10 +694,12 @@ data
             (inputLabels :: LabelStackShape)
             (secPC :: [SecLevel])
             (topSecPC :: SecLevel)
-            (untouchableStack :: ValStackShape).
+            (untouchableStack :: ValStackShape)
+            (topSecPCOut :: SecLevel).
         ( CheckTopVecEqual paramsStack inputStack ~ 'True
         , CheckTopVecEqual resStack outputStack ~ 'True -- ensure that the parameters of the block are on top of the input stack
         , topSecPC ~ Index Z secPC
+        , CanFlow topSecPC topSecPCOut ~ 'True
         , inputStack ~ paramsStack +>+:untouchableStack
         , outputStack ~ resStack +>+: untouchableStack
         ) =>
@@ -706,11 +711,12 @@ data
             wasmModule
             ('LabelShape paramsStack (Length inputStack) ': inputLabels)
             ('LabelShape paramsStack (Length inputStack) ': inputLabels)
-            (topSecPC ': secPC) ->
+            (topSecPC ': secPC)
+            (topSecPCOut ': secPC) ->
         Instruction inputStack outputStack locals 
             wasmModule inputLabels inputLabels secPC secPC
     -- If: conditional execution (pops i32 condition, executes one of two branches)
-    If :: forall paramsStack resStack inputStack outputStack outputStack1 outputStack2 locals wasmModule inputLabels secPC lCond untouchableStack.
+    If :: forall paramsStack resStack inputStack outputStack outputStack1 outputStack2 locals wasmModule inputLabels secPC lCond untouchableStack outTopSecPC1 outTopSecPC2.
         ( CheckTopVecEqual paramsStack inputStack ~ 'True
         , CheckTopVecEqual resStack outputStack1 ~ 'True -- ensure that the parameters of the block are on top of the input stack
         , CheckTopVecEqual resStack outputStack2 ~ 'True
@@ -721,6 +727,8 @@ data
         , outputStack ~ CombineValSecTypes outputStack1 outputStack2
         , inputStack ~ paramsStack +>+:untouchableStack
         , outputStack ~ resStack +>+: untouchableStack
+        , CanFlow (lCond :/\ Index Z secPC) outTopSecPC1 ~ 'True
+        , CanFlow (lCond :/\ Index Z secPC) outTopSecPC2 ~ 'True
         ) =>
         BlockType paramsStack resStack ->
         InstructionSequence
@@ -730,7 +738,8 @@ data
             wasmModule
             ('LabelShape resStack (Length inputStack) ': inputLabels)
             ('LabelShape resStack (Length inputStack) ': inputLabels)
-            ((lCond :/\ Index Z secPC) ': secPC) -> -- then branch
+            ((lCond :/\ Index Z secPC) ': secPC)
+            (outTopSecPC1 ': secPC) -> -- then branch
         InstructionSequence
             inputStack
             outputStack2
@@ -738,7 +747,8 @@ data
             wasmModule
             ('LabelShape resStack (Length inputStack) ': inputLabels)
             ('LabelShape resStack (Length inputStack) ': inputLabels)
-            ((lCond :/\ Index Z secPC) ': secPC) -> -- else branch
+            ((lCond :/\ Index Z secPC) ': secPC)
+            (outTopSecPC2 ': secPC) -> -- else branch
         Instruction
             (I32 :~ lCond ': inputStack) -- l condition says whether the condition itself is high or low security level
             outputStack
@@ -1014,6 +1024,7 @@ data
         (inputLabels :: LabelStackShape)
         (outputLabels :: LabelStackShape)
         (inSecPC :: [SecLevel])
+        (outSecPC :: [SecLevel])
     where
     End ::
         InstructionSequence
@@ -1023,8 +1034,18 @@ data
             wasmModule
             inputLabels
             inputLabels
+            inSecPC
             inSecPC -- Base case: empty sequence (identity)
-    (:|) :: (Length inSecPC ~ Length outSecPC) =>
+    (:|) :: (Length inSecPC ~ Length outSecPC
+            , Length inSecPC ~ Length intermediateSecPC
+            , Length intermediateSecPC ~ Length outSecPC
+            , topSecPC1 ': restSecPC ~ inSecPC
+            , topSecPC2 ': restSecPC ~ intermediateSecPC
+            , topSecPC3 ': restSecPC' ~ outSecPC
+            -- CanFlow topSecPC1 topSecPC2 ~ 'True,
+            -- CanFlow topSecPC2 topSecPC3 ~ 'True,
+            -- CanFlow topSecPC1 topSecPC3 ~ 'True
+            ) =>
         Instruction
             initialStack
             intermediateStack
@@ -1033,7 +1054,7 @@ data
             inputLabels
             intermediateLabels
             inSecPC
-            outSecPC -- need this for branch if instructions
+            intermediateSecPC -- need this for branch if instructions
              -> -- Inductive case: first instruction
         InstructionSequence
             intermediateStack
@@ -1042,6 +1063,7 @@ data
             wasmModule
             intermediateLabels
             outputLabels
+            intermediateSecPC
             outSecPC -> -- rest of sequence
         InstructionSequence
             initialStack
@@ -1050,6 +1072,7 @@ data
             wasmModule
             inputLabels
             outputLabels
+            inSecPC
             outSecPC -- combined sequence
 
 {-
@@ -1070,6 +1093,7 @@ data
         (outputLabels :: LabelStackShape)
         (wasmModule :: WasmModule shape)
         (secPC :: [SecLevel])
+        (outSecPC :: [SecLevel])
     where
     Function ::
         FuncTypeAnn inputStack resultStack ->
@@ -1080,8 +1104,9 @@ data
             wasmModule
             outputLabels
             outputLabels
-            secPC ->
-        Function inputStack resultStack locals outputLabels wasmModule secPC
+            secPC
+            outSecPC ->
+        Function inputStack resultStack locals outputLabels wasmModule secPC outSecPC
 
 -- add a new type that captures the function type annotation, i.e.
 -- FuncTypeAnn inputStack resultStack ->
