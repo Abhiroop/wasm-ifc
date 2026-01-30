@@ -1119,6 +1119,37 @@ ifCondSeqSetLocalLow =
         :| End
 
 
+{-
+LOOP EXAMPLES
+-}
+
+loopSeq ::
+    InstructionSequence
+        '[]
+        '[I32 :~ High]
+        '[]
+        ( (WasmModuleR '[] '[]) ::
+            WasmModule (WasmModuleShapeR Z Z)
+        )
+        '[]
+        '[]
+        '[Low]
+        '[Low]
+loopSeq =
+    Block
+        (BTParamsResults KnownValVNil (KnownValCons (IsHigh, ForI32) KnownValVNil))
+        (
+            Loop
+                (BTParamsResults KnownValVNil (KnownValCons (IsHigh, ForI32) KnownValVNil))
+                ( I32Const IsLow 42
+                    :| I32Const IsLow 7
+                    :| I32Add
+                    :| End
+                )
+                :| End
+        )
+        :| End
+
 
 {-
 EXAMPLE FOR BRIF WITH TAINTED COND
@@ -1251,8 +1282,8 @@ factorialSeq ::
     (s ~ WasmModuleShapeR Z Z) =>
     InstructionSequence
         '[]
-        (I32 :~ Low ': '[])
-        (I32 :~ Low ': I32 :~ Low ': '[])
+        (I32 :~ High ': '[])
+        (I32 :~ High ': I32 :~ High ': '[])
         wm
         '[]
         '[]
@@ -1261,7 +1292,7 @@ factorialSeq ::
 factorialSeq =
     -- Local slots: (0) input parameter (also used as counter), (1) accumulator
     -- Initialize accumulator to 1
-    I32Const IsLow 1
+    I32Const IsHigh 1 -- Cannot be Low because currently can't put low in high => probably implement this and ignore unsafeCoerces
         :| LocalSet (SFS SFZ)
         -- :| I32Const 0
         -- Main computation block
@@ -1301,15 +1332,15 @@ factorialSeq =
 factorial ::
     forall (s :: WasmModuleShape) (wm :: WasmModule s).
     (s ~ WasmModuleShapeR Z Z) =>
-    Function '[] (I32 :~ Low ': '[]) (I32 :~ Low ': I32 :~ Low ': '[]) '[] wm '[Low] '[Low]
+    Function '[] (I32 :~ High ': '[]) (I32 :~ High ': I32 :~ High ': '[]) '[] wm '[Low] '[Low]
 factorial =
     Function
-        (FFuncTypeAnn [] [I32 :~ Low])
+        (FFuncTypeAnn [] [I32 :~ High])
         factorialSeq
 executeFactorial ::
     RuntimeContext @(WasmModuleShapeR Z Z)
-        '[I32 :~ Low]
-        '[I32 :~ Low, I32 :~ Low]
+        '[I32 :~ High]
+        '[I32 :~ High, I32 :~ High]
         (WasmModuleR '[] '[])
         '[]
 -- we put as input 4 so the expected result is 24
@@ -1324,7 +1355,7 @@ executeFactorial =
             } ::
             RuntimeContext
                 '[]
-                '[I32 :~ Low, I32 :~ Low]
+                '[I32 :~ High, I32 :~ High]
                 ((WasmModuleR '[] '[]) :: WasmModule (WasmModuleShapeR Z Z))
                 '[]
         )

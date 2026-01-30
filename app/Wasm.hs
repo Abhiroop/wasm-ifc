@@ -682,7 +682,7 @@ data
         Instruction inputStack outputStack locals 
             wasmModule inputLabels inputLabels secPC secPC
     -- Loop: a sequence of instructions that can be restarted with 'br'
-    Loop ::
+    Loop :: -- Don't see a way of doing fix point -> therefore we just treat everything that is on top of unreachable stack as high sec level (really harsh overapproximation)
         forall
             (shape :: WasmModuleShape)
             (paramsStack :: ValStackShape)
@@ -693,13 +693,14 @@ data
             (wasmModule :: WasmModule shape)
             (inputLabels :: LabelStackShape)
             (secPC :: [SecLevel])
-            (topSecPC :: SecLevel)
+            -- (topSecPC :: SecLevel)
             (untouchableStack :: ValStackShape)
-            (topSecPCOut :: SecLevel).
+            -- (topSecPCOut :: SecLevel)
+            .
         ( CheckTopVecEqual paramsStack inputStack ~ 'True
         , CheckTopVecEqual resStack outputStack ~ 'True -- ensure that the parameters of the block are on top of the input stack
-        , topSecPC ~ Index Z secPC
-        , CanFlow topSecPC topSecPCOut ~ 'True
+        -- , topSecPC ~ Index Z secPC
+        -- , CanFlow topSecPC topSecPCOut ~ 'True
         , inputStack ~ paramsStack +>+:untouchableStack
         , outputStack ~ resStack +>+: untouchableStack
         ) =>
@@ -711,8 +712,8 @@ data
             wasmModule
             ('LabelShape paramsStack (Length inputStack) ': inputLabels)
             ('LabelShape paramsStack (Length inputStack) ': inputLabels)
-            (topSecPC ': secPC)
-            (topSecPCOut ': secPC) ->
+            (High ': secPC)
+            (High ': secPC) ->
         Instruction inputStack outputStack locals 
             wasmModule inputLabels inputLabels secPC secPC
     -- If: conditional execution (pops i32 condition, executes one of two branches)
@@ -848,14 +849,11 @@ data
             (remainingLabels :: LabelStackShape)
             (inputLabels :: LabelStackShape)
             (inputStack :: ValStackShape)
-            (outputStack :: ValStackShape)
             (locals :: LocalsShape)
             (wasmModule :: WasmModule shape)
             (secPC :: [SecLevel])
             (topL :: SecLevel)
             (lCond :: SecLevel). -- whether condition is high or low security level
-        -- inputStack ~ outputStack =>
-        -- (CheckTopVecEqual (GetLabelType (Index i inputLabels)) (  inputStack) ~ 'True) =>
         ( targetLabel : remainingLabels ~ Drop i inputLabels
         , l ~ Length inputLabels
         , LessThan l (S (Length secPC)) ~ 'True
@@ -1042,9 +1040,6 @@ data
             , topSecPC1 ': restSecPC ~ inSecPC
             , topSecPC2 ': restSecPC ~ intermediateSecPC
             , topSecPC3 ': restSecPC' ~ outSecPC
-            -- CanFlow topSecPC1 topSecPC2 ~ 'True,
-            -- CanFlow topSecPC2 topSecPC3 ~ 'True,
-            -- CanFlow topSecPC1 topSecPC3 ~ 'True
             ) =>
         Instruction
             initialStack
