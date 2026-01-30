@@ -617,8 +617,8 @@ branchExampleSeq ::
         {locals :: LocalsShape}
         {wasmModule :: WasmModule shape}.
     InstructionSequence
-        inputStack
-        ('[] +>+: Reverse (Take (Length inputStack) (Reverse inputStack)))
+        '[]
+        '[]
         locals
         wasmModule
         '[]
@@ -753,7 +753,7 @@ branchExample4Seq =
     Block
         (BTParamsResults KnownValVNil (KnownValCons (IsLow, ForI32) KnownValVNil))
         ( Block
-            (BTParamsResults KnownValVNil KnownValVNil)
+            (BTParamsResults KnownValVNil (KnownValCons (IsLow, ForI32) KnownValVNil))
             ( I32Const IsLow 42
                 :| Br (SFS SFZ)
                 -- :| I32Const 7 -- TODO BUG: in validation this instruction is not removed and therefore the types do not agree
@@ -797,7 +797,7 @@ ifCondSeq ::
         '[Low]
 ifCondSeq =
     If
-        (BTParamsResults KnownValVNil KnownValVNil)
+        (BTParamsResults KnownValVNil (KnownValCons (IsHigh, ForI32) KnownValVNil))
         ( I32Const IsLow 42
             :| I32Const IsLow 7
             :| I32Add
@@ -846,7 +846,7 @@ ifCondSeq2 ::
         '[Low]
 ifCondSeq2 =
     If
-        (BTParamsResults KnownValVNil KnownValVNil)
+        (BTParamsResults KnownValVNil (KnownValCons (IsLow, ForI32) KnownValVNil))
         ( I32Const IsLow 42
             :| I32Const IsLow 7
             :| I32Add
@@ -894,7 +894,7 @@ ifCondSeqParentHigh ::
         '[High]
 ifCondSeqParentHigh =
     If
-        (BTParamsResults KnownValVNil KnownValVNil)
+        (BTParamsResults KnownValVNil (KnownValCons (IsHigh, ForI32) KnownValVNil))
         ( I32Const IsLow 42
             :| I32Const IsLow 7
             :| I32Add
@@ -943,7 +943,7 @@ ifCondSeq3 ::
         '[Low]
 ifCondSeq3 =
     If
-        (BTParamsResults KnownValVNil KnownValVNil)
+        (BTParamsResults KnownValVNil (KnownValCons (IsHigh, ForI32) KnownValVNil))
         ( I32Const IsHigh 42
             :| I32Const IsLow 7
             :| I32Add
@@ -992,7 +992,7 @@ ifCondSeqGetLocalLow ::
         '[Low]
 ifCondSeqGetLocalLow =
     If
-        (BTParamsResults KnownValVNil KnownValVNil)
+        (BTParamsResults KnownValVNil (KnownValCons (IsHigh, ForI32) KnownValVNil))
         ( I32Const IsLow 42
             :| LocalGet SFZ
             :| I32Add
@@ -1040,7 +1040,7 @@ ifCondSeqGetLocalHigh ::
         '[Low]
 ifCondSeqGetLocalHigh =
     If
-        (BTParamsResults KnownValVNil KnownValVNil)
+        (BTParamsResults KnownValVNil (KnownValCons (IsHigh, ForI32) KnownValVNil))
         ( I32Const IsLow 42
             :| LocalGet SFZ
             :| I32Add
@@ -1088,7 +1088,7 @@ ifCondSeqSetLocalLow ::
         '[Low]
 ifCondSeqSetLocalLow =
     If
-        (BTParamsResults KnownValVNil KnownValVNil)
+        (BTParamsResults KnownValVNil (KnownValCons (IsHigh, ForI32) KnownValVNil))
         ( I32Const IsLow 42
             :| I32Const IsHigh 1
             :| I32Add
@@ -1121,7 +1121,7 @@ brIfSeq ::
         '[Low]
 brIfSeq =
     Block
-        (BTParamsResults KnownValVNil KnownValVNil)
+        (BTParamsResults KnownValVNil (KnownValCons (IsLow, ForI32) KnownValVNil))
         ( I32Const IsLow 42
             :| I32Const IsLow 7
             :| I32Add
@@ -1317,28 +1317,26 @@ Demonstrates different return types - this one returns Empty stack.
 printNumberSeq ::
     forall (s :: WasmModuleShape) (wm :: WasmModule s) (outputLabels :: LabelStackShape).
     (s ~ WasmModuleShapeR Z Z) =>
-    InstructionSequence '[] '[] '[I32 :~ Low, I32 :~ Low] wm outputLabels outputLabels '[Low]
+    InstructionSequence '[] '[I32 :~ Low] '[I32 :~ Low, I32 :~ Low] wm outputLabels outputLabels '[Low]
 printNumberSeq =
     -- Just consume the parameter without returning anything
-    LocalGet slotZero
-        :| Drop
+    LocalGet SFZ
+        :| LocalGet (SFS SFZ)
+        :| I32Add -- just to do something with the parameters
         :| End
-  where
-    -- example: here we are saying that
-    -- extract the zeroth index from
-    -- a vector of size 2
-    slotZero :: SFin 'Z ('S ('S 'Z))
-    slotZero = SFZ
 
+-- This cannot be executed for now.
 printNumber ::
     forall (s :: WasmModuleShape) (wm :: WasmModule s).
-    (s ~ WasmModuleShapeR Z Z) => Function '[] '[] '[I32 :~ Low, I32 :~ Low] '[] wm '[Low]
+    (s ~ WasmModuleShapeR Z Z) => Function '[] '[I32 :~ Low] '[I32 :~ Low, I32 :~ Low] '[] wm '[Low]
 printNumber =
     Function
-        (FFuncTypeAnn [] [])
+        (FFuncTypeAnn [I32 :~ Low, I32 :~ Low] [I32 :~ Low])
         printNumberSeq
+
+
 executePrintNumber ::
-    RuntimeContext @(WasmModuleShapeR Z Z) '[] '[I32 :~ Low, I32 :~ Low] (WasmModuleR '[] '[]) '[]
+    RuntimeContext @(WasmModuleShapeR Z Z) '[I32 :~ Low] '[I32 :~ Low, I32 :~ Low] (WasmModuleR '[] '[]) '[]
 executePrintNumber =
     stepMany
         ( RuntimeContext
@@ -1435,7 +1433,7 @@ absoluteValueSeq =
         :| I32Const IsLow 0
         :| I32LtS -- Is input < 0?
         :| If
-            (BTParamsResults KnownValVNil KnownValVNil)
+            (BTParamsResults KnownValVNil (KnownValCons (IsLow, ForI32) KnownValVNil))
             -- Then branch: negate the number (0 - input)
             ( I32Const IsLow 0
                 :| LocalGet SFZ

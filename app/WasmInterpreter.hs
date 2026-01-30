@@ -458,7 +458,7 @@ stepInternal ctx instruction nextControl = case instruction of
     Loop
         blockType@(BTParamsResults (params :: KnownValStackShape paramsStack) _)
         body ->
-        let loopCont = SomeInstrSeq (Loop blockType body :| End :: InstructionSequence initialVal middleVal locals wasmModule initialLab initialLab inSecPC)
+        let loopCont = SomeInstrSeq (instruction :| End :: InstructionSequence initialVal middleVal locals wasmModule initialLab initialLab inSecPC)
             newCtx =
                 pushLabel
                     (Label (stackLength $ values ctx) (knownStackShapeLen params) loopCont)

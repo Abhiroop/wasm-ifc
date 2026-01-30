@@ -659,9 +659,12 @@ data
             (wasmModule :: WasmModule shape)
             (inputLabels :: LabelStackShape)
             (secPC :: [SecLevel])
-            (topSecPC :: SecLevel).
+            (topSecPC :: SecLevel)
+            (untouchableStack :: ValStackShape).
         ( CheckTopVecEqual paramsStack inputStack ~ 'True
         , CheckTopVecEqual resStack outputStack ~ 'True -- ensure that the parameters of the block are on top of the input stack
+        , inputStack ~ paramsStack +>+:untouchableStack
+        , outputStack ~ resStack +>+: untouchableStack
         , topSecPC ~ Index Z secPC
         ) =>
         BlockType paramsStack resStack -> -- represents the optional valtype however what about the typeidx? can't know the function type
@@ -687,10 +690,13 @@ data
             (wasmModule :: WasmModule shape)
             (inputLabels :: LabelStackShape)
             (secPC :: [SecLevel])
-            (topSecPC :: SecLevel).
+            (topSecPC :: SecLevel)
+            (untouchableStack :: ValStackShape).
         ( CheckTopVecEqual paramsStack inputStack ~ 'True
         , CheckTopVecEqual resStack outputStack ~ 'True -- ensure that the parameters of the block are on top of the input stack
         , topSecPC ~ Index Z secPC
+        , inputStack ~ paramsStack +>+:untouchableStack
+        , outputStack ~ resStack +>+: untouchableStack
         ) =>
         BlockType paramsStack resStack ->
         InstructionSequence
@@ -704,7 +710,7 @@ data
         Instruction inputStack outputStack locals 
             wasmModule inputLabels inputLabels secPC secPC
     -- If: conditional execution (pops i32 condition, executes one of two branches)
-    If ::
+    If :: forall paramsStack resStack inputStack outputStack outputStack1 outputStack2 locals wasmModule inputLabels secPC lCond untouchableStack.
         ( CheckTopVecEqual paramsStack inputStack ~ 'True
         , CheckTopVecEqual resStack outputStack1 ~ 'True -- ensure that the parameters of the block are on top of the input stack
         , CheckTopVecEqual resStack outputStack2 ~ 'True
@@ -713,6 +719,8 @@ data
         , CheckValStackShapesEqual outputStack outputStack1 ~ 'True
         , CheckValStackShapesEqual outputStack outputStack2 ~ 'True
         , outputStack ~ CombineValSecTypes outputStack1 outputStack2
+        , inputStack ~ paramsStack +>+:untouchableStack
+        , outputStack ~ resStack +>+: untouchableStack
         ) =>
         BlockType paramsStack resStack ->
         InstructionSequence
