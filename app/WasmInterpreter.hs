@@ -397,7 +397,7 @@ stepInternal ctx instruction nextControl = case instruction of
     -- Have memory array as a list of bytes and then we cast it when we load/store
     -- So F64 and I64 would read 8 bytes (8 consecutive elements) and cast them to the right type
     -- and F32 and I32 would read 4 bytes (4 consecutive elements) and cast them to the right type
-    MemoryLoad @(wasmType :: WasmType) memidx (SMemArg alignment offset) -> case values ctx of
+    MemoryLoad @(wasmType :: WasmType) @(_secLevel :: SecLevel) memidx (SMemArg alignment offset) -> case values ctx of
         ConsValues addr rest ->
             let memoryArray = getMemoryArray memidx (memories ctx)
                 addrAsWord64 = fromIntegral addr :: Word64
@@ -417,6 +417,7 @@ stepInternal ctx instruction nextControl = case instruction of
                                  in StepResult (ctx{values = ConsValues value rest}) nextControl
     MemoryStore
         @(wasmType :: WasmType)
+        @(_secLevel :: SecLevel)
         (memidx :: SFin i n)
         (SMemArg alignment offset) -> case values ctx of
         ConsValues (addr :: Int64) (ConsValues (value :: RuntimeTypeOf wasmType) rest) ->

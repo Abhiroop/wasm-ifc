@@ -138,7 +138,7 @@ currMem2 :: MemoryArray
 currMem2 = store @I32 currMem1 0 (20 :: Int32)
 currMem :: MemoryArray
 currMem = store @I32 currMem2 4 (10 :: Int32)
-{-
+
 memLoadSequence ::
     InstructionSequence
         '[]
@@ -155,11 +155,13 @@ memLoadSequence ::
         )
         '[]
         '[]
+        '[Low]
+        '[Low]
 memLoadSequence =
     LocalGet SFZ
-        :| MemoryLoad @I32 SFZ (SMemArg 0 0)
+        :| MemoryLoad @I32 @Low SFZ (SMemArg 0 0)
         :| LocalGet (SFS SFZ)
-        :| MemoryLoad @I32 SFZ (SMemArg 0 0)
+        :| MemoryLoad @I32 @Low SFZ (SMemArg 0 0)
         :| I32Add
         :| End
 
@@ -178,6 +180,8 @@ memLoad ::
           ) ::
             WasmModule (WasmModuleShapeR Z (S (S Z)))
         )
+        '[Low]
+        '[Low]
 memLoad =
     Function
         (FFuncTypeAnn [] [I32 :~ Low])
@@ -223,8 +227,8 @@ executeMemLoad =
 memLoadSequence1 ::
     InstructionSequence
         '[]
-        '[I32 :~ Low, I32 :~ Low]
-        '[I64 :~ Low, I64 :~ Low]
+        '[I32 :~ High, I32 :~ Low]
+        '[I64 :~ Low, I64 :~ High]
         ( ( WasmModuleR
                 '[]
                 ( currMem
@@ -236,17 +240,19 @@ memLoadSequence1 ::
         )
         '[]
         '[]
+        '[Low]
+        '[Low]
 memLoadSequence1 =
     LocalGet SFZ
-        :| MemoryLoad @I32 SFZ (SMemArg 0 0)
+        :| MemoryLoad @I32 @Low SFZ (SMemArg 0 0)
         :| LocalGet (SFS SFZ)
-        :| MemoryLoad @I32 SFZ (SMemArg 0 0)
+        :| MemoryLoad @I32 @High SFZ (SMemArg 0 0)
         :| End
 
 executeMemLoadSequence1 ::
     RuntimeContext @(WasmModuleShapeR Z (S (S Z)))
-        '[I32 :~ Low, I32 :~ Low]
-        '[I64 :~ Low, I64 :~ Low]
+        '[I32 :~ High, I32 :~ Low]
+        '[I64 :~ Low, I64 :~ High]
         ( WasmModuleR
             '[]
             ( currMem
@@ -266,7 +272,7 @@ executeMemLoadSequence1 =
             } ::
             RuntimeContext
                 '[]
-                '[I64 :~ Low, I64 :~ Low]
+                '[I64 :~ Low, I64 :~ High]
                 ( ( WasmModuleR
                         '[]
                         ( currMem
@@ -292,10 +298,12 @@ memStoreSequence ::
         )
         '[]
         '[]
+        '[Low]
+        '[Low]
 memStoreSequence =
     LocalGet SFZ -- get the value to store
         :| LocalGet (SFS SFZ) -- get the address
-        :| MemoryStore @I32 SFZ (SMemArg 0 0)
+        :| MemoryStore @I32 @Low SFZ (SMemArg 0 0)
         :| End
 
 memStore ::
@@ -305,6 +313,8 @@ memStore ::
         '[I32 :~ Low, I64 :~ Low]
         '[]
         ((WasmModuleR '[] ('[] ': '[])) :: WasmModule (WasmModuleShapeR Z (S (S Z))))
+        '[Low]
+        '[Low]
 memStore =
     Function
         (FFuncTypeAnn [] [])
@@ -362,12 +372,14 @@ memLoadStoreSequence ::
         )
         '[]
         '[]
+        '[Low]
+        '[Low]
 memLoadStoreSequence =
     LocalGet SFZ -- get the value to store
-        :| I64Const 0 -- get the address
-        :| MemoryStore @I32 SFZ (SMemArg 0 0)
-        :| I64Const 0
-        :| MemoryLoad @I32 SFZ (SMemArg 0 0)
+        :| I64Const IsLow 0 -- get the address
+        :| MemoryStore @I32 @Low SFZ (SMemArg 0 0)
+        :| I64Const IsLow 0
+        :| MemoryLoad @I32 @Low SFZ (SMemArg 0 0)
         :| End
 
 executeMemLoadStore ::
@@ -420,12 +432,14 @@ memLoadStore64Sequence ::
         )
         '[]
         '[]
+        '[Low]
+        '[Low]
 memLoadStore64Sequence =
     LocalGet SFZ -- get the value to store
-        :| I64Const 0 -- get the address
-        :| MemoryStore @I64 SFZ (SMemArg 0 0)
-        :| I64Const 0
-        :| MemoryLoad @I64 SFZ (SMemArg 0 0)
+        :| I64Const IsLow 0 -- get the address
+        :| MemoryStore @I64 @Low SFZ (SMemArg 0 0)
+        :| I64Const IsLow 0
+        :| MemoryLoad @I64 @Low SFZ (SMemArg 0 0)
         :| End
 
 executeMemLoadStore64 ::
@@ -462,7 +476,7 @@ executeMemLoadStore64 =
                 '[]
         )
         memLoadStore64Sequence
--}
+
 -- Example GlobalGet and GlobalSet
 -- have to force the WasmModuleShape so :: WasmModule (WasmModuleShapeR (S Z) Z) is necessary!!!
 globalGetSetSequence ::
