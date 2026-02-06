@@ -802,6 +802,39 @@ executeBranchExample5 =
             }
         branchExample5Seq
 
+-- THIS EXAMPLE WORKS IN OUR IMPLEMENTATION BUT NOT WHEN YOU WRITE IT AS WAT CODE!!
+-- (SEE block-simple-br2-nested.wat)
+branchExampleNestedSeq ::
+    InstructionSequence '[] '[I32, I32] locals wasmModule '[] '[]
+branchExampleNestedSeq =
+    Block
+        (BTParamsResults KnownValVNil (KnownValCons ForI32 (KnownValCons ForI32 KnownValVNil)))
+        ( I32Const 42
+            :| I32Const 7
+            :| Block
+                (BTParamsResults (KnownValCons ForI32 KnownValVNil) (KnownValCons ForI32 KnownValVNil))
+                ( 
+                    I32Const 3
+                    :| I32Add
+                    :| Br SFZ
+                    :| End
+                )
+            :| End
+        )
+        :| End
+executeBranchExampleNested ::
+    RuntimeContext @(WasmModuleShapeR Z Z) '[I32, I32] '[] (WasmModuleR '[] '[]) '[]
+executeBranchExampleNested =
+    stepMany
+        RuntimeContext
+            { values = NoValues
+            , locals = NoLocals
+            , WasmInterpreter.globals = WasmInterpreter.NoGlobals
+            , labels = NoLabels
+            , memories = NoMems
+            }
+        branchExampleNestedSeq
+
 {- | Example 1: Add two integers
 Takes two i32 parameters (slots 0 and 1), returns their sum
 -}

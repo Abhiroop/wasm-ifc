@@ -601,22 +601,20 @@ data
         Instruction (paramsStack +>+: untouchableStack) (resStack +>+: untouchableStack) locals wasmModule inputLabels inputLabels
     -- If: conditional execution (pops i32 condition, executes one of two branches)
     If ::
-        ( CheckTopVecEqual paramsStack inputStack ~ 'True
-        , CheckTopVecEqual resStack outputStack ~ 'True
-        , inputStack ~ paramsStack +>+:untouchableStack
+        ( inputStack ~ paramsStack +>+:untouchableStack
         , outputStack ~ resStack +>+: untouchableStack -- ensure that the parameters of the block are on top of the input stack
         ) =>
         BlockType paramsStack resStack ->
         InstructionSequence
             (paramsStack +>+:untouchableStack)
-            outputStack
+            (resStack +>+: untouchableStack)
             locals
             wasmModule
             ('LabelShape resStack (Length inputStack :- Length paramsStack) ': inputLabels)
             ('LabelShape resStack (Length inputStack :- Length paramsStack) ': inputLabels) -> -- then branch
         InstructionSequence
             (paramsStack +>+:untouchableStack)
-            outputStack
+            (resStack +>+: untouchableStack)
             locals
             wasmModule
             ('LabelShape resStack (Length inputStack :- Length paramsStack) ': inputLabels)
