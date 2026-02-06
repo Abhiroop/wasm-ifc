@@ -1,12 +1,9 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
-{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
-{-# LANGUAGE UndecidableInstances #-}
 
 {- | A type-safe embedded domain-specific language (DSL) for WebAssembly.
 This module uses advanced Haskell type system features to ensure that
@@ -664,24 +661,24 @@ data
             (topSecPC :: SecLevel)
             (untouchableStack :: ValStackShape)
             (topSecPCOut :: SecLevel).
-        ( CheckTopVecEqual paramsStack inputStack ~ 'True
-        , CheckTopVecEqual resStack outputStack ~ 'True -- ensure that the parameters of the block are on top of the input stack
-        , inputStack ~ paramsStack +>+:untouchableStack
+        ( inputStack ~ paramsStack +>+: untouchableStack
         , outputStack ~ resStack +>+: untouchableStack
+        -- , CheckTopVecEqual paramsStack inputStack ~ 'True
+        -- , CheckTopVecEqual resStack outputStack ~ 'True -- ensure that the parameters of the block are on top of the input stack
         , topSecPC ~ Index Z secPC
         , CanFlow topSecPC topSecPCOut ~ 'True
         ) =>
         BlockType paramsStack resStack -> -- represents the optional valtype however what about the typeidx? can't know the function type
         InstructionSequence
-            inputStack
-            outputStack
+            (paramsStack +>+: untouchableStack)
+            (resStack +>+: untouchableStack)
             locals
             wasmModule
-            ('LabelShape resStack (Length inputStack) ': inputLabels)
-            ('LabelShape resStack (Length inputStack) ': inputLabels)
+            ('LabelShape resStack (Length inputStack :- Length paramsStack) ': inputLabels)
+            ('LabelShape resStack (Length inputStack :- Length paramsStack) ': inputLabels)
             (topSecPC ': secPC)
             (topSecPCOut ': secPC) ->
-        Instruction inputStack outputStack locals 
+        Instruction (paramsStack +>+: untouchableStack) (resStack +>+: untouchableStack) locals 
             wasmModule inputLabels inputLabels secPC secPC
     -- Loop: a sequence of instructions that can be restarted with 'br'
     Loop :: -- Don't see a way of doing fix point -> therefore we just treat everything that is on top of unreachable stack as high sec level (really harsh overapproximation)
@@ -708,15 +705,15 @@ data
         ) =>
         BlockType paramsStack resStack ->
         InstructionSequence
-            inputStack
-            outputStack
+            (paramsStack +>+:untouchableStack)
+            (resStack +>+: untouchableStack)
             locals
             wasmModule
-            ('LabelShape paramsStack (Length inputStack) ': inputLabels)
-            ('LabelShape paramsStack (Length inputStack) ': inputLabels)
+            ('LabelShape paramsStack (Length inputStack :- Length paramsStack) ': inputLabels)
+            ('LabelShape paramsStack (Length inputStack :- Length paramsStack) ': inputLabels)
             (High ': secPC)
             (High ': secPC) ->
-        Instruction inputStack outputStack locals 
+        Instruction (paramsStack +>+:untouchableStack) (resStack +>+: untouchableStack) locals 
             wasmModule inputLabels inputLabels secPC secPC
     -- If: conditional execution (pops i32 condition, executes one of two branches)
     If :: forall paramsStack resStack inputStack outputStack outputStack1 outputStack2 locals wasmModule inputLabels secPC lCond untouchableStack outTopSecPC1 outTopSecPC2.
@@ -735,25 +732,25 @@ data
         ) =>
         BlockType paramsStack resStack ->
         InstructionSequence
-            inputStack
+            (paramsStack +>+:untouchableStack)
             outputStack1
             locals
             wasmModule
-            ('LabelShape resStack (Length inputStack) ': inputLabels)
-            ('LabelShape resStack (Length inputStack) ': inputLabels)
+            ('LabelShape resStack (Length inputStack :- Length paramsStack) ': inputLabels)
+            ('LabelShape resStack (Length inputStack :- Length paramsStack) ': inputLabels)
             ((lCond :/\ Index Z secPC) ': secPC)
             (outTopSecPC1 ': secPC) -> -- then branch
         InstructionSequence
-            inputStack
+            (paramsStack +>+:untouchableStack)
             outputStack2
             locals
             wasmModule
-            ('LabelShape resStack (Length inputStack) ': inputLabels)
-            ('LabelShape resStack (Length inputStack) ': inputLabels)
+            ('LabelShape resStack (Length inputStack :- Length paramsStack) ': inputLabels)
+            ('LabelShape resStack (Length inputStack :- Length paramsStack) ': inputLabels)
             ((lCond :/\ Index Z secPC) ': secPC)
             (outTopSecPC2 ': secPC) -> -- else branch
         Instruction
-            (I32 :~ lCond ': inputStack) -- l condition says whether the condition itself is high or low security level
+            (I32 :~ lCond ': (paramsStack +>+:untouchableStack)) -- l condition says whether the condition itself is high or low security level
             outputStack
             locals
             wasmModule

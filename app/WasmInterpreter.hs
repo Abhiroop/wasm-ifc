@@ -1,7 +1,11 @@
-{-# LANGUAGE AllowAmbiguousTypes #-}
-{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeOperators #-}
+
+-- only used for show instance
 {-# LANGUAGE InstanceSigs #-}
 {-
 TODO Summary:
@@ -15,12 +19,6 @@ TODO Summary:
 8. Line 395: In future instead of inlining Br's code investigate how can we call `Br`
 9. Line 437: double check the operand order
 -}
-{-# LANGUAGE PolyKinds #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE TypeOperators #-}
-{-# LANGUAGE UndecidableInstances #-}
 
 {- | A type-safe embedded domain-specific language (DSL) for WebAssembly.
 This module uses advanced Haskell type system features to ensure that
@@ -124,6 +122,10 @@ stackLength ::
     ValueStack (valuesShape :: ValStackShape) -> SNat (Length valuesShape)
 stackLength NoValues = SZ
 stackLength (ConsValues _ rest) = SS (stackLength rest)
+
+stackLengthKvalStack :: KnownValStackShape valuesShape -> SNat (Length valuesShape)
+stackLengthKvalStack KnownValVNil = SZ
+stackLengthKvalStack (KnownValCons _ rest) = SS (stackLengthKvalStack rest)
 
 takeStack ::
     () => SNat n -> ValueStack s -> (ValueStack (Take n s), ValueStack (Drop n s))
@@ -452,10 +454,10 @@ stepInternal ctx instruction nextControl = case instruction of
                                             } ::
                                             RuntimeContext middleVal locals wasmModule initialLab
                                  in StepResult newCtx nextControl
-    Block (BTParamsResults _ (res :: KnownValStackShape resStack)) body ->
+    Block (BTParamsResults (params :: KnownValStackShape paramsStack) (res :: KnownValStackShape resStack)) body ->
         let newCtx =
                 pushLabel
-                    (Label (stackLength $ values ctx) (knownStackShapeLen res) (SomeInstrSeq End)) -- :: InstructionSequence middleVal middleVal locals wasmModule ('LabelShape resStack (Length initialVal) ': initialLab) ('LabelShape resStack (Length initialVal) ': initialLab) inSecPC)))
+                    (Label ( subtractSNat (stackLength (values ctx)) (stackLengthKvalStack params)) (knownStackShapeLen res) (SomeInstrSeq End)) -- :: InstructionSequence middleVal middleVal locals wasmModule ('LabelShape resStack (Length initialVal) ': initialLab) ('LabelShape resStack (Length initialVal) ': initialLab) inSecPC)))
                     ctx
          in StepResult newCtx (CCons (appendInstructionSeq body Leave) nextControl)
     Loop
@@ -464,10 +466,10 @@ stepInternal ctx instruction nextControl = case instruction of
         let loopCont = SomeInstrSeq (instruction :| End ) -- :: InstructionSequence initialVal middleVal locals wasmModule initialLab initialLab inSecPC)
             newCtx =
                 pushLabel
-                    (Label (stackLength $ values ctx) (knownStackShapeLen params) loopCont)
+                    (Label (subtractSNat (stackLength (values ctx)) (stackLengthKvalStack params)) (knownStackShapeLen params) loopCont)
                     ctx
          in StepResult newCtx (CCons (appendInstructionSeq body Leave) nextControl)
-    If (BTParamsResults _ (res :: KnownValStackShape resStack)) (thenBody :: InstructionSequence initialVal1 outputStack1 locals wasmModule ('LabelShape resStack (Length initialVal1) ': initialLab) ('LabelShape resStack (Length initialVal1) ': initialLab) (lCond ': inSecPC) (lCondOut ': inSecPC)) (elseBody :: InstructionSequence initialVal1 outputStack2 locals wasmModule ('LabelShape resStack (Length initialVal1) ': initialLab) ('LabelShape resStack (Length initialVal1) ': initialLab) (lCond ': inSecPC) (lCondOut2 ': inSecPC)) ->
+    If (BTParamsResults (params :: KnownValStackShape paramsStack) (res :: KnownValStackShape resStack)) (thenBody :: InstructionSequence initialVal1 outputStack1 locals wasmModule ('LabelShape resStack (Length initialVal1 :- Length paramsStack) ': initialLab) ('LabelShape resStack (Length initialVal1 :- Length paramsStack) ': initialLab) (lCond ': inSecPC) (lCondOut ': inSecPC)) (elseBody :: InstructionSequence initialVal1 outputStack2 locals wasmModule ('LabelShape resStack (Length initialVal1 :- Length paramsStack) ': initialLab) ('LabelShape resStack (Length initialVal1 :- Length paramsStack) ': initialLab) (lCond ': inSecPC) (lCondOut2 ': inSecPC)) ->
         case values ctx of
             ConsValues (cond :: RuntimeSecTypeOf (I32 :~ lCond)) (restVal :: ValueStack initialVal1) ->
                 let newCtx =
@@ -475,10 +477,10 @@ stepInternal ctx instruction nextControl = case instruction of
                             { values = restVal
                             , labels =
                                 ConsLabels
-                                    (Label (stackLength restVal) (knownStackShapeLen res) (SomeInstrSeq End))
-                                    (labels ctx) :: (LabelStack ('LabelShape resStack (Length initialVal1) ': initialLab))
+                                    (Label (subtractSNat (stackLength restVal) (stackLengthKvalStack params)) (knownStackShapeLen res) (SomeInstrSeq End))
+                                    (labels ctx) :: (LabelStack ('LabelShape resStack (Length initialVal1 :- Length paramsStack) ': initialLab))
                             }
-                    body = (if cond /= 0 then unsafeCoerce thenBody else unsafeCoerce elseBody) :: InstructionSequence initialVal1 (CombineValSecTypes outputStack1 outputStack2) locals wasmModule ('LabelShape resStack (Length initialVal1) ': initialLab) ('LabelShape resStack (Length initialVal1) ': initialLab) (lCond ': inSecPC) ( lCond:/\ lCond2 ': inSecPC)
+                    body = (if cond /= 0 then unsafeCoerce thenBody else unsafeCoerce elseBody) -- :: InstructionSequence initialVal1 (CombineValSecTypes outputStack1 outputStack2) locals wasmModule ('LabelShape resStack (Length initialVal1) ': initialLab) ('LabelShape resStack (Length initialVal1) ': initialLab) (lCond ': inSecPC) ( lCond:/\ lCond2 ': inSecPC)
                  in StepResult newCtx (CCons (appendInstructionSeq body Leave) nextControl)
     -- The first drop is correct since we drop the label anyways with the leave instruction that we added in the block instruction
     -- For the controlFrames I have to drop depth frames +1 to get to the right instruction sequence
@@ -492,7 +494,7 @@ stepInternal ctx instruction nextControl = case instruction of
                     finalValues = concatStacks valuesToKeep baseValues :: ValueStack middleVal
                     nextCtx = ctx{values = finalValues, labels = restLab}
                  in case someNext of
-                        SomeInstrSeq next -> StepResult nextCtx (unsafeCoerce cprepend (unsafeCoerce next) nextParents) -- first unsafeCoerce to make sec levels work
+                        SomeInstrSeq next -> StepResult nextCtx (unsafeCoerce cprepend next nextParents) -- first unsafeCoerce to make sec levels work
     -- TODO: In future instead of inlining Br's code investigate how can we call `Br`
     BrIf depth ->
         case values ctx of
@@ -507,7 +509,7 @@ stepInternal ctx instruction nextControl = case instruction of
                                 finalValues = concatStacks valuesToKeep baseValues
                                 nextCtx = ctx{values = finalValues, labels = restLab}
                              in case someNext of
-                                    SomeInstrSeq next -> StepResult nextCtx (unsafeCoerce cprepend (unsafeCoerce next) nextParents) -- first unsafeCoerce to make sec levels work
+                                    SomeInstrSeq next -> StepResult nextCtx (unsafeCoerce cprepend next nextParents) -- first unsafeCoerce to make sec levels work
                     else StepResult (ctx{values = rest}) nextControl
     Call _ _ -> undefined
     Leave ->

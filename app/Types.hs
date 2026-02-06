@@ -4,7 +4,6 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
 
 
 module Types where
@@ -14,14 +13,7 @@ import Data.Kind (Type)
 import Data.String ()
 import GHC.TypeError (ErrorMessage (Text))
 import GHC.TypeLits (TypeError)
-import Utils (Nat (S, Z), SNat (..), Vec (..), (:-), (:==), type (+:), type (:+))
-
-type family CheckSameVecType (xs :: [a]) (ys :: [a]) :: Bool where
-    CheckSameVecType (xs :: [a]) (ys :: [a]) =
-        Length xs :== Length ys
-
--- CheckSameVecType _ _ = 'False
-
+import Utils
 type family CheckTopVecEqual (top :: ValStackShape) (stack :: ValStackShape) :: Bool where
     CheckTopVecEqual '[] s2 = 'True
     CheckTopVecEqual s s = 'True
@@ -152,11 +144,6 @@ type family CheckValStackShapesEqual (vs1 :: ValStackShape) (vs2 :: ValStackShap
     CheckValStackShapesEqual ((t :~ l1) ': rest1) ((t :~ l2) ': rest2) =
         CheckValStackShapesEqual rest1 rest2
     CheckValStackShapesEqual (t1 :~ _ ': _) (t2 :~ _ ': _) = 'False
-        
-
-type family AddComm (a :: Nat) (b :: Nat) :: Bool where
-    AddComm a b = (a :+ b) :== (b :+ a)
-
 -- | Type family that reverses a ValStackShape.
 type family Reverse (s :: [a]) :: [a] where
     Reverse '[] = '[]
@@ -187,8 +174,6 @@ type family (upper :: [a]) +>+: (lower :: [a]) :: [a] where
     '[] +>+: lower = lower
     (top ': upper) +>+: lower = top ': (upper +>+: lower)
 infixl 5 +>+:
-
-type family (upper :: [a]) +<+: (lower :: [a]) :: [a] where
 
 {-
 =============================================================================
@@ -247,10 +232,6 @@ data KnownSecLevel (l :: SecLevel) where
     IsLow  :: KnownSecLevel Low
     IsHigh :: KnownSecLevel High
 
-class CanFlowInto (l :: SecLevel) (l' :: SecLevel)
-instance CanFlowInto 'Low 'Low
-instance CanFlowInto 'Low 'High
-instance CanFlowInto 'High 'High
 
 type family CanFlow (l :: SecLevel) (l' :: SecLevel) :: Bool where
     CanFlow 'Low 'Low = 'True
@@ -275,10 +256,3 @@ type family CombineSecLevel (swt :: SecWasmType) (secPC :: SecLevel) :: SecWasmT
 type family RuntimeSecTypeOf (swt :: SecWasmType) :: Type where
     RuntimeSecTypeOf (t :~ _) =  RuntimeTypeOf t
 
-combineSecLevels ::
-    KnownSecLevel l1 ->
-    KnownSecLevel l2 ->
-    KnownSecLevel (l1 :/\ l2)
-combineSecLevels IsLow IsLow = IsLow
-combineSecLevels IsHigh _ = IsHigh
-combineSecLevels _ IsHigh = IsHigh

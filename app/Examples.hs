@@ -1,18 +1,13 @@
-{-# LANGUAGE AllowAmbiguousTypes #-}
-{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE GADTs #-}
+{-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeOperators #-}
 {-
 TODO Summary:
 1. Line 39: tables, etc.
 2. Line 196: BUG: in validation this instruction is not removed and therefore the types do not agree
 -}
-{-# LANGUAGE PolyKinds #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE TypeOperators #-}
-{-# LANGUAGE UndecidableInstances #-}
 
 {- | A type-safe embedded domain-specific language (DSL) for WebAssembly.
 This module uses advanced Haskell type system features to ensure that
@@ -803,6 +798,24 @@ executeBranchExample4 =
             , memories = NoMems
             }
         branchExample4Seq
+
+branchExample5Seq ::
+    InstructionSequence '[] '[I32 :~ Low] locals wasmModule '[] '[] '[Low] '[Low]
+branchExample5Seq =
+    Block
+        (BTParamsResults KnownValVNil ( KnownValCons (IsLow, ForI32) KnownValVNil))
+        ( Block
+            (BTParamsResults KnownValVNil ((KnownValCons (IsLow, ForI32) KnownValVNil)))
+            ( I32Const IsLow 42
+                :| I32Const IsLow 7
+                :| I32Const IsLow 3
+                :| I32Add
+                :| Br (SFS SFZ)
+                :| End
+            )
+            :| End
+        )
+        :| End
 
 {-
 EXAMPLE FOR IF WITH IFC
