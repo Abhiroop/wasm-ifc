@@ -1,18 +1,14 @@
-{-# LANGUAGE AllowAmbiguousTypes #-}
-{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE GADTs #-}
-{-
-TODO Summary:
-1. Line 39: tables, etc.
-2. Line 196: BUG: in validation this instruction is not removed and therefore the types do not agree
--}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
-{-# LANGUAGE UndecidableInstances #-}
+{-
+TODO Summary:
+1. Line 39: tables, etc.
+2. Line 196: BUG: in validation this instruction is not removed and therefore the types do not agree
+-}
 
 {- | A type-safe embedded domain-specific language (DSL) for WebAssembly.
 This module uses advanced Haskell type system features to ensure that
@@ -773,6 +769,38 @@ executeBranchExample4 =
             , memories = NoMems
             }
         branchExample4Seq
+
+
+branchExample5Seq ::
+    InstructionSequence '[] '[I32] locals wasmModule '[] '[]
+branchExample5Seq =
+    Block
+        (BTParamsResults KnownValVNil ( KnownValCons ForI32 KnownValVNil))
+        ( Block
+            (BTParamsResults KnownValVNil (KnownValCons ForI32 KnownValVNil))
+            ( I32Const 42
+                :| I32Const 7
+                :| I32Const 3
+                :| I32Add
+                :| Br (SFS SFZ)
+                :| End
+            )
+            :| End
+        )
+        :| End
+
+executeBranchExample5 ::
+    RuntimeContext @(WasmModuleShapeR Z Z) '[I32] '[] (WasmModuleR '[] '[]) '[]
+executeBranchExample5 =
+    stepMany
+        RuntimeContext
+            { values = NoValues
+            , locals = NoLocals
+            , WasmInterpreter.globals = WasmInterpreter.NoGlobals
+            , labels = NoLabels
+            , memories = NoMems
+            }
+        branchExample5Seq
 
 {- | Example 1: Add two integers
 Takes two i32 parameters (slots 0 and 1), returns their sum

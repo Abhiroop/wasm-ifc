@@ -1,7 +1,11 @@
-{-# LANGUAGE AllowAmbiguousTypes #-}
-{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeOperators #-}
+
+-- only used for show instance
 {-# LANGUAGE InstanceSigs #-}
 {-
 TODO Summary:
@@ -15,12 +19,6 @@ TODO Summary:
 8. Line 395: In future instead of inlining Br's code investigate how can we call `Br`
 9. Line 437: double check the operand order
 -}
-{-# LANGUAGE PolyKinds #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE TypeOperators #-}
-{-# LANGUAGE UndecidableInstances #-}
 
 {- | A type-safe embedded domain-specific language (DSL) for WebAssembly.
 This module uses advanced Haskell type system features to ensure that
@@ -126,6 +124,10 @@ stackLength ::
     ValueStack (valuesShape :: ValStackShape) -> SNat (Length valuesShape)
 stackLength NoValues = SZ
 stackLength (ConsValues _ rest) = SS (stackLength rest)
+
+stackLengthKvalStack :: KnownValStackShape valuesShape -> SNat (Length valuesShape)
+stackLengthKvalStack KnownValVNil = SZ
+stackLengthKvalStack (KnownValCons _ rest) = SS (stackLengthKvalStack rest)
 
 takeStack ::
     () => SNat n -> ValueStack s -> (ValueStack (Take n s), ValueStack (Drop n s))
@@ -433,10 +435,10 @@ stepInternal ctx instruction nextControl = case instruction of
                                             } ::
                                             RuntimeContext middleVal locals wasmModule initialLab
                                  in StepResult newCtx nextControl
-    Block (BTParamsResults _ (res :: KnownValStackShape resStack)) body ->
+    Block (BTParamsResults (params :: KnownValStackShape paramsStack) (res :: KnownValStackShape resStack)) body ->
         let newCtx =
                 pushLabel
-                    (Label (stackLength $ values ctx) (knownStackShapeLen res) (SomeInstrSeq End))
+                    (Label (subtractSNat (stackLength (values ctx)) (stackLengthKvalStack params)) (knownStackShapeLen res) (SomeInstrSeq End))
                     ctx
          in StepResult newCtx (CCons (appendInstructionSeq body Leave) nextControl)
     Loop
@@ -446,10 +448,10 @@ stepInternal ctx instruction nextControl = case instruction of
             loopCont = SomeInstrSeq (loopInstr :| End)
             newCtx =
                 pushLabel
-                    (Label (stackLength $ values ctx) (knownStackShapeLen params) loopCont)
+                    (Label (subtractSNat (stackLength (values ctx)) (stackLengthKvalStack params)) (knownStackShapeLen params) loopCont)
                     ctx
          in StepResult newCtx (CCons (appendInstructionSeq body Leave) nextControl)
-    If (BTParamsResults _ (res :: KnownValStackShape resStack)) thenBody elseBody ->
+    If (BTParamsResults (params :: KnownValStackShape paramsStack) (res :: KnownValStackShape resStack)) thenBody elseBody ->
         case values ctx of
             ConsValues (cond :: RuntimeTypeOf I32) restVal ->
                 let newCtx =
@@ -457,7 +459,7 @@ stepInternal ctx instruction nextControl = case instruction of
                             { values = restVal
                             , labels =
                                 ConsLabels
-                                    (Label (stackLength restVal) (knownStackShapeLen res) (SomeInstrSeq End))
+                                    (Label (subtractSNat (stackLength restVal) (stackLengthKvalStack params)) (knownStackShapeLen res) (SomeInstrSeq End))
                                     (labels ctx)
                             }
                     body = if cond /= 0 then thenBody else elseBody

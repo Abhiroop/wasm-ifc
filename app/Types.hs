@@ -12,13 +12,7 @@ import Data.Kind (Type)
 import Data.String ()
 import GHC.TypeError (ErrorMessage (Text))
 import GHC.TypeLits (TypeError)
-import Utils (Nat (S, Z), SNat (..), Vec (..), (:-), (:==), type (+:), type (:+))
-
-type family CheckSameVecType (xs :: [a]) (ys :: [a]) :: Bool where
-    CheckSameVecType (xs :: [a]) (ys :: [a]) =
-        Length xs :== Length ys
-
--- CheckSameVecType _ _ = 'False
+import Utils
 
 type family CheckTopVecEqual (top :: ValStackShape) (stack :: ValStackShape) :: Bool where
     CheckTopVecEqual '[] s2 = 'True
@@ -105,9 +99,6 @@ data KnownValStackShape (s :: ValStackShape) where
     KnownValVNil :: KnownValStackShape '[]
     KnownValCons ::
         KnownWasmType t -> KnownValStackShape ts -> KnownValStackShape (t ': ts)
-
-type family AddComm (a :: Nat) (b :: Nat) :: Bool where
-    AddComm a b = (a :+ b) :== (b :+ a)
 
 -- | Type family that reverses a ValStackShape.
 type family Reverse (s :: [a]) :: [a] where

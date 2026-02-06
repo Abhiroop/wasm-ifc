@@ -1,13 +1,10 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE PolyKinds #-}
-{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
-{-# LANGUAGE TypeFamilyDependencies #-}
-{-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE TypeFamilies #-}
 
 module Utils where
-import Data.Type.Equality ((:~:)(Refl))
 import Data.Kind
 
 -----------------------------------------------------------------------------
@@ -48,6 +45,16 @@ type family (m :: Nat) :- (n :: Nat) :: Nat where
     m :- 'Z         = m
     ('S m) :- ('S n) = m :- n
 
+
+infixr 5 ::-
+type family (m :: SNat sm) ::- (n :: SNat sn) :: SNat (sm :- sn) where
+    m ::- 'SZ         = m
+    ('SS m) ::- ('SS n) = m ::- n
+
+subtractSNat :: SNat sm -> SNat sn -> SNat (sm :- sn)
+subtractSNat m SZ = m
+subtractSNat (SS m) (SS n) = subtractSNat m n
+subtractSNat SZ (SS n) = error "subtractSNat: negative result"
 
 -- Peano Nat addition
 type family (m :: Nat) +: (n :: Nat) :: Nat where

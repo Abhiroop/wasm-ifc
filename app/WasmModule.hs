@@ -4,24 +4,15 @@ TODO Summary:
 2. Line 143: Maybe we still need to not the limits here to check whether the memory can grow or whether we have a maximum size!
 -}
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
-{-# LANGUAGE UndecidableInstances #-}
 
 module WasmModule where
 
--- import GHC.TypeLits (Nat)
-
-import Data.Bits
-import Data.Int (Int32, Int64)
-import Data.Kind (Type)
-import Data.List (List)
-import qualified Data.Vector.Mutable as MV
 import Data.Word (Word32, Word64, Word8)
-import Types (KnownWasmType (..), RuntimeTypeOf, RuntimeWasmTypes, WasmType (..))
+import Types
 import Utils
 
 -- https://webassembly.github.io/spec/core/syntax/modules.html#syntax-global

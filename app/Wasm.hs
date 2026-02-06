@@ -1,14 +1,9 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
-{-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
-{-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
-{-# LANGUAGE UndecidableInstances #-}
 
 {- | A type-safe embedded domain-specific language (DSL) for WebAssembly.
 This module uses advanced Haskell type system features to ensure that
@@ -564,20 +559,20 @@ data
             (wasmModule :: WasmModule shape)
             (inputLabels :: LabelStackShape)
             (untouchableStack :: ValStackShape).
-        ( CheckTopVecEqual paramsStack inputStack ~ 'True
-        , CheckTopVecEqual resStack outputStack ~ 'True
-        , inputStack ~ paramsStack +>+:untouchableStack
+        ( inputStack ~ paramsStack +>+: untouchableStack
         , outputStack ~ resStack +>+: untouchableStack -- ensure that the parameters of the block are on top of the input stack
+        --, CheckTopVecEqual paramsStack inputStack ~ 'True
+        --, CheckTopVecEqual resStack outputStack ~ 'True
         ) =>
         BlockType paramsStack resStack -> -- represents the optional valtype however what about the typeidx? can't know the function type
         InstructionSequence
-            inputStack
-            outputStack
+            (paramsStack +>+: untouchableStack)
+            (resStack +>+: untouchableStack)
             locals
             wasmModule
-            ('LabelShape resStack (Length inputStack) ': inputLabels)
-            ('LabelShape resStack (Length inputStack) ': inputLabels) ->
-        Instruction inputStack outputStack locals wasmModule inputLabels inputLabels
+            ('LabelShape resStack (Length inputStack :- Length paramsStack) ': inputLabels)
+            ('LabelShape resStack (Length inputStack :- Length paramsStack) ': inputLabels) ->
+        Instruction (paramsStack +>+: untouchableStack) (resStack +>+: untouchableStack) locals wasmModule inputLabels inputLabels
     -- Loop: a sequence of instructions that can be restarted with 'br'
     Loop ::
         forall
@@ -597,13 +592,13 @@ data
         ) =>
         BlockType paramsStack resStack ->
         InstructionSequence
-            inputStack
-            outputStack
+            (paramsStack +>+:untouchableStack)
+            (resStack +>+: untouchableStack)
             locals
             wasmModule
-            ('LabelShape paramsStack (Length inputStack) ': inputLabels)
-            ('LabelShape paramsStack (Length inputStack) ': inputLabels) ->
-        Instruction inputStack outputStack locals wasmModule inputLabels inputLabels
+            ('LabelShape paramsStack (Length inputStack :- Length paramsStack) ': inputLabels)
+            ('LabelShape paramsStack (Length inputStack :- Length paramsStack) ': inputLabels) ->
+        Instruction (paramsStack +>+: untouchableStack) (resStack +>+: untouchableStack) locals wasmModule inputLabels inputLabels
     -- If: conditional execution (pops i32 condition, executes one of two branches)
     If ::
         ( CheckTopVecEqual paramsStack inputStack ~ 'True
@@ -613,22 +608,22 @@ data
         ) =>
         BlockType paramsStack resStack ->
         InstructionSequence
-            inputStack
+            (paramsStack +>+:untouchableStack)
             outputStack
             locals
             wasmModule
-            ('LabelShape resStack (Length inputStack) ': inputLabels)
-            ('LabelShape resStack (Length inputStack) ': inputLabels) -> -- then branch
+            ('LabelShape resStack (Length inputStack :- Length paramsStack) ': inputLabels)
+            ('LabelShape resStack (Length inputStack :- Length paramsStack) ': inputLabels) -> -- then branch
         InstructionSequence
-            inputStack
+            (paramsStack +>+:untouchableStack)
             outputStack
             locals
             wasmModule
-            ('LabelShape resStack (Length inputStack) ': inputLabels)
-            ('LabelShape resStack (Length inputStack) ': inputLabels) -> -- else branch
+            ('LabelShape resStack (Length inputStack :- Length paramsStack) ': inputLabels)
+            ('LabelShape resStack (Length inputStack :- Length paramsStack) ': inputLabels) -> -- else branch
         Instruction
-            (I32 ': inputStack)
-            outputStack
+            (I32 ': (paramsStack +>+: untouchableStack))
+            (resStack +>+: untouchableStack)
             locals
             wasmModule
             inputLabels
