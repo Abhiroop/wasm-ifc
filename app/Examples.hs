@@ -802,7 +802,7 @@ executeBranchExample5 =
             }
         branchExample5Seq
 
--- THIS EXAMPLE WORKS IN OUR IMPLEMENTATION BUT NOT WHEN YOU WRITE IT AS WAT CODE!!
+-- DOES NOT COMPILE AND SHOULD NOT COMPILE!!
 -- (SEE block-simple-br2-nested.wat)
 branchExampleNestedSeq ::
     InstructionSequence '[] '[I32, I32] locals wasmModule '[] '[]
@@ -816,7 +816,7 @@ branchExampleNestedSeq =
                 ( 
                     I32Const 3
                     :| I32Add
-                    :| Br SFZ
+                    :| Br (SFS SFZ)
                     :| End
                 )
             :| End
@@ -834,6 +834,71 @@ executeBranchExampleNested =
             , memories = NoMems
             }
         branchExampleNestedSeq
+
+branchThesisSeq ::
+    InstructionSequence '[] '[I64, I32] locals wasmModule '[] '[]
+branchThesisSeq =
+    Block
+        (BTParamsResults KnownValVNil (KnownValCons ForI64 (KnownValCons ForI32 KnownValVNil)))
+        ( I32Const 10
+             :| Block -- here we have problem that we expect 1 i32 on top at the end of the block but we have two
+                (BTParamsResults KnownValVNil ((KnownValCons ForI64 KnownValVNil)))
+                ( 
+                    I32Const 20
+                    :| I64Const 30
+                    :| Br (SFS SFZ)
+                    :| End -- here we expect that we have one i32 as defined in innerblock but we in fact have two i32
+                            -- hence the first thing saing the we cannot match [I32] (which is the second one) with the empty list => so the firest i32 has already been matched
+                )
+            :| End
+        )
+        :| End
+
+branchRandomAfterSequence ::
+    InstructionSequence '[] '[I32] locals wasmModule '[] '[]
+branchRandomAfterSequence =
+    Block
+        (BTParamsResults KnownValVNil (KnownValCons ForI32 (KnownValCons ForI32 KnownValVNil)))
+        ( 
+            I32Const 20
+            :| I32Const 10
+            :| Br SFZ
+            :| I32Add -- this instruction is not removed in validation and therefore the types do not agree
+            :| I32Add
+            :| End
+        )
+    :| I32Add
+    :| End
+executeRandomAfterSequence ::
+    RuntimeContext @(WasmModuleShapeR Z Z) '[I32] '[] (WasmModuleR '[] '[]) '[]
+executeRandomAfterSequence =
+    stepMany
+        RuntimeContext
+            { values = NoValues
+            , locals = NoLocals
+            , WasmInterpreter.globals = WasmInterpreter.NoGlobals
+            , labels = NoLabels
+            , memories = NoMems
+            }
+        branchRandomAfterSequence
+
+-- Does not compile and also SHOULD NOT compile
+branchSimpleSeq :: 
+    InstructionSequence '[] '[I32, I32] locals wasmModule '[] '[]
+branchSimpleSeq =
+    Block
+        (BTParamsResults KnownValVNil (KnownValCons ForI32 (KnownValCons ForI32 KnownValVNil)))
+        ( I32Const 10
+            :| Block
+                (BTParamsResults KnownValVNil (KnownValCons ForI32 KnownValVNil))
+                ( 
+                    I32Const 20
+                    :| Br (SFS SFZ)
+                    :| End
+                )
+                :| End
+        )
+        :| End
 
 {- | Example 1: Add two integers
 Takes two i32 parameters (slots 0 and 1), returns their sum

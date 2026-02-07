@@ -680,13 +680,20 @@ data
             (inputStack :: ValStackShape)
             (outputStack :: ValStackShape)
             (locals :: LocalsShape)
-            (wasmModule :: WasmModule shape).
-        ( CheckTopVecEqual (GetLabelType (Index i inputLabels)) inputStack ~ 'True
+            (wasmModule :: WasmModule shape)
+            (topLabel :: LabelShape)
+            (tailLabels :: LabelStackShape)
+            (aboveInnermostLabel :: ValStackShape).
+        -- ( CheckTopVecEqual (GetLabelType (Index i inputLabels)) inputStack ~ 'True
+        ( topLabel : tailLabels ~ inputLabels
+        , aboveInnermostLabel ~ Reverse (Drop (Height topLabel) (Reverse inputStack))
         , targetLabel : remainingLabels ~ Drop i inputLabels
-        , ( Take (Arity targetLabel) inputStack
-                +>+: Reverse (Take (Height targetLabel) (Reverse inputStack))
-          )
-            ~ outputStack
+        , CheckTopVecEqual (GetLabelType targetLabel) aboveInnermostLabel ~ 'True
+        -- actually remove this constraint because it stopped as from adding random things after branch which is actually possible in wasm
+        -- , ( Take (Arity targetLabel) inputStack
+        --         +>+: Reverse (Take (Height targetLabel) (Reverse inputStack))
+        --   )
+        --     ~ outputStack
         , l ~ Length inputLabels
         ) =>
         SFin i l ->
