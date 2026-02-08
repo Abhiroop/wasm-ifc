@@ -12,7 +12,7 @@ TODO Summary:
 module WasmModule where
 
 import Data.Word (Word32, Word64, Word8)
-import Types 
+import Types
 import Utils
 import GHC.TypeError (ErrorMessage (Text))
 import GHC.TypeLits (TypeError)

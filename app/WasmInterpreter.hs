@@ -462,8 +462,9 @@ stepInternal ctx instruction nextControl = case instruction of
          in StepResult newCtx (CCons (appendInstructionSeq body Leave) nextControl)
     Loop
         blockType@(BTParamsResults (params :: KnownValStackShape paramsStack) _)
-        body ->
-        let loopCont = SomeInstrSeq (instruction :| End ) -- :: InstructionSequence initialVal middleVal locals wasmModule initialLab initialLab inSecPC)
+        body ->  -- :: InstructionSequence initialVal middleVal locals wasmModule (topLabel ': initialLab) (topLabel ': initialLab) inSecPC intermediateSecPC) ->
+        let loopInstr = instruction --Loop blockType body :: Instruction initialVal middleVal locals wasmModule initialLab initialLab
+            loopCont = SomeInstrSeq (loopInstr :| End)
             newCtx =
                 pushLabel
                     (Label (subtractSNat (stackLength (values ctx)) (stackLengthKvalStack params)) (knownStackShapeLen params) loopCont)
@@ -491,16 +492,18 @@ stepInternal ctx instruction nextControl = case instruction of
                 ) ->
                 let (valuesToKeep, _) = takeStack arity (values ctx)
                     baseValues = reduceStackToLength heightToPreserve (values ctx)
-                    finalValues = concatStacks valuesToKeep baseValues :: ValueStack middleVal
+                    finalValues = concatStacks valuesToKeep baseValues -- :: ValueStack middleVal
                     nextCtx = ctx{values = finalValues, labels = restLab}
                  in case someNext of
                         SomeInstrSeq next -> StepResult nextCtx (unsafeCoerce cprepend next nextParents) -- first unsafeCoerce to make sec levels work
     -- TODO: In future instead of inlining Br's code investigate how can we call `Br`
     BrIf depth ->
         case values ctx of
-            ConsValues cond rest ->
+            ConsValues cond (rest :: ValueStack restShape) ->
                 if cond == 0
-                    then case (dropLabels depth (labels ctx), dropControlFrames (SFS depth) nextControl) of
+                    then 
+                        -- StepResult (ctx{values = rest}) (cprepend ((Br depth :| End ) :: InstructionSequence restShape middleVal locals wasmModule initialLab middleLab) nextControl)
+                        case (dropLabels depth (labels ctx), dropControlFrames (SFS depth) nextControl) of
                         ( ConsLabels (Label heightToPreserve arity someNext) restLab
                             , ControlStackWithSomeInitial nextParents
                             ) ->

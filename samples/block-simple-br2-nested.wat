@@ -1,0 +1,13 @@
+(module
+  (func $block-simple (result i32 i32)
+    (block (result i32 i32)
+      (i32.const 10)
+      (i32.const 20)
+      (block (param i32) (result i32)
+        (i32.const 10)
+        (i32.add)
+        (br 1)
+      )
+    )
+  )
+)

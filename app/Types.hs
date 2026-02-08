@@ -14,12 +14,18 @@ import Data.String ()
 import GHC.TypeError (ErrorMessage (Text))
 import GHC.TypeLits (TypeError)
 import Utils
+
 type family CheckTopVecEqual (top :: ValStackShape) (stack :: ValStackShape) :: Bool where
     CheckTopVecEqual '[] s2 = 'True
     CheckTopVecEqual s s = 'True
     CheckTopVecEqual (t :~ l1 ': ts) (t :~ l2 ': ss) = CheckTopVecEqual ts ss
     CheckTopVecEqual (t1 :~ _ ': _) (t2 :~ _ ': _) = False
 
+type family CheckTopVecEqualInclSecLevel (top :: ValStackShape) (stack :: ValStackShape) :: Bool where
+    CheckTopVecEqualInclSecLevel '[] s2 = 'True
+    CheckTopVecEqualInclSecLevel s s = 'True
+    CheckTopVecEqualInclSecLevel (t :~ l ': ts) (t :~ l ': ss) = CheckTopVecEqualInclSecLevel ts ss
+    CheckTopVecEqualInclSecLevel (t1 :~ _ ': _) (t2 :~ _ ': _) = False  
     
 type LocalsShape = [SecWasmType]
 
@@ -132,18 +138,6 @@ data KnownValStackShape (s :: ValStackShape) where
     KnownValCons ::
         (KnownSecLevel l,KnownWasmType t) -> KnownValStackShape ts -> KnownValStackShape ((t :~ l) ': ts)
 
-type family CombineValSecTypes (vs1 :: ValStackShape) (vs2 :: ValStackShape) :: ValStackShape where
-    CombineValSecTypes '[] '[] = '[]
-    CombineValSecTypes ((t :~ l1) ': rest1) ((t :~ l2) ': rest2) =
-        (t :~ (l1 :/\ l2)) ': CombineValSecTypes rest1 rest2
-    CombineValSecTypes v1 v2 =
-        TypeError ('Text "CombineValSecTypes: ValStackShapes have different WasmTypes")
-
-type family CheckValStackShapesEqual (vs1 :: ValStackShape) (vs2 :: ValStackShape) :: Bool where
-    CheckValStackShapesEqual '[] '[] = 'True
-    CheckValStackShapesEqual ((t :~ l1) ': rest1) ((t :~ l2) ': rest2) =
-        CheckValStackShapesEqual rest1 rest2
-    CheckValStackShapesEqual (t1 :~ _ ': _) (t2 :~ _ ': _) = 'False
 -- | Type family that reverses a ValStackShape.
 type family Reverse (s :: [a]) :: [a] where
     Reverse '[] = '[]

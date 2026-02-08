@@ -2,6 +2,7 @@
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-
 TODO Summary:
@@ -631,6 +632,8 @@ branchExampleSeq ::
         {locals :: LocalsShape}
         {wasmModule :: WasmModule shape}.
     InstructionSequence
+        -- inputStack
+        -- ('[] +>+: Reverse (Take (Length inputStack) (Reverse inputStack)))
         '[]
         '[]
         locals
@@ -817,6 +820,116 @@ branchExample5Seq =
         )
         :| End
 
+
+executeBranchExample5 ::
+    RuntimeContext @(WasmModuleShapeR Z Z) '[I32 :~ Low] '[] (WasmModuleR '[] '[]) '[]
+executeBranchExample5 =
+    stepMany
+        RuntimeContext
+            { values = NoValues
+            , locals = NoLocals
+            , WasmInterpreter.globals = WasmInterpreter.NoGlobals
+            , labels = NoLabels
+            , memories = NoMems            }
+        branchExample5Seq
+
+-- DOES NOT COMPILE AND SHOULD NOT COMPILE!!
+-- (SEE block-simple-br2-nested.wat)
+branchExampleNestedSeq ::
+    InstructionSequence '[] '[I32 :~ Low, I32 :~ Low] locals wasmModule '[] '[] '[Low] '[Low]
+branchExampleNestedSeq =
+    Block
+        (BTParamsResults KnownValVNil (KnownValCons (IsLow, ForI32) (KnownValCons (IsLow, ForI32) KnownValVNil)))
+        ( I32Const IsLow 42
+            :| I32Const IsLow 7
+            :| Block
+                (BTParamsResults (KnownValCons (IsLow, ForI32) KnownValVNil) (KnownValCons (IsLow, ForI32) KnownValVNil))
+                ( 
+                    I32Const IsLow 3
+                    :| I32Add
+                    :| Br (SFS SFZ)
+                    :| End
+                )
+            :| End
+        )
+        :| End
+executeBranchExampleNested ::
+    RuntimeContext @(WasmModuleShapeR Z Z) '[I32 :~ Low, I32 :~ Low] '[] (WasmModuleR '[] '[]) '[]
+executeBranchExampleNested =
+    stepMany
+        RuntimeContext
+            { values = NoValues
+            , locals = NoLocals
+            , WasmInterpreter.globals = WasmInterpreter.NoGlobals
+            , labels = NoLabels
+            , memories = NoMems
+            }
+        branchExampleNestedSeq
+
+branchThesisSeq ::
+    InstructionSequence '[] '[I64 :~ Low, I32 :~ Low] locals wasmModule '[] '[] '[Low] '[Low]
+branchThesisSeq =
+    Block
+        (BTParamsResults KnownValVNil (KnownValCons (IsLow, ForI64) (KnownValCons (IsLow, ForI32) KnownValVNil)))
+        ( I32Const IsLow 10
+             :| Block -- here we have problem that we expect 1 i32 on top at the end of the block but we have two
+                (BTParamsResults KnownValVNil ((KnownValCons (IsLow, ForI64) KnownValVNil)))
+                ( 
+                    I32Const IsLow 20
+                    :| I64Const IsLow 30
+                    :| Br (SFS SFZ)
+                    :| End -- here we expect that we have one i32 as defined in innerblock but we in fact have two i32
+                            -- hence the first thing saing the we cannot match [I32] (which is the second one) with the empty list => so the firest i32 has already been matched
+                )
+            :| End
+        )
+        :| End
+
+branchRandomAfterSequence ::
+    InstructionSequence '[] '[I32 :~ High, I32 :~ Low] locals wasmModule '[] '[] '[Low] '[Low]
+branchRandomAfterSequence = 
+    Block
+        (BTParamsResults KnownValVNil (KnownValCons (IsHigh, ForI32) (KnownValCons (IsLow, ForI32) KnownValVNil)))
+        ( 
+            I32Const IsLow 20
+            :| I32Const IsHigh 10
+            :| Br SFZ
+            -- :| I32Add -- this does not work in IFC since we cannot definitely know what the output sec level is and therefore we have a problem also with what is expected from the next instr
+            :| End
+        )
+    -- :| I32Add
+    :| End
+executeRandomAfterSequence ::
+    RuntimeContext @(WasmModuleShapeR Z Z) '[I32 :~ High] '[] (WasmModuleR '[] '[]) '[]
+executeRandomAfterSequence =
+    stepMany
+        RuntimeContext
+            { values = NoValues
+            , locals = NoLocals
+            , WasmInterpreter.globals = WasmInterpreter.NoGlobals
+            , labels = NoLabels
+            , memories = NoMems
+            }
+        branchRandomAfterSequence
+
+-- Does not compile and also SHOULD NOT compile
+branchSimpleSeq :: 
+    InstructionSequence '[] '[I32 :~ Low, I32 :~ Low] locals wasmModule '[] '[] '[Low] '[Low]
+branchSimpleSeq =
+    Block
+        (BTParamsResults KnownValVNil (KnownValCons (IsLow, ForI32) (KnownValCons (IsLow, ForI32) KnownValVNil)))
+        ( I32Const IsLow 10
+            :| Block
+                (BTParamsResults KnownValVNil (KnownValCons (IsLow, ForI32) KnownValVNil))
+                ( 
+                    I32Const IsLow 20
+                    :| Br (SFS SFZ)                    
+                    :| End
+                )
+                :| End
+        )
+        :| End
+
 {-
 EXAMPLE FOR IF WITH IFC
 -}
@@ -856,10 +969,6 @@ executeIfCond =
     stepMany
         ( RuntimeContext
             { values = ConsValues (0 :: Int32) NoValues
-            , locals = NoLocals
-            , WasmInterpreter.globals = WasmInterpreter.NoGlobals
-            , labels = NoLabels
-            , memories = NoMems
             } ::
             RuntimeContext
                 '[I32 :~ High]
@@ -1170,7 +1279,7 @@ loopSeq =
                 (BTParamsResults KnownValVNil (KnownValCons (IsHigh, ForI32) KnownValVNil))
                 ( I32Const IsLow 42
                     :| I32Const IsLow 7
-                    :| I32Add
+                    :| I32Add                    
                     :| End
                 )
                 :| End
@@ -1256,7 +1365,6 @@ brIfSeqHigh =
             :| End :: InstructionSequence '[] '[I32 :~ High] '[] (WasmModuleR '[] '[]) '[ 'LabelShape '[I32 :~ High] Z] '[ 'LabelShape '[I32 :~ High] Z] '[Low, Low] '[High, Low]
         )
         :| End
-
 
 {- | Example 1: Add two integers
 Takes two i32 parameters (slots 0 and 1), returns their sum

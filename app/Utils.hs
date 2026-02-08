@@ -55,7 +55,6 @@ subtractSNat m SZ = m
 subtractSNat (SS m) (SS n) = subtractSNat m n
 subtractSNat SZ (SS n) = error "subtractSNat: negative result"
 
-
 -- Peano Nat addition
 type family (m :: Nat) +: (n :: Nat) :: Nat where
     'Z +: n         = n

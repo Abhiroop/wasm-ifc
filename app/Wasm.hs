@@ -85,7 +85,7 @@ data
     I32Add ::
         Instruction
             ((I32 :~ l1) ': (I32 :~ l2) ': inputStack)
-            ((I32 :~ (l1 :/\ l2) :/\ Index Z secPC) ': inputStack)
+            ((I32 :~ l1 :/\ l2 :/\ Index Z secPC) ': inputStack)
             locals
             wasmModule
             inputLabels
@@ -692,16 +692,11 @@ data
             (wasmModule :: WasmModule shape)
             (inputLabels :: LabelStackShape)
             (secPC :: [SecLevel])
-            -- (topSecPC :: SecLevel)
-            (untouchableStack :: ValStackShape)
-            -- (topSecPCOut :: SecLevel)
-            .
+            (untouchableStack :: ValStackShape).
         ( CheckTopVecEqual paramsStack inputStack ~ 'True
-        , CheckTopVecEqual resStack outputStack ~ 'True -- ensure that the parameters of the block are on top of the input stack
-        -- , topSecPC ~ Index Z secPC
-        -- , CanFlow topSecPC topSecPCOut ~ 'True
-        , inputStack ~ paramsStack +>+:untouchableStack
-        , outputStack ~ resStack +>+: untouchableStack
+        , CheckTopVecEqual resStack outputStack ~ 'True
+        , inputStack ~ paramsStack +>+: untouchableStack
+        , outputStack ~ resStack +>+: untouchableStack -- ensure that the parameters of the block are on top of the input stack
         ) =>
         BlockType paramsStack resStack ->
         InstructionSequence
@@ -717,14 +712,12 @@ data
             wasmModule inputLabels inputLabels secPC secPC
     -- If: conditional execution (pops i32 condition, executes one of two branches)
     If :: forall paramsStack resStack inputStack outputStack outputStack1 outputStack2 locals wasmModule inputLabels secPC lCond untouchableStack outTopSecPC1 outTopSecPC2.
-        ( CheckTopVecEqual paramsStack inputStack ~ 'True
+        ( CheckTopVecEqualInclSecLevel paramsStack inputStack ~ 'True
         , CheckTopVecEqual resStack outputStack1 ~ 'True -- ensure that the parameters of the block are on top of the input stack
         , CheckTopVecEqual resStack outputStack2 ~ 'True
-        , CheckTopVecEqual outputStack1 outputStack2 ~ 'True
-        , CheckTopVecEqual outputStack2 outputStack2 ~ 'True
-        , CheckValStackShapesEqual outputStack outputStack1 ~ 'True
-        , CheckValStackShapesEqual outputStack outputStack2 ~ 'True
-        , outputStack ~ CombineValSecTypes outputStack1 outputStack2
+        , CheckTopVecEqual outputStack1 outputStack ~ 'True
+        , CheckTopVecEqual outputStack2 outputStack ~ 'True
+        , outputStack ~ CombineSecTypes outputStack1 outputStack2
         , inputStack ~ paramsStack +>+:untouchableStack
         , outputStack ~ resStack +>+: untouchableStack
         , CanFlow (lCond :/\ Index Z secPC) outTopSecPC1 ~ 'True
@@ -813,13 +806,20 @@ data
             (outputStack :: ValStackShape)
             (locals :: LocalsShape)
             (wasmModule :: WasmModule shape)
+            (topLabel :: LabelShape)
+            (tailLabels :: LabelStackShape)
+            (aboveInnermostLabel :: ValStackShape)
             (secPC :: [SecLevel]).
-        ( CheckTopVecEqual (GetLabelType (Index i inputLabels)) inputStack ~ 'True
+        -- ( CheckTopVecEqual (GetLabelType (Index i inputLabels)) inputStack ~ 'True
+        ( topLabel : tailLabels ~ inputLabels
+        , aboveInnermostLabel ~ Reverse (Drop (Height topLabel) (Reverse inputStack))
         , targetLabel : remainingLabels ~ Drop i inputLabels
-        , ( Take (Arity targetLabel) inputStack
-                +>+: Reverse (Take (Height targetLabel) (Reverse inputStack))
-          )
-            ~ outputStack
+        , CheckTopVecEqualInclSecLevel (GetLabelType targetLabel) aboveInnermostLabel ~ 'True
+        -- actually remove this constraint because it stopped as from adding random things after branch which is actually possible in wasm
+        -- , ( Take (Arity targetLabel) inputStack
+        --         +>+: Reverse (Take (Height targetLabel) (Reverse inputStack))
+        --   )
+        --     ~ outputStack
         , l ~ Length inputLabels
         , LessThan l (Length secPC) ~ 'True
         ) =>
@@ -1014,23 +1014,23 @@ infixr 5 :| -- Right-associative, like list construction
 
 data
     InstructionSequence
-        (inputStack :: ValStackShape)
-        (outputStack :: ValStackShape)
+        (initialVal :: ValStackShape)
+        (finalVal :: ValStackShape)
         (locals :: LocalsShape)
         (wasmModule :: WasmModule shape)
-        (inputLabels :: LabelStackShape)
-        (outputLabels :: LabelStackShape)
+        (initialLab :: LabelStackShape)
+        (finalLab :: LabelStackShape)
         (inSecPC :: [SecLevel])
         (outSecPC :: [SecLevel])
     where
     End ::
         InstructionSequence
-            inputStack
-            inputStack
+            initialVal
+            initialVal
             locals
             wasmModule
-            inputLabels
-            inputLabels
+            initialLab
+            initialLab
             inSecPC
             inSecPC -- Base case: empty sequence (identity)
     (:|) :: (Length inSecPC ~ Length outSecPC
@@ -1041,31 +1041,31 @@ data
             , topSecPC3 ': restSecPC' ~ outSecPC
             ) =>
         Instruction
-            initialStack
-            intermediateStack
+            initialVal
+            intermediateVal
             locals
             wasmModule
-            inputLabels
-            intermediateLabels
+            initialLab
+            intermediateLab
             inSecPC
             intermediateSecPC -- need this for branch if instructions
-             -> -- Inductive case: first instruction
-        InstructionSequence
-            intermediateStack
-            finalStack
+            -- Inductive case: first instruction
+        -> InstructionSequence
+            intermediateVal
+            finalVal
             locals
             wasmModule
-            intermediateLabels
-            outputLabels
+            intermediateLab
+            finalLab
             intermediateSecPC
-            outSecPC -> -- rest of sequence
-        InstructionSequence
-            initialStack
-            finalStack
+            outSecPC -- rest of sequence
+        -> InstructionSequence
+            initialVal
+            finalVal
             locals
             wasmModule
-            inputLabels
-            outputLabels
+            initialLab
+            finalLab
             inSecPC
             outSecPC -- combined sequence
 
