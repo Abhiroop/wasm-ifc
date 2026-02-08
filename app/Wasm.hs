@@ -873,43 +873,43 @@ infixr 5 :| -- Right-associative, like list construction
 
 data
     InstructionSequence
-        (inputStack :: ValStackShape)
-        (outputStack :: ValStackShape)
+        (initialVal :: ValStackShape)
+        (finalVal :: ValStackShape)
         (locals :: LocalsShape)
         (wasmModule :: WasmModule shape)
-        (inputLabels :: LabelStackShape)
-        (outputLabels :: LabelStackShape)
+        (initialLab :: LabelStackShape)
+        (finalLab :: LabelStackShape)
     where
     End ::
         InstructionSequence
-            inputStack
-            inputStack
+            initialVal
+            initialVal
             locals
             wasmModule
-            inputLabels
-            inputLabels -- Base case: empty sequence (identity)
+            initialLab
+            initialLab -- Base case: empty sequence (identity)
     (:|) ::
         Instruction
-            initialStack
-            intermediateStack
+            initialVal
+            intermediateVal
             locals
             wasmModule
-            inputLabels
-            intermediateLabels -> -- Inductive case: first instruction
+            initialLab
+            intermediateLab -> -- Inductive case: first instruction
         InstructionSequence
-            intermediateStack
-            finalStack
+            intermediateVal
+            finalVal
             locals
             wasmModule
-            intermediateLabels
-            outputLabels -> -- rest of sequence
+            intermediateLab
+            finalLab -> -- rest of sequence
         InstructionSequence
-            initialStack
-            finalStack
+            initialVal
+            finalVal
             locals
             wasmModule
-            inputLabels
-            outputLabels -- combined sequence
+            initialLab
+            finalLab -- combined sequence
 
 {-
 =============================================================================
