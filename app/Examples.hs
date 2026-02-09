@@ -835,36 +835,36 @@ executeBranchExample5 =
 
 -- DOES NOT COMPILE AND SHOULD NOT COMPILE!!
 -- (SEE block-simple-br2-nested.wat)
-branchExampleNestedSeq ::
-    InstructionSequence '[] '[I32 :~ Low, I32 :~ Low] locals wasmModule '[] '[] '[Low] '[Low]
-branchExampleNestedSeq =
-    Block
-        (BTParamsResults KnownValVNil (KnownValCons (IsLow, ForI32) (KnownValCons (IsLow, ForI32) KnownValVNil)))
-        ( I32Const IsLow 42
-            :| I32Const IsLow 7
-            :| Block
-                (BTParamsResults (KnownValCons (IsLow, ForI32) KnownValVNil) (KnownValCons (IsLow, ForI32) KnownValVNil))
-                ( 
-                    I32Const IsLow 3
-                    :| I32Add
-                    :| Br (SFS SFZ)
-                    :| End
-                )
-            :| End
-        )
-        :| End
-executeBranchExampleNested ::
-    RuntimeContext @(WasmModuleShapeR Z Z) '[I32 :~ Low, I32 :~ Low] '[] (WasmModuleR '[] '[]) '[]
-executeBranchExampleNested =
-    stepMany
-        RuntimeContext
-            { values = NoValues
-            , locals = NoLocals
-            , WasmInterpreter.globals = WasmInterpreter.NoGlobals
-            , labels = NoLabels
-            , memories = NoMems
-            }
-        branchExampleNestedSeq
+-- branchExampleNestedSeq ::
+--     InstructionSequence '[] '[I32 :~ Low, I32 :~ Low] locals wasmModule '[] '[] '[Low] '[Low]
+-- branchExampleNestedSeq =
+--     Block
+--         (BTParamsResults KnownValVNil (KnownValCons (IsLow, ForI32) (KnownValCons (IsLow, ForI32) KnownValVNil)))
+--         ( I32Const IsLow 42
+--             :| I32Const IsLow 7
+--             :| Block
+--                 (BTParamsResults (KnownValCons (IsLow, ForI32) KnownValVNil) (KnownValCons (IsLow, ForI32) KnownValVNil))
+--                 ( 
+--                     I32Const IsLow 3
+--                     :| I32Add
+--                     :| Br (SFS SFZ)
+--                     :| End
+--                 )
+--             :| End
+--         )
+--         :| End
+-- executeBranchExampleNested ::
+--     RuntimeContext @(WasmModuleShapeR Z Z) '[I32 :~ Low, I32 :~ Low] '[] (WasmModuleR '[] '[]) '[]
+-- executeBranchExampleNested =
+--     stepMany
+--         RuntimeContext
+--             { values = NoValues
+--             , locals = NoLocals
+--             , WasmInterpreter.globals = WasmInterpreter.NoGlobals
+--             , labels = NoLabels
+--             , memories = NoMems
+--             }
+--         branchExampleNestedSeq
 
 branchThesisSeq ::
     InstructionSequence '[] '[I64 :~ Low, I32 :~ Low] locals wasmModule '[] '[] '[Low] '[Low]
@@ -900,7 +900,7 @@ branchRandomAfterSequence =
     -- :| I32Add
     :| End
 executeRandomAfterSequence ::
-    RuntimeContext @(WasmModuleShapeR Z Z) '[I32 :~ High] '[] (WasmModuleR '[] '[]) '[]
+    RuntimeContext @(WasmModuleShapeR Z Z) '[I32 :~ High, I32 :~ Low] '[] (WasmModuleR '[] '[]) '[]
 executeRandomAfterSequence =
     stepMany
         RuntimeContext
@@ -912,23 +912,23 @@ executeRandomAfterSequence =
             }
         branchRandomAfterSequence
 
--- Does not compile and also SHOULD NOT compile
-branchSimpleSeq :: 
-    InstructionSequence '[] '[I32 :~ Low, I32 :~ Low] locals wasmModule '[] '[] '[Low] '[Low]
-branchSimpleSeq =
-    Block
-        (BTParamsResults KnownValVNil (KnownValCons (IsLow, ForI32) (KnownValCons (IsLow, ForI32) KnownValVNil)))
-        ( I32Const IsLow 10
-            :| Block
-                (BTParamsResults KnownValVNil (KnownValCons (IsLow, ForI32) KnownValVNil))
-                ( 
-                    I32Const IsLow 20
-                    :| Br (SFS SFZ)                    
-                    :| End
-                )
-                :| End
-        )
-        :| End
+-- -- Does not compile and also SHOULD NOT compile
+-- branchSimpleSeq :: 
+--     InstructionSequence '[] '[I32 :~ Low, I32 :~ Low] locals wasmModule '[] '[] '[Low] '[Low]
+-- branchSimpleSeq =
+--     Block
+--         (BTParamsResults KnownValVNil (KnownValCons (IsLow, ForI32) (KnownValCons (IsLow, ForI32) KnownValVNil)))
+--         ( I32Const IsLow 10
+--             :| Block
+--                 (BTParamsResults KnownValVNil (KnownValCons (IsLow, ForI32) KnownValVNil))
+--                 ( 
+--                     I32Const IsLow 20
+--                     :| Br (SFS SFZ)                    
+--                     :| End
+--                 )
+--                 :| End
+--         )
+--         :| End
 
 {-
 EXAMPLE FOR IF WITH IFC
@@ -1262,7 +1262,7 @@ LOOP EXAMPLES
 loopSeq ::
     InstructionSequence
         '[]
-        '[I32 :~ High]
+        '[I32 :~ Low]
         '[]
         ( (WasmModuleR '[] '[]) ::
             WasmModule (WasmModuleShapeR Z Z)
@@ -1273,13 +1273,43 @@ loopSeq ::
         '[Low]
 loopSeq =
     Block
-        (BTParamsResults KnownValVNil (KnownValCons (IsHigh, ForI32) KnownValVNil))
+        (BTParamsResults KnownValVNil (KnownValCons (IsLow, ForI32) KnownValVNil))
         (
-            Loop
-                (BTParamsResults KnownValVNil (KnownValCons (IsHigh, ForI32) KnownValVNil))
+            Loop @Low
+                (BTParamsResults KnownValVNil (KnownValCons (IsLow, ForI32) KnownValVNil))
                 ( I32Const IsLow 42
                     :| I32Const IsLow 7
                     :| I32Add                    
+                    :| End
+                )
+                :| End
+        )
+        :| End
+
+loopSeqBrif ::
+    InstructionSequence
+        '[]
+        '[]
+        '[]
+        ( (WasmModuleR '[] '[]) ::
+            WasmModule (WasmModuleShapeR Z Z)
+        )
+        '[]
+        '[]
+        '[Low]
+        '[Low]
+loopSeqBrif =
+    Block
+        (BTParamsResults KnownValVNil KnownValVNil) -- (KnownValCons (IsLow, ForI32) KnownValVNil))
+        (
+            Loop @High
+                (BTParamsResults KnownValVNil KnownValVNil) -- (KnownValCons (IsLow, ForI32) KnownValVNil))
+                ( I32Const IsLow 42
+                    :| I32Const IsLow 7
+                    :| I32Add
+                    :| I32Const IsHigh 50
+                    :| I32LeS
+                    :| BrIf SFZ                  
                     :| End
                 )
                 :| End
@@ -1366,6 +1396,17 @@ brIfSeqHigh =
         )
         :| End
 
+-- shouldn't compile so this is good
+-- localSetSeq ::
+--     InstructionSequence '[] '[] '[I32 :~ Low] (WasmModuleR '[] '[]) '[]
+--         '[]
+--         '[High]
+--         '[High]
+-- localSetSeq =
+--     I32Const IsLow 42
+--         :| LocalSet SFZ
+--         :| End
+
 {- | Example 1: Add two integers
 Takes two i32 parameters (slots 0 and 1), returns their sum
 -}
@@ -1417,8 +1458,8 @@ factorialSeq ::
     (s ~ WasmModuleShapeR Z Z) =>
     InstructionSequence
         '[]
-        (I32 :~ High ': '[])
-        (I32 :~ High ': I32 :~ High ': '[])
+        (I32 :~ Low ': '[])
+        (I32 :~ Low ': I32 :~ Low ': '[])
         wm
         '[]
         '[]
@@ -1427,7 +1468,7 @@ factorialSeq ::
 factorialSeq =
     -- Local slots: (0) input parameter (also used as counter), (1) accumulator
     -- Initialize accumulator to 1
-    I32Const IsHigh 1 -- Cannot be Low because currently can't put low in high => probably implement this and ignore unsafeCoerces
+    I32Const IsLow 1 -- Can be Low but when we get it from locals will be High since the slot is high
         :| LocalSet (SFS SFZ)
         -- :| I32Const 0
         -- Main computation block
@@ -1439,7 +1480,7 @@ factorialSeq =
                 :| I32LeS
                 :| BrIf SFZ -- Exit block if n <= 1
                 -- Iterative loop for factorial computation
-                :| Loop
+                :| Loop @Low
                     (BTParamsResults KnownValVNil KnownValVNil)
                     ( -- accumulator *= n
                       LocalGet (SFS SFZ)
@@ -1467,15 +1508,15 @@ factorialSeq =
 factorial ::
     forall (s :: WasmModuleShape) (wm :: WasmModule s).
     (s ~ WasmModuleShapeR Z Z) =>
-    Function '[] (I32 :~ High ': '[]) (I32 :~ High ': I32 :~ High ': '[]) '[] wm '[Low] '[Low]
+    Function '[] (I32 :~ Low ': '[]) (I32 :~ Low ': I32 :~ Low ': '[]) '[] wm '[Low] '[Low]
 factorial =
     Function
-        (FFuncTypeAnn [] [I32 :~ High])
+        (FFuncTypeAnn [] [I32 :~ Low])
         factorialSeq
 executeFactorial ::
     RuntimeContext @(WasmModuleShapeR Z Z)
-        '[I32 :~ High]
-        '[I32 :~ High, I32 :~ High]
+        '[I32 :~ Low]
+        '[I32 :~ Low, I32 :~ Low]
         (WasmModuleR '[] '[])
         '[]
 -- we put as input 4 so the expected result is 24
@@ -1490,7 +1531,7 @@ executeFactorial =
             } ::
             RuntimeContext
                 '[]
-                '[I32 :~ High, I32 :~ High]
+                '[I32 :~ Low, I32 :~ Low]
                 ((WasmModuleR '[] '[]) :: WasmModule (WasmModuleShapeR Z Z))
                 '[]
         )

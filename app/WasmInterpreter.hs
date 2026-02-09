@@ -379,12 +379,12 @@ stepInternal ctx instruction nextControl = case instruction of
             let newCtx =
                     ctx
                         { values = rest
-                        , locals = setLocal slot val (locals ctx)
+                        , locals = setLocal slot (unsafeCoerce val) (locals ctx)
                         }
              in StepResult newCtx nextControl
     LocalTee slot -> case values ctx of
         ConsValues val _ ->
-            let newCtx = ctx{locals = setLocal slot val (locals ctx)}
+            let newCtx = ctx{locals = setLocal slot (unsafeCoerce val) (locals ctx)}
              in StepResult newCtx nextControl
     GlobalGet slot -> case getGlobal slot (globals ctx) of
         val -> StepResult (pushValue (unsafeCoerce val) ctx) nextControl -- TODO unsafeCoerce
@@ -393,7 +393,7 @@ stepInternal ctx instruction nextControl = case instruction of
             let newCtx =
                     ctx
                         { values = rest
-                        , globals = setGlobal slot val (globals ctx)
+                        , globals = setGlobal slot (unsafeCoerce val) (globals ctx)
                         }
              in StepResult newCtx nextControl
     -- Have memory array as a list of bytes and then we cast it when we load/store

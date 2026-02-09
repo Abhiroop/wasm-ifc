@@ -472,19 +472,20 @@ data
         SFin i n ->
         Instruction
             inputStack
-            (CombineLocalSecLevel (Index i locals) t ': inputStack)
+            (CombineLocalSecLevel (Index i locals) (Index Z secPC) ': inputStack)
             locals
             wasmModule
             inputLabels
             inputLabels
-            (t ': secPC)
-            (t ': secPC) -- pop a value from stack and store it in a local variable
+            secPC
+            secPC -- pop a value from stack and store it in a local variable
     LocalSet :: -- TODO actually comment below not quite accurate -> we can only set the exact security level and type since we have it typed that way
         (n ~ Length locals
-        ,  CanFlow (Index Z secPC) (GetSecLevel (Index i locals)) ~ 'True) => -- we can only set a local if the current secPC is can flow into the level the local slot has
+        ,  CanFlow (Index Z secPC) (GetSecLevel (Index i locals)) ~ 'True
+        , CanFlow l (GetSecLevel (Index i locals)) ~ 'True) => -- we can only set a local if the current secPC is can flow into the level the local slot has
         SFin i n ->
         Instruction
-            (Index i locals ': inputStack)
+            (GetWasmType (Index i locals) :~ l ': inputStack)
             -- ( GetWasmType (Index i locals) :~ GetSecLevel (Index i locals) :/\ Index Z secPC ': inputStack) => could do it like this but then need unsafeCoerce
             inputStack
             locals
@@ -503,11 +504,12 @@ data
     -- => technically the stack looks the same at the start and at the end?
     LocalTee ::
         (n ~ Length locals
-        ,  CanFlow (Index Z secPC) (GetSecLevel (Index i locals)) ~ 'True) =>
+        , CanFlow (Index Z secPC) (GetSecLevel (Index i locals)) ~ 'True
+        , CanFlow l (GetSecLevel (Index i locals)) ~ 'True) =>
         SFin i n ->
         Instruction
-            (Index i locals ': inputStack)
-            (Index i locals ': inputStack)
+            (GetWasmType (Index i locals) :~ l ': inputStack)
+            (GetWasmType (Index i locals) :~ l ': inputStack)
             locals
             wasmModule
             inputLabels
@@ -549,14 +551,16 @@ data
             (wasmModule :: WasmModule shape)
             (locals :: LocalsShape)
             (inputLabels :: LabelStackShape)
-            (secPC :: [SecLevel]).
+            (secPC :: [SecLevel])
+            (l :: SecLevel).
         ( n ~ GetGlobalsShape shape
         , IsVarMutability (GetMutability (Index i (GetGlobals wasmModule))) ~ 'True
         , CanFlow (Index Z secPC) (GetSecLevel (GlobalTypeToWasmType (Index i (GetGlobals wasmModule)))) ~ 'True
+        , CanFlow l (GetSecLevel (GlobalTypeToWasmType (Index i (GetGlobals wasmModule)))) ~ 'True
         ) =>
         SFin i n ->
         Instruction
-            (GlobalTypeToWasmType (Index i (GetGlobals wasmModule)) ': inputStack)
+            (GetWasmType (GlobalTypeToWasmType (Index i (GetGlobals wasmModule))) :~ l ': inputStack) -- can do same here as local.set?
             inputStack
             locals
             wasmModule
@@ -625,6 +629,7 @@ data
         SFin i n ->
         MemArg align offset ->
         Instruction
+            -- also the the security level of the wasm type does not matter does it? so could just put a random l
             (I64 :~ lAddr ': wasmtype :~ secLevel :/\ Index Z secPC :/\ lAddr ': inputStack) -- But we cannot store the security level of that value. So are we just overly cautious and mark everything coming from memory as high security level?
             inputStack
             locals
@@ -683,6 +688,7 @@ data
     -- Loop: a sequence of instructions that can be restarted with 'br'
     Loop :: -- Don't see a way of doing fix point -> therefore we just treat everything that is on top of unreachable stack as high sec level (really harsh overapproximation)
         forall
+            (secLevelAnnotation :: SecLevel)
             (shape :: WasmModuleShape)
             (paramsStack :: ValStackShape)
             (resStack :: ValStackShape)
@@ -692,11 +698,13 @@ data
             (wasmModule :: WasmModule shape)
             (inputLabels :: LabelStackShape)
             (secPC :: [SecLevel])
+            (outSecLevelAnnotation :: SecLevel)
             (untouchableStack :: ValStackShape).
         ( CheckTopVecEqual paramsStack inputStack ~ 'True
         , CheckTopVecEqual resStack outputStack ~ 'True
         , inputStack ~ paramsStack +>+: untouchableStack
         , outputStack ~ resStack +>+: untouchableStack -- ensure that the parameters of the block are on top of the input stack
+        , CanFlow outSecLevelAnnotation secLevelAnnotation ~ 'True -- we want to ensure that it cannot be annotated with low if there is a brif and the sec level changes to high
         ) =>
         BlockType paramsStack resStack ->
         InstructionSequence
@@ -706,18 +714,19 @@ data
             wasmModule
             ('LabelShape paramsStack (Length inputStack :- Length paramsStack) ': inputLabels)
             ('LabelShape paramsStack (Length inputStack :- Length paramsStack) ': inputLabels)
-            (High ': secPC)
-            (High ': secPC) ->
-        Instruction (paramsStack +>+:untouchableStack) (resStack +>+: untouchableStack) locals 
+            (secLevelAnnotation ': secPC)
+            (outSecLevelAnnotation ': secPC) ->
+        Instruction (paramsStack +>+: untouchableStack) (resStack +>+: untouchableStack) locals 
             wasmModule inputLabels inputLabels secPC secPC
     -- If: conditional execution (pops i32 condition, executes one of two branches)
     If :: forall paramsStack resStack inputStack outputStack outputStack1 outputStack2 locals wasmModule inputLabels secPC lCond untouchableStack outTopSecPC1 outTopSecPC2.
-        ( CheckTopVecEqualInclSecLevel paramsStack inputStack ~ 'True
-        , CheckTopVecEqual resStack outputStack1 ~ 'True -- ensure that the parameters of the block are on top of the input stack
-        , CheckTopVecEqual resStack outputStack2 ~ 'True
-        , CheckTopVecEqual outputStack1 outputStack ~ 'True
-        , CheckTopVecEqual outputStack2 outputStack ~ 'True
-        , outputStack ~ CombineSecTypes outputStack1 outputStack2
+        ( 
+        --     CheckTopVecEqualInclSecLevel paramsStack inputStack ~ 'True
+        -- , CheckTopVecEqual resStack outputStack1 ~ 'True
+        -- , CheckTopVecEqual resStack outputStack2 ~ 'True
+        -- , CheckTopVecEqual outputStack1 outputStack ~ 'True
+        -- , CheckTopVecEqual outputStack2 outputStack ~ 'True
+        outputStack ~ CombineSecTypes outputStack1 outputStack2
         , inputStack ~ paramsStack +>+:untouchableStack
         , outputStack ~ resStack +>+: untouchableStack
         , CanFlow (lCond :/\ Index Z secPC) outTopSecPC1 ~ 'True
@@ -851,12 +860,13 @@ data
             (locals :: LocalsShape)
             (wasmModule :: WasmModule shape)
             (secPC :: [SecLevel])
+            (restSecPC :: [SecLevel])
             (topL :: SecLevel)
             (lCond :: SecLevel). -- whether condition is high or low security level
         ( targetLabel : remainingLabels ~ Drop i inputLabels
         , l ~ Length inputLabels
-        , LessThan l (S (Length secPC)) ~ 'True
-        , topL ~ Index Z secPC
+        , LessThan l (S (Length restSecPC)) ~ 'True
+        , topL ': restSecPC ~ secPC
         ) =>
         SFin i l ->
         Instruction
@@ -866,8 +876,8 @@ data
             wasmModule
             inputLabels
             inputLabels
-            (topL ': secPC)
-            ((lCond :/\ topL) ': secPC)
+            (topL ': restSecPC)
+            ((lCond :/\ topL) ': restSecPC)
 
     -- "naive" way
     Call ::
@@ -1033,10 +1043,11 @@ data
             initialLab
             inSecPC
             inSecPC -- Base case: empty sequence (identity)
-    (:|) :: (Length inSecPC ~ Length outSecPC
-            , Length inSecPC ~ Length intermediateSecPC
-            , Length intermediateSecPC ~ Length outSecPC
-            , topSecPC1 ': restSecPC ~ inSecPC
+    (:|) :: (
+            -- Length inSecPC ~ Length outSecPC
+            -- , Length inSecPC ~ Length intermediateSecPC
+            -- , Length intermediateSecPC ~ Length outSecPC
+            topSecPC1 ': restSecPC ~ inSecPC
             , topSecPC2 ': restSecPC ~ intermediateSecPC
             , topSecPC3 ': restSecPC' ~ outSecPC
             ) =>
