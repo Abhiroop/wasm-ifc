@@ -52,16 +52,8 @@ type family GetMutability (g :: GlobalType) :: Mutability where
 
 -- type GlobalsShape = [GlobalType]
 type GlobalsShape = [GlobalType]
-
-type family GetGlobalsShape (m :: WasmModuleShape) :: Nat where
-    GetGlobalsShape ('WasmModuleShapeR globalsShape _) = globalsShape
-
-type family GetMemoriesShape (m :: WasmModuleShape) :: Nat where
-    GetMemoriesShape ('WasmModuleShapeR _ memoriesShape) = memoriesShape
-
 data WasmModuleShape = WasmModuleShapeR
-    { globalsShape :: Nat
-    , memoriesShape :: Nat
+    { 
     }
 
 -- module ::== {

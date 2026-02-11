@@ -37,8 +37,6 @@ LOCAL VARIABLE CONTEXT
 -- | Reference to a local variable slot (0-indexed).
 type SlotIndex = Nat
 
-type LocalsShape = [WasmType]
-
 {- TODO: Better error messages
    Improve type error messages for common mistakes like:
    - Stack underflow
@@ -442,7 +440,7 @@ data
             (wasmModule :: WasmModule shape)
             (locals :: LocalsShape)
             (inputLabels :: LabelStackShape).
-        (n ~ GetGlobalsShape shape) =>
+        (n ~ Length (GetGlobals wasmModule)) =>
         SFin i n ->
         Instruction
             inputStack
@@ -461,7 +459,7 @@ data
             (wasmModule :: WasmModule shape)
             (locals :: LocalsShape)
             (inputLabels :: LabelStackShape).
-        ( n ~ GetGlobalsShape shape
+        ( n ~ Length (GetGlobals wasmModule)
         , IsVarMutability (GetMutability (Index i (GetGlobals wasmModule))) ~ 'True
         ) =>
         SFin i n ->
@@ -490,7 +488,7 @@ data
             (wasmModule :: WasmModule shape)
             (locals :: LocalsShape)
             (inputLabels :: LabelStackShape).
-        (Loadable wasmtype, n ~ GetMemoriesShape shape) =>
+        (Loadable wasmtype, n ~ Length (GetMems wasmModule)) =>
         SFin i n ->
         MemArg align offset -> -- ignore alignment for now, also not 100% sure why i32 has to be on top of stack
         Instruction
@@ -519,7 +517,7 @@ data
             (wasmModule :: WasmModule shape)
             locals
             inputLabels.
-        ( n ~ GetMemoriesShape shape
+        ( n ~ Length (GetMems wasmModule)
         , -- alignment must be multiple of 4 if wasmtype is I32 and multiple of 8 if wasmtype is I64
           -- ModEq align (ByteSize wasmtype) ~ 0, This one would only work with alignment also were a Nat not a word => however maybe we can evendo this at tha type level and keep it as a Word32 at execution time.
           Loadable wasmtype

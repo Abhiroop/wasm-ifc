@@ -41,6 +41,14 @@ data BlockType (params :: ValStackShape) (res :: ValStackShape) where
     BTParamsResults ::
         KnownValStackShape params -> KnownValStackShape res -> BlockType params res
 
+
+        
+
+type LocalsShape = [WasmType]
+data KnownLocalsShape (locals :: LocalsShape) where
+    NoLocalsShape :: KnownLocalsShape '[]
+    ConsLocalsShape :: KnownWasmType t -> KnownLocalsShape ts -> KnownLocalsShape (t ': ts)
+
 {-
 =============================================================================
 LABEL THINGS

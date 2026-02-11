@@ -114,7 +114,7 @@ data
         (labelsShape :: LabelStackShape) = RuntimeContext
     { values :: ValueStack valuesShape
     , locals :: Locals localsShape
-    , globals :: Globals (GetGlobals wasmModule) -- :: GlobalsShape (GetGlobalsShape shape)),
+    , globals :: Globals (GetGlobals wasmModule)
     , labels :: LabelStack labelsShape
     , memories :: Memory (GetMems wasmModule)
     -- TODO: tables, etc.
