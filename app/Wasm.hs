@@ -663,13 +663,12 @@ data
             (wasmModule :: WasmModule shape)
             (inputLabels :: LabelStackShape)
             (secPC :: [SecLevel])
+            (outSecPC :: [SecLevel])
             (topSecPC :: SecLevel)
             (untouchableStack :: ValStackShape)
             (topSecPCOut :: SecLevel).
         ( inputStack ~ paramsStack +>+: untouchableStack
         , outputStack ~ resStack +>+: untouchableStack
-        -- , CheckTopVecEqual paramsStack inputStack ~ 'True
-        -- , CheckTopVecEqual resStack outputStack ~ 'True -- ensure that the parameters of the block are on top of the input stack
         , topSecPC ~ Index Z secPC
         , CanFlow topSecPC topSecPCOut ~ 'True
         ) =>
@@ -682,9 +681,9 @@ data
             ('LabelShape resStack (Length inputStack :- Length paramsStack) ': inputLabels)
             ('LabelShape resStack (Length inputStack :- Length paramsStack) ': inputLabels)
             (topSecPC ': secPC)
-            (topSecPCOut ': secPC) ->
+            (topSecPCOut ': outSecPC) ->
         Instruction (paramsStack +>+: untouchableStack) (resStack +>+: untouchableStack) locals 
-            wasmModule inputLabels inputLabels secPC secPC
+            wasmModule inputLabels inputLabels secPC outSecPC
     -- Loop: a sequence of instructions that can be restarted with 'br'
     Loop :: -- Don't see a way of doing fix point -> therefore we just treat everything that is on top of unreachable stack as high sec level (really harsh overapproximation)
         forall
@@ -719,18 +718,17 @@ data
         Instruction (paramsStack +>+: untouchableStack) (resStack +>+: untouchableStack) locals 
             wasmModule inputLabels inputLabels secPC secPC
     -- If: conditional execution (pops i32 condition, executes one of two branches)
-    If :: forall paramsStack resStack inputStack outputStack outputStack1 outputStack2 locals wasmModule inputLabels secPC lCond untouchableStack outTopSecPC1 outTopSecPC2.
+    If :: forall paramsStack resStack inputStack outputStack outputStack1 outputStack2 locals wasmModule inputLabels secPC lCond untouchableStack outTopSecPC1 outTopSecPC2
+        outSecPC1 outSecPC2.
         ( 
-        --     CheckTopVecEqualInclSecLevel paramsStack inputStack ~ 'True
-        -- , CheckTopVecEqual resStack outputStack1 ~ 'True
-        -- , CheckTopVecEqual resStack outputStack2 ~ 'True
-        -- , CheckTopVecEqual outputStack1 outputStack ~ 'True
-        -- , CheckTopVecEqual outputStack2 outputStack ~ 'True
         outputStack ~ CombineSecTypes outputStack1 outputStack2
-        , inputStack ~ paramsStack +>+:untouchableStack
+        , inputStack ~ paramsStack +>+: untouchableStack
         , outputStack ~ resStack +>+: untouchableStack
         , CanFlow (lCond :/\ Index Z secPC) outTopSecPC1 ~ 'True
         , CanFlow (lCond :/\ Index Z secPC) outTopSecPC2 ~ 'True
+        , Length outSecPC1 ~ Length outSecPC2
+        , Length outSecPC1 ~ Length secPC
+        , Length outSecPC2 ~ Length secPC
         ) =>
         BlockType paramsStack resStack ->
         InstructionSequence
@@ -741,7 +739,7 @@ data
             ('LabelShape resStack (Length inputStack :- Length paramsStack) ': inputLabels)
             ('LabelShape resStack (Length inputStack :- Length paramsStack) ': inputLabels)
             ((lCond :/\ Index Z secPC) ': secPC)
-            (outTopSecPC1 ': secPC) -> -- then branch
+            (outTopSecPC1 ': outSecPC1) -> -- then branch
         InstructionSequence
             (paramsStack +>+:untouchableStack)
             outputStack2
@@ -750,7 +748,7 @@ data
             ('LabelShape resStack (Length inputStack :- Length paramsStack) ': inputLabels)
             ('LabelShape resStack (Length inputStack :- Length paramsStack) ': inputLabels)
             ((lCond :/\ Index Z secPC) ': secPC)
-            (outTopSecPC2 ': secPC) -> -- else branch
+            (outTopSecPC2 ': outSecPC2) -> -- else branch
         Instruction
             (I32 :~ lCond ': (paramsStack +>+:untouchableStack)) -- l condition says whether the condition itself is high or low security level
             outputStack
@@ -759,7 +757,7 @@ data
             inputLabels
             inputLabels
             secPC
-            secPC
+            (CombineSecLevelStacks outSecPC1 outSecPC2)
     -- Br: unconditional branch to a label
     -- Nat is the nesting depth of how many nested blocks/loops to break out of
     -- I guess this means we need an additional stack or vector that stores the current
@@ -819,7 +817,6 @@ data
             (tailLabels :: LabelStackShape)
             (aboveInnermostLabel :: ValStackShape)
             (secPC :: [SecLevel]).
-        -- ( CheckTopVecEqual (GetLabelType (Index i inputLabels)) inputStack ~ 'True
         ( topLabel : tailLabels ~ inputLabels
         , aboveInnermostLabel ~ Reverse (Drop (Height topLabel) (Reverse inputStack))
         , targetLabel : remainingLabels ~ Drop i inputLabels
@@ -848,6 +845,7 @@ data
     -- BrIf: conditional branch (pops i32 condition)
     -- DINA: Problem => either we branch then we have the conditions below for the outputStack or we don't branch
     -- and then the outputStack is just the inputStack minus the i32 condition
+    -- According to SecWasm all labels until i+1 should be tainted, and the level of the condition should be able to flow into the level of the block that the target label flows into
     BrIf ::
         forall
             (i :: Nat)
@@ -862,11 +860,18 @@ data
             (secPC :: [SecLevel])
             (restSecPC :: [SecLevel])
             (topL :: SecLevel)
+            (targetSecLevel :: SecLevel)
+            (unchangedSecPC :: [SecLevel])
+            (outTopSecLevels :: [SecLevel])
+            (outTargetSecLevel :: SecLevel)
             (lCond :: SecLevel). -- whether condition is high or low security level
         ( targetLabel : remainingLabels ~ Drop i inputLabels
         , l ~ Length inputLabels
         , LessThan l (S (Length restSecPC)) ~ 'True
         , topL ': restSecPC ~ secPC
+        , targetSecLevel ': unchangedSecPC ~ Drop i secPC
+        , CombineSecLevelList (lCond :/\ topL) (Take i secPC) ~ outTopSecLevels -- everything between current and target sec level
+        , outTargetSecLevel ~ (lCond :/\ topL :/\ targetSecLevel) -- the target sec level is also influenced
         ) =>
         SFin i l ->
         Instruction
@@ -877,7 +882,7 @@ data
             inputLabels
             inputLabels
             (topL ': restSecPC)
-            ((lCond :/\ topL) ': restSecPC)
+            (outTopSecLevels +>+: (outTargetSecLevel ': unchangedSecPC))
 
     -- "naive" way
     Call ::
@@ -885,7 +890,6 @@ data
         FuncTypeAnn inputStack outputStack ->
         Instruction inputStack outputStack locals
             wasmModule inputLabels outputLabels secPC secPC
-    -- here we need to po
     -- Call  :: FuncName f -> Instruction (GetParamsOf (GetTypeOfFunc f wasmModule)) (GetResultsOf (GetTypeOfFunc f wasmModule)) locals wasmModule inputLabels outputLabels
 
     Leave ::
@@ -1044,12 +1048,9 @@ data
             inSecPC
             inSecPC -- Base case: empty sequence (identity)
     (:|) :: (
-            -- Length inSecPC ~ Length outSecPC
-            -- , Length inSecPC ~ Length intermediateSecPC
-            -- , Length intermediateSecPC ~ Length outSecPC
-            topSecPC1 ': restSecPC ~ inSecPC
-            , topSecPC2 ': restSecPC ~ intermediateSecPC
-            , topSecPC3 ': restSecPC' ~ outSecPC
+            Length inSecPC ~ Length outSecPC
+            , Length inSecPC ~ Length intermediateSecPC
+            , Length outSecPC ~ Length intermediateSecPC
             ) =>
         Instruction
             initialVal

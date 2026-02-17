@@ -247,6 +247,16 @@ type family GetSecLevel (swt :: SecWasmType) :: SecLevel where
 type family CombineSecLevel (swt :: SecWasmType) (secPC :: SecLevel) :: SecWasmType where
     CombineSecLevel (t :~ l1) l2 = (t :~ (l1 :/\ l2))
 
+
+type family CombineSecLevelList (secPC :: SecLevel) (secTypes :: [SecLevel]) :: [SecLevel] where
+    CombineSecLevelList secPC '[] = '[]
+    CombineSecLevelList secPC (l ': ls) = (l :/\ secPC) : CombineSecLevelList secPC ls
+
+type family CombineSecLevelStacks (secPCs1 :: [SecLevel]) (secPCs2 :: [SecLevel]) :: [SecLevel] where
+    CombineSecLevelStacks '[] '[] = '[]
+    CombineSecLevelStacks (l1 ': ls1) (l2 ': ls2) = (l1 :/\ l2) : CombineSecLevelStacks ls1 ls2
+    CombineSecLevelStacks _ _ = TypeError ('Text "CombineSecLevelStacks: stacks have different lengths")
+
 type family RuntimeSecTypeOf (swt :: SecWasmType) :: Type where
     RuntimeSecTypeOf (t :~ _) =  RuntimeTypeOf t
 

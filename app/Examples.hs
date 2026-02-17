@@ -142,9 +142,7 @@ memLoadSequence ::
         '[I64 :~ Low, I64 :~ Low]
         ( ( WasmModuleR
                 '[]
-                ( currMem
-                    -- '[ fromIntegral 10 :: Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8, fromIntegral 20::Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8]
-                    ': '[]
+                ( currMem ': '[]
                 )
           ) ::
             WasmModule (WasmModuleShapeR Z (S (S Z)))
@@ -169,9 +167,7 @@ memLoad ::
         '[]
         ( ( WasmModuleR
                 '[]
-                ( currMem
-                    -- '[ fromIntegral 10 :: Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8, fromIntegral 20::Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8]
-                    ': '[]
+                ( currMem ': '[]
                 )
           ) ::
             WasmModule (WasmModuleShapeR Z (S (S Z)))
@@ -189,9 +185,7 @@ executeMemLoad ::
         '[I64 :~ Low, I64 :~ Low]
         ( WasmModuleR
             '[]
-            ( currMem
-                -- '[ fromIntegral 10 :: Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8, fromIntegral 20::Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8]
-                ': '[]
+            ( currMem ': '[]
             )
         )
         '[]
@@ -209,9 +203,7 @@ executeMemLoad =
                 '[I64 :~ Low, I64 :~ Low]
                 ( ( WasmModuleR
                         '[]
-                        ( currMem
-                            -- '[ fromIntegral 10 :: Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8, fromIntegral 20::Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8]
-                            ': '[]
+                        ( currMem ': '[]
                         )
                   ) ::
                     WasmModule (WasmModuleShapeR Z (S (S Z)))
@@ -227,9 +219,7 @@ memLoadSequence1 ::
         '[I64 :~ Low, I64 :~ High]
         ( ( WasmModuleR
                 '[]
-                ( currMem
-                    -- '[ fromIntegral 10 :: Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8, fromIntegral 20::Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8]
-                    ': '[]
+                ( currMem ': '[]
                 )
           ) ::
             WasmModule (WasmModuleShapeR Z (S (S Z)))
@@ -251,9 +241,7 @@ executeMemLoadSequence1 ::
         '[I64 :~ Low, I64 :~ High]
         ( WasmModuleR
             '[]
-            ( currMem
-                -- '[ fromIntegral 10 :: Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8, fromIntegral 20::Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8]
-                ': '[]
+            ( currMem ': '[]
             )
         )
         '[]
@@ -271,9 +259,7 @@ executeMemLoadSequence1 =
                 '[I64 :~ Low, I64 :~ High]
                 ( ( WasmModuleR
                         '[]
-                        ( currMem
-                            -- '[ fromIntegral 10 :: Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8, fromIntegral 20::Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8, fromIntegral 0 :: Word8]
-                            ': '[]
+                        ( currMem ': '[]
                         )
                   ) ::
                     WasmModule (WasmModuleShapeR Z (S (S Z)))
@@ -536,8 +522,8 @@ executeGlobalGetSetSequence =
 
 globalSetConstSeq ::
     InstructionSequence
+        '[I32 :~ Low, I32 :~ Low]
         '[I32 :~ Low]
-        '[]
         locals
         ( (WasmModuleR '[GlobalTypeMW Const (I32 :~ Low), GlobalTypeMW Var (I32 :~ Low)] '[]) ::
             WasmModule (WasmModuleShapeR (S (S Z)) Z)
@@ -548,7 +534,7 @@ globalSetConstSeq ::
         '[Low]
 globalSetConstSeq =
     GlobalSet (SFS SFZ)
-        -- :| GlobalSet SFZ      -- set global at index 0 should fail if uncommented
+        -- :| GlobalSet SFZ      -- set global at index 0 should fail if uncommented because of wrong mutability
         :| End
 
 add1Sequence ::
@@ -1316,6 +1302,36 @@ loopSeqBrif =
         )
         :| End
 
+
+loopSeqBrifSecWasm ::
+    InstructionSequence
+        '[]
+        '[I32 :~ Low, I32 :~ High]
+        '[]
+        ( (WasmModuleR '[] '[]) ::
+            WasmModule (WasmModuleShapeR Z Z)
+        )
+        '[]
+        '[]
+        '[Low]
+        '[Low]
+loopSeqBrifSecWasm =
+    Block 
+        (BTParamsResults KnownValVNil (KnownValCons (IsHigh, ForI32) KnownValVNil)) -- (KnownValCons (IsLow, ForI32) KnownValVNil))
+        ( Block
+            (BTParamsResults KnownValVNil (KnownValCons (IsLow, ForI32) KnownValVNil)) -- (KnownValCons (IsLow, ForI32) KnownValVNil))
+            ( I32Const IsLow 0
+                :| I32Const IsHigh 1
+                :| BrIf (SFS SFZ)
+                :| End
+            )
+            :| Drop
+            :| I32Const IsHigh 0
+            :| End 
+        )
+        :| I32Const IsLow 42
+        :| End
+            
 
 {-
 EXAMPLE FOR BRIF WITH TAINTED COND
