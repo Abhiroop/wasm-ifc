@@ -481,7 +481,7 @@ data
             secPC -- pop a value from stack and store it in a local variable
     LocalSet :: -- TODO actually comment below not quite accurate -> we can only set the exact security level and type since we have it typed that way
         (n ~ Length locals
-        ,  CanFlow (Index Z secPC) (GetSecLevel (Index i locals)) ~ 'True
+        , CanFlow (Index Z secPC) (GetSecLevel (Index i locals)) ~ 'True
         , CanFlow l (GetSecLevel (Index i locals)) ~ 'True) => -- we can only set a local if the current secPC is can flow into the level the local slot has
         SFin i n ->
         Instruction
@@ -530,7 +530,7 @@ data
             (locals :: LocalsShape)
             (inputLabels :: LabelStackShape)
             (secPC :: [SecLevel]).
-        (n ~ GetGlobalsShape shape) =>
+        (n ~ Length (GetGlobals wasmModule)) =>
         SFin i n ->
         Instruction
             inputStack
@@ -553,7 +553,7 @@ data
             (inputLabels :: LabelStackShape)
             (secPC :: [SecLevel])
             (l :: SecLevel).
-        ( n ~ GetGlobalsShape shape
+        ( n ~ Length (GetGlobals wasmModule)
         , IsVarMutability (GetMutability (Index i (GetGlobals wasmModule))) ~ 'True
         , CanFlow (Index Z secPC) (GetSecLevel (GlobalTypeToWasmType (Index i (GetGlobals wasmModule)))) ~ 'True
         , CanFlow l (GetSecLevel (GlobalTypeToWasmType (Index i (GetGlobals wasmModule)))) ~ 'True
@@ -588,12 +588,15 @@ data
             (inputLabels :: LabelStackShape)
             (lAddr :: SecLevel)
             (secPC :: [SecLevel]).
-        (Loadable wasmtype, n ~ GetMemoriesShape shape, CanFlow (Index Z secPC) secLevel ~ 'True, CanFlow lAddr secLevel ~ 'True) =>
+         (Loadable wasmtype
+        , n ~ Length (GetMems wasmModule)
+        , CanFlow (Index Z secPC) secLevel ~ 'True -- make sure we cannot annotate as low when the loaded value will be annotated with high anyways
+        , CanFlow lAddr secLevel ~ 'True) => -- same as above
         SFin i n ->
         MemArg align offset -> -- ignore alignment for now, also not 100% sure why i32 has to be on top of stack
         Instruction
-            (I64 :~ lAddr ': inputStack) -- TODO: what happens if the address somehow have highsecurity level? Should it influence the value?
-            (wasmtype :~ lAddr :/\ Index Z secPC :/\ secLevel ': inputStack) -- TODO: No way to know if what we just loaded has high security level so just mark it as high for now?
+            (I64 :~ lAddr ': inputStack)
+            (wasmtype :~ lAddr :/\ Index Z secPC :/\ secLevel ': inputStack)
             locals
             wasmModule
             inputLabels
@@ -608,7 +611,6 @@ data
     MemoryStore ::
         forall
             (wasmtype :: WasmType)
-            (secLevel :: SecLevel)
             (i :: Nat)
             (n :: Nat)
             (shape :: WasmModuleShape)
@@ -619,18 +621,19 @@ data
             (locals :: LocalsShape)
             (inputLabels :: LabelStackShape)
             (lAddr :: SecLevel)
+            (secLevel :: SecLevel)
             (secPC :: [SecLevel]).
-        ( n ~ GetMemoriesShape shape
+        ( n ~ Length (GetMems wasmModule)
         , -- alignment must be multiple of 4 if wasmtype is I32 and multiple of 8 if wasmtype is I64
           -- ModEq align (ByteSize wasmtype) ~ 0, This one would only work with alignment also were a Nat not a word => however maybe we can evendo this at tha type level and keep it as a Word32 at execution time.
-          Loadable wasmtype,
-          CanFlow (Index Z secPC) secLevel ~ 'True, CanFlow secLevel lAddr ~ 'True -- hwat do we want here actually?
+          Loadable wasmtype
+        --  , CanFlow (Index Z secPC) secLevel ~ 'True, CanFlow secLevel lAddr ~ 'True -- anything can be stored anywhere so do not care about an annotation or anything
         ) =>
         SFin i n ->
         MemArg align offset ->
         Instruction
             -- also the the security level of the wasm type does not matter does it? so could just put a random l
-            (I64 :~ lAddr ': wasmtype :~ secLevel :/\ Index Z secPC :/\ lAddr ': inputStack) -- But we cannot store the security level of that value. So are we just overly cautious and mark everything coming from memory as high security level?
+            (I64 :~ lAddr ': wasmtype :~ secLevel ': inputStack) -- But we cannot store the security level of that value. So are we just overly cautious and mark everything coming from memory as high security level?
             inputStack
             locals
             wasmModule
@@ -697,6 +700,7 @@ data
             (wasmModule :: WasmModule shape)
             (inputLabels :: LabelStackShape)
             (secPC :: [SecLevel])
+            (outSecPC :: [SecLevel])
             (outSecLevelAnnotation :: SecLevel)
             (untouchableStack :: ValStackShape).
         ( CheckTopVecEqual paramsStack inputStack ~ 'True
@@ -714,9 +718,9 @@ data
             ('LabelShape paramsStack (Length inputStack :- Length paramsStack) ': inputLabels)
             ('LabelShape paramsStack (Length inputStack :- Length paramsStack) ': inputLabels)
             (secLevelAnnotation ': secPC)
-            (outSecLevelAnnotation ': secPC) ->
+            (outSecLevelAnnotation ': outSecPC) ->
         Instruction (paramsStack +>+: untouchableStack) (resStack +>+: untouchableStack) locals 
-            wasmModule inputLabels inputLabels secPC secPC
+            wasmModule inputLabels inputLabels secPC outSecPC
     -- If: conditional execution (pops i32 condition, executes one of two branches)
     If :: forall paramsStack resStack inputStack outputStack outputStack1 outputStack2 locals wasmModule inputLabels secPC lCond untouchableStack outTopSecPC1 outTopSecPC2
         outSecPC1 outSecPC2.

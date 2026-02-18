@@ -406,7 +406,7 @@ stepInternal ctx instruction nextControl = case instruction of
                                  in StepResult (ctx{values = ConsValues value rest}) nextControl
     MemoryStore
         @(wasmType :: WasmType)
-        @(_secLevel :: SecLevel)
+        -- @(_secLevel :: SecLevel)
         (memidx :: SFin i n)
         (SMemArg alignment offset) -> case values ctx of
         ConsValues (addr :: Int64) (ConsValues (value :: RuntimeTypeOf wasmType) rest) ->

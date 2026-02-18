@@ -285,7 +285,7 @@ memStoreSequence ::
 memStoreSequence =
     LocalGet SFZ -- get the value to store
         :| LocalGet (SFS SFZ) -- get the address
-        :| MemoryStore @I32 @Low SFZ (SMemArg 0 0)
+        :| MemoryStore @I32 SFZ (SMemArg 0 0)
         :| End
 
 memStore ::
@@ -359,7 +359,7 @@ memLoadStoreSequence ::
 memLoadStoreSequence =
     LocalGet SFZ -- get the value to store
         :| I64Const IsLow 0 -- get the address
-        :| MemoryStore @I32 @Low SFZ (SMemArg 0 0)
+        :| MemoryStore @I32 SFZ (SMemArg 0 0)
         :| I64Const IsLow 0
         :| MemoryLoad @I32 @Low SFZ (SMemArg 0 0)
         :| End
@@ -419,7 +419,7 @@ memLoadStore64Sequence ::
 memLoadStore64Sequence =
     LocalGet SFZ -- get the value to store
         :| I64Const IsLow 0 -- get the address
-        :| MemoryStore @I64 @Low SFZ (SMemArg 0 0)
+        :| MemoryStore @I64 SFZ (SMemArg 0 0)
         :| I64Const IsLow 0
         :| MemoryLoad @I64 @Low SFZ (SMemArg 0 0)
         :| End
@@ -614,7 +614,6 @@ executeAddSub =
 branchExampleSeq ::
     forall
         {shape :: WasmModuleShape}
-        {inputStack :: ValStackShape}
         {locals :: LocalsShape}
         {wasmModule :: WasmModule shape}.
     InstructionSequence
