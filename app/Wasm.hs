@@ -701,13 +701,13 @@ data
             (inputLabels :: LabelStackShape)
             (secPC :: [SecLevel])
             (outSecPC :: [SecLevel])
-            (outSecLevelAnnotation :: SecLevel)
+            (outSecLevel :: SecLevel)
             (untouchableStack :: ValStackShape).
         ( CheckTopVecEqual paramsStack inputStack ~ 'True
         , CheckTopVecEqual resStack outputStack ~ 'True
         , inputStack ~ paramsStack +>+: untouchableStack
         , outputStack ~ resStack +>+: untouchableStack -- ensure that the parameters of the block are on top of the input stack
-        , CanFlow outSecLevelAnnotation secLevelAnnotation ~ 'True -- we want to ensure that it cannot be annotated with low if there is a brif and the sec level changes to high
+        , CanFlow outSecLevel secLevelAnnotation ~ 'True -- we want to ensure that it cannot be annotated with low if there is a brif and the sec level changes to high
         ) =>
         BlockType paramsStack resStack ->
         InstructionSequence
@@ -718,7 +718,7 @@ data
             ('LabelShape paramsStack (Length inputStack :- Length paramsStack) ': inputLabels)
             ('LabelShape paramsStack (Length inputStack :- Length paramsStack) ': inputLabels)
             (secLevelAnnotation ': secPC)
-            (outSecLevelAnnotation ': outSecPC) ->
+            (outSecLevel ': outSecPC) ->
         Instruction (paramsStack +>+: untouchableStack) (resStack +>+: untouchableStack) locals 
             wasmModule inputLabels inputLabels secPC outSecPC
     -- If: conditional execution (pops i32 condition, executes one of two branches)
@@ -736,7 +736,7 @@ data
         ) =>
         BlockType paramsStack resStack ->
         InstructionSequence
-            (paramsStack +>+:untouchableStack)
+            (paramsStack +>+: untouchableStack)
             outputStack1
             locals
             wasmModule
@@ -745,7 +745,7 @@ data
             ((lCond :/\ Index Z secPC) ': secPC)
             (outTopSecPC1 ': outSecPC1) -> -- then branch
         InstructionSequence
-            (paramsStack +>+:untouchableStack)
+            (paramsStack +>+: untouchableStack)
             outputStack2
             locals
             wasmModule
@@ -805,25 +805,78 @@ data
     --                        inputLabels
     --                        inputLabels
 
+    -- Br ::
+    --     forall
+    --         (i :: Nat)
+    --         (l :: Nat)
+    --         (shape :: WasmModuleShape)
+    --         (targetLabel :: LabelShape)
+    --         (remainingLabels :: LabelStackShape)
+    --         (inputLabels :: LabelStackShape)
+    --         (inputStack :: ValStackShape)
+    --         (outputStack :: ValStackShape)
+    --         (locals :: LocalsShape)
+    --         (wasmModule :: WasmModule shape)
+    --         (topLabel :: LabelShape)
+    --         (tailLabels :: LabelStackShape)
+    --         (aboveInnermostLabel :: ValStackShape)
+    --         (secPC :: [SecLevel]).
+    --     ( topLabel : tailLabels ~ inputLabels
+    --     , aboveInnermostLabel ~ Reverse (Drop (Height topLabel) (Reverse inputStack))
+    --     , targetLabel : remainingLabels ~ Drop i inputLabels
+    --     , CheckTopVecEqualInclSecLevel (GetLabelType targetLabel) aboveInnermostLabel ~ 'True
+    --     -- actually remove this constraint because it stopped as from adding random things after branch which is actually possible in wasm
+    --     -- , ( Take (Arity targetLabel) inputStack
+    --     --         +>+: Reverse (Take (Height targetLabel) (Reverse inputStack))
+    --     --   )
+    --     --     ~ outputStack
+    --     , l ~ Length inputLabels
+    --     , LessThan l (Length secPC) ~ 'True
+    --     ) =>
+    --     SFin i l ->
+    --     Instruction
+    --         inputStack
+    --         outputStack
+    --     --     ( Take (Arity targetLabel) inputStack
+    --     --         +>+: Reverse (Take (Height targetLabel) (Reverse inputStack))
+    --     --   )
+    --         locals
+    --         wasmModule
+    --         inputLabels
+    --         inputLabels
+    --         secPC
+    --         secPC
+
+    -- Option 2 looks more like rule:
     Br ::
-        forall
-            (i :: Nat)
-            (l :: Nat)
-            (shape :: WasmModuleShape)
-            (targetLabel :: LabelShape)
-            (remainingLabels :: LabelStackShape)
-            (inputLabels :: LabelStackShape)
-            (inputStack :: ValStackShape)
-            (outputStack :: ValStackShape)
-            (locals :: LocalsShape)
-            (wasmModule :: WasmModule shape)
-            (topLabel :: LabelShape)
-            (tailLabels :: LabelStackShape)
-            (aboveInnermostLabel :: ValStackShape)
-            (secPC :: [SecLevel]).
-        ( topLabel : tailLabels ~ inputLabels
+        -- forall
+        --     (i :: Nat)
+        --     (l :: Nat)
+        --     (shape :: WasmModuleShape)
+        --     (targetLabel :: LabelShape)
+        --     (remainingLabels :: LabelStackShape)
+        --     (inputLabels :: LabelStackShape)
+        --     (inputStack :: ValStackShape)
+        --     (outputStack :: ValStackShape)
+        --     (locals :: LocalsShape)
+        --     (wasmModule :: WasmModule shape)
+        --     (topLabel :: LabelShape)
+        --     (tailLabels :: LabelStackShape)
+        --     (aboveInnermostLabel :: ValStackShape)
+        --     (topL :: SecLevel)
+        --     (targetSecLevel :: SecLevel)
+        --     (outTargetSecLevel :: SecLevel)
+        --     (restSecPC :: [SecLevel])
+        --     (outTopSecLevels :: [SecLevel])
+        --     (secPC :: [SecLevel])
+        --     (unchangedSecPC :: [SecLevel]).
+        ( targetLabel : remainingLabels ~ Drop i inputLabels
+        , topL ': restSecPC ~ secPC
+        , targetSecLevel ': unchangedSecPC ~ Drop i secPC
+        , CombineSecLevelList topL (Take i secPC) ~ outTopSecLevels -- everything between current and target sec level
+        , outTargetSecLevel ~ (topL :/\ targetSecLevel) -- the target sec level is also influenced
+        , topLabel : tailLabels ~ inputLabels
         , aboveInnermostLabel ~ Reverse (Drop (Height topLabel) (Reverse inputStack))
-        , targetLabel : remainingLabels ~ Drop i inputLabels
         , CheckTopVecEqualInclSecLevel (GetLabelType targetLabel) aboveInnermostLabel ~ 'True
         -- actually remove this constraint because it stopped as from adding random things after branch which is actually possible in wasm
         -- , ( Take (Arity targetLabel) inputStack
@@ -831,6 +884,7 @@ data
         --   )
         --     ~ outputStack
         , l ~ Length inputLabels
+        , LessThan l (S (Length restSecPC)) ~ 'True
         , LessThan l (Length secPC) ~ 'True
         ) =>
         SFin i l ->
@@ -845,7 +899,8 @@ data
             inputLabels
             inputLabels
             secPC
-            secPC
+            (outTopSecLevels +>+: (outTargetSecLevel ': unchangedSecPC))
+
     -- BrIf: conditional branch (pops i32 condition)
     -- DINA: Problem => either we branch then we have the conditions below for the outputStack or we don't branch
     -- and then the outputStack is just the inputStack minus the i32 condition

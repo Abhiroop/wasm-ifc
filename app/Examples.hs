@@ -1465,6 +1465,160 @@ executeAdd2 =
         )
         add2Seq
 
+
+-- this works with either br implementation
+brAndBrIfSeq ::
+    InstructionSequence '[] '[I32 :~ High] '[] wasmModule '[] '[] '[Low] '[Low]
+brAndBrIfSeq =
+    Block
+        (BTParamsResults KnownValVNil (KnownValCons (IsHigh, ForI32) KnownValVNil))
+        ( 
+        Block 
+            (BTParamsResults KnownValVNil (KnownValCons (IsHigh, ForI32) KnownValVNil))
+            ( I32Const IsHigh 42
+                :| I32Const IsHigh 1
+                :| BrIf SFZ
+                :| Drop
+                :| I32Const IsHigh 2
+                :| Br (SFS SFZ)
+                :| End
+            )
+            :| Drop
+            :| I32Const IsHigh 7
+            :| End
+        )
+        :| End
+
+brAndBrIfSeq2 ::
+    InstructionSequence '[] '[] '[I32 :~ High] wasmModule '[] '[] '[Low] '[Low]
+brAndBrIfSeq2 =
+    Block
+        (BTParamsResults KnownValVNil KnownValVNil)
+        ( 
+        Block 
+            (BTParamsResults KnownValVNil KnownValVNil)
+            ( I32Const IsHigh 1
+                :| BrIf SFZ
+                :| Br (SFS SFZ)
+                :| End
+            )
+            :| I32Const IsLow 7
+            :| LocalSet SFZ -- this only fails here with option two => also I think it should fail
+            :| End
+        )
+        :| End
+executeBrAndBrIfSeq2 ::
+    RuntimeContext @(WasmModuleShapeR Z Z)
+        '[]
+        '[I32 :~ High]
+        (WasmModuleR '[] '[])
+        '[]
+executeBrAndBrIfSeq2 =
+    stepMany
+        ( RuntimeContext
+            { values = NoValues
+            , locals = ConsLocals 1 NoLocals
+            , WasmInterpreter.globals = WasmInterpreter.NoGlobals
+            , labels = NoLabels
+            , memories = NoMems
+            } ::
+            RuntimeContext           
+                '[]
+                '[I32 :~ High]
+                ((WasmModuleR '[] '[]) :: WasmModule (WasmModuleShapeR Z Z))
+                '[]
+        )
+        brAndBrIfSeq2
+
+brAndIfSeq :: 
+    InstructionSequence '[] '[] '[I32 :~ High] wasmModule '[] '[] '[Low] '[Low]
+brAndIfSeq =
+    Block
+        (BTParamsResults KnownValVNil KnownValVNil)
+        ( I32Const IsHigh 0
+            :| If 
+                (BTParamsResults KnownValVNil KnownValVNil)
+                ( Br (SFS SFZ)
+                    :| End :: InstructionSequence '[] '[] '[I32 :~ High] wasmModule '[ 'LabelShape '[] 'Z ,'LabelShape '[] 'Z ] '[ 'LabelShape '[] 'Z ,'LabelShape '[] 'Z ] '[High, Low, Low] '[High, High, Low]
+                )
+                ( Br SFZ
+                    :| End :: InstructionSequence '[] '[] '[I32 :~ High] wasmModule '[ 'LabelShape '[] 'Z ,'LabelShape '[] 'Z ] '[ 'LabelShape '[] 'Z ,'LabelShape '[] 'Z ] '[High, Low, Low] '[High, Low, Low]
+                ) -- :: Instruction '[I32 :~ High] '[] '[I32 :~ Low] wasmModule '[ 'LabelShape '[] 'Z ] '[ 'LabelShape '[] 'Z ] '[Low, Low] '[High, Low])
+            :| I32Const IsLow 7
+            :| LocalSet SFZ -- this only fails here with option two => also I think it should fail
+            :| End
+            )
+        :| End
+executeBrAndIfSeq ::
+    RuntimeContext @(WasmModuleShapeR Z Z)
+        '[]
+        '[I32 :~ High]
+        (WasmModuleR '[] '[])
+        '[]
+executeBrAndIfSeq =
+    stepMany
+        ( RuntimeContext
+            { values = NoValues
+            , locals = ConsLocals 1 NoLocals
+            , WasmInterpreter.globals = WasmInterpreter.NoGlobals
+            , labels = NoLabels
+            , memories = NoMems
+            } ::
+            RuntimeContext
+                '[]
+                '[I32 :~ High]
+                ((WasmModuleR '[] '[]) :: WasmModule (WasmModuleShapeR Z Z))
+                '[]
+        )
+        brAndIfSeq
+
+
+ifSeq :: 
+    InstructionSequence '[] '[] '[I32 :~ High] wasmModule '[] '[] '[Low] '[Low]
+ifSeq =
+    Block
+        (BTParamsResults KnownValVNil KnownValVNil)
+        ( I32Const IsLow 0
+            :| If 
+                (BTParamsResults KnownValVNil (KnownValCons (IsHigh, ForI32) KnownValVNil))
+                ( I32Const IsLow 2
+                    :| I32Const IsLow 2
+                    :| I32Add
+                    :| End
+                )
+                ( I32Const IsHigh 1
+                    :| I32Const IsLow 1
+                    :| I32Add
+                    :| End
+                )
+            :| LocalSet SFZ -- this only fails here with option two => also I think it should fail
+            :| End
+            )
+        :| End
+
+executeIfSeq ::
+    RuntimeContext @(WasmModuleShapeR Z Z)
+        '[]
+        '[I32 :~ High]
+        (WasmModuleR '[] '[])
+        '[]
+executeIfSeq =
+    stepMany
+        ( RuntimeContext
+            { values = NoValues
+            , locals = ConsLocals 1 NoLocals
+            , WasmInterpreter.globals = WasmInterpreter.NoGlobals
+            , labels = NoLabels
+            , memories = NoMems
+            } ::
+            RuntimeContext
+                '[]
+                '[I32 :~ High]
+                ((WasmModuleR '[] '[]) :: WasmModule (WasmModuleShapeR Z Z))
+                '[]
+        )
+        ifSeq
+
 {- | Example 2: Factorial function using iteration
 Takes one i32 parameter, returns its factorial
 -}

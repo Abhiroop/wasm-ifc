@@ -39,12 +39,12 @@ type family SetSecLevelLocals (i :: Nat) (l :: SecLevel) (locals :: LocalsShape)
 
 -- type family to combine two LocalsShapes sec type => needed for if instructions
 -- this is overly careful but works
-type family CombineSecTypes (l1 :: LocalsShape) (l2 :: LocalsShape) :: LocalsShape where
+type family CombineSecTypes (l1 :: [SecWasmType]) (l2 :: [SecWasmType]) :: [SecWasmType] where
     CombineSecTypes '[] '[] = '[]
     CombineSecTypes ((t :~ l1) ': rest1) ((t :~ l2) ': rest2) =
         (t :~ (l1 :/\ l2)) ': CombineSecTypes rest1 rest2
     CombineSecTypes l1 l2 =
-        TypeError ('Text "CombineSecTypes: LocalsShapes have different WasmTypes")
+        TypeError ('Text "CombineSecTypes: [SecWasmType] have different WasmTypes")
 
 type family CheckWasmTypesInLocalsEqual (l1 :: LocalsShape) (l2 :: LocalsShape) :: Bool where
     CheckWasmTypesInLocalsEqual '[] '[] = 'True

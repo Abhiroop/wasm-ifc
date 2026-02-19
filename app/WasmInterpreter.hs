@@ -489,7 +489,7 @@ stepInternal ctx instruction nextControl = case instruction of
     BrIf depth ->
         case values ctx of
             ConsValues cond (rest :: ValueStack restShape) ->
-                if cond == 0
+                if cond /= 0
                     then 
                         -- StepResult (ctx{values = rest}) (cprepend ((Br depth :| End ) :: InstructionSequence restShape middleVal locals wasmModule initialLab middleLab) nextControl)
                         case (dropLabels depth (labels ctx), dropControlFrames (SFS depth) nextControl) of
