@@ -39,11 +39,6 @@ LOCAL VARIABLE CONTEXT
 =============================================================================
 -}
 
--- | Reference to a local variable slot (0-indexed).
-type SlotIndex = Nat
-
-type LocalsShape = [WasmType]
-
 {- TODO: Better error messages
    Improve type error messages for common mistakes like:
    - Stack underflow

@@ -111,7 +111,7 @@ data
         (labelsShape :: LabelStackShape) = RuntimeContext
     { values :: ValueStack valuesShape
     , locals :: Locals localsShape
-    , globals :: Globals (GetGlobals wasmModule) -- :: GlobalsShape (GetGlobalsShape shape)),
+    , globals :: Globals (GetGlobals wasmModule)
     , labels :: LabelStack labelsShape
     , memories :: Memory (GetMems wasmModule)
     -- TODO: tables, etc.
@@ -414,7 +414,7 @@ stepInternal ctx instruction nextControl = case instruction of
                 addrAsWord64 = fromIntegral addr :: Word64
              in case (byteSize @wasmType) of
                     I32 ->
-                        if addrAsWord64 + offset + 4 > (fromIntegral (length memoryArray) :: Word64)
+                        if addrAsWord64 + offset + 4 >= (fromIntegral (length memoryArray) :: Word64)
                             then error "Memory access out of bounds in MemoryStore I32"
                             else
                                 let newMemoryArray = store @wasmType memoryArray (addrAsWord64 + offset) value
@@ -429,7 +429,7 @@ stepInternal ctx instruction nextControl = case instruction of
                                             RuntimeContext middleVal locals wasmModule initialLab
                                  in StepResult newCtx nextControl
                     I64 ->
-                        if addrAsWord64 + offset + 8 > (fromIntegral (length memoryArray) :: Word64)
+                        if addrAsWord64 + offset + 8 >= (fromIntegral (length memoryArray) :: Word64)
                             then error "Memory access out of bounds in MemoryStore I64"
                             else
                                 let newMemoryArray = store @wasmType memoryArray (addrAsWord64 + offset) value
@@ -448,10 +448,9 @@ stepInternal ctx instruction nextControl = case instruction of
                     ctx
          in StepResult newCtx (CCons (appendInstructionSeq body Leave) nextControl)
     Loop
-        blockType@(BTParamsResults (params :: KnownValStackShape paramsStack) _)
-        body ->  -- :: InstructionSequence initialVal middleVal locals wasmModule (topLabel ': initialLab) (topLabel ': initialLab) inSecPC intermediateSecPC) ->
-        let loopInstr = instruction --Loop blockType body :: Instruction initialVal middleVal locals wasmModule initialLab initialLab
-            loopCont = SomeInstrSeq (loopInstr :| End)
+        (BTParamsResults (params :: KnownValStackShape paramsStack) _)
+        (body :: InstructionSequence initialVal middleVal locals wasmModule (topLabel ': initialLab) (topLabel ': initialLab) bodySecPC outBodySecPC) ->
+        let loopCont = SomeInstrSeq (instruction :| End)
             newCtx =
                 pushLabel
                     (Label (subtractSNat (stackLength (values ctx)) (stackLengthKvalStack params)) (knownStackShapeLen params) loopCont)

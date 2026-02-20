@@ -31,14 +31,15 @@ EXECUTION EXAMPLES
 -- data RuntimeContext (valuesShape :: ValStackShape) (localsShape :: LocalsShape) (wasmModule :: WasmModule shape) (labelsShape :: LabelStackShape) = RuntimeContext
 --     { values :: ValueStack valuesShape,
 --       locals :: Locals localsShape,
---       globals :: Globals (GetGlobals wasmModule), -- :: GlobalsShape (GetGlobalsShape shape)),
+--       globals :: Globals (GetGlobals wasmModule),
 --       labels :: LabelStack labelsShape,
 --       memories :: Memory (GetMems wasmModule)
 --       -- TODO: tables, etc.
 --     }
-executeAddStep :: StepResult [I32 :~ Low, I32 :~ High] '[I32 :~ High] '[] (WasmModuleR '[] '[]) '[] '[] '[Low]
+
+executeAddStep :: RuntimeContext @WasmModuleShapeR '[I32 :~ High] '[] (WasmModuleR '[] '[]) '[]
 executeAddStep =
-    step
+    stepMany
         ( RuntimeContext
             { values = ConsValues 5 (ConsValues 10 NoValues)
             , locals = NoLocals
@@ -48,14 +49,14 @@ executeAddStep =
             } ::
             RuntimeContext (I32 :~ Low ': I32 :~ High ': '[]) '[] (WasmModuleR '[] '[]) '[]
         )
-        (CSingle (I32Add :| End))
+        ((I32Add :| End) :: InstructionSequence '[I32 :~ Low, I32 :~ High] '[I32 :~ High] '[] (WasmModuleR '[] '[]) '[] '[] '[Low] '[Low])
 
 executeAddMany ::
-    RuntimeContext @(WasmModuleShapeR Z Z) '[I32 :~ Low] '[] (WasmModuleR '[] '[]) '[]
+    RuntimeContext @WasmModuleShapeR '[I32 :~ Low] '[] (WasmModuleR '[] '[] :: WasmModule WasmModuleShapeR) '[]
 executeAddMany =
     stepMany
         ( RuntimeContext
-            { values = ConsValues 10 (ConsValues 5 (ConsValues 10 NoValues))
+            { values = ConsValues 5 (ConsValues 10 (ConsValues 10 NoValues))
             , locals = NoLocals
             , WasmInterpreter.globals = WasmInterpreter.NoGlobals
             , labels = NoLabels
@@ -64,13 +65,13 @@ executeAddMany =
             RuntimeContext
                 (I32 :~ Low ': I32 :~ Low ': I32 :~ Low ': '[])
                 '[]
-                ((WasmModuleR '[] '[]) :: WasmModule (WasmModuleShapeR Z Z))
+                ((WasmModuleR '[] '[]) :: WasmModule WasmModuleShapeR)
                 '[]
         )
         (I32Div :| I32Add :| End :: InstructionSequence '[I32 :~ Low, I32 :~ Low, I32 :~ Low] '[I32 :~ Low] '[] (WasmModuleR '[] '[]) '[] '[] '[Low] '[Low])
 
 executeDivMany ::
-    RuntimeContext @(WasmModuleShapeR Z Z) '[I32 :~ Low] '[] (WasmModuleR '[] '[]) '[]
+    RuntimeContext @WasmModuleShapeR '[I32 :~ Low] '[] (WasmModuleR '[] '[] :: WasmModule WasmModuleShapeR) '[]
 executeDivMany =
     stepMany
         ( RuntimeContext
@@ -83,7 +84,7 @@ executeDivMany =
             RuntimeContext
                 (I32 :~ Low ': I32 :~ Low ': '[])
                 '[]
-                ((WasmModuleR '[] '[]) :: WasmModule (WasmModuleShapeR Z Z))
+                ((WasmModuleR '[] '[]) :: WasmModule WasmModuleShapeR)
                 '[]
         )
         (I32Div :| End :: InstructionSequence '[I32 :~ Low, I32 :~ Low] '[I32 :~ Low] '[] (WasmModuleR '[] '[]) '[] '[] '[Low] '[Low])
@@ -110,17 +111,35 @@ VALIDATION EXAMPLES
 -}
 
 -- Example Call in Function
+{-
 callExample ::
     forall (s :: WasmModuleShape) (wm :: WasmModule s).
-    (s ~ WasmModuleShapeR Z Z) =>
-    Function '[] (I32 :~ Low ': '[]) (I32 :~ Low ': I32 :~ Low ': '[]) '[] wm '[Low] '[Low]
+    InstructionSequence '[I32, I32] '[I32] '[] wm '[] '[] 
 callExample =
-    Function (FFuncTypeAnn [] [I32 :~ Low]) $
-        LocalGet SFZ -- get first parameter
-            :| LocalGet (SFS SFZ) -- get second parameter
-            :| Call "add2" (FFuncTypeAnn  [I32 :~ Low, I32 :~ Low] [I32 :~ Low]) -- call add2 function
+        -- LocalSet SFZ -- get first parameter
+        --     :| LocalSet (SFS SFZ) -- get second parameter
+            Call "add" (FFuncTypeAnn (ConsLocalsShape ForI32 (ConsLocalsShape ForI32 NoLocalsShape)) (KnownValCons ForI32 KnownValVNil)) -- call add2 function
             :| End
-
+executeCallExample ::
+    RuntimeContext '[I32] '[] (WasmModuleR '[] '[] :: WasmModule shape) '[]
+executeCallExample =
+    stepMany
+        ( RuntimeContext
+            { values = ConsValues 5 (ConsValues 10 NoValues)
+            , locals = NoLocals-- initialize locals for parameters, will be set by LocalSet instructions in callExample sequence
+            , WasmInterpreter.globals = WasmInterpreter.NoGlobals
+            , labels = NoLabels
+            , memories = NoMems
+            , funcs = Data.Map.fromList [("add", SomeFuncBody simpleAddSequence)]
+            } ::
+            RuntimeContext
+                '[I32, I32]
+                '[]
+                (WasmModuleR '[] '[] :: WasmModule shape)
+                '[]
+        )
+        callExample
+        -}
 -- Example MemoryLoad
 -- the locals are the two I32 integers that are used to compute the address of the memory load
 -- memLoadSequence :: Function EmptyValStack (I64 :> EmptyValStack) (I32 ': I32 ': VNil) EmptyLabels ((WasmModuleR VNil ('[ 'SomeWasmType ( RInt32 (fromIntegral 10 :: Int32)), 'SomeWasmType ( RInt32 (fromIntegral 20 :: Int32))] ': VNil)) :: WasmModule ( WasmModuleShapeR Z (S Z)))
@@ -145,7 +164,7 @@ memLoadSequence ::
                 ( currMem ': '[]
                 )
           ) ::
-            WasmModule (WasmModuleShapeR Z (S (S Z)))
+            WasmModule WasmModuleShapeR
         )
         '[]
         '[]
@@ -170,7 +189,7 @@ memLoad ::
                 ( currMem ': '[]
                 )
           ) ::
-            WasmModule (WasmModuleShapeR Z (S (S Z)))
+            WasmModule WasmModuleShapeR
         )
         '[Low]
         '[Low]
@@ -180,13 +199,13 @@ memLoad =
         memLoadSequence
 
 executeMemLoad ::
-    RuntimeContext @(WasmModuleShapeR Z (S (S Z)))
+    RuntimeContext @WasmModuleShapeR
         '[I32 :~ Low]
         '[I64 :~ Low, I64 :~ Low]
         ( WasmModuleR
             '[]
-            ( currMem ': '[]
-            )
+            ( currMem ': '[] )
+        :: WasmModule WasmModuleShapeR
         )
         '[]
 executeMemLoad =
@@ -205,8 +224,7 @@ executeMemLoad =
                         '[]
                         ( currMem ': '[]
                         )
-                  ) ::
-                    WasmModule (WasmModuleShapeR Z (S (S Z)))
+                  ) :: WasmModule WasmModuleShapeR
                 )
                 '[]
         )
@@ -219,10 +237,9 @@ memLoadSequence1 ::
         '[I64 :~ Low, I64 :~ High]
         ( ( WasmModuleR
                 '[]
-                ( currMem ': '[]
-                )
+                ( currMem ': '[] )
           ) ::
-            WasmModule (WasmModuleShapeR Z (S (S Z)))
+            WasmModule WasmModuleShapeR
         )
         '[]
         '[]
@@ -236,13 +253,13 @@ memLoadSequence1 =
         :| End
 
 executeMemLoadSequence1 ::
-    RuntimeContext @(WasmModuleShapeR Z (S (S Z)))
+    RuntimeContext
+        @WasmModuleShapeR
         '[I32 :~ High, I32 :~ Low]
         '[I64 :~ Low, I64 :~ High]
         ( WasmModuleR
             '[]
-            ( currMem ': '[]
-            )
+            ( currMem ': '[] )
         )
         '[]
 executeMemLoadSequence1 =
@@ -259,10 +276,8 @@ executeMemLoadSequence1 =
                 '[I64 :~ Low, I64 :~ High]
                 ( ( WasmModuleR
                         '[]
-                        ( currMem ': '[]
-                        )
-                  ) ::
-                    WasmModule (WasmModuleShapeR Z (S (S Z)))
+                        ( currMem ': '[] )
+                  ) :: WasmModule WasmModuleShapeR
                 )
                 '[]
         )
@@ -276,7 +291,7 @@ memStoreSequence ::
         '[]
         '[I32 :~ Low, I64 :~ Low]
         ( (WasmModuleR '[] (storeMem ': '[])) ::
-            WasmModule (WasmModuleShapeR Z (S (S Z)))
+            WasmModule WasmModuleShapeR
         )
         '[]
         '[]
@@ -294,7 +309,7 @@ memStore ::
         '[]
         '[I32 :~ Low, I64 :~ Low]
         '[]
-        ((WasmModuleR '[] ('[] ': '[])) :: WasmModule (WasmModuleShapeR Z (S (S Z))))
+        ((WasmModuleR '[] ('[] ': '[])) :: WasmModule WasmModuleShapeR)
         '[Low]
         '[Low]
 memStore =
@@ -305,14 +320,14 @@ memStore =
 storeMem :: MemoryArray
 storeMem = createMemory 65536
 executeMemStore ::
-    RuntimeContext @(WasmModuleShapeR Z (S (S Z)))
+    RuntimeContext
+        @WasmModuleShapeR
         '[]
         '[I32 :~ Low, I64 :~ Low]
         ( WasmModuleR
             '[]
-            ( storeMem
-                ': '[]
-            )
+            ( storeMem ': '[] )
+            :: WasmModule WasmModuleShapeR
         )
         '[]
 executeMemStore =
@@ -329,11 +344,9 @@ executeMemStore =
                 '[I32 :~ Low, I64 :~ Low]
                 ( ( WasmModuleR
                         '[]
-                        ( storeMem
-                            ': '[]
+                        ( storeMem ': '[]
                         )
-                  ) ::
-                    WasmModule (WasmModuleShapeR Z (S (S Z)))
+                  ) :: WasmModule WasmModuleShapeR
                 )
                 '[]
         )
@@ -350,7 +363,7 @@ memLoadStoreSequence ::
                     ': '[]
                 )
           ) ::
-            WasmModule (WasmModuleShapeR Z (S (S Z)))
+            WasmModule WasmModuleShapeR
         )
         '[]
         '[]
@@ -365,7 +378,8 @@ memLoadStoreSequence =
         :| End
 
 executeMemLoadStore ::
-    RuntimeContext @(WasmModuleShapeR Z (S (S Z)))
+    RuntimeContext
+        @WasmModuleShapeR
         '[I32 :~ Low]
         '[I32 :~ Low]
         ( WasmModuleR
@@ -373,6 +387,7 @@ executeMemLoadStore ::
             ( storeMem
                 ': '[]
             )
+            :: WasmModule WasmModuleShapeR
         )
         '[]
 executeMemLoadStore =
@@ -392,8 +407,7 @@ executeMemLoadStore =
                         ( storeMem
                             ': '[]
                         )
-                  ) ::
-                    WasmModule (WasmModuleShapeR Z (S (S Z)))
+                  ) :: WasmModule WasmModuleShapeR
                 )
                 '[]
         )
@@ -410,7 +424,7 @@ memLoadStore64Sequence ::
                     ': '[]
                 )
           ) ::
-            WasmModule (WasmModuleShapeR Z (S (S Z)))
+            WasmModule WasmModuleShapeR
         )
         '[]
         '[]
@@ -425,7 +439,8 @@ memLoadStore64Sequence =
         :| End
 
 executeMemLoadStore64 ::
-    RuntimeContext @(WasmModuleShapeR Z (S (S Z)))
+    RuntimeContext
+        @WasmModuleShapeR
         '[I64 :~ Low]
         '[I64 :~ Low]
         ( WasmModuleR
@@ -433,6 +448,7 @@ executeMemLoadStore64 ::
             ( storeMem
                 ': '[]
             )
+            :: WasmModule WasmModuleShapeR
         )
         '[]
 executeMemLoadStore64 =
@@ -452,8 +468,7 @@ executeMemLoadStore64 =
                         ( storeMem
                             ': '[]
                         )
-                  ) ::
-                    WasmModule (WasmModuleShapeR Z (S (S Z)))
+                  ) :: WasmModule WasmModuleShapeR
                 )
                 '[]
         )
@@ -467,7 +482,7 @@ globalGetSetSequence ::
         '[I32 :~ Low]
         locals
         ( (WasmModuleR (GlobalTypeMW Var (I32 :~ Low) ': '[]) '[]) ::
-            WasmModule (WasmModuleShapeR (S Z) Z)
+            WasmModule WasmModuleShapeR
         )
         outputLabels
         outputLabels
@@ -488,7 +503,7 @@ globalGetSet ::
         '[]
         '[]
         ( (WasmModuleR (GlobalTypeMW Var (I32 :~ Low) ': '[]) '[]) ::
-            WasmModule (WasmModuleShapeR (S Z) Z)
+            WasmModule WasmModuleShapeR
         )
         '[Low]
         '[Low]
@@ -496,7 +511,7 @@ globalGetSet = Function (FFuncTypeAnn [] [I32 :~ Low]) globalGetSetSequence
 
 -- Execution example for globalGetSetSequence
 executeGlobalGetSetSequence ::
-    RuntimeContext @(WasmModuleShapeR (S Z) Z)
+    RuntimeContext @WasmModuleShapeR
         '[I32 :~ Low]
         '[]
         (WasmModuleR '[GlobalTypeMW Var (I32 :~ Low)] '[])
@@ -513,8 +528,7 @@ executeGlobalGetSetSequence =
             RuntimeContext
                 '[]
                 '[]
-                ( (WasmModuleR (GlobalTypeMW Var (I32 :~ Low) ': '[]) '[]) ::
-                    WasmModule (WasmModuleShapeR (S Z) Z)
+                ( (WasmModuleR (GlobalTypeMW Var (I32 :~ Low) ': '[]) '[]) :: WasmModule WasmModuleShapeR
                 )
                 '[]
         )
@@ -526,7 +540,7 @@ globalSetConstSeq ::
         '[I32 :~ Low]
         locals
         ( (WasmModuleR '[GlobalTypeMW Const (I32 :~ Low), GlobalTypeMW Var (I32 :~ Low)] '[]) ::
-            WasmModule (WasmModuleShapeR (S (S Z)) Z)
+            WasmModule WasmModuleShapeR
         )
         outputLabels
         outputLabels
@@ -542,7 +556,7 @@ add1Sequence ::
         {shape :: WasmModuleShape}
         {inputStack :: ValStackShape}
         {locals :: LocalsShape}
-        {wasmModule :: WasmModule shape}
+        {wasmModule :: WasmModule WasmModuleShapeR}
         {inputLabels :: LabelStackShape}.
     InstructionSequence
         (I32 :~ Low ': (I32 :~ Low ': inputStack))
@@ -556,7 +570,7 @@ add1Sequence ::
 add1Sequence = I32Add :| End
 
 executeAdd1Sequence ::
-    RuntimeContext @(WasmModuleShapeR Z Z) '[I32 :~ Low] '[] (WasmModuleR '[] '[]) '[]
+    RuntimeContext @WasmModuleShapeR '[I32 :~ Low] '[] (WasmModuleR '[] '[]) '[]
 executeAdd1Sequence =
     stepMany
         ( RuntimeContext
@@ -569,7 +583,7 @@ executeAdd1Sequence =
             RuntimeContext
                 (I32 :~ Low ': I32 :~ Low ': '[])
                 '[]
-                ((WasmModuleR '[] '[]) :: WasmModule (WasmModuleShapeR Z Z))
+                ((WasmModuleR '[] '[]) :: WasmModule WasmModuleShapeR)
                 '[]
         )
         add1Sequence
@@ -579,7 +593,7 @@ addSubSequence ::
         {shape :: WasmModuleShape}
         {inputStack :: ValStackShape}
         {locals :: LocalsShape}
-        {wasmModule :: WasmModule shape}
+        {wasmModule :: WasmModule WasmModuleShapeR}
         {inputLabels :: LabelStackShape}.
     InstructionSequence
         (I32 :~ Low ': (I32 :~ Low ': (I32 :~ Low ': inputStack)))
@@ -592,7 +606,7 @@ addSubSequence ::
         '[Low]
 addSubSequence = I32Add :| (I32Sub :| End)
 executeAddSub ::
-    RuntimeContext @(WasmModuleShapeR Z Z) '[I32 :~ Low] '[] (WasmModuleR '[] '[]) '[]
+    RuntimeContext @WasmModuleShapeR '[I32 :~ Low] '[] (WasmModuleR '[] '[]) '[]
 executeAddSub =
     stepMany
         ( RuntimeContext
@@ -605,7 +619,7 @@ executeAddSub =
             RuntimeContext
                 (I32 :~ Low ': I32 :~ Low ': I32 :~ Low ': '[])
                 '[]
-                ((WasmModuleR '[] '[]) :: WasmModule (WasmModuleShapeR Z Z))
+                ((WasmModuleR '[] '[]) :: WasmModule WasmModuleShapeR)
                 '[]
         )
         addSubSequence
@@ -615,7 +629,8 @@ branchExampleSeq ::
     forall
         {shape :: WasmModuleShape}
         {locals :: LocalsShape}
-        {wasmModule :: WasmModule shape}.
+        {wasmModule :: WasmModule WasmModuleShapeR}
+        {outputLabels :: LabelStackShape}.
     InstructionSequence
         -- inputStack
         -- ('[] +>+: Reverse (Take (Length inputStack) (Reverse inputStack)))
@@ -639,15 +654,18 @@ branchExample ::
         '[]
         '[]
         '[I32 :~ Low]
-        -- ('LabelShape '[] Z ': '[])
         '[]
-        ((WasmModuleR '[] '[]) :: WasmModule (WasmModuleShapeR Z Z))
+        ((WasmModuleR '[] '[]) :: WasmModule WasmModuleShapeR)
         '[Low]
         '[Low]
 branchExample = Function (FFuncTypeAnn [] []) branchExampleSeq
 
 executeBranchExample ::
-    RuntimeContext @(WasmModuleShapeR Z Z) '[] '[] (WasmModuleR '[] '[]) '[]
+    RuntimeContext @WasmModuleShapeR        
+        '[]
+        '[]
+        (WasmModuleR '[] '[] :: WasmModule WasmModuleShapeR)
+        '[]
 executeBranchExample =
     stepMany
         ( RuntimeContext
@@ -660,14 +678,14 @@ executeBranchExample =
             RuntimeContext
                 '[]
                 '[]
-                ((WasmModuleR '[] '[]) :: WasmModule (WasmModuleShapeR Z Z))
+                ((WasmModuleR '[] '[]) :: WasmModule WasmModuleShapeR)
                 '[]
         )
         branchExampleSeq
 
 -- example function for Br instruction
 branchExample2Seq ::
-    forall {shape :: WasmModuleShape} {wasmModule :: WasmModule shape}.
+    forall {shape :: WasmModuleShape} {wasmModule :: WasmModule WasmModuleShapeR}.
     InstructionSequence
         '[]
         '[]
@@ -686,9 +704,8 @@ branchExample2Seq =
         :| Br SFZ
         :| End
 branchExample2 ::
-    forall (s :: WasmModuleShape) (wm :: WasmModule s).
-    (s ~ WasmModuleShapeR Z Z) =>
-    Function '[] '[] '[] '[ 'LabelShape '[] Z] wm '[Low, Low] [Low, Low]
+    -- forall (s :: WasmModuleShape) (wm :: WasmModule s).
+    Function @WasmModuleShapeR '[] '[] '[] '[ 'LabelShape '[] Z] wm '[Low, Low] [Low, Low]
 branchExample2 = Function (FFuncTypeAnn [] []) branchExample2Seq
 
 -- this does not make sense for execution since we assume the first control frame and in execution we cannot drop it!
@@ -702,7 +719,7 @@ branchExample3Seq ::
     forall
         {shape :: WasmModuleShape}
         {locals :: LocalsShape}
-        {wasmModule :: WasmModule shape}
+        {wasmModule :: WasmModule WasmModuleShapeR}
         {outputLabels :: LabelStackShape}.
     InstructionSequence
         '[I32 :~ Low, I64 :~ Low]
@@ -727,16 +744,14 @@ branchExample3Seq =
         )
         :| End
 branchExample3 ::
-    forall (s :: WasmModuleShape) (wm :: WasmModule s).
-    (s ~ WasmModuleShapeR Z Z) =>
-    Function '[I32 :~ Low, I64 :~ Low] (I32 :~ Low ': '[I32 :~ Low, I64 :~ Low]) (I32 :~ Low ': '[]) '[] wm '[Low] '[Low]
+    -- forall (s :: WasmModuleShape) (wm :: WasmModule s).
+    Function @WasmModuleShapeR '[I32 :~ Low, I64 :~ Low] (I32 :~ Low ': '[I32 :~ Low, I64 :~ Low]) (I32 :~ Low ': '[]) '[] wm '[Low] '[Low]
 branchExample3 =
     Function
         (FFuncTypeAnn [] [])
         branchExample3Seq
 executeBranchExample3 ::
-    RuntimeContext @(WasmModuleShapeR Z Z)
-        '[I32 :~ Low, I32 :~ Low, I64 :~ Low]
+    RuntimeContext @WasmModuleShapeR '[I32 :~ Low, I32 :~ Low, I64 :~ Low]
         '[]
         (WasmModuleR '[] '[])
         '[]
@@ -771,11 +786,12 @@ branchExample4Seq =
 
 branchExample4 ::
     forall (s :: WasmModuleShape) (wm :: WasmModule s).
-    (s ~ WasmModuleShapeR Z Z) => Function '[] (I32 :~ Low ': '[]) (I32 :~ Low ': '[]) '[] wm '[Low] '[Low]
+    Function '[] (I32 :~ Low ': '[]) (I32 :~ Low ': '[]) '[] wm '[Low] '[Low]
+
 branchExample4 = Function (FFuncTypeAnn [] []) branchExample4Seq
 
 executeBranchExample4 ::
-    RuntimeContext @(WasmModuleShapeR Z Z) '[I32 :~ Low] '[] (WasmModuleR '[] '[]) '[]
+    RuntimeContext @WasmModuleShapeR '[I32 :~ Low] '[] (WasmModuleR '[] '[]) '[]
 executeBranchExample4 =
     stepMany
         RuntimeContext
@@ -807,7 +823,7 @@ branchExample5Seq =
 
 
 executeBranchExample5 ::
-    RuntimeContext @(WasmModuleShapeR Z Z) '[I32 :~ Low] '[] (WasmModuleR '[] '[]) '[]
+    RuntimeContext @WasmModuleShapeR '[I32 :~ Low] '[] (WasmModuleR '[] '[]) '[]
 executeBranchExample5 =
     stepMany
         RuntimeContext
@@ -839,7 +855,7 @@ executeBranchExample5 =
 --         )
 --         :| End
 -- executeBranchExampleNested ::
---     RuntimeContext @(WasmModuleShapeR Z Z) '[I32 :~ Low, I32 :~ Low] '[] (WasmModuleR '[] '[]) '[]
+--     RuntimeContext '[I32 :~ Low, I32 :~ Low] '[] (WasmModuleR '[] '[]) '[]
 -- executeBranchExampleNested =
 --     stepMany
 --         RuntimeContext
@@ -858,7 +874,7 @@ branchThesisSeq =
         (BTParamsResults KnownValVNil (KnownValCons (IsLow, ForI64) (KnownValCons (IsLow, ForI32) KnownValVNil)))
         ( I32Const IsLow 10
              :| Block -- here we have problem that we expect 1 i32 on top at the end of the block but we have two
-                (BTParamsResults KnownValVNil ((KnownValCons (IsLow, ForI64) KnownValVNil)))
+                (BTParamsResults KnownValVNil (KnownValCons (IsLow, ForI64) KnownValVNil))
                 ( 
                     I32Const IsLow 20
                     :| I64Const IsLow 30
@@ -869,6 +885,67 @@ branchThesisSeq =
             :| End
         )
         :| End
+
+{-
+(module
+  (func $block-simple (result i32 i32)
+    (block (result i32 i32)               ;; depth 2
+      (i32.const 20)      
+      (block (result i32)
+          i32.const 6                 ;; depth 1
+          (block (result i32)             ;; depth 0 (innermost)
+                i32.const 4
+                br 1                      ;; jump out of two enclosing blocks
+                ;; unreachable
+          )
+          i32.add
+          ;; skipped
+      )
+      ;; execution continues here after end of block with depth 1
+      )
+  )
+)
+-}
+branchThesisSeq2 ::
+    InstructionSequence '[] '[I32 :~ Low, I32 :~ Low] locals wasmModule '[] '[] '[Low] '[Low]
+branchThesisSeq2 = 
+    Block
+        (BTParamsResults KnownValVNil (KnownValCons (IsLow, ForI32) (KnownValCons (IsLow, ForI32) KnownValVNil)))
+        ( I32Const IsLow 20
+             :| Block
+                (BTParamsResults KnownValVNil (KnownValCons (IsLow, ForI32) KnownValVNil))
+                ( 
+                    I32Const IsLow 6
+                     :| Block
+                        (BTParamsResults KnownValVNil (KnownValCons (IsLow, ForI32) KnownValVNil))
+                        (
+                            I32Const IsLow 4
+                            :| Br (SFS SFZ)
+                            :| End
+                        )
+                    :| I32Add
+                    :| End
+                )
+            :| End
+        )
+        :| End
+executeBranchThesisSeq2 ::
+    RuntimeContext @WasmModuleShapeR '[I32 :~ Low, I32 :~ Low] '[] (WasmModuleR '[] '[]) '[]
+executeBranchThesisSeq2 =
+    stepMany
+        (RuntimeContext            
+        { values = NoValues
+            , locals = NoLocals
+            , WasmInterpreter.globals = WasmInterpreter.NoGlobals
+            , labels = NoLabels
+            , memories = NoMems
+            } :: RuntimeContext
+                '[]
+                '[]
+                ((WasmModuleR '[] '[]) :: WasmModule WasmModuleShapeR)
+                '[]
+        )
+        branchThesisSeq2
 
 branchRandomAfterSequence ::
     InstructionSequence '[] '[I32 :~ High, I32 :~ Low] locals wasmModule '[] '[] '[Low] '[Low]
@@ -885,7 +962,7 @@ branchRandomAfterSequence =
     -- :| I32Add
     :| End
 executeRandomAfterSequence ::
-    RuntimeContext @(WasmModuleShapeR Z Z) '[I32 :~ High, I32 :~ Low] '[] (WasmModuleR '[] '[]) '[]
+    RuntimeContext @WasmModuleShapeR '[I32 :~ High, I32 :~ Low] '[] (WasmModuleR '[] '[]) '[]
 executeRandomAfterSequence =
     stepMany
         RuntimeContext
@@ -924,7 +1001,7 @@ ifCondSeq ::
         '[I32 :~ High]
         '[]
         ( (WasmModuleR '[] '[]) ::
-            WasmModule (WasmModuleShapeR Z Z)
+            WasmModule WasmModuleShapeR
         )
         outputLabels
         outputLabels
@@ -945,7 +1022,7 @@ ifCondSeq =
         )
         :| End
 executeIfCond ::
-    RuntimeContext @(WasmModuleShapeR Z Z)
+    RuntimeContext @WasmModuleShapeR
         '[I32 :~ High]
         '[]
         (WasmModuleR '[] '[])
@@ -958,7 +1035,7 @@ executeIfCond =
             RuntimeContext
                 '[I32 :~ High]
                 '[]
-                ((WasmModuleR '[] '[]) :: WasmModule (WasmModuleShapeR Z Z))
+                ((WasmModuleR '[] '[]) :: WasmModule WasmModuleShapeR)
                 '[]
         )
         ifCondSeq
@@ -970,7 +1047,7 @@ ifCondSeq2 ::
         '[I32 :~ Low]
         '[]
         ( (WasmModuleR '[] '[]) ::
-            WasmModule (WasmModuleShapeR Z Z)
+            WasmModule WasmModuleShapeR
         )
         outputLabels
         outputLabels
@@ -991,7 +1068,7 @@ ifCondSeq2 =
         )
         :| End
 executeIfCond2 ::
-    RuntimeContext @(WasmModuleShapeR Z Z)
+    RuntimeContext @WasmModuleShapeR
         '[I32 :~ Low]
         '[]
         (WasmModuleR '[] '[])
@@ -1008,7 +1085,7 @@ executeIfCond2 =
             RuntimeContext
                 '[I32 :~ Low]
                 '[]
-                ((WasmModuleR '[] '[]) :: WasmModule (WasmModuleShapeR Z Z))
+                ((WasmModuleR '[] '[]) :: WasmModule WasmModuleShapeR)
                 '[]
         )
         ifCondSeq2
@@ -1019,7 +1096,7 @@ ifCondSeqParentHigh ::
         '[I32 :~ High]
         '[]
         ( (WasmModuleR '[] '[]) ::
-            WasmModule (WasmModuleShapeR Z Z)
+            WasmModule WasmModuleShapeR
         )
         outputLabels
         outputLabels
@@ -1040,7 +1117,7 @@ ifCondSeqParentHigh =
         )
         :| End
 executeifCondSeqParentHigh ::
-    RuntimeContext @(WasmModuleShapeR Z Z)
+    RuntimeContext @WasmModuleShapeR
         '[I32 :~ High]
         '[]
         (WasmModuleR '[] '[])
@@ -1057,7 +1134,7 @@ executeifCondSeqParentHigh =
             RuntimeContext
                 '[I32 :~ Low]
                 '[]
-                ((WasmModuleR '[] '[]) :: WasmModule (WasmModuleShapeR Z Z))
+                ((WasmModuleR '[] '[]) :: WasmModule WasmModuleShapeR)
                 '[]
         )
         ifCondSeqParentHigh
@@ -1069,7 +1146,7 @@ ifCondSeq3 ::
         '[I32 :~ High]
         '[]
         ( (WasmModuleR '[] '[]) ::
-            WasmModule (WasmModuleShapeR Z Z)
+            WasmModule WasmModuleShapeR
         )
         outputLabels
         outputLabels
@@ -1091,7 +1168,7 @@ ifCondSeq3 =
         :| End
 
 executeIfCond3 ::
-    RuntimeContext @(WasmModuleShapeR Z Z)
+    RuntimeContext @WasmModuleShapeR
         '[I32 :~ High]
         '[]
         (WasmModuleR '[] '[])
@@ -1108,7 +1185,7 @@ executeIfCond3 =
             RuntimeContext
                 '[I32 :~ Low]
                 '[]
-                ((WasmModuleR '[] '[]) :: WasmModule (WasmModuleShapeR Z Z))
+                ((WasmModuleR '[] '[]) :: WasmModule WasmModuleShapeR)
                 '[]
         )
         ifCondSeq3
@@ -1119,7 +1196,7 @@ ifCondSeqGetLocalLow ::
         '[I32 :~ High]
         '[I32 :~ Low]
         ( (WasmModuleR '[] '[]) ::
-            WasmModule (WasmModuleShapeR Z Z)
+            WasmModule WasmModuleShapeR
         )
         outputLabels
         outputLabels
@@ -1140,7 +1217,7 @@ ifCondSeqGetLocalLow =
         )
         :| End
 executeIfCondGetLocalLow ::
-    RuntimeContext @(WasmModuleShapeR Z Z)
+    RuntimeContext @WasmModuleShapeR
         '[I32 :~ High]
         '[I32 :~ Low]
         (WasmModuleR '[] '[])
@@ -1157,7 +1234,7 @@ executeIfCondGetLocalLow =
             RuntimeContext
                 '[I32 :~ High]
                 '[I32 :~ Low]
-                ((WasmModuleR '[] '[]) :: WasmModule (WasmModuleShapeR Z Z))
+                ((WasmModuleR '[] '[]) :: WasmModule WasmModuleShapeR)
                 '[]
         )
         ifCondSeqGetLocalLow
@@ -1168,7 +1245,7 @@ ifCondSeqGetLocalHigh ::
         '[I32 :~ High]
         '[I32 :~ High]
         ( (WasmModuleR '[] '[]) ::
-            WasmModule (WasmModuleShapeR Z Z)
+            WasmModule WasmModuleShapeR
         )
         outputLabels
         outputLabels
@@ -1189,7 +1266,7 @@ ifCondSeqGetLocalHigh =
         )
         :| End
 executeIfCondGetLocalHigh ::
-    RuntimeContext @(WasmModuleShapeR Z Z)
+    RuntimeContext @WasmModuleShapeR
         '[I32 :~ High]
         '[I32 :~ High]
         (WasmModuleR '[] '[])
@@ -1206,7 +1283,7 @@ executeIfCondGetLocalHigh =
             RuntimeContext
                 '[I32 :~ Low]
                 '[I32 :~ High]
-                ((WasmModuleR '[] '[]) :: WasmModule (WasmModuleShapeR Z Z))
+                ((WasmModuleR '[] '[]) :: WasmModule WasmModuleShapeR)
                 '[]
         )
         ifCondSeqGetLocalHigh
@@ -1217,7 +1294,7 @@ ifCondSeqSetLocalLow ::
         '[I32 :~ High]
         '[I32 :~ High]
         ( (WasmModuleR '[] '[]) ::
-            WasmModule (WasmModuleShapeR Z Z)
+            WasmModule WasmModuleShapeR
         )
         outputLabels
         outputLabels
@@ -1250,7 +1327,7 @@ loopSeq ::
         '[I32 :~ Low]
         '[]
         ( (WasmModuleR '[] '[]) ::
-            WasmModule (WasmModuleShapeR Z Z)
+            WasmModule WasmModuleShapeR
         )
         '[]
         '[]
@@ -1277,7 +1354,7 @@ loopSeqBrif ::
         '[]
         '[]
         ( (WasmModuleR '[] '[]) ::
-            WasmModule (WasmModuleShapeR Z Z)
+            WasmModule WasmModuleShapeR
         )
         '[]
         '[]
@@ -1308,7 +1385,7 @@ loopSeqBrifSecWasm ::
         '[I32 :~ Low, I32 :~ High]
         '[]
         ( (WasmModuleR '[] '[]) ::
-            WasmModule (WasmModuleShapeR Z Z)
+            WasmModule WasmModuleShapeR
         )
         '[]
         '[]
@@ -1342,7 +1419,7 @@ brIfSeq ::
         '[I32 :~ Low]
         '[]
         ( (WasmModuleR '[] '[]) ::
-            WasmModule (WasmModuleShapeR Z Z)
+            WasmModule WasmModuleShapeR
         )
         '[]
         '[]
@@ -1362,7 +1439,7 @@ brIfSeq =
         )
         :| End
 executeBrIf :: 
-    RuntimeContext @(WasmModuleShapeR Z Z)
+    RuntimeContext @WasmModuleShapeR
         '[I32 :~ Low]
         '[]
         (WasmModuleR '[] '[])
@@ -1379,7 +1456,7 @@ executeBrIf =
             RuntimeContext
                 '[]
                 '[]
-                ((WasmModuleR '[] '[]) :: WasmModule (WasmModuleShapeR Z Z))
+                ((WasmModuleR '[] '[]) :: WasmModule WasmModuleShapeR)
                 '[]
         )
         brIfSeq
@@ -1391,7 +1468,7 @@ brIfSeqHigh ::
         '[I32 :~ High]
         '[]
         ( (WasmModuleR '[] '[]) ::
-            WasmModule (WasmModuleShapeR Z Z)
+            WasmModule WasmModuleShapeR
         )
         '[]
         '[]
@@ -1435,7 +1512,6 @@ add2Seq =
 
 add2 ::
     forall (s :: WasmModuleShape) (wm :: WasmModule s).
-    (s ~ WasmModuleShapeR Z Z) =>
     Function '[] (I32 :~ Low ': '[]) (I32 :~ Low ': I32 :~ Low ': '[]) '[] wm '[Low] '[Low] -- Function resultStack locals (repr the function parameters)
 add2 =
     Function
@@ -1443,7 +1519,7 @@ add2 =
         -- Local slots: (0) first parameter, (1) second parameter
         add2Seq
 executeAdd2 ::
-    RuntimeContext @(WasmModuleShapeR Z Z)
+    RuntimeContext @WasmModuleShapeR
         '[I32 :~ Low]
         '[I32 :~ Low, I32 :~ Low]
         (WasmModuleR '[] '[])
@@ -1460,7 +1536,7 @@ executeAdd2 =
             RuntimeContext
                 '[]
                 '[I32 :~ Low, I32 :~ Low]
-                ((WasmModuleR '[] '[]) :: WasmModule (WasmModuleShapeR Z Z))
+                ((WasmModuleR '[] '[]) :: WasmModule WasmModuleShapeR)
                 '[]
         )
         add2Seq
@@ -1508,7 +1584,7 @@ brAndBrIfSeq2 =
         )
         :| End
 executeBrAndBrIfSeq2 ::
-    RuntimeContext @(WasmModuleShapeR Z Z)
+    RuntimeContext @WasmModuleShapeR
         '[]
         '[I32 :~ High]
         (WasmModuleR '[] '[])
@@ -1525,7 +1601,7 @@ executeBrAndBrIfSeq2 =
             RuntimeContext           
                 '[]
                 '[I32 :~ High]
-                ((WasmModuleR '[] '[]) :: WasmModule (WasmModuleShapeR Z Z))
+                ((WasmModuleR '[] '[]) :: WasmModule WasmModuleShapeR)
                 '[]
         )
         brAndBrIfSeq2
@@ -1550,7 +1626,7 @@ brAndIfSeq =
             )
         :| End
 executeBrAndIfSeq ::
-    RuntimeContext @(WasmModuleShapeR Z Z)
+    RuntimeContext @WasmModuleShapeR
         '[]
         '[I32 :~ High]
         (WasmModuleR '[] '[])
@@ -1567,7 +1643,7 @@ executeBrAndIfSeq =
             RuntimeContext
                 '[]
                 '[I32 :~ High]
-                ((WasmModuleR '[] '[]) :: WasmModule (WasmModuleShapeR Z Z))
+                ((WasmModuleR '[] '[]) :: WasmModule WasmModuleShapeR)
                 '[]
         )
         brAndIfSeq
@@ -1597,7 +1673,7 @@ ifSeq =
         :| End
 
 executeIfSeq ::
-    RuntimeContext @(WasmModuleShapeR Z Z)
+    RuntimeContext @WasmModuleShapeR
         '[]
         '[I32 :~ High]
         (WasmModuleR '[] '[])
@@ -1614,7 +1690,7 @@ executeIfSeq =
             RuntimeContext
                 '[]
                 '[I32 :~ High]
-                ((WasmModuleR '[] '[]) :: WasmModule (WasmModuleShapeR Z Z))
+                ((WasmModuleR '[] '[]) :: WasmModule WasmModuleShapeR)
                 '[]
         )
         ifSeq
@@ -1624,7 +1700,6 @@ Takes one i32 parameter, returns its factorial
 -}
 factorialSeq ::
     forall (s :: WasmModuleShape) (wm :: WasmModule s) (outputLabels :: LabelStackShape).
-    (s ~ WasmModuleShapeR Z Z) =>
     InstructionSequence
         '[]
         (I32 :~ Low ': '[])
@@ -1676,14 +1751,13 @@ factorialSeq =
 
 factorial ::
     forall (s :: WasmModuleShape) (wm :: WasmModule s).
-    (s ~ WasmModuleShapeR Z Z) =>
     Function '[] (I32 :~ Low ': '[]) (I32 :~ Low ': I32 :~ Low ': '[]) '[] wm '[Low] '[Low]
 factorial =
     Function
         (FFuncTypeAnn [] [I32 :~ Low])
         factorialSeq
 executeFactorial ::
-    RuntimeContext @(WasmModuleShapeR Z Z)
+    RuntimeContext @WasmModuleShapeR
         '[I32 :~ Low]
         '[I32 :~ Low, I32 :~ Low]
         (WasmModuleR '[] '[])
@@ -1701,7 +1775,7 @@ executeFactorial =
             RuntimeContext
                 '[]
                 '[I32 :~ Low, I32 :~ Low]
-                ((WasmModuleR '[] '[]) :: WasmModule (WasmModuleShapeR Z Z))
+                ((WasmModuleR '[] '[]) :: WasmModule WasmModuleShapeR)
                 '[]
         )
         factorialSeq
@@ -1711,7 +1785,6 @@ Demonstrates different return types - this one returns Empty stack.
 -}
 printNumberSeq ::
     forall (s :: WasmModuleShape) (wm :: WasmModule s) (outputLabels :: LabelStackShape).
-    (s ~ WasmModuleShapeR Z Z) =>
     InstructionSequence '[] '[I32 :~ Low] '[I32 :~ Low, I32 :~ Low] wm outputLabels outputLabels '[Low] '[Low]
 printNumberSeq =
     -- Just consume the parameter without returning anything
@@ -1723,7 +1796,7 @@ printNumberSeq =
 -- This cannot be executed for now.
 printNumber ::
     forall (s :: WasmModuleShape) (wm :: WasmModule s).
-    (s ~ WasmModuleShapeR Z Z) => Function '[] '[I32 :~ Low] '[I32 :~ Low, I32 :~ Low] '[] wm '[Low] '[Low]
+    Function '[] '[I32 :~ Low] '[I32 :~ Low, I32 :~ Low] '[] wm '[Low] '[Low]
 printNumber =
     Function
         (FFuncTypeAnn [I32 :~ Low, I32 :~ Low] [I32 :~ Low])
@@ -1731,7 +1804,7 @@ printNumber =
 
 
 executePrintNumber ::
-    RuntimeContext @(WasmModuleShapeR Z Z) '[I32 :~ Low] '[I32 :~ Low, I32 :~ Low] (WasmModuleR '[] '[]) '[]
+    RuntimeContext @WasmModuleShapeR '[I32 :~ Low] '[I32 :~ Low, I32 :~ Low] (WasmModuleR '[] '[]) '[]
 executePrintNumber =
     stepMany
         ( RuntimeContext
@@ -1744,7 +1817,7 @@ executePrintNumber =
             RuntimeContext
                 '[]
                 '[I32 :~ Low, I32 :~ Low]
-                ((WasmModuleR '[] '[]) :: WasmModule (WasmModuleShapeR Z Z))
+                ((WasmModuleR '[] '[]) :: WasmModule WasmModuleShapeR)
                 '[]
         )
         printNumberSeq
@@ -1754,7 +1827,6 @@ Takes one parameter, uses three local variables for intermediate calculations.
 -}
 complexCalculationSeq ::
     forall (s :: WasmModuleShape) (wm :: WasmModule s) (outputLabels :: LabelStackShape).
-    (s ~ WasmModuleShapeR Z Z) =>
     InstructionSequence
         '[]
         '[I32 :~ Low]
@@ -1786,7 +1858,6 @@ complexCalculationSeq =
 
 complexCalculation ::
     forall (s :: WasmModuleShape) (wm :: WasmModule s).
-    (s ~ WasmModuleShapeR Z Z) =>
     Function '[] '[I32 :~ Low] (I32 :~ Low ': I32 :~ Low ': I32 :~ Low ': I32 :~ Low ': '[]) '[] wm '[Low] '[Low]
 complexCalculation =
     Function
@@ -1794,7 +1865,7 @@ complexCalculation =
         complexCalculationSeq
 
 executeComplexCalculation ::
-    RuntimeContext @(WasmModuleShapeR Z Z)
+    RuntimeContext @WasmModuleShapeR
         '[I32 :~ Low]
         (I32 :~ Low ': I32 :~ Low ': I32 :~ Low ': I32 :~ Low ': '[])
         (WasmModuleR '[] '[])
@@ -1811,7 +1882,7 @@ executeComplexCalculation =
             RuntimeContext
                 '[]
                 (I32 :~ Low ': I32 :~ Low ': I32 :~ Low ': I32 :~ Low ': '[])
-                ((WasmModuleR '[] '[]) :: WasmModule (WasmModuleShapeR Z Z))
+                ((WasmModuleR '[] '[]) :: WasmModule WasmModuleShapeR)
                 '[]
         )
         complexCalculationSeq
@@ -1821,7 +1892,6 @@ Returns the absolute value of the input.
 -}
 absoluteValueSeq ::
     forall (s :: WasmModuleShape) (wm :: WasmModule s) (outputLabels :: LabelStackShape).
-    (s ~ WasmModuleShapeR Z Z) =>
     InstructionSequence '[] (I32 :~ Low ': '[]) (I32 :~ Low ': '[]) wm outputLabels outputLabels '[Low] '[Low]
 absoluteValueSeq =
     -- Check if input is negative
@@ -1844,13 +1914,13 @@ absoluteValueSeq =
 
 absoluteValue ::
     forall (s :: WasmModuleShape) (wm :: WasmModule s).
-    (s ~ WasmModuleShapeR Z Z) => Function '[] (I32 :~ Low ': '[]) (I32 :~ Low ': '[]) '[] wm '[Low] '[Low]
+    Function '[] (I32 :~ Low ': '[]) (I32 :~ Low ': '[]) '[] wm '[Low] '[Low]
 absoluteValue =
     Function
         (FFuncTypeAnn [] [I32 :~ Low])
         absoluteValueSeq
 executeAbsoluteValue ::
-    RuntimeContext @(WasmModuleShapeR Z Z) '[I32 :~ Low] '[I32 :~ Low] (WasmModuleR '[] '[]) '[]
+    RuntimeContext @WasmModuleShapeR '[I32 :~ Low] '[I32 :~ Low] (WasmModuleR '[] '[]) '[]
 executeAbsoluteValue =
     stepMany
         ( RuntimeContext
@@ -1863,7 +1933,7 @@ executeAbsoluteValue =
             RuntimeContext
                 '[]
                 '[I32 :~ Low]
-                ((WasmModuleR '[] '[]) :: WasmModule (WasmModuleShapeR Z Z))
+                (WasmModuleR '[] '[] :: WasmModule WasmModuleShapeR)
                 '[]
         )
         absoluteValueSeq

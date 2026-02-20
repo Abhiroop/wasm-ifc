@@ -34,9 +34,6 @@ LOCAL VARIABLE CONTEXT
 =============================================================================
 -}
 
--- | Reference to a local variable slot (0-indexed).
-type SlotIndex = Nat
-
 
 {- TODO: Better error messages
    Improve type error messages for common mistakes like:

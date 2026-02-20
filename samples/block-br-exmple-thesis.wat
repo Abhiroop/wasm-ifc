@@ -113,19 +113,22 @@
 ;;     )
 ;;   )
 ;; )
-;; this is the simple example used to illustrtate it has to be in the inner most block
-
-
 
 (module
-  (func $block-simple (result i32)
-    (block (result i32 i32)
-      (i32.const 20)
-      (i32.const 10)
-      (br 0)
-      (i32.add)
-      (i32.add)
-    )
-    (i32.add)
+  (func $block-simple (result i32 i32)
+    (block (result i32 i32)               ;; depth 2
+      (i32.const 20)      
+      (block (result i32)
+          i32.const 6                 ;; depth 1
+          (block (result i32)             ;; depth 0 (innermost)
+                i32.const 4
+                br 1                      ;; jump out of two enclosing blocks
+                ;; unreachable
+          )
+          i32.add
+          ;; skipped
+      )
+      ;; execution continues here after end of block with depth 1
+      )
   )
 )
