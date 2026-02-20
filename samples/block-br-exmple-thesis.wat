@@ -102,15 +102,34 @@
 ;;   )
 ;; )
 
+;; (module
+;;   (func $block-simple (result i32 i32)
+;;     (block (result i32 i32)
+;;       (i32.const 20)
+;;       (block (result i32)
+;;         (i32.const 10)
+;;         (br 1)
+;;       )
+;;     )
+;;   )
+;; )
+
 (module
   (func $block-simple (result i32 i32)
-    (block (result i32 i32)
-      (i32.const 20)
+    (block (result i32 i32)               ;; depth 2
+      (i32.const 20)      
       (block (result i32)
-        (i32.const 10)
-        (br 1)
+          i32.const 6                 ;; depth 1
+          (block (result i32)             ;; depth 0 (innermost)
+                i32.const 4
+                br 1                      ;; jump out of two enclosing blocks
+                ;; unreachable
+          )
+          i32.add
+          ;; skipped
       )
-    )
+      ;; execution continues here after end of block with depth 1
+      )
   )
 )
 

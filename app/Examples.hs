@@ -849,7 +849,7 @@ branchThesisSeq =
         (BTParamsResults KnownValVNil (KnownValCons ForI64 (KnownValCons ForI32 KnownValVNil)))
         ( I32Const 10
              :| Block -- here we have problem that we expect 1 i32 on top at the end of the block but we have two
-                (BTParamsResults KnownValVNil ((KnownValCons ForI64 KnownValVNil)))
+                (BTParamsResults KnownValVNil (KnownValCons ForI64 KnownValVNil))
                 ( 
                     I32Const 20
                     :| I64Const 30
@@ -860,6 +860,67 @@ branchThesisSeq =
             :| End
         )
         :| End
+
+{-
+(module
+  (func $block-simple (result i32 i32)
+    (block (result i32 i32)               ;; depth 2
+      (i32.const 20)      
+      (block (result i32)
+          i32.const 6                 ;; depth 1
+          (block (result i32)             ;; depth 0 (innermost)
+                i32.const 4
+                br 1                      ;; jump out of two enclosing blocks
+                ;; unreachable
+          )
+          i32.add
+          ;; skipped
+      )
+      ;; execution continues here after end of block with depth 1
+      )
+  )
+)
+-}
+branchThesisSeq2 ::
+    InstructionSequence '[] '[I32, I32] locals wasmModule '[] '[]
+branchThesisSeq2 = 
+    Block
+        (BTParamsResults KnownValVNil (KnownValCons ForI32 (KnownValCons ForI32 KnownValVNil)))
+        ( I32Const 20
+             :| Block
+                (BTParamsResults KnownValVNil (KnownValCons ForI32 KnownValVNil))
+                ( 
+                    I32Const 6
+                     :| Block
+                        (BTParamsResults KnownValVNil (KnownValCons ForI32 KnownValVNil))
+                        (
+                            I32Const 4
+                            :| Br (SFS SFZ)
+                            :| End
+                        )
+                    :| I32Add
+                    :| End
+                )
+            :| End
+        )
+        :| End
+executeBranchThesisSeq2 ::
+    RuntimeContext @WasmModuleShapeR '[I32, I32] '[] (WasmModuleR '[] '[]) '[]
+executeBranchThesisSeq2 =
+    stepMany
+        (RuntimeContext            
+        { values = NoValues
+            , locals = NoLocals
+            , WasmInterpreter.globals = WasmInterpreter.NoGlobals
+            , labels = NoLabels
+            , memories = NoMems
+            } :: RuntimeContext
+                '[]
+                '[]
+                ((WasmModuleR '[] '[]) :: WasmModule WasmModuleShapeR)
+                '[]
+        )
+        branchThesisSeq2
 
 branchRandomAfterSequence ::
     InstructionSequence '[] '[I32] locals wasmModule '[] '[]
