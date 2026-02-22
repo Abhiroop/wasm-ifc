@@ -184,7 +184,7 @@ setGlobal ::
     Globals globalsShape ->
     Globals globalsShape
 setGlobal SFZ newVal (ConsGlobals _ SVar rest) = ConsGlobals newVal SVar rest
-setGlobal (SFS idx) newVal (ConsGlobals oldVal SVar rest) = ConsGlobals oldVal SVar (setGlobal idx newVal rest)
+setGlobal (SFS idx) newVal (ConsGlobals oldVal mutabilty rest) = ConsGlobals oldVal mutabilty (setGlobal idx newVal rest)
 setGlobal _ _ (ConsGlobals _ SConst _) = error "Cannot set value of a constant global variable" -- TODO: double check this
 setGlobal _ _ NoGlobals = error "Index out of bounds in setGlobalValue"
 
@@ -495,8 +495,8 @@ stepInternal ctx instruction nextControl = case instruction of
                         ( ConsLabels (Label heightToPreserve arity someNext) restLab
                             , ControlStackWithSomeInitial nextParents
                             ) ->
-                            let (valuesToKeep, _) = takeStack arity (values ctx)
-                                baseValues = reduceStackToLength heightToPreserve (values ctx)
+                            let (valuesToKeep, _) = takeStack arity rest
+                                baseValues = reduceStackToLength heightToPreserve rest
                                 finalValues = concatStacks valuesToKeep baseValues
                                 nextCtx = ctx{values = finalValues, labels = restLab}
                              in case someNext of

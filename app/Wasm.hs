@@ -700,9 +700,7 @@ data
             (outSecPC :: [SecLevel])
             (outSecLevel :: SecLevel)
             (untouchableStack :: ValStackShape).
-        ( CheckTopVecEqual paramsStack inputStack ~ 'True
-        , CheckTopVecEqual resStack outputStack ~ 'True
-        , inputStack ~ paramsStack +>+: untouchableStack
+        ( inputStack ~ paramsStack +>+: untouchableStack
         , outputStack ~ resStack +>+: untouchableStack -- ensure that the parameters of the block are on top of the input stack
         , CanFlow outSecLevel secLevelAnnotation ~ 'True -- we want to ensure that it cannot be annotated with low if there is a brif and the sec level changes to high
         ) =>
