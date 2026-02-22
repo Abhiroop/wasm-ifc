@@ -715,10 +715,16 @@ data
             (inputLabels :: LabelStackShape)
             (inputStack :: ValStackShape)
             (locals :: LocalsShape)
-            (wasmModule :: WasmModule shape).
+            (wasmModule :: WasmModule shape)
+            (topLabel :: LabelShape)
+            (tailLabels :: LabelStackShape)
+            (aboveInnermostLabel :: ValStackShape).
         -- inputStack ~ outputStack =>
         -- (CheckTopVecEqual (GetLabelType (Index i inputLabels)) (  inputStack) ~ 'True) =>
         ( targetLabel : remainingLabels ~ Drop i inputLabels
+        , topLabel : tailLabels ~ inputLabels
+        , aboveInnermostLabel ~ Reverse (Drop (Height topLabel) (Reverse inputStack))
+        , CheckTopVecEqual (GetLabelType targetLabel) aboveInnermostLabel ~ 'True
         , l ~ Length inputLabels
         ) =>
         SFin i l ->

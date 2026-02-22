@@ -1010,6 +1010,43 @@ executeAdd2 =
         )
         add2Seq
 
+-- Like this it doesn't compile either in wat2wasm not in our example
+-- (module
+--   (func $block-simple (result i32 i32)
+--     (block (result i32 i32)
+--       (i32.const 10)
+--       (i32.const 20)
+--       (block (param i32) (result i32)
+--         (i32.const 10)
+--         (i32.add)
+--         (i32.const 1)
+--         (br_if 1)
+--       )
+--     )
+--   )
+-- )
+brIfSeq :: 
+    InstructionSequence '[] '[I32, I32] '[] wasmModule outputLabels outputLabels
+brIfSeq =
+    Block
+        (BTParamsResults KnownValVNil (KnownValCons ForI32 (KnownValCons ForI32 KnownValVNil)))
+        ( I32Const 10
+            :| I32Const 20
+            :| Block
+                (BTParamsResults (KnownValCons ForI32 KnownValVNil) (KnownValCons ForI32 KnownValVNil))
+                (
+                    I32Const 10
+                    :| I32Add
+                    :| I32Const 5
+                    :| I32Const 1
+                    :| BrIf (SFS SFZ)
+                    :| Drop
+                    :| End
+                )
+            :| End
+        )
+        :| End
+
 {- | Example 2: Factorial function using iteration
 Takes one i32 parameter, returns its factorial
 -}
