@@ -906,6 +906,9 @@ data
             (l :: Nat)
             (shape :: WasmModuleShape)
             (targetLabel :: LabelShape)
+            (topLabel :: LabelShape)
+            (tailLabels :: LabelStackShape)
+            (aboveInnermostLabel :: ValStackShape)
             (remainingLabels :: LabelStackShape)
             (inputLabels :: LabelStackShape)
             (inputStack :: ValStackShape)
@@ -920,6 +923,9 @@ data
             (outTargetSecLevel :: SecLevel)
             (lCond :: SecLevel). -- whether condition is high or low security level
         ( targetLabel : remainingLabels ~ Drop i inputLabels
+        , topLabel : tailLabels ~ inputLabels
+        , aboveInnermostLabel ~ Reverse (Drop (Height topLabel) (Reverse inputStack))
+        , CheckTopVecEqual (GetLabelType targetLabel) aboveInnermostLabel ~ 'True
         , l ~ Length inputLabels
         , LessThan l (S (Length restSecPC)) ~ 'True
         , topL ': restSecPC ~ secPC
