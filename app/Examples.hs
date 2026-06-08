@@ -1099,25 +1099,26 @@ factorialSeq =
         :| LocalGet (SFS SFZ)
         :| End
 
-factorial ::
+{- factorial ::
     forall (s :: WasmModuleShape) (wm :: WasmModule s).
     Function '[] (I32 ': '[]) (I32 ': I32 ': '[]) '[] wm
 factorial =
     Function
         (FFuncTypeAnn [] [I32])
         factorialSeq
-executeFactorial ::
+ -}
+executeFactorial :: Int32 ->
     RuntimeContext @WasmModuleShapeR
         '[I32]
         '[I32, I32]
         (WasmModuleR '[] '[])
         '[]
 -- we put as input 4 so the expected result is 24
-executeFactorial =
+executeFactorial n =
     stepMany
         ( RuntimeContext
             { values = NoValues
-            , locals = ConsLocals 4 (ConsLocals 0 NoLocals)
+            , locals = ConsLocals n (ConsLocals 0 NoLocals)
             , WasmInterpreter.globals = WasmInterpreter.NoGlobals
             , labels = NoLabels
             , memories = NoMems
@@ -1314,3 +1315,145 @@ executeAbsoluteValue =
 --        :| End)
 --    :| LocalGet (SFS SFZ)  -- Return the result
 --    :| End
+
+
+
+
+
+
+
+{- Attempts at benchmarking -}
+
+{- | Fibonacci function using iteration.
+Local slots: (0) n (counter), (1) a = fib(i-1), (2) b = fib(i)
+Init: a = 0, b = 1. Loop runs until n <= 1, then returns b.
+fib(10) = 55
+-}
+fibSeq ::
+    forall (s :: WasmModuleShape) (wm :: WasmModule s) (outputLabels :: LabelStackShape).
+    InstructionSequence
+        '[]
+        (I32 ': '[])
+        (I32 ': I32 ': I32 ': '[])
+        wm
+        outputLabels
+        outputLabels
+fibSeq =
+    -- Local slots: (0) n, (1) a = 0, (2) b = 1
+    I32Const 0
+        :| LocalSet (SFS SFZ)           -- local[1] = a = 0
+        :| I32Const 1
+        :| LocalSet (SFS (SFS SFZ))     -- local[2] = b = 1
+        -- Outer block for base-case early exit
+        :| Block
+            (BTParamsResults KnownValVNil KnownValVNil)
+            ( LocalGet SFZ
+                :| I32Const 1
+                :| I32LeS               -- n <= 1?
+                :| BrIf SFZ             -- skip loop entirely if n <= 1
+                :| Loop
+                    (BTParamsResults KnownValVNil KnownValVNil)
+                    ( -- Stack shuffle: need old b for both new a and the addition
+                      -- Push b (becomes new a), then a, then b (for add)
+                      LocalGet (SFS (SFS SFZ))     -- push b  (saved as new a)
+                        :| LocalGet (SFS SFZ)       -- push a
+                        :| LocalGet (SFS (SFS SFZ)) -- push b  (for a + b)
+                        :| I32Add                   -- a + b; stack: [a+b, old_b]
+                        :| LocalSet (SFS (SFS SFZ)) -- local[2] = b = a + b
+                        :| LocalSet (SFS SFZ)       -- local[1] = a = old_b
+                        -- Decrement n and store
+                        :| LocalGet SFZ
+                        :| I32Const 1
+                        :| I32Sub
+                        :| LocalTee SFZ             -- local[0] = n - 1, keep on stack
+                        -- Continue loop if n > 1
+                        :| I32Const 1
+                        :| I32GtS                   -- (n-1) > 1?
+                        :| BrIf SFZ                 -- branch back to loop start
+                        :| End
+                    )
+                :| End
+            )
+        -- Return b
+        :| LocalGet (SFS (SFS SFZ))
+        :| End
+
+fib ::
+    forall (s :: WasmModuleShape) (wm :: WasmModule s).
+    Function '[] (I32 ': '[]) (I32 ': I32 ': I32 ': '[]) '[] wm
+fib =
+    Function
+        (FFuncTypeAnn [] [I32])
+        fibSeq
+
+executeFib ::
+    RuntimeContext @WasmModuleShapeR
+        '[I32]
+        '[I32, I32, I32]
+        (WasmModuleR '[] '[])
+        '[]
+-- local[0] = 10, expected result: fib(10) = 55
+executeFib =
+    stepMany
+        ( RuntimeContext
+            { values = NoValues
+            , locals = ConsLocals 10 (ConsLocals 0 (ConsLocals 0 NoLocals))
+            , WasmInterpreter.globals = WasmInterpreter.NoGlobals
+            , labels = NoLabels
+            , memories = NoMems
+            } ::
+            RuntimeContext
+                '[]
+                '[I32, I32, I32]
+                ((WasmModuleR '[] '[]) :: WasmModule WasmModuleShapeR)
+                '[]
+        )
+        fibSeq
+
+-- Should return fib(2) = 1
+executeFib2 ::
+    RuntimeContext @WasmModuleShapeR
+        '[I32]
+        '[I32, I32, I32]
+        (WasmModuleR '[] '[])
+        '[]
+executeFib2 =
+    stepMany
+        ( RuntimeContext
+            { values = NoValues
+            , locals = ConsLocals 2 (ConsLocals 0 (ConsLocals 0 NoLocals))
+            , WasmInterpreter.globals = WasmInterpreter.NoGlobals
+            , labels = NoLabels
+            , memories = NoMems
+            } ::
+            RuntimeContext
+                '[]
+                '[I32, I32, I32]
+                ((WasmModuleR '[] '[]) :: WasmModule WasmModuleShapeR)
+                '[]
+        )
+        fibSeq
+
+-- Should return fib(3) = 2
+executeFib3 ::
+    RuntimeContext @WasmModuleShapeR
+        '[I32]
+        '[I32, I32, I32]
+        (WasmModuleR '[] '[])
+        '[]
+executeFib3 =
+    stepMany
+        ( RuntimeContext
+            { values = NoValues
+            , locals = ConsLocals 3 (ConsLocals 0 (ConsLocals 0 NoLocals))
+            , WasmInterpreter.globals = WasmInterpreter.NoGlobals
+            , labels = NoLabels
+            , memories = NoMems
+            } ::
+            RuntimeContext
+                '[]
+                '[I32, I32, I32]
+                ((WasmModuleR '[] '[]) :: WasmModule WasmModuleShapeR)
+                '[]
+        )
+        fibSeq

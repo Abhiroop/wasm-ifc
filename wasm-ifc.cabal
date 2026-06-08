@@ -51,7 +51,7 @@ extra-doc-files:    CHANGELOG.md
 extra-source-files: Types, WasmModule, Utils, Wasm, WasmInterpreter
 
 common warnings
-    ghc-options: -Wall
+    ghc-options: -Wall -fno-cse
 
 executable wasm-ifc
     -- Import common warning flags.
