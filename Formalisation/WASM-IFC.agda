@@ -2,7 +2,13 @@ module WASM-IFC where
 
 open import Data.List using (List; []; _∷_)
 open import Data.Product using (Σ; _,_; _×_)
-open import Relation.Binary.PropositionalEquality using (_≡_; refl)
+open import Data.Maybe using (Maybe; just; nothing)
+open import Relation.Nullary using (yes; no)
+open import Relation.Binary.PropositionalEquality using (_≢_; _≡_; refl)
+open import Data.Integer using (ℤ; _+_; _-_; _*_; _/_; NonZero; +_; 0ℤ; ≢-nonZero)
+open import Data.Integer.Properties using (_≟_)
+open import Data.Maybe using (Maybe; just; nothing)
+
 
 -- Value types matching your Haskell WasmType
 data ValType : Set where
@@ -161,4 +167,110 @@ WasmIsomorphism = record
   ; back       = from
   ; back-forth = from-to
   ; forth-back = to-from
+  }
+
+
+-- Runtime values
+data Value : ValType → Set where
+  VI32 : ℤ → Value I32
+  VI64 : ℤ → Value I64
+
+-- Typed value stack
+data ValueStack : ValStackShape → Set where
+  []   : ValueStack []
+  _∷_  : ∀ {t s} → Value t → ValueStack s → ValueStack (t ∷ s)
+
+
+
+data _↝_ : ∀ {s s'} → ValueStack s → ValueStack s' → Set where
+  I32Add : ∀ {rhs lhs : ℤ} {s} {rest : ValueStack s}
+         → (VI32 rhs ∷ VI32 lhs ∷ rest) ↝ (VI32 (lhs + rhs) ∷ rest)
+  I32Sub : ∀ {rhs lhs : ℤ} {s} {rest : ValueStack s}
+         → (VI32 rhs ∷ VI32 lhs ∷ rest) ↝ (VI32 (lhs - rhs) ∷ rest)
+  I32Mul : ∀ {rhs lhs : ℤ} {s} {rest : ValueStack s}
+         → (VI32 rhs ∷ VI32 lhs ∷ rest) ↝ (VI32 (lhs * rhs) ∷ rest)
+  I32Div : ∀ {rhs lhs : ℤ} {s} {rest : ValueStack s}
+         → ⦃ nz : NonZero rhs ⦄
+         → (VI32 rhs ∷ VI32 lhs ∷ rest) ↝ (VI32 (lhs / rhs) ∷ rest)
+  I64Add : ∀ {rhs lhs : ℤ} {s} {rest : ValueStack s}
+         → (VI64 rhs ∷ VI64 lhs ∷ rest) ↝ (VI64 (lhs + rhs) ∷ rest)
+  I64Sub : ∀ {rhs lhs : ℤ} {s} {rest : ValueStack s}
+         → (VI64 rhs ∷ VI64 lhs ∷ rest) ↝ (VI64 (lhs - rhs) ∷ rest)
+  I64Mul : ∀ {rhs lhs : ℤ} {s} {rest : ValueStack s}
+         → (VI64 rhs ∷ VI64 lhs ∷ rest) ↝ (VI64 (lhs * rhs) ∷ rest)
+  I64Div : ∀ {rhs lhs : ℤ} {s} {rest : ValueStack s}
+         → ⦃ nz : NonZero rhs ⦄
+         → (VI64 rhs ∷ VI64 lhs ∷ rest) ↝ (VI64 (lhs / rhs) ∷ rest)
+  Drop   : ∀ {t s} {v : Value t} {rest : ValueStack s}
+         → (v ∷ rest) ↝ rest
+
+
+
+stepValues : ∀ {pre post locals}
+           → Instruction pre post locals
+           → ValueStack pre
+           → Maybe (ValueStack post)
+stepValues I32Add (VI32 rhs ∷ VI32 lhs ∷ rest) = just (VI32 (lhs + rhs) ∷ rest)
+stepValues I32Sub (VI32 rhs ∷ VI32 lhs ∷ rest) = just (VI32 (lhs - rhs) ∷ rest)
+stepValues I32Mul (VI32 rhs ∷ VI32 lhs ∷ rest) = just (VI32 (lhs * rhs) ∷ rest)
+stepValues I32Div (VI32 rhs ∷ VI32 lhs ∷ rest) with rhs ≟ 0ℤ
+... | yes _  = nothing
+... | no  p  = let instance _ = ≢-nonZero p
+               in just (VI32 (lhs / rhs) ∷ rest)
+stepValues I64Add (VI64 rhs ∷ VI64 lhs ∷ rest) = just (VI64 (lhs + rhs) ∷ rest)
+stepValues I64Sub (VI64 rhs ∷ VI64 lhs ∷ rest) = just (VI64 (lhs - rhs) ∷ rest)
+stepValues I64Mul (VI64 rhs ∷ VI64 lhs ∷ rest) = just (VI64 (lhs * rhs) ∷ rest)
+stepValues I64Div (VI64 rhs ∷ VI64 lhs ∷ rest) with rhs ≟ 0ℤ
+... | yes _  = nothing
+... | no  p  = let instance _ = ≢-nonZero p
+               in just (VI64 (lhs / rhs) ∷ rest)
+stepValues Drop   (v ∷ rest)                    = just rest
+
+
+
+absurd : ∀ {A : Set} {a : A} → nothing ≡ just a → ∀ {B : Set} → B
+absurd ()
+
+
+-- For total instructions
+step-correct : ∀ {pre post locals}
+             → (t : Instruction pre post locals)
+             → (vs : ValueStack pre)
+             → {result : ValueStack post}
+             → stepValues t vs ≡ just result
+             → vs ↝ result
+step-correct I32Add (VI32 rhs ∷ VI32 lhs ∷ rest) refl = I32Add
+step-correct I32Sub (VI32 rhs ∷ VI32 lhs ∷ rest) refl = I32Sub
+step-correct I32Mul (VI32 rhs ∷ VI32 lhs ∷ rest) refl = I32Mul
+step-correct I32Div (VI32 rhs ∷ VI32 lhs ∷ rest) {result} p with rhs ≟ 0ℤ
+... | yes _ = absurd p
+... | no  q with p
+...   | refl = let instance _ = ≢-nonZero q in I32Div
+step-correct I64Add (VI64 rhs ∷ VI64 lhs ∷ rest) refl = I64Add
+step-correct I64Sub (VI64 rhs ∷ VI64 lhs ∷ rest) refl = I64Sub
+step-correct I64Mul (VI64 rhs ∷ VI64 lhs ∷ rest) refl = I64Mul
+step-correct I64Div (VI64 rhs ∷ VI64 lhs ∷ rest) {result} p with rhs ≟ 0ℤ
+... | yes _ = absurd p
+... | no  q with p
+...   | refl = let instance _ = ≢-nonZero q in I64Div
+step-correct Drop   (v ∷ rest)                    refl = Drop
+
+
+record WasmAdequacy {pre post locals} (t : Instruction pre post locals) : Set where
+  field
+    -- syntactic: full isomorphism between your GADT and Wasm validation judgment
+    syntactic : InstrA ≅ InstrB
+
+    -- semantic: your evaluator agrees with the Wasm spec reduction relation
+    semantic  : ∀ (vs : ValueStack pre)
+                  {result : ValueStack post}
+              → stepValues t vs ≡ just result
+              → vs ↝ result
+
+
+
+adequate : ∀ {pre post locals} (t : Instruction pre post locals) → WasmAdequacy t
+adequate t = record
+  { syntactic = WasmIsomorphism
+  ; semantic  = step-correct t
   }
