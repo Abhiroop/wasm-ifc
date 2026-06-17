@@ -173,37 +173,46 @@ notation:67 v " ∷ₛ " vs => ValueStack.cons v vs
 notation "[]ₛ"           => ValueStack.nil
 
 -- ============================================================
--- Small-step reduction relation on value stacks
--- WasmTyping lives in Type so we can match on it;
--- StepRel is a specification so it lives in Prop
+-- Small-step reduction relation, INDEXED BY THE INSTRUCTION
+-- This removes the Drop-overlaps-everything problem: each step
+-- names the instruction that caused it.
 -- ============================================================
 
-inductive StepRel : ∀ {s s'}, ValueStack s → ValueStack s' → Prop where
-  | I32Add : ∀ {rhs lhs : Int} {s} {rest : ValueStack s},
-      StepRel (Value.VI32 rhs ∷ₛ Value.VI32 lhs ∷ₛ rest) (Value.VI32 (lhs + rhs) ∷ₛ rest)
-  | I32Sub : ∀ {rhs lhs : Int} {s} {rest : ValueStack s},
-      StepRel (Value.VI32 rhs ∷ₛ Value.VI32 lhs ∷ₛ rest) (Value.VI32 (lhs - rhs) ∷ₛ rest)
-  | I32Mul : ∀ {rhs lhs : Int} {s} {rest : ValueStack s},
-      StepRel (Value.VI32 rhs ∷ₛ Value.VI32 lhs ∷ₛ rest) (Value.VI32 (lhs * rhs) ∷ₛ rest)
-  | I32Div : ∀ {rhs lhs : Int} {s} {rest : ValueStack s},
+inductive StepRel : ∀ {pre post locals},
+    Instruction pre post locals → ValueStack pre → ValueStack post → Prop where
+  | I32Add : ∀ {locals rhs lhs s} {rest : ValueStack s},
+      StepRel (Instruction.I32Add (locals := locals))
+        (Value.VI32 rhs ∷ₛ Value.VI32 lhs ∷ₛ rest) (Value.VI32 (lhs + rhs) ∷ₛ rest)
+  | I32Sub : ∀ {locals rhs lhs s} {rest : ValueStack s},
+      StepRel (Instruction.I32Sub (locals := locals))
+        (Value.VI32 rhs ∷ₛ Value.VI32 lhs ∷ₛ rest) (Value.VI32 (lhs - rhs) ∷ₛ rest)
+  | I32Mul : ∀ {locals rhs lhs s} {rest : ValueStack s},
+      StepRel (Instruction.I32Mul (locals := locals))
+        (Value.VI32 rhs ∷ₛ Value.VI32 lhs ∷ₛ rest) (Value.VI32 (lhs * rhs) ∷ₛ rest)
+  | I32Div : ∀ {locals rhs lhs s} {rest : ValueStack s},
       rhs ≠ 0 →
-      StepRel (Value.VI32 rhs ∷ₛ Value.VI32 lhs ∷ₛ rest) (Value.VI32 (lhs / rhs) ∷ₛ rest)
-  | I64Add : ∀ {rhs lhs : Int} {s} {rest : ValueStack s},
-      StepRel (Value.VI64 rhs ∷ₛ Value.VI64 lhs ∷ₛ rest) (Value.VI64 (lhs + rhs) ∷ₛ rest)
-  | I64Sub : ∀ {rhs lhs : Int} {s} {rest : ValueStack s},
-      StepRel (Value.VI64 rhs ∷ₛ Value.VI64 lhs ∷ₛ rest) (Value.VI64 (lhs - rhs) ∷ₛ rest)
-  | I64Mul : ∀ {rhs lhs : Int} {s} {rest : ValueStack s},
-      StepRel (Value.VI64 rhs ∷ₛ Value.VI64 lhs ∷ₛ rest) (Value.VI64 (lhs * rhs) ∷ₛ rest)
-  | I64Div : ∀ {rhs lhs : Int} {s} {rest : ValueStack s},
+      StepRel (Instruction.I32Div (locals := locals))
+        (Value.VI32 rhs ∷ₛ Value.VI32 lhs ∷ₛ rest) (Value.VI32 (lhs / rhs) ∷ₛ rest)
+  | I64Add : ∀ {locals rhs lhs s} {rest : ValueStack s},
+      StepRel (Instruction.I64Add (locals := locals))
+        (Value.VI64 rhs ∷ₛ Value.VI64 lhs ∷ₛ rest) (Value.VI64 (lhs + rhs) ∷ₛ rest)
+  | I64Sub : ∀ {locals rhs lhs s} {rest : ValueStack s},
+      StepRel (Instruction.I64Sub (locals := locals))
+        (Value.VI64 rhs ∷ₛ Value.VI64 lhs ∷ₛ rest) (Value.VI64 (lhs - rhs) ∷ₛ rest)
+  | I64Mul : ∀ {locals rhs lhs s} {rest : ValueStack s},
+      StepRel (Instruction.I64Mul (locals := locals))
+        (Value.VI64 rhs ∷ₛ Value.VI64 lhs ∷ₛ rest) (Value.VI64 (lhs * rhs) ∷ₛ rest)
+  | I64Div : ∀ {locals rhs lhs s} {rest : ValueStack s},
       rhs ≠ 0 →
-      StepRel (Value.VI64 rhs ∷ₛ Value.VI64 lhs ∷ₛ rest) (Value.VI64 (lhs / rhs) ∷ₛ rest)
-  | Drop   : ∀ {t s} {v : Value t} {rest : ValueStack s},
-      StepRel (v ∷ₛ rest) rest
+      StepRel (Instruction.I64Div (locals := locals))
+        (Value.VI64 rhs ∷ₛ Value.VI64 lhs ∷ₛ rest) (Value.VI64 (lhs / rhs) ∷ₛ rest)
+  | Drop : ∀ {locals t s} {v : Value t} {rest : ValueStack s},
+      StepRel (Instruction.Drop (locals := locals)) (v ∷ₛ rest) rest
+
 
 -- ============================================================
 -- Evaluator (stepValues)
 -- ============================================================
-
 
 def stepValues {pre post locals}
     (t : Instruction pre post locals) (vs : ValueStack pre) : Option (ValueStack post) :=
@@ -230,14 +239,15 @@ def stepValues {pre post locals}
       some rest
 
 -- ============================================================
--- step_correct: evaluator soundness w.r.t. the reduction relation
+-- Soundness: interpreter result is permitted by the spec
+-- Now relates stepValues t to StepRel t (same instruction)
 -- ============================================================
-theorem step_correct {pre post locals}
+theorem step_sound {pre post locals}
     (t : Instruction pre post locals)
     (vs : ValueStack pre)
     {result : ValueStack post}
     (h : stepValues t vs = some result)
-    : StepRel vs result := by
+    : StepRel t vs result := by
   cases t with
   | I32Add =>
       cases vs with
@@ -311,22 +321,58 @@ theorem step_correct {pre post locals}
           simp [stepValues] at h
           exact h ▸ StepRel.Drop
 
-
-
+-- ============================================================
+-- Completeness: every spec step is realized by the interpreter
+-- Now provable cleanly because StepRel names the instruction,
+-- so cases on h forces the matching stepValues branch.
+-- ============================================================
+theorem step_complete {pre post locals}
+    (t : Instruction pre post locals)
+    (vs : ValueStack pre)
+    {result : ValueStack post}
+    (h : StepRel t vs result)
+    : stepValues t vs = some result := by
+  cases h with
+  | I32Add => rfl
+  | I32Sub => rfl
+  | I32Mul => rfl
+  | I32Div hnz => simp [stepValues, hnz]
+  | I64Add => rfl
+  | I64Sub => rfl
+  | I64Mul => rfl
+  | I64Div hnz => simp [stepValues, hnz]
+  | Drop => rfl
 
 
 -- ============================================================
 -- Adequacy record
 -- ============================================================
 
+
 structure WasmAdequacy {pre post locals} (t : Instruction pre post locals) : Type 1 where
+  syntactic    : Iso InstrA InstrB
+  sound        : ∀ (vs : ValueStack pre) {result : ValueStack post},
+                 stepValues t vs = some result → StepRel t vs result
+  complete     : ∀ (vs : ValueStack pre) {result : ValueStack post},
+                 StepRel t vs result → stepValues t vs = some result
+
+def adequate {pre post locals} (t : Instruction pre post locals) : WasmAdequacy t :=
+  { syntactic := WasmIsomorphism
+  , sound     := step_sound t
+  , complete  := step_complete t
+  }
+
+
+
+/- structure WasmAdequacy {pre post locals} (t : Instruction pre post locals) : Type 1 where
   syntactic : Iso InstrA InstrB
-  semantic  : ∀ (vs : ValueStack pre) {result : ValueStack post},
+  soundness : ∀ (vs : ValueStack pre) {result : ValueStack post},
               stepValues t vs = some result → StepRel vs result
 
 def adequate {pre post locals} (t : Instruction pre post locals) : WasmAdequacy t :=
   { syntactic := WasmIsomorphism
-  , semantic  := step_correct t
+  , soundness := step_sound t
   }
+ -/
 
 end WasmIFC
