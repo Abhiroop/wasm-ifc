@@ -1,0 +1,11 @@
+(module
+  (func $faddmul (export "faddmul") (param $a f64) (param $b f64) (result f64)
+    (local.get $a)
+    (local.get $b)
+    (f64.add)
+    (local.get $a)
+    (f64.mul))
+  (func $f32div (export "f32div") (param $a f32) (param $b f32) (result f32)
+    (local.get $a)
+    (local.get $b)
+    (f32.div)))

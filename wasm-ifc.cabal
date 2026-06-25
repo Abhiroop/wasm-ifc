@@ -47,31 +47,69 @@ build-type:         Simple
 -- Extra doc files to be distributed with the package, such as a CHANGELOG or a README.
 extra-doc-files:    CHANGELOG.md
 
--- Extra source files to be distributed with the package, such as examples, or a tutorial module.
-extra-source-files: Types, WasmModule, Utils, Wasm, WasmInterpreter
 
 common warnings
-    ghc-options: -Wall -fno-cse
+    -- @-Werror=incomplete-patterns@ enforces the totality the typed interpreter's
+    -- soundness argument relies on: a non-exhaustive 'step' would be a hole in the
+    -- progress proof, so it must fail the build, not merely warn.
+    ghc-options: -Wall -fno-cse -Werror=incomplete-patterns
+
+-- The decoder, the typed interpreter, and the elaborator live in a library so they can be
+-- reused by the executable and exercised directly by the test-suite.
+library
+    import:           warnings
+    hs-source-dirs:   src
+    default-language: Haskell2010
+    exposed-modules:
+        Syntax.Types
+      , Syntax.Indices
+      , Syntax.Immediates
+      , Syntax.Instructions
+      , Syntax.Expressions
+      , Syntax.Globals
+      , Syntax.Memories
+      , Syntax.Functions
+      , Syntax.Module
+      , Validation.Shape
+      , Validation.Reflect
+      , Validation.Elaborate
+      , Runtime.Values
+      , Runtime.MemInst
+      , Runtime.Trap
+      , Runtime.Bytes
+      , Runtime.Numeric
+      , Runtime.Convert
+      , Runtime.Stack
+      , Runtime.Interpreter
+      , Runtime.Examples
+      , Codec.Wasm
+    build-depends:
+        base          ^>=4.21.0.0
+      , containers    ^>=0.7
+      , vector        ^>=0.13
+      , singletons-th ==3.5
+      , bytestring    ^>=0.12
+      , binary        ^>=0.8
+      , transformers  ^>=0.6
+      , text          ^>=2.1
 
 executable wasm-ifc
-    -- Import common warning flags.
     import:           warnings
-
-    -- .hs or .lhs file containing the Main module.
     main-is:          Main.hs
-
-    -- Modules included in this executable, other than Main.
-    other-modules:    TinySecLang, Wasm, TypeExercise, WasmModule, Types, Utils, WasmInterpreter, Branch, BranchWithTypes, Examples, Refactor.Types, Refactor.Wasm, Refactor.WasmInterpreter, Refactor.WasmModule, Refactor.Examples
-
-    -- LANGUAGE extensions used by modules in this package.
-    -- other-extensions:
-
-    -- Other library packages from which modules are imported.
-    build-depends:    base ^>=4.21.0.0, containers, vector >=0.12
-
-    -- Directories containing source files.
-    hs-source-dirs:   app, exercises, discussions
-
-
-    -- Base language which the package is written in.
+    hs-source-dirs:   app
     default-language: Haskell2010
+    build-depends:
+        base
+      , wasm-ifc
+      , bytestring
+      , text
+
+test-suite wasm-ifc-test
+    import:           warnings
+    type:             exitcode-stdio-1.0
+    main-is:          Spec.hs
+    hs-source-dirs:   test
+    default-language: Haskell2010
+    build-depends:
+        base
+      , wasm-ifc

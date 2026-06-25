@@ -1,0 +1,20 @@
+(module
+  (memory 1)
+  ;; fill memory with 0..n-1, reverse the array in place, return the new first element (= n-1)
+  (func $memreverse (export "memreverse") (param $n i32) (result i32)
+    (local $i i32) (local $lo i32) (local $hi i32) (local $tmp i32)
+    (block $fw (loop $fwl
+      (br_if $fw (i32.ge_s (local.get $i) (local.get $n)))
+      (i32.store (i32.mul (local.get $i) (i32.const 4)) (local.get $i))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $fwl)))
+    (local.set $hi (i32.sub (local.get $n) (i32.const 1)))
+    (block $rv (loop $rvl
+      (br_if $rv (i32.ge_s (local.get $lo) (local.get $hi)))
+      (local.set $tmp (i32.load (i32.mul (local.get $lo) (i32.const 4))))
+      (i32.store (i32.mul (local.get $lo) (i32.const 4)) (i32.load (i32.mul (local.get $hi) (i32.const 4))))
+      (i32.store (i32.mul (local.get $hi) (i32.const 4)) (local.get $tmp))
+      (local.set $lo (i32.add (local.get $lo) (i32.const 1)))
+      (local.set $hi (i32.sub (local.get $hi) (i32.const 1)))
+      (br $rvl)))
+    (i32.load (i32.const 0))))
