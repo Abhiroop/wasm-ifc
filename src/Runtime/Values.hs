@@ -1,35 +1,46 @@
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE GADTs #-}
-{-# LANGUAGE TypeFamilies #-}
 
-module Runtime.Values where
+module Runtime.Values (
+    Val,
+    fromI32,
+    toI32,
+    fromI64,
+    toI64,
+    fromF32,
+    toF32,
+    fromF64,
+    toF64,
+    toSigned32,
+    toSigned64,
+    fromSigned32,
+    fromSigned64,
+) where
 
-import Data.Int       (Int32, Int64)
-import Data.Kind      (Type)
-import Data.Word      (Word32, Word64)
-import GHC.Float      (castDoubleToWord64, castFloatToWord32, castWord32ToFloat, castWord64ToDouble)
+import Data.Int (Int32, Int64)
+import Data.Word (Word32, Word64)
+import GHC.Float (castDoubleToWord64, castFloatToWord32, castWord32ToFloat, castWord64ToDouble)
 
-import Syntax.Immediates (ImmediateHostType)
-import Syntax.Types
-
--- | Maps a value type to its Haskell host representation at the type level.
---
 -- In the typed interpreter a value-stack slot of type @t@ literally /is/ a
--- @RuntimeHostType t@: the type, not the value, says how to read the bits. The untyped
--- 'Val' below is the type-erased counterpart used by the decoder and the conversion
--- bridge, with the @from*@/@to*@ helpers shadowing this family at the term level.
-type family RuntimeHostType (t :: ValType) :: Type where
-    RuntimeHostType ('Num n) = ImmediateHostType n
+-- @'Syntax.Immediates.HostType' t@: the type, not the value, says how to read the bits. The
+-- untyped 'Val' below is the type-erased counterpart used by the decoder and the conversion
+-- bridge, with the @from*@/@to*@ helpers shadowing 'HostType' at the term level.
 
--- | A runtime value: just 64 bits, with no record of its type.
---
--- 'Val' is the type-erased slot used by the conversion bridge ('Runtime.Convert'): the
--- typed interpreter marshals a host value into it, applies a bit-level conversion, and
--- reads it back. 32-bit values occupy the low half; floats are stored as their IEEE-754
--- bit pattern.
---- TODO: should probably define Val (t :: ValType), representing a val that satifies a given type
+{- | A runtime value: just 64 bits, with no record of its type.
+
+'Val' is the type-erased slot used by the conversion bridge ('Runtime.Convert'): the
+typed interpreter marshals a host value into it, applies a bit-level conversion, and
+reads it back. 32-bit values occupy the low half; floats are stored as their IEEE-754
+bit pattern.
+
+It is deliberately untyped. A @Val (t :: ValType)@ would let the marshalling be checked,
+but it would force 'Syntax.Instructions.ConvertOp' to be indexed by its source and target
+types and threaded through the interpreter, for little gain: a conversion is exactly a
+change of type, so a single flat bit-bag is the natural home for it, and this slot never
+escapes into the typed operand stack (the interpreter converts back to 'HostType' at the
+source/target types it already knows).
+-}
 newtype Val = Val Word64
-    deriving (Eq, Show)
+    deriving stock (Eq, Show)
 
 -- Move host values in and out of the untyped slot.
 

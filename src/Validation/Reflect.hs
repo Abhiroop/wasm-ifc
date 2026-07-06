@@ -2,316 +2,147 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeOperators #-}
 
--- | Reflection between the term level and the type level, and reconstruction of the typed
---   AST's indices ('Elem') and witnesses ('Append') from runtime data — what lets
---   elaboration recover a decoded module's hidden type indices.
---
---   The @singletons-th@ we depend on does not ship list singletons (those live in
---   @singletons-base@), so we hand-roll small singletons for stack shapes (@StackS@ for
---   @[ValType]@) and label contexts (@LabelS@ for @[[ValType]]@) over the generated
---   'SValType'/'SNumType'.
-module Validation.Reflect
-    ( StackS (..)
-    , LabelS (..)
-    , SomeStack (..)
-    , SomeElem (..)
-    , SomeLabel (..)
-    , SomeSplit (..)
-    , reflectStack
-    , decideNumType
-    , decideValType
-    , decideStack
-    , mkLocalElem
-    , mkLabelElem
-    , matchPrefix
-    , sAppendS
-      -- module-signature witnesses
-    , SMut (..)
-    , FuncTypeS (..)
-    , FuncTypesS (..)
-    , GlobalTypeS (..)
-    , GlobalsS (..)
-    , MemsS (..)
-    , ModuleShapeS (..)
-    , SomeModuleShapeS (..)
-    , SomeFuncRef (..)
-    , SomeGlobalRef (..)
-    , NonEmptyMems (..)
-    , reflectCtx
-    , lookupFuncRef
-    , lookupGlobalRef
-    , memsNonEmpty
-    ) where
+{- | Reflection between the term level and the type level, and reconstruction of the typed
+  AST's indices ('Elem') and witnesses ('Append') from runtime data — what lets
+  elaboration recover a decoded module's hidden type indices.
 
-import Data.Kind          (Type)
+  With @singletons-base@ providing the @Sing@ instances for our types (and for lists,
+  @Maybe@ and @Natural@), the term→type direction is just the library's 'withSomeSing'.
+  This module adds the WASM-specific pieces the library does not give us: small decidable
+  equalities used during elaboration, and the bounds-checked construction of 'Elem' indices
+  and 'Append' split witnesses from decoded indices.
+-}
+module Validation.Reflect (
+    SomeStack (..),
+    SomeElem (..),
+    SomeLabel (..),
+    SomeSplit (..),
+    reflectStack,
+    mkLocalElem,
+    mkLabelElem,
+    matchPrefix,
+    -- module-signature witnesses
+    SomeModuleShape (..),
+    SomeFuncRef (..),
+    SomeGlobalRef (..),
+    NonEmptyMems (..),
+    reflectCtx,
+    lookupFuncRef,
+    lookupGlobalRef,
+    memsNonEmpty,
+) where
+
 import Data.Type.Equality ((:~:) (Refl))
-import Data.Word          (Word32)
-import GHC.TypeNats       (SNat, withSomeSNat)
-import Numeric.Natural    (Natural)
+import Data.Word (Word32)
 
-import Syntax.Types  (AddrType (..), FuncType (..), GlobalType (..), Limits (..),
-                      MemType (..), Mutability (..), NumType (..), SNumType (..), SValType (..),
-                      ValType (..))
-import Validation.Shape (Append (..), Elem (..), MemShape (..), ModuleShape (..), type (++))
+import Data.Singletons.Base.TH (SList (SCons, SNil), Sing, withSomeSing)
+import Data.Singletons.Decide (decideEquality)
+import Syntax.Types
+import Validation.Shape (Append (..), Elem (..), MemShape (..), ModuleShape (..))
 
-{- *** Hand-rolled stack-shape singletons *** -}
+{- *** Reflecting term-level shapes to singletons ***
 
--- | A singleton for a stack shape @[ValType]@.
-type StackS :: [ValType] -> Type
-data StackS s where
-    SSNil  :: StackS '[]
-    SSCons :: SValType v -> StackS vs -> StackS (v ': vs)
+   Each is a one-liner over the library's 'withSomeSing': the @Sing@ and @SingKind@ instances
+   for our types come from @singletons-base@.
+-}
 
--- | A singleton for a label context @[[ValType]]@ (each label carries a stack shape).
-type LabelS :: [[ValType]] -> Type
-data LabelS ls where
-    LSNil  :: LabelS '[]
-    LSCons :: StackS rs -> LabelS rest -> LabelS (rs ': rest)
-
+-- | A term-level stack shape reflected to its singleton, hidden existentially.
 data SomeStack where
-    SomeStack :: StackS s -> SomeStack
+    SomeStack :: Sing (s :: [ValType]) -> SomeStack
 
-data SomeNumType where
-    SomeNumType :: SNumType n -> SomeNumType
-
-data SomeValType where
-    SomeValType :: SValType v -> SomeValType
-
-reflectNumType :: NumType -> SomeNumType
-reflectNumType I32 = SomeNumType SI32
-reflectNumType I64 = SomeNumType SI64
-reflectNumType F32 = SomeNumType SF32
-reflectNumType F64 = SomeNumType SF64
-
-reflectValType :: ValType -> SomeValType
-reflectValType (Num n) = case reflectNumType n of SomeNumType sn -> SomeValType (SNum sn)
-
--- | Reflect a term-level stack shape to its singleton, hidden existentially.
 reflectStack :: [ValType] -> SomeStack
-reflectStack []       = SomeStack SSNil
-reflectStack (v : vs) = case (reflectValType v, reflectStack vs) of
-    (SomeValType sv, SomeStack svs) -> SomeStack (SSCons sv svs)
+reflectStack vs = withSomeSing vs SomeStack
 
-{- *** Decidable equality *** -}
+{- *** Index and witness construction ***
 
-decideNumType :: SNumType a -> SNumType b -> Maybe (a :~: b)
-decideNumType SI32 SI32 = Just Refl
-decideNumType SI64 SI64 = Just Refl
-decideNumType SF32 SF32 = Just Refl
-decideNumType SF64 SF64 = Just Refl
-decideNumType _    _    = Nothing
+   Decidable equality on stack/type singletons comes from the library's 'decideEquality'
+   (over the 'SDecide' instances generated in "Syntax.Types"); the pieces below build the
+   typed AST's index and split witnesses, which the library does not provide.
+-}
 
-decideValType :: SValType a -> SValType b -> Maybe (a :~: b)
-decideValType (SNum a) (SNum b) = (\Refl -> Refl) <$> decideNumType a b
+-- | @∃x. (Sing (x :: ValType), Elem x xs)@ — a bounds-checked index into a stack shape.
+data SomeElem (xs :: [ValType]) where
+    SomeElem :: Sing (x :: ValType) -> Elem x xs -> SomeElem xs
 
-decideStack :: StackS a -> StackS b -> Maybe (a :~: b)
-decideStack SSNil         SSNil         = Just Refl
-decideStack (SSCons x xs) (SSCons y ys) = do
-    Refl <- decideValType x y
-    Refl <- decideStack xs ys
-    Just Refl
-decideStack _ _ = Nothing
+mkLocalElem :: Sing (xs :: [ValType]) -> Word32 -> Maybe (SomeElem xs)
+mkLocalElem (SCons x _) 0 = Just (SomeElem x Here)
+mkLocalElem (SCons _ xs) n = (\(SomeElem y ix) -> SomeElem y (There ix)) <$> mkLocalElem xs (n - 1)
+mkLocalElem SNil _ = Nothing
 
-{- *** Index and witness construction *** -}
+-- | @∃rs. (Sing (rs :: ResultType), Elem rs ls)@ — a bounds-checked index into a label context.
+data SomeLabel (ls :: [ResultType]) where
+    SomeLabel :: Sing (rs :: ResultType) -> Elem rs ls -> SomeLabel ls
 
--- | @∃x. (SValType x, Elem x xs)@ — a bounds-checked index into a stack shape.
-type SomeElem :: [ValType] -> Type
-data SomeElem xs where
-    SomeElem :: SValType x -> Elem x xs -> SomeElem xs
+mkLabelElem :: Sing (ls :: [ResultType]) -> Word32 -> Maybe (SomeLabel ls)
+mkLabelElem (SCons rs _) 0 = Just (SomeLabel rs Here)
+mkLabelElem (SCons _ rest) n = (\(SomeLabel rs ix) -> SomeLabel rs (There ix)) <$> mkLabelElem rest (n - 1)
+mkLabelElem SNil _ = Nothing
 
-mkLocalElem :: StackS xs -> Word32 -> Maybe (SomeElem xs)
-mkLocalElem (SSCons x _)  0 = Just (SomeElem x Here)
-mkLocalElem (SSCons _ xs) n = (\(SomeElem y ix) -> SomeElem y (There ix)) <$> mkLocalElem xs (n - 1)
-mkLocalElem SSNil         _ = Nothing
+{- | @∃s. (Sing (s :: [ValType]), Append ps s full)@ — proof that @ps@ is a prefix of @full@,
+  with the suffix singleton and the 'Append' witness used to split/recombine stacks.
+-}
+data SomeSplit (ps :: [ValType]) (full :: [ValType]) where
+    SomeSplit :: Sing (s :: [ValType]) -> Append ps s full -> SomeSplit ps full
 
--- | @∃rs. (StackS rs, Elem rs ls)@ — a bounds-checked index into a label context.
-type SomeLabel :: [[ValType]] -> Type
-data SomeLabel ls where
-    SomeLabel :: StackS rs -> Elem rs ls -> SomeLabel ls
-
-mkLabelElem :: LabelS ls -> Word32 -> Maybe (SomeLabel ls)
-mkLabelElem (LSCons rs _)   0 = Just (SomeLabel rs Here)
-mkLabelElem (LSCons _ rest) n = (\(SomeLabel rs ix) -> SomeLabel rs (There ix)) <$> mkLabelElem rest (n - 1)
-mkLabelElem LSNil           _ = Nothing
-
--- | @∃s. (StackS s, Append ps s full)@ — proof that @ps@ is a prefix of @full@, with the
---   suffix singleton and the 'Append' witness used to split/recombine stacks.
-type SomeSplit :: [ValType] -> [ValType] -> Type
-data SomeSplit ps full where
-    SomeSplit :: StackS s -> Append ps s full -> SomeSplit ps full
-
-matchPrefix :: StackS ps -> StackS full -> Maybe (SomeSplit ps full)
-matchPrefix SSNil         sfull         = Just (SomeSplit sfull ANil)
-matchPrefix (SSCons p ps) (SSCons f fs) = do
-    Refl          <- decideValType p f
+matchPrefix :: Sing (ps :: [ValType]) -> Sing (full :: [ValType]) -> Maybe (SomeSplit ps full)
+matchPrefix SNil sfull = Just (SomeSplit sfull ANil)
+matchPrefix (SCons p ps) (SCons f fs) = do
+    Refl <- decideEquality p f
     SomeSplit s w <- matchPrefix ps fs
     Just (SomeSplit s (ACons w))
-matchPrefix (SSCons _ _) SSNil = Nothing
+matchPrefix (SCons _ _) SNil = Nothing
 
--- | Compute the singleton for a concatenated stack shape.
-sAppendS :: StackS a -> StackS b -> StackS (a ++ b)
-sAppendS SSNil         sb = sb
-sAppendS (SSCons x xs) sb = SSCons x (sAppendS xs sb)
-
-{- *** Module-signature singletons ***
+{- *** Module-signature reflection ***
 
    To elaborate @call@/global/memory we need a runtime witness of the module signature so
-   their indices can be turned into the typed AST's 'Elem's and constraints. -}
+   their indices can be turned into the typed AST's 'Elem's and constraints. The whole
+   signature reflects in one 'withSomeSing'; the lookups then walk the resulting singleton.
+-}
 
--- | A singleton for 'Mutability' (which is not itself singletonised).
-type SMut :: Mutability -> Type
-data SMut m where
-    SImmutable :: SMut 'Immutable
-    SMutable   :: SMut 'Mutable
+data SomeModuleShape where
+    SomeModuleShape :: Sing (shape :: ModuleShape) -> SomeModuleShape
 
-type FuncTypeS :: FuncType -> Type
-data FuncTypeS ft where
-    FuncTypeS :: StackS ps -> StackS rs -> FuncTypeS ('FuncType ps rs)
+-- | The type-level mirror of a decoded 'MemType': lift its @Word32@ limits to 'Natural's.
+memShapeOf :: MemType -> MemShape
+memShapeOf (MemType at (Limits lo hi)) = MemShape at (fromIntegral lo) (fmap fromIntegral hi)
 
-type FuncTypesS :: [FuncType] -> Type
-data FuncTypesS fts where
-    FtSNil  :: FuncTypesS '[]
-    FtSCons :: FuncTypeS ft -> FuncTypesS fts -> FuncTypesS (ft ': fts)
-
-type GlobalTypeS :: GlobalType -> Type
-data GlobalTypeS g where
-    GlobalTypeS :: SMut m -> SValType t -> GlobalTypeS ('GlobalType m t)
-
-type GlobalsS :: [GlobalType] -> Type
-data GlobalsS gs where
-    GsSNil  :: GlobalsS '[]
-    GsSCons :: GlobalTypeS g -> GlobalsS gs -> GlobalsS (g ': gs)
-
--- | Singleton for an address type.
-data SAddrType (a :: AddrType) where
-    SAddrI32 :: SAddrType 'AddrI32
-    SAddrI64 :: SAddrType 'AddrI64
-
--- | Singleton for an optional type-level limit.
-data SMaybeNat (m :: Maybe Natural) where
-    SNothingN :: SMaybeNat 'Nothing
-    SJustN    :: SNat n -> SMaybeNat ('Just n)
-
--- | Singleton for a memory shape: its address type and (type-level 'Natural') limits.
-data MemShapeS (m :: MemShape) where
-    MemShapeS :: SAddrType at -> SNat lo -> SMaybeNat hi -> MemShapeS ('MemShape at lo hi)
-
-type MemsS :: [MemShape] -> Type
-data MemsS ms where
-    MsSNil  :: MemsS '[]
-    MsSCons :: MemShapeS m -> MemsS ms -> MemsS (m ': ms)
-
--- | A runtime witness of a whole module signature.
-type ModuleShapeS :: ModuleShape -> Type
-data ModuleShapeS shape where
-    ModuleShapeS :: FuncTypesS fts -> GlobalsS gs -> MemsS ms -> ModuleShapeS ('ModuleShape fts gs ms)
-
-data SomeModuleShapeS where
-    SomeModuleShapeS :: ModuleShapeS shape -> SomeModuleShapeS
-
-data SomeMut where
-    SomeMut :: SMut m -> SomeMut
-
-reflectMut :: Mutability -> SomeMut
-reflectMut Immutable = SomeMut SImmutable
-reflectMut Mutable   = SomeMut SMutable
-
-data SomeFuncTypeS where
-    SomeFuncTypeS :: FuncTypeS ft -> SomeFuncTypeS
-
-reflectFuncType :: FuncType -> SomeFuncTypeS
-reflectFuncType (FuncType psT rsT) = case (reflectStack psT, reflectStack rsT) of
-    (SomeStack ps, SomeStack rs) -> SomeFuncTypeS (FuncTypeS ps rs)
-
-data SomeFuncTypesS where
-    SomeFuncTypesS :: FuncTypesS fts -> SomeFuncTypesS
-
-reflectFuncTypes :: [FuncType] -> SomeFuncTypesS
-reflectFuncTypes []       = SomeFuncTypesS FtSNil
-reflectFuncTypes (f : fs) = case (reflectFuncType f, reflectFuncTypes fs) of
-    (SomeFuncTypeS ft, SomeFuncTypesS fts) -> SomeFuncTypesS (FtSCons ft fts)
-
-data SomeGlobalTypeS where
-    SomeGlobalTypeS :: GlobalTypeS g -> SomeGlobalTypeS
-
-reflectGlobalType :: GlobalType -> SomeGlobalTypeS
-reflectGlobalType (GlobalType mut (Num n)) = case (reflectMut mut, reflectNumType n) of
-    (SomeMut sm, SomeNumType sn) -> SomeGlobalTypeS (GlobalTypeS sm (SNum sn))
-
-data SomeGlobalsS where
-    SomeGlobalsS :: GlobalsS gs -> SomeGlobalsS
-
-reflectGlobals :: [GlobalType] -> SomeGlobalsS
-reflectGlobals []       = SomeGlobalsS GsSNil
-reflectGlobals (g : gs) = case (reflectGlobalType g, reflectGlobals gs) of
-    (SomeGlobalTypeS gt, SomeGlobalsS gts) -> SomeGlobalsS (GsSCons gt gts)
-
-data SomeMemsS where
-    SomeMemsS :: MemsS ms -> SomeMemsS
-
-data SomeAddrType where
-    SomeAddrType :: SAddrType a -> SomeAddrType
-
-reflectAddrType :: AddrType -> SomeAddrType
-reflectAddrType AddrI32 = SomeAddrType SAddrI32
-reflectAddrType AddrI64 = SomeAddrType SAddrI64
-
-data SomeMemShapeS where
-    SomeMemShapeS :: MemShapeS m -> SomeMemShapeS
-
--- | Reflect a decoded memory type to its shape singleton, lifting the @Word32@ limits to
---   type-level 'Natural's via 'withSomeSNat'.
-reflectMemShape :: MemType -> SomeMemShapeS
-reflectMemShape (MemType at (Limits lo hi)) = case reflectAddrType at of
-    SomeAddrType sAt -> withSomeSNat (fromIntegral lo) $ \sLo -> case hi of
-        Nothing -> SomeMemShapeS (MemShapeS sAt sLo SNothingN)
-        Just h  -> withSomeSNat (fromIntegral h) $ \sHi ->
-                       SomeMemShapeS (MemShapeS sAt sLo (SJustN sHi))
-
-reflectMems :: [MemType] -> SomeMemsS
-reflectMems []         = SomeMemsS MsSNil
-reflectMems (mt : mts) = case (reflectMemShape mt, reflectMems mts) of
-    (SomeMemShapeS m, SomeMemsS ms) -> SomeMemsS (MsSCons m ms)
-
--- | Reflect a module's signature (function types, global types, memory types) to a runtime
---   witness with the type-level signature hidden existentially.
-reflectCtx :: [FuncType] -> [GlobalType] -> [MemType] -> SomeModuleShapeS
+{- | Reflect a module's signature (function types, global types, memory types) to a runtime
+  witness with the type-level signature hidden existentially.
+-}
+reflectCtx :: [FuncType] -> [GlobalType] -> [MemType] -> SomeModuleShape
 reflectCtx funcTypes globalTypes memTypes =
-    case (reflectFuncTypes funcTypes, reflectGlobals globalTypes, reflectMems memTypes) of
-        (SomeFuncTypesS fts, SomeGlobalsS gs, SomeMemsS ms) -> SomeModuleShapeS (ModuleShapeS fts gs ms)
+    withSomeSing (ModuleShape funcTypes globalTypes (map memShapeOf memTypes)) SomeModuleShape
 
--- | @∃ps rs. (StackS ps, StackS rs, Elem ('FuncType ps rs) fts)@ — a function reference
---   resolved against the signature, carrying its parameter and result shapes.
-type SomeFuncRef :: [FuncType] -> Type
-data SomeFuncRef fts where
-    SomeFuncRef :: StackS ps -> StackS rs -> Elem ('FuncType ps rs) fts -> SomeFuncRef fts
+{- | @∃ps rs. (Sing ps, Sing rs, Elem ('FuncType ps rs) fts)@ — a function reference resolved
+  against the signature, carrying its parameter and result shapes.
+-}
+data SomeFuncRef (fts :: [FuncType]) where
+    SomeFuncRef :: Sing (ps :: [ValType]) -> Sing (rs :: [ValType]) -> Elem ('FuncType ps rs) fts -> SomeFuncRef fts
 
-lookupFuncRef :: FuncTypesS fts -> Word32 -> Maybe (SomeFuncRef fts)
-lookupFuncRef (FtSCons (FuncTypeS ps rs) _) 0 = Just (SomeFuncRef ps rs Here)
-lookupFuncRef (FtSCons _ rest) n =
+lookupFuncRef :: Sing (fts :: [FuncType]) -> Word32 -> Maybe (SomeFuncRef fts)
+lookupFuncRef (SCons (SFuncType ps rs) _) 0 = Just (SomeFuncRef ps rs Here)
+lookupFuncRef (SCons _ rest) n =
     (\(SomeFuncRef ps rs ix) -> SomeFuncRef ps rs (There ix)) <$> lookupFuncRef rest (n - 1)
-lookupFuncRef FtSNil _ = Nothing
+lookupFuncRef SNil _ = Nothing
 
--- | @∃m t. (SMut m, SValType t, Elem ('GlobalType m t) gs)@ — a global resolved against
---   the signature, carrying its mutability and type.
-type SomeGlobalRef :: [GlobalType] -> Type
-data SomeGlobalRef gs where
-    SomeGlobalRef :: SMut m -> SValType t -> Elem ('GlobalType m t) gs -> SomeGlobalRef gs
+{- | @∃m t. (Sing m, Sing (t :: ValType), Elem ('GlobalType m t) gs)@ — a global resolved
+  against the signature, carrying its mutability and type.
+-}
+data SomeGlobalRef (gs :: [GlobalType]) where
+    SomeGlobalRef :: Sing (m :: Mutability) -> Sing (t :: ValType) -> Elem ('GlobalType m t) gs -> SomeGlobalRef gs
 
-lookupGlobalRef :: GlobalsS gs -> Word32 -> Maybe (SomeGlobalRef gs)
-lookupGlobalRef (GsSCons (GlobalTypeS sm st) _) 0 = Just (SomeGlobalRef sm st Here)
-lookupGlobalRef (GsSCons _ rest) n =
+lookupGlobalRef :: Sing (gs :: [GlobalType]) -> Word32 -> Maybe (SomeGlobalRef gs)
+lookupGlobalRef (SCons (SGlobalType sm st) _) 0 = Just (SomeGlobalRef sm st Here)
+lookupGlobalRef (SCons _ rest) n =
     (\(SomeGlobalRef sm st ix) -> SomeGlobalRef sm st (There ix)) <$> lookupGlobalRef rest (n - 1)
-lookupGlobalRef GsSNil _ = Nothing
+lookupGlobalRef SNil _ = Nothing
 
 -- | Proof that a memory index space is non-empty, licensing @load@/@store@.
-type NonEmptyMems :: [MemShape] -> Type
-data NonEmptyMems ms where
+data NonEmptyMems (ms :: [MemShape]) where
     NonEmptyMems :: NonEmptyMems (m ': ms)
 
-memsNonEmpty :: MemsS ms -> Maybe (NonEmptyMems ms)
-memsNonEmpty (MsSCons _ _) = Just NonEmptyMems
-memsNonEmpty MsSNil        = Nothing
+memsNonEmpty :: Sing (ms :: [MemShape]) -> Maybe (NonEmptyMems ms)
+memsNonEmpty (SCons _ _) = Just NonEmptyMems
+memsNonEmpty SNil = Nothing

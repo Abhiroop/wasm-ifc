@@ -1,5 +1,7 @@
 -- | A global as decoded: its declared type plus the constant expression that initializes it.
-module Syntax.Globals where
+module Syntax.Globals (
+    RawGlobal (..),
+) where
 
 import Syntax.Expressions
 import Syntax.Types

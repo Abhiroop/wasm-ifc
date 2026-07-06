@@ -5,386 +5,423 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeOperators #-}
 
--- | Elaboration: type-checking a decoded module and, where it succeeds, building the
---   corresponding intrinsically-typed AST with its indices recovered — the bridge from the
---   untyped (decoded) representation to the typed interpreter.
---
---   Elaboration runs against a runtime witness of the module signature ('ModuleShapeS'), so it
---   covers the whole module: @call@ between functions, globals and memory are all checked.
---   Dead code after an unconditional transfer is validated under the spec's polymorphic
---   stack ('validateDead'); nested block/loop/if bodies are fresh, reachable frames.
-module Validation.Elaborate
-    ( ElabError (..)
-    , SomeModule (..)
-    , elaborateModule
-    , runModuleFunction
-    ) where
+{- | Elaboration: type-checking a decoded module and, where it succeeds, building the
+  corresponding intrinsically-typed AST with its indices recovered — the bridge from the
+  untyped (decoded) representation to the typed interpreter.
 
-import Data.Text          (Text)
-import qualified Data.Text as T
+  Elaboration runs against a runtime witness of the module signature ('SModuleShape'), so it
+  covers the whole module: @call@ between functions, globals and memory are all checked.
+  Dead code after an unconditional transfer is validated under the spec's polymorphic
+  stack ('validateDead'); nested block/loop/if bodies are fresh, reachable frames.
+-}
+module Validation.Elaborate (
+    ElabError (..),
+    SomeModule (..),
+    elaborateModule,
+    runModuleFunction,
+) where
+
+import Data.Text (Text)
+import Data.Text qualified as T
 import Data.Type.Equality ((:~:) (Refl))
-import Data.Word          (Word32)
+import Data.Word (Word32)
 
-import Runtime.MemInst      (allocMemory)
-import Runtime.Values     (RuntimeHostType)
-import Syntax.Functions   (RawFunction (RawFunction))
-import Syntax.Globals     (RawGlobal (RawGlobal))
-import Syntax.Indices     (FunctionIdx (..), GlobalIdx (..), LabelIdx (..), LocalIdx (..))
-import Syntax.Instructions (ConvertOp (..), RawInstr (..))
-import Syntax.Memories    (RawMemory (RawMemory))
+import Data.List.Singletons ((%++))
+import Data.Singletons.Base.TH (SList (SCons, SNil), Sing, fromSing, withSomeSing)
+import Data.Singletons.Decide (decideEquality)
+import Runtime.Interpreter (FuncInst (..), FuncInsts (..), ModuleInst (..), getFunc, runFunction)
+import Runtime.MemInst (allocMemory)
+import Runtime.Stack (GlobalInsts (..), LocalInsts (..), MemInsts (..), ValueStack (..))
+import Syntax.Functions (RawFunction (RawFunction))
+import Syntax.Globals (RawGlobal (RawGlobal))
+import Syntax.Immediates (HostType)
+import Syntax.Indices (FunctionIdx (..), GlobalIdx (..), LabelIdx (..), LocalIdx (..))
+import Syntax.Instructions (
+    BitwiseOp (..),
+    ConvertOp (..),
+    CountOp (..),
+    Expr (..),
+    FloatBinOp (..),
+    FloatUnOp (..),
+    Instr (..),
+    RawInstr (..),
+ )
+import Syntax.Memories (RawMemory (RawMemory))
 import Syntax.Module
 import Syntax.Types
-import Validation.Shape      (ModuleFuncs, ModuleGlobals, ModuleMems, Elem)
-import Syntax.Instructions (BitwiseOp (..), CountOp (..), FloatBinOp (..), FloatUnOp (..),
-                           Instr (..), Expr (..))
-import Runtime.Interpreter  (FuncInst (..), FuncInsts (..), ModuleInst (..), getFunc, runFunction)
 import Validation.Reflect
-import Runtime.Stack        (GlobalInsts (..), LocalInsts (..), MemInsts (..), ValueStack (..))
+import Validation.Shape
 
 data ElabError
-    = StackUnderflow String    -- ^ not enough operands on the stack
-    | TypeMismatch String      -- ^ operand types are wrong
-    | IndexOutOfRange String   -- ^ a local/label/function/global index is out of range
-    | UnsupportedInstr String  -- ^ outside the supported instruction subset
-    | ResultMismatch String    -- ^ a body produced a stack that does not match its type
-    | DeadCodeError String     -- ^ malformed code after an unconditional transfer
-    | Malformed String         -- ^ structurally inconsistent module
-    deriving (Eq, Show)
+    = -- | not enough operands on the stack
+      StackUnderflow String
+    | -- | operand types are wrong
+      TypeMismatch String
+    | -- | a local/label/function/global index is out of range
+      IndexOutOfRange String
+    | -- | outside the supported instruction subset
+      UnsupportedInstr String
+    | -- | a body produced a stack that does not match its type
+      ResultMismatch String
+    | -- | malformed code after an unconditional transfer
+      DeadCodeError String
+    | -- | structurally inconsistent module
+      Malformed String
+    deriving stock (Eq, Show)
 
-{- *** Elaboration environment & results *** -}
+-- *** Elaboration environment & results ***
 
--- | What elaboration knows: the module signature witness, the enclosing function's result
---   type and locals, and the result type of each enclosing label.
-data ElabEnv shape ret locals labels = ElabEnv
-    { eeShape    :: ModuleShapeS shape
-    , eeRet    :: StackS ret
-    , eeLocals :: StackS locals
-    , eeLabels :: LabelS labels
+{- | What elaboration knows: the module signature witness, the enclosing function's result
+  type and locals, and the result type of each enclosing label.
+-}
+data ElabEnv (shape :: ModuleShape) (ret :: ResultType) (locals :: [ValType]) (labels :: [ResultType]) = ElabEnv
+    { eeShape :: Sing shape
+    , eeRet :: Sing ret
+    , eeLocals :: Sing locals
+    , eeLabels :: Sing labels
     }
 
--- | The result of elaborating a sequence from input stack @si@: either it falls through
---   with a concrete output stack, or it ends in an unconditional transfer and its output
---   is universally quantified (the dead tail is validated but not represented).
-data Elab shape ret locals labels si where
-    Reachable :: StackS so -> Expr shape ret locals labels si so -> Elab shape ret locals labels si
-    Diverged  :: (forall so. Expr shape ret locals labels si so) -> Elab shape ret locals labels si
+{- | The result of elaborating a whole instruction sequence that started from stack @stackIn@.
+  A sequence either runs to its end or leaves early through an unconditional branch, and the
+  two cases carry different evidence:
+-}
+data ElaboratedExpr (shape :: ModuleShape) (ret :: ResultType) (locals :: [ValType]) (labels :: [ResultType]) (stackIn :: [ValType]) where
+    -- | Control reached the end of the sequence, leaving a concrete @stackOut@ on top.
+    Reachable :: Sing stackOut -> Expr shape ('FrameShape locals ret) labels stackIn stackOut -> ElaboratedExpr shape ret locals labels stackIn
+    {- | The sequence ended in an unconditional transfer (@br@ / @return@ / @unreachable@), so
+    control never falls out the bottom. Nothing constrains the output stack, so it is left
+    universally quantified — exactly the spec's stack-polymorphism for dead code.
+    -}
+    Diverged :: (forall stackOut. Expr shape ('FrameShape locals ret) labels stackIn stackOut) -> ElaboratedExpr shape ret locals labels stackIn
 
--- | The result of elaborating one instruction.
-data Step shape ret locals labels si where
-    StepTo   :: StackS so -> Instr shape ret locals labels si so -> Step shape ret locals labels si
-    StepAway :: (forall so. Instr shape ret locals labels si so) -> Step shape ret locals labels si
+{- | The result of elaborating a single instruction — the per-instruction version of
+  'ElaboratedExpr', with the same two cases. 'elabSeq' folds these into an 'ElaboratedExpr'
+  as it walks the sequence.
+-}
+data ElaboratedInstr (shape :: ModuleShape) (ret :: ResultType) (locals :: [ValType]) (labels :: [ResultType]) (stackIn :: [ValType]) where
+    {- | An ordinary instruction: it leaves a concrete @stackOut@ and elaboration continues
+    from there (the analogue of 'Reachable').
+    -}
+    Produces :: Sing stackOut -> Instr shape ('FrameShape locals ret) labels stackIn stackOut -> ElaboratedInstr shape ret locals labels stackIn
+    {- | An unconditional transfer (@br@ / @return@ / @unreachable@): control leaves here, so any
+    instructions after it are dead code and the output stack is unconstrained (the analogue
+    of 'Diverged').
+    -}
+    Transfers :: (forall stackOut. Instr shape ('FrameShape locals ret) labels stackIn stackOut) -> ElaboratedInstr shape ret locals labels stackIn
 
 note :: ElabError -> Maybe a -> Either ElabError a
 note e = maybe (Left e) Right
 
-shapeFuncsS :: ModuleShapeS shape -> FuncTypesS (ModuleFuncs shape)
-shapeFuncsS (ModuleShapeS fts _ _) = fts
+funcTypesSing :: SModuleShape shape -> Sing (ModuleFuncs shape)
+funcTypesSing (SModuleShape fts _ _) = fts
 
-shapeGlobalsS :: ModuleShapeS shape -> GlobalsS (ModuleGlobals shape)
-shapeGlobalsS (ModuleShapeS _ gs _) = gs
+globalTypesSing :: SModuleShape shape -> Sing (ModuleGlobals shape)
+globalTypesSing (SModuleShape _ gs _) = gs
 
-shapeMemsS :: ModuleShapeS shape -> MemsS (ModuleMems shape)
-shapeMemsS (ModuleShapeS _ _ ms) = ms
+memShapesSing :: SModuleShape shape -> Sing (ModuleMems shape)
+memShapesSing (SModuleShape _ _ ms) = ms
 
-{- *** Sequences *** -}
+-- *** Sequences ***
 
-elabSeq :: ElabEnv shape ret locals labels -> StackS si -> [RawInstr]
-        -> Either ElabError (Elab shape ret locals labels si)
-elabSeq _   si []           = Right (Reachable si INil)
-elabSeq env si (raw : rest) = do
-    step <- elabInstr env si raw
-    case step of
-        StepTo so instr -> do
-            rest' <- elabSeq env so rest
+elabSeq ::
+    ElabEnv shape ret locals labels ->
+    Sing stackIn ->
+    [RawInstr] ->
+    Either ElabError (ElaboratedExpr shape ret locals labels stackIn)
+elabSeq _ stackIn [] = Right (Reachable stackIn INil)
+elabSeq env stackIn (raw : rest) = do
+    elaboratedInstr <- elabInstr env stackIn raw
+    case elaboratedInstr of
+        Produces stackOut instr -> do
+            rest' <- elabSeq env stackOut rest
             pure $ case rest' of
-                Reachable so' seq' -> Reachable so' (instr :. seq')
-                Diverged poly      -> Diverged (instr :. poly)
-        StepAway transfer -> do
+                Reachable stackOut' seq' -> Reachable stackOut' (instr :. seq')
+                Diverged poly -> Diverged (instr :. poly)
+        Transfers transfer -> do
             validateDead env rest
             pure (Diverged (transfer :. INil))
 
-{- *** Single instructions *** -}
+-- *** Single instructions ***
 
-elabInstr :: forall shape ret locals labels si.
-             ElabEnv shape ret locals labels -> StackS si -> RawInstr
-          -> Either ElabError (Step shape ret locals labels si)
-elabInstr env si instr = case instr of
+elabInstr ::
+    forall shape ret locals labels stackIn.
+    ElabEnv shape ret locals labels ->
+    Sing stackIn ->
+    RawInstr ->
+    Either ElabError (ElaboratedInstr shape ret locals labels stackIn)
+elabInstr env stackIn instr = case instr of
     {- Constants -}
-    Const st literal -> Right (StepTo (SSCons (SNum st) si) (IConst st literal))
-
+    Const st literal -> Right (Produces (SCons st stackIn) (IConst st literal))
     {- Numeric (consume two of type t, produce one of type t) -}
-    Add st     -> consumeTwo st (SNum st) si (IAdd st)
-    Sub st     -> consumeTwo st (SNum st) si (ISub st)
-    Mul st     -> consumeTwo st (SNum st) si (IMul st)
-    Div st sign -> consumeTwo st (SNum st) si (IDiv st sign)
-    Rem st sign -> withInt st $ \isInt -> consumeTwo st (SNum st) si (IRem isInt sign)
-
+    Add st -> consumeTwo st st stackIn (IAdd st)
+    Sub st -> consumeTwo st st stackIn (ISub st)
+    Mul st -> consumeTwo st st stackIn (IMul st)
+    Div st sign -> consumeTwo st st stackIn (IDiv st sign)
+    Rem st sign -> withInt st $ \isInt -> consumeTwo st st stackIn (IRem isInt sign)
     {- Comparison (consume two of type t, produce one i32) -}
-    Eq st      -> consumeTwo st (SNum SI32) si (IEq st)
-    Ne st      -> consumeTwo st (SNum SI32) si (INe st)
-    Lt st sign  -> consumeTwo st (SNum SI32) si (ILt st sign)
-    Gt st sign  -> consumeTwo st (SNum SI32) si (IGt st sign)
-    Le st sign  -> consumeTwo st (SNum SI32) si (ILe st sign)
-    Ge st sign  -> consumeTwo st (SNum SI32) si (IGe st sign)
-    Eqz st     -> case si of
-        SSCons (SNum sa) rest -> do
-            Refl <- note (TypeMismatch "eqz operand") (decideNumType sa st)
-            Right (StepTo (SSCons (SNum SI32) rest) (IEqz st))
+    Eq st -> consumeTwo st SI32 stackIn (IEq st)
+    Ne st -> consumeTwo st SI32 stackIn (INe st)
+    Lt st sign -> consumeTwo st SI32 stackIn (ILt st sign)
+    Gt st sign -> consumeTwo st SI32 stackIn (IGt st sign)
+    Le st sign -> consumeTwo st SI32 stackIn (ILe st sign)
+    Ge st sign -> consumeTwo st SI32 stackIn (IGe st sign)
+    Eqz st -> case stackIn of
+        SCons sa rest -> do
+            Refl <- note (TypeMismatch "eqz operand") (decideEquality sa st)
+            Right (Produces (SCons SI32 rest) (IEqz st))
         _ -> Left (StackUnderflow "eqz")
-
     {- Stack management -}
-    Drop -> case si of
-        SSCons _ rest -> Right (StepTo rest IDrop)
-        _             -> Left (StackUnderflow "drop")
-    Select -> case si of
-        SSCons (SNum sc) (SSCons va (SSCons vb rest)) -> do
-            Refl <- note (TypeMismatch "select condition must be i32") (decideNumType sc SI32)
-            Refl <- note (TypeMismatch "select operands have different types") (decideValType va vb)
-            Right (StepTo (SSCons va rest) ISelect)
+    Drop -> case stackIn of
+        SCons _ rest -> Right (Produces rest IDrop)
+        _ -> Left (StackUnderflow "drop")
+    Select -> case stackIn of
+        SCons sc (SCons va (SCons vb rest)) -> do
+            Refl <- note (TypeMismatch "select condition must be i32") (decideEquality sc SI32)
+            Refl <- note (TypeMismatch "select operands have different types") (decideEquality va vb)
+            Right (Produces (SCons va rest) ISelect)
         _ -> Left (StackUnderflow "select")
-
     {- Locals -}
-    LocalGet (LocalIdx i) -> case mkLocalElem (eeLocals env) i of
-        Just (SomeElem sv ix) -> Right (StepTo (SSCons sv si) (ILocalGet ix))
-        Nothing               -> Left (IndexOutOfRange ("local.get " ++ show i))
-    LocalSet (LocalIdx i) -> case mkLocalElem (eeLocals env) i of
-        Just (SomeElem sv ix) -> case si of
-            SSCons stop rest -> do
-                Refl <- note (TypeMismatch ("local.set " ++ show i)) (decideValType stop sv)
-                Right (StepTo rest (ILocalSet ix))
+    LocalGet (LocalIdx i) -> case mkLocalElem (env.eeLocals) i of
+        Just (SomeElem sv ix) -> Right (Produces (SCons sv stackIn) (ILocalGet ix))
+        Nothing -> Left (IndexOutOfRange ("local.get " ++ show i))
+    LocalSet (LocalIdx i) -> case mkLocalElem (env.eeLocals) i of
+        Just (SomeElem sv ix) -> case stackIn of
+            SCons stop rest -> do
+                Refl <- note (TypeMismatch ("local.set " ++ show i)) (decideEquality stop sv)
+                Right (Produces rest (ILocalSet ix))
             _ -> Left (StackUnderflow "local.set")
         Nothing -> Left (IndexOutOfRange ("local.set " ++ show i))
-    LocalTee (LocalIdx i) -> case mkLocalElem (eeLocals env) i of
-        Just (SomeElem sv ix) -> case si of
-            SSCons stop _ -> do
-                Refl <- note (TypeMismatch ("local.tee " ++ show i)) (decideValType stop sv)
-                Right (StepTo si (ILocalTee ix))
+    LocalTee (LocalIdx i) -> case mkLocalElem (env.eeLocals) i of
+        Just (SomeElem sv ix) -> case stackIn of
+            SCons stop _ -> do
+                Refl <- note (TypeMismatch ("local.tee " ++ show i)) (decideEquality stop sv)
+                Right (Produces stackIn (ILocalTee ix))
             _ -> Left (StackUnderflow "local.tee")
         Nothing -> Left (IndexOutOfRange ("local.tee " ++ show i))
-
     {- Globals -}
-    GlobalGet (GlobalIdx g) -> case lookupGlobalRef (shapeGlobalsS (eeShape env)) g of
+    GlobalGet (GlobalIdx g) -> case lookupGlobalRef (globalTypesSing (env.eeShape)) g of
         Nothing -> Left (IndexOutOfRange ("global.get " ++ show g))
-        Just (SomeGlobalRef _ st gix) -> Right (StepTo (SSCons st si) (IGlobalGet gix))
-    GlobalSet (GlobalIdx g) -> case lookupGlobalRef (shapeGlobalsS (eeShape env)) g of
+        Just (SomeGlobalRef _ st gix) -> Right (Produces (SCons st stackIn) (IGlobalGet gix))
+    GlobalSet (GlobalIdx g) -> case lookupGlobalRef (globalTypesSing (env.eeShape)) g of
         Nothing -> Left (IndexOutOfRange ("global.set " ++ show g))
         Just (SomeGlobalRef smut st gix) -> case smut of
             SImmutable -> Left (TypeMismatch ("global.set " ++ show g ++ ": global is immutable"))
-            SMutable -> case si of
-                SSCons stop rest -> do
-                    Refl <- note (TypeMismatch ("global.set " ++ show g)) (decideValType stop st)
-                    Right (StepTo rest (IGlobalSet gix))
+            SMutable -> case stackIn of
+                SCons stop rest -> do
+                    Refl <- note (TypeMismatch ("global.set " ++ show g)) (decideEquality stop st)
+                    Right (Produces rest (IGlobalSet gix))
                 _ -> Left (StackUnderflow "global.set")
-
     {- Memory -}
-    Load st memArg -> case memsNonEmpty (shapeMemsS (eeShape env)) of
+    Load st memArg -> case memsNonEmpty (memShapesSing (env.eeShape)) of
         Nothing -> Left (TypeMismatch "load: module declares no memory")
-        Just NonEmptyMems -> case si of
-            SSCons (SNum sc) rest -> do
-                Refl <- note (TypeMismatch "load address must be i32") (decideNumType sc SI32)
-                Right (StepTo (SSCons (SNum st) rest) (ILoad st memArg))
+        Just NonEmptyMems -> case stackIn of
+            SCons sc rest -> do
+                Refl <- note (TypeMismatch "load address must be i32") (decideEquality sc SI32)
+                Right (Produces (SCons st rest) (ILoad st memArg))
             _ -> Left (StackUnderflow "load")
-    Store st memArg -> case memsNonEmpty (shapeMemsS (eeShape env)) of
+    Store st memArg -> case memsNonEmpty (memShapesSing (env.eeShape)) of
         Nothing -> Left (TypeMismatch "store: module declares no memory")
-        Just NonEmptyMems -> case si of
-            SSCons (SNum sv) (SSCons (SNum sc) rest) -> do
-                Refl <- note (TypeMismatch "store value type") (decideNumType sv st)
-                Refl <- note (TypeMismatch "store address must be i32") (decideNumType sc SI32)
-                Right (StepTo rest (IStore st memArg))
+        Just NonEmptyMems -> case stackIn of
+            SCons sv (SCons sc rest) -> do
+                Refl <- note (TypeMismatch "store value type") (decideEquality sv st)
+                Refl <- note (TypeMismatch "store address must be i32") (decideEquality sc SI32)
+                Right (Produces rest (IStore st memArg))
             _ -> Left (StackUnderflow "store")
-
-    LoadN st width sign memArg -> case memsNonEmpty (shapeMemsS (eeShape env)) of
+    LoadN st width sign memArg -> case memsNonEmpty (memShapesSing (env.eeShape)) of
         Nothing -> Left (TypeMismatch "load: module declares no memory")
-        Just NonEmptyMems -> withInt st $ \isInt -> case si of
-            SSCons (SNum sc) rest -> do
-                Refl <- note (TypeMismatch "load address must be i32") (decideNumType sc SI32)
-                Right (StepTo (SSCons (SNum st) rest) (ILoadN isInt width sign memArg))
+        Just NonEmptyMems -> withInt st $ \isInt -> case stackIn of
+            SCons sc rest -> do
+                Refl <- note (TypeMismatch "load address must be i32") (decideEquality sc SI32)
+                Right (Produces (SCons st rest) (ILoadN isInt width sign memArg))
             _ -> Left (StackUnderflow "load")
-    StoreN st width memArg -> case memsNonEmpty (shapeMemsS (eeShape env)) of
+    StoreN st width memArg -> case memsNonEmpty (memShapesSing (env.eeShape)) of
         Nothing -> Left (TypeMismatch "store: module declares no memory")
-        Just NonEmptyMems -> withInt st $ \isInt -> case si of
-            SSCons (SNum sv) (SSCons (SNum sc) rest) -> do
-                Refl <- note (TypeMismatch "store value type") (decideNumType sv st)
-                Refl <- note (TypeMismatch "store address must be i32") (decideNumType sc SI32)
-                Right (StepTo rest (IStoreN isInt width memArg))
+        Just NonEmptyMems -> withInt st $ \isInt -> case stackIn of
+            SCons sv (SCons sc rest) -> do
+                Refl <- note (TypeMismatch "store value type") (decideEquality sv st)
+                Refl <- note (TypeMismatch "store address must be i32") (decideEquality sc SI32)
+                Right (Produces rest (IStoreN isInt width memArg))
             _ -> Left (StackUnderflow "store")
-    MemorySize -> case memsNonEmpty (shapeMemsS (eeShape env)) of
-        Nothing            -> Left (TypeMismatch "memory.size: module declares no memory")
-        Just NonEmptyMems  -> Right (StepTo (SSCons (SNum SI32) si) IMemSize)
-    MemoryGrow -> case memsNonEmpty (shapeMemsS (eeShape env)) of
-        Nothing           -> Left (TypeMismatch "memory.grow: module declares no memory")
-        Just NonEmptyMems -> case si of
-            SSCons (SNum sc) rest -> do
-                Refl <- note (TypeMismatch "memory.grow argument must be i32") (decideNumType sc SI32)
-                Right (StepTo (SSCons (SNum SI32) rest) IMemGrow)
+    MemorySize -> case memsNonEmpty (memShapesSing (env.eeShape)) of
+        Nothing -> Left (TypeMismatch "memory.size: module declares no memory")
+        Just NonEmptyMems -> Right (Produces (SCons SI32 stackIn) IMemSize)
+    MemoryGrow -> case memsNonEmpty (memShapesSing (env.eeShape)) of
+        Nothing -> Left (TypeMismatch "memory.grow: module declares no memory")
+        Just NonEmptyMems -> case stackIn of
+            SCons sc rest -> do
+                Refl <- note (TypeMismatch "memory.grow argument must be i32") (decideEquality sc SI32)
+                Right (Produces (SCons SI32 rest) IMemGrow)
             _ -> Left (StackUnderflow "memory.grow")
-
     {- Calls -}
-    Call (FunctionIdx f) -> case lookupFuncRef (shapeFuncsS (eeShape env)) f of
+    Call (FunctionIdx f) -> case lookupFuncRef (funcTypesSing (env.eeShape)) f of
         Nothing -> Left (IndexOutOfRange ("call " ++ show f))
-        Just (SomeFuncRef psS rsS fix) -> case matchPrefix psS si of
+        Just (SomeFuncRef psS rsS fix) -> case matchPrefix psS stackIn of
             Nothing -> Left (TypeMismatch ("call " ++ show f ++ ": arguments not on the stack"))
-            Just (SomeSplit sS witness) -> Right (StepTo (sAppendS rsS sS) (ICall witness fix))
-
+            Just (SomeSplit sS witness) -> Right (Produces (rsS %++ sS) (ICall witness fix))
     {- Integer bitwise / shift / count (integer types only) -}
-    And st     -> withInt st $ \isInt -> sameTypeBinary st si (IBitwise isInt BwAnd)
-    Or  st     -> withInt st $ \isInt -> sameTypeBinary st si (IBitwise isInt BwOr)
-    Xor st     -> withInt st $ \isInt -> sameTypeBinary st si (IBitwise isInt BwXor)
-    Shl st     -> withInt st $ \isInt -> sameTypeBinary st si (IBitwise isInt BwShl)
-    Shr st sign -> withInt st $ \isInt -> sameTypeBinary st si (IBitwise isInt (BwShr sign))
-    Rotl st    -> withInt st $ \isInt -> sameTypeBinary st si (IBitwise isInt BwRotl)
-    Rotr st    -> withInt st $ \isInt -> sameTypeBinary st si (IBitwise isInt BwRotr)
-    Clz st     -> withInt st $ \isInt -> sameTypeUnary st si (ICount isInt OpClz)
-    Ctz st     -> withInt st $ \isInt -> sameTypeUnary st si (ICount isInt OpCtz)
-    Popcnt st  -> withInt st $ \isInt -> sameTypeUnary st si (ICount isInt OpPopcnt)
-
+    And st -> withInt st $ \isInt -> sameTypeBinary st stackIn (IBitwise isInt BwAnd)
+    Or st -> withInt st $ \isInt -> sameTypeBinary st stackIn (IBitwise isInt BwOr)
+    Xor st -> withInt st $ \isInt -> sameTypeBinary st stackIn (IBitwise isInt BwXor)
+    Shl st -> withInt st $ \isInt -> sameTypeBinary st stackIn (IBitwise isInt BwShl)
+    Shr st sign -> withInt st $ \isInt -> sameTypeBinary st stackIn (IBitwise isInt (BwShr sign))
+    Rotl st -> withInt st $ \isInt -> sameTypeBinary st stackIn (IBitwise isInt BwRotl)
+    Rotr st -> withInt st $ \isInt -> sameTypeBinary st stackIn (IBitwise isInt BwRotr)
+    Clz st -> withInt st $ \isInt -> sameTypeUnary st stackIn (ICount isInt OpClz)
+    Ctz st -> withInt st $ \isInt -> sameTypeUnary st stackIn (ICount isInt OpCtz)
+    Popcnt st -> withInt st $ \isInt -> sameTypeUnary st stackIn (ICount isInt OpPopcnt)
     {- Floating-point unary / binary (floating-point types only) -}
-    Abs st        -> withFloat st $ \isFloat -> sameTypeUnary  st si (IFloatUn isFloat FAbs)
-    Neg st        -> withFloat st $ \isFloat -> sameTypeUnary  st si (IFloatUn isFloat FNeg)
-    Sqrt st       -> withFloat st $ \isFloat -> sameTypeUnary  st si (IFloatUn isFloat FSqrt)
-    Ceil st       -> withFloat st $ \isFloat -> sameTypeUnary  st si (IFloatUn isFloat FCeil)
-    Floor st      -> withFloat st $ \isFloat -> sameTypeUnary  st si (IFloatUn isFloat FFloor)
-    FloatTrunc st -> withFloat st $ \isFloat -> sameTypeUnary  st si (IFloatUn isFloat FTrunc)
-    Nearest st    -> withFloat st $ \isFloat -> sameTypeUnary  st si (IFloatUn isFloat FNearest)
-    Min st        -> withFloat st $ \isFloat -> sameTypeBinary st si (IFloatBin isFloat FMin)
-    Max st        -> withFloat st $ \isFloat -> sameTypeBinary st si (IFloatBin isFloat FMax)
-    Copysign st   -> withFloat st $ \isFloat -> sameTypeBinary st si (IFloatBin isFloat FCopysign)
-
+    Abs st -> withFloat st $ \isFloat -> sameTypeUnary st stackIn (IFloatUn isFloat FAbs)
+    Neg st -> withFloat st $ \isFloat -> sameTypeUnary st stackIn (IFloatUn isFloat FNeg)
+    Sqrt st -> withFloat st $ \isFloat -> sameTypeUnary st stackIn (IFloatUn isFloat FSqrt)
+    Ceil st -> withFloat st $ \isFloat -> sameTypeUnary st stackIn (IFloatUn isFloat FCeil)
+    Floor st -> withFloat st $ \isFloat -> sameTypeUnary st stackIn (IFloatUn isFloat FFloor)
+    FloatTrunc st -> withFloat st $ \isFloat -> sameTypeUnary st stackIn (IFloatUn isFloat FTrunc)
+    Nearest st -> withFloat st $ \isFloat -> sameTypeUnary st stackIn (IFloatUn isFloat FNearest)
+    Min st -> withFloat st $ \isFloat -> sameTypeBinary st stackIn (IFloatBin isFloat FMin)
+    Max st -> withFloat st $ \isFloat -> sameTypeBinary st stackIn (IFloatBin isFloat FMax)
+    Copysign st -> withFloat st $ \isFloat -> sameTypeBinary st stackIn (IFloatBin isFloat FCopysign)
     {- Conversions: derive the source/result singletons from the opcode -}
     Convert op ->
-        let (Num fromN, Num toN) = convertSig op
-        in case (reflectNum fromN, reflectNum toN) of
-            (SomeNum sFrom, SomeNum sTo) -> case si of
-                SSCons (SNum sa) rest -> do
-                    Refl <- note (TypeMismatch "conversion source type") (decideNumType sa sFrom)
-                    Right (StepTo (SSCons (SNum sTo) rest) (IConvert sFrom sTo op))
+        let (fromN, toN) = convertSig op
+         in withSomeSing fromN $ \sFrom -> withSomeSing toN $ \sTo -> case stackIn of
+                SCons sa rest -> do
+                    Refl <- note (TypeMismatch "conversion source type") (decideEquality sa sFrom)
+                    Right (Produces (SCons sTo rest) (IConvert sFrom sTo op))
                 _ -> Left (StackUnderflow "conversion")
-
     {- Inert -}
-    Nop -> Right (StepTo si INop)
-
+    Nop -> Right (Produces stackIn INop)
     {- Structured control -}
     Block (FuncType psT rsT) body ->
         case (reflectStack psT, reflectStack rsT) of
-            (SomeStack psS, SomeStack rsS) -> case matchPrefix psS si of
+            (SomeStack psS, SomeStack rsS) -> case matchPrefix psS stackIn of
                 Nothing -> Left (TypeMismatch "block parameters not on the stack")
                 Just (SomeSplit sS witness) ->
                     elabBodyChecked (pushLabel rsS env) psS rsS body $ \bodySeq ->
-                        Right (StepTo (sAppendS rsS sS) (IBlock witness bodySeq))
+                        Right (Produces (rsS %++ sS) (IBlock witness bodySeq))
     Loop (FuncType psT rsT) body ->
         case (reflectStack psT, reflectStack rsT) of
-            (SomeStack psS, SomeStack rsS) -> case matchPrefix psS si of
+            (SomeStack psS, SomeStack rsS) -> case matchPrefix psS stackIn of
                 Nothing -> Left (TypeMismatch "loop parameters not on the stack")
                 Just (SomeSplit sS witness) ->
                     elabBodyChecked (pushLabel psS env) psS rsS body $ \bodySeq ->
-                        Right (StepTo (sAppendS rsS sS) (ILoop witness bodySeq))
-    If (FuncType psT rsT) thenBody elseBody -> case si of
-        SSCons (SNum sc) rest -> do
-            Refl <- note (TypeMismatch "if condition must be i32") (decideNumType sc SI32)
+                        Right (Produces (rsS %++ sS) (ILoop witness bodySeq))
+    If (FuncType psT rsT) thenBody elseBody -> case stackIn of
+        SCons sc rest -> do
+            Refl <- note (TypeMismatch "if condition must be i32") (decideEquality sc SI32)
             case (reflectStack psT, reflectStack rsT) of
                 (SomeStack psS, SomeStack rsS) -> case matchPrefix psS rest of
                     Nothing -> Left (TypeMismatch "if parameters not on the stack")
                     Just (SomeSplit sS witness) ->
                         elabBodyChecked (pushLabel rsS env) psS rsS thenBody $ \thenSeq ->
-                        elabBodyChecked (pushLabel rsS env) psS rsS elseBody $ \elseSeq ->
-                            Right (StepTo (sAppendS rsS sS) (IIf witness thenSeq elseSeq))
+                            elabBodyChecked (pushLabel rsS env) psS rsS elseBody $ \elseSeq ->
+                                Right (Produces (rsS %++ sS) (IIf witness thenSeq elseSeq))
         _ -> Left (StackUnderflow "if")
-
     {- Branches (unconditional ones diverge) -}
-    Br (LabelIdx l) -> case mkLabelElem (eeLabels env) l of
+    Br (LabelIdx l) -> case mkLabelElem (env.eeLabels) l of
         Nothing -> Left (IndexOutOfRange ("br " ++ show l))
-        Just (SomeLabel rsS labelIx) -> case matchPrefix rsS si of
+        Just (SomeLabel rsS labelIx) -> case matchPrefix rsS stackIn of
             Nothing -> Left (TypeMismatch ("br " ++ show l ++ ": operands do not match the label"))
-            Just (SomeSplit _ witness) -> Right (StepAway (IBr witness labelIx))
-    BrIf (LabelIdx l) -> case si of
-        SSCons (SNum sc) rest -> do
-            Refl <- note (TypeMismatch "br_if condition must be i32") (decideNumType sc SI32)
-            case mkLabelElem (eeLabels env) l of
+            Just (SomeSplit _ witness) -> Right (Transfers (IBr witness labelIx))
+    BrIf (LabelIdx l) -> case stackIn of
+        SCons sc rest -> do
+            Refl <- note (TypeMismatch "br_if condition must be i32") (decideEquality sc SI32)
+            case mkLabelElem (env.eeLabels) l of
                 Nothing -> Left (IndexOutOfRange ("br_if " ++ show l))
                 Just (SomeLabel rsS labelIx) -> case matchPrefix rsS rest of
                     Nothing -> Left (TypeMismatch ("br_if " ++ show l ++ ": operands do not match the label"))
-                    Just (SomeSplit _ witness) -> Right (StepTo rest (IBrIf witness labelIx))
+                    Just (SomeSplit _ witness) -> Right (Produces rest (IBrIf witness labelIx))
         _ -> Left (StackUnderflow "br_if")
-    BrTable targets (LabelIdx d) -> case si of
-        SSCons (SNum sc) rest -> case decideNumType sc SI32 of
-            Nothing   -> Left (TypeMismatch "br_table index must be i32")
-            Just Refl -> case mkLabelElem (eeLabels env) d of
+    BrTable targets (LabelIdx d) -> case stackIn of
+        SCons sc rest -> case decideEquality sc SI32 of
+            Nothing -> Left (TypeMismatch "br_table index must be i32")
+            Just Refl -> case mkLabelElem (env.eeLabels) d of
                 Nothing -> Left (IndexOutOfRange ("br_table default " ++ show d))
                 Just (SomeLabel rsS defIx) -> case mapM (resolveTarget env rsS) targets of
-                    Left err        -> Left err
+                    Left err -> Left err
                     Right targetIxs -> case matchPrefix rsS rest of
                         Nothing -> Left (TypeMismatch "br_table operands do not match the labels")
-                        Just (SomeSplit _ witness) -> Right (StepAway (IBrTable witness targetIxs defIx))
+                        Just (SomeSplit _ witness) -> Right (Transfers (IBrTable witness targetIxs defIx))
         _ -> Left (StackUnderflow "br_table")
-    Return -> case matchPrefix (eeRet env) si of
+    Return -> case matchPrefix (env.eeRet) stackIn of
         Nothing -> Left (TypeMismatch "return: operands do not match the result type")
-        Just (SomeSplit _ witness) -> Right (StepAway (IReturn witness))
-    Unreachable -> Right (StepAway IUnreachable)
+        Just (SomeSplit _ witness) -> Right (Transfers (IReturn witness))
+    Unreachable -> Right (Transfers IUnreachable)
 
 -- | Push a label's result type onto the elaboration environment's label context.
-pushLabel :: StackS rs -> ElabEnv shape ret locals labels -> ElabEnv shape ret locals (rs ': labels)
-pushLabel rsS env = env { eeLabels = LSCons rsS (eeLabels env) }
+pushLabel :: Sing rs -> ElabEnv shape ret locals labels -> ElabEnv shape ret locals (rs ': labels)
+pushLabel rsS env = env {eeLabels = SCons rsS (env.eeLabels)}
 
--- | Elaborate a block/loop/if body (its label already pushed onto @env@), checking it
---   transforms @ps@ into @rs@, and hand the resulting typed sequence to the continuation.
-elabBodyChecked
-    :: ElabEnv shape ret locals labels
-    -> StackS ps -> StackS rs -> [RawInstr]
-    -> (Expr shape ret locals labels ps rs -> Either ElabError a)
-    -> Either ElabError a
+{- | Elaborate a block/loop/if body (its label already pushed onto @env@), checking it
+  transforms @ps@ into @rs@, and hand the resulting typed sequence to the continuation.
+-}
+elabBodyChecked ::
+    ElabEnv shape ret locals labels ->
+    Sing ps ->
+    Sing rs ->
+    [RawInstr] ->
+    (Expr shape ('FrameShape locals ret) labels ps rs -> Either ElabError a) ->
+    Either ElabError a
 elabBodyChecked env psS rsS body k = do
     body' <- elabSeq env psS body
     case body' of
         Reachable soS seq' -> do
-            Refl <- note (ResultMismatch "body result does not match its block type") (decideStack soS rsS)
+            Refl <- note (ResultMismatch "body result does not match its block type") (decideEquality soS rsS)
             k seq'
         Diverged poly -> k poly
 
 -- | Resolve one @br_table@ target, checking it carries the same result type as the rest.
-resolveTarget :: ElabEnv shape ret locals labels -> StackS rs -> LabelIdx -> Either ElabError (Elem rs labels)
-resolveTarget env rsS (LabelIdx t) = case mkLabelElem (eeLabels env) t of
+resolveTarget :: ElabEnv shape ret locals labels -> Sing rs -> LabelIdx -> Either ElabError (Elem rs labels)
+resolveTarget env rsS (LabelIdx t) = case mkLabelElem (env.eeLabels) t of
     Nothing -> Left (IndexOutOfRange ("br_table target " ++ show t))
-    Just (SomeLabel rsS' targetIx) -> case decideStack rsS' rsS of
+    Just (SomeLabel rsS' targetIx) -> case decideEquality rsS' rsS of
         Just Refl -> Right targetIx
-        Nothing   -> Left (TypeMismatch "br_table targets have different types")
+        Nothing -> Left (TypeMismatch "br_table targets have different types")
 
--- | Check the top two operands are both @'Num t@ and replace them with the instruction's
---   single result of element type @r@.
--- | Refine an operation's number type to integer (resp. floating-point) evidence, failing
---   elaboration if it is of the wrong kind (e.g. @f32.and@ or @i32.sqrt@). This is what
---   lets the typed interpreter dispatch those instructions totally, with no float/int
---   fall-through to reject at run time.
-withInt :: SNumType t -> (IsInt t -> Either ElabError a) -> Either ElabError a
+{- | Check the top two operands are both @t@ and replace them with the instruction's
+  single result of element type @r@.
+| Refine an operation's number type to integer (resp. floating-point) evidence, failing
+  elaboration if it is of the wrong kind (e.g. @f32.and@ or @i32.sqrt@). This is what
+  lets the typed interpreter dispatch those instructions totally, with no float/int
+  fall-through to reject at run time.
+-}
+withInt :: Sing (t :: ValType) -> (IsInt t -> Either ElabError a) -> Either ElabError a
 withInt st k = maybe (Left (TypeMismatch "operation requires an integer type")) k (intType st)
 
-withFloat :: SNumType t -> (IsFloat t -> Either ElabError a) -> Either ElabError a
+withFloat :: Sing (t :: ValType) -> (IsFloat t -> Either ElabError a) -> Either ElabError a
 withFloat st k = maybe (Left (TypeMismatch "operation requires a floating-point type")) k (floatType st)
 
-consumeTwo :: forall t r shape ret locals labels si.
-              SNumType t -> SValType r -> StackS si
-           -> (forall s. Instr shape ret locals labels ('Num t ': 'Num t ': s) (r ': s))
-           -> Either ElabError (Step shape ret locals labels si)
-consumeTwo st sr si typed = case si of
-    SSCons (SNum sa) (SSCons (SNum sb) rest) -> do
-        Refl <- note (TypeMismatch "binary op operand 1") (decideNumType sa st)
-        Refl <- note (TypeMismatch "binary op operand 2") (decideNumType sb st)
-        Right (StepTo (SSCons sr rest) typed)
+consumeTwo ::
+    forall t r shape ret locals labels stackIn.
+    Sing (t :: ValType) ->
+    Sing (r :: ValType) ->
+    Sing stackIn ->
+    (forall s. Instr shape ('FrameShape locals ret) labels (t ': t ': s) (r ': s)) ->
+    Either ElabError (ElaboratedInstr shape ret locals labels stackIn)
+consumeTwo st sr stackIn typed = case stackIn of
+    SCons sa (SCons sb rest) -> do
+        Refl <- note (TypeMismatch "binary op operand 1") (decideEquality sa st)
+        Refl <- note (TypeMismatch "binary op operand 2") (decideEquality sb st)
+        Right (Produces (SCons sr rest) typed)
     _ -> Left (StackUnderflow "binary numeric op")
 
 -- | A binary operation whose result has the same type as its (matching) operands.
-sameTypeBinary :: SNumType t -> StackS si
-               -> (forall s. Instr shape ret locals labels ('Num t ': 'Num t ': s) ('Num t ': s))
-               -> Either ElabError (Step shape ret locals labels si)
-sameTypeBinary st = consumeTwo st (SNum st)
+sameTypeBinary ::
+    Sing (t :: ValType) ->
+    Sing stackIn ->
+    (forall s. Instr shape ('FrameShape locals ret) labels (t ': t ': s) (t ': s)) ->
+    Either ElabError (ElaboratedInstr shape ret locals labels stackIn)
+sameTypeBinary st = consumeTwo st st
 
 -- | A unary operation whose result has the same type as its operand.
-sameTypeUnary :: SNumType t -> StackS si
-              -> (forall s. Instr shape ret locals labels ('Num t ': s) ('Num t ': s))
-              -> Either ElabError (Step shape ret locals labels si)
-sameTypeUnary st si typed = case si of
-    SSCons (SNum sa) rest -> do
-        Refl <- note (TypeMismatch "unary op operand") (decideNumType sa st)
-        Right (StepTo (SSCons (SNum st) rest) typed)
+sameTypeUnary ::
+    Sing (t :: ValType) ->
+    Sing stackIn ->
+    (forall s. Instr shape ('FrameShape locals ret) labels (t ': s) (t ': s)) ->
+    Either ElabError (ElaboratedInstr shape ret locals labels stackIn)
+sameTypeUnary st stackIn typed = case stackIn of
+    SCons sa rest -> do
+        Refl <- note (TypeMismatch "unary op operand") (decideEquality sa st)
+        Right (Produces (SCons st rest) typed)
     _ -> Left (StackUnderflow "unary numeric op")
 
 {- *** Unreachable code (full unreachable typing) ***
@@ -392,7 +429,8 @@ sameTypeUnary st si typed = case si of
    After an unconditional transfer the operand stack becomes polymorphic. We validate the
    dead tail over a 'PolyStack' — known entries above an implicit @Unknown@ bottom — so
    underflowing pops yield @Unknown@ (and succeed), exactly as the spec prescribes. Nested
-   block/loop/if bodies are fresh reachable frames, validated by the ordinary elaborator. -}
+   block/loop/if bodies are fresh reachable frames, validated by the ordinary elaborator.
+-}
 
 newtype PolyStack = PolyStack [Maybe ValType]
 
@@ -401,143 +439,141 @@ pushKnown v (PolyStack xs) = PolyStack (Just v : xs)
 
 popAny :: PolyStack -> (Maybe ValType, PolyStack)
 popAny (PolyStack (x : xs)) = (x, PolyStack xs)
-popAny (PolyStack [])       = (Nothing, PolyStack [])
+popAny (PolyStack []) = (Nothing, PolyStack [])
 
 popKnown :: ValType -> PolyStack -> Either ElabError PolyStack
 popKnown t s = case popAny s of
-    (Nothing, s')             -> Right s'
-    (Just v,  s') | v == t    -> Right s'
-                  | otherwise -> Left (DeadCodeError msg)
-      where msg = "unreachable code expected " ++ show t ++ ", found " ++ show v
+    (Nothing, s') -> Right s'
+    (Just v, s')
+        | v == t -> Right s'
+        | otherwise -> Left (DeadCodeError msg)
+      where
+        msg = "unreachable code expected " ++ show t ++ ", found " ++ show v
 
 validateDead :: ElabEnv shape ret locals labels -> [RawInstr] -> Either ElabError ()
 validateDead env = go (PolyStack [])
   where
-    go _ []       = Right ()
+    go _ [] = Right ()
     go s (i : is) = stepDead env s i >>= \s' -> go s' is
 
 stepDead :: ElabEnv shape ret locals labels -> PolyStack -> RawInstr -> Either ElabError PolyStack
 stepDead env s instr = case instr of
-    Const t _  -> Right (pushKnown (numVal t) s)
-    Add t      -> arith t
-    Sub t      -> arith t
-    Mul t      -> arith t
-    Div t _    -> arith t
-    Rem t _    -> arith t
-    Eq  t      -> compare' t
-    Ne  t      -> compare' t
-    Lt  t _    -> compare' t
-    Gt  t _    -> compare' t
-    Le  t _    -> compare' t
-    Ge  t _    -> compare' t
-    Eqz t      -> pushKnown (Num I32) <$> popKnown (numVal t) s
-    Drop       -> Right (snd (popAny s))
-    Select     -> do
-        s1 <- popKnown (Num I32) s
+    Const t _ -> Right (pushKnown (valTypeOf t) s)
+    Add t -> arith t
+    Sub t -> arith t
+    Mul t -> arith t
+    Div t _ -> arith t
+    Rem t _ -> arith t
+    Eq t -> compare' t
+    Ne t -> compare' t
+    Lt t _ -> compare' t
+    Gt t _ -> compare' t
+    Le t _ -> compare' t
+    Ge t _ -> compare' t
+    Eqz t -> pushKnown I32 <$> popKnown (valTypeOf t) s
+    Drop -> Right (snd (popAny s))
+    Select -> do
+        s1 <- popKnown I32 s
         let (a, s2) = popAny s1
             (b, s3) = popAny s2
         Right (PolyStack (orElse a b : unStack s3))
     LocalGet (LocalIdx i) -> withLocal env i (\v -> Right (pushKnown v s))
     LocalSet (LocalIdx i) -> withLocal env i (\v -> popKnown v s)
     LocalTee (LocalIdx i) -> withLocal env i (\v -> pushKnown v <$> popKnown v s)
-    GlobalGet (GlobalIdx g) -> case lookupGlobalRef (shapeGlobalsS (eeShape env)) g of
-        Nothing                       -> Left (IndexOutOfRange ("global.get " ++ show g ++ " (unreachable)"))
-        Just (SomeGlobalRef _ st _)   -> Right (pushKnown (numValOf st) s)
-    GlobalSet (GlobalIdx g) -> case lookupGlobalRef (shapeGlobalsS (eeShape env)) g of
-        Nothing                       -> Left (IndexOutOfRange ("global.set " ++ show g ++ " (unreachable)"))
-        Just (SomeGlobalRef _ st _)   -> popKnown (numValOf st) s
-    Load t _   -> pushKnown (numVal t) <$> popKnown (Num I32) s
-    Store t _  -> popKnown (numVal t) s >>= popKnown (Num I32)
-    LoadN t _ _ _  -> pushKnown (numVal t) <$> popKnown (Num I32) s
-    StoreN t _ _   -> popKnown (numVal t) s >>= popKnown (Num I32)
-    MemorySize     -> Right (pushKnown (Num I32) s)
-    MemoryGrow     -> pushKnown (Num I32) <$> popKnown (Num I32) s
-    And t      -> arith t
-    Or  t      -> arith t
-    Xor t      -> arith t
-    Shl t      -> arith t
-    Shr t _    -> arith t
-    Rotl t     -> arith t
-    Rotr t     -> arith t
-    Clz t      -> sameUnary t
-    Ctz t      -> sameUnary t
-    Popcnt t   -> sameUnary t
-    Abs t        -> sameUnary t
-    Neg t        -> sameUnary t
-    Sqrt t       -> sameUnary t
-    Ceil t       -> sameUnary t
-    Floor t      -> sameUnary t
+    GlobalGet (GlobalIdx g) -> case lookupGlobalRef (globalTypesSing (env.eeShape)) g of
+        Nothing -> Left (IndexOutOfRange ("global.get " ++ show g ++ " (unreachable)"))
+        Just (SomeGlobalRef _ st _) -> Right (pushKnown (valTypeOf st) s)
+    GlobalSet (GlobalIdx g) -> case lookupGlobalRef (globalTypesSing (env.eeShape)) g of
+        Nothing -> Left (IndexOutOfRange ("global.set " ++ show g ++ " (unreachable)"))
+        Just (SomeGlobalRef _ st _) -> popKnown (valTypeOf st) s
+    Load t _ -> pushKnown (valTypeOf t) <$> popKnown I32 s
+    Store t _ -> popKnown (valTypeOf t) s >>= popKnown I32
+    LoadN t _ _ _ -> pushKnown (valTypeOf t) <$> popKnown I32 s
+    StoreN t _ _ -> popKnown (valTypeOf t) s >>= popKnown I32
+    MemorySize -> Right (pushKnown I32 s)
+    MemoryGrow -> pushKnown I32 <$> popKnown I32 s
+    And t -> arith t
+    Or t -> arith t
+    Xor t -> arith t
+    Shl t -> arith t
+    Shr t _ -> arith t
+    Rotl t -> arith t
+    Rotr t -> arith t
+    Clz t -> sameUnary t
+    Ctz t -> sameUnary t
+    Popcnt t -> sameUnary t
+    Abs t -> sameUnary t
+    Neg t -> sameUnary t
+    Sqrt t -> sameUnary t
+    Ceil t -> sameUnary t
+    Floor t -> sameUnary t
     FloatTrunc t -> sameUnary t
-    Nearest t    -> sameUnary t
-    Min t        -> arith t
-    Max t        -> arith t
-    Copysign t   -> arith t
-    Convert op   -> let (from, to) = convertSig op in pushKnown to <$> popKnown from s
-    Call (FunctionIdx f) -> case lookupFuncRef (shapeFuncsS (eeShape env)) f of
-        Nothing                     -> Left (IndexOutOfRange ("call " ++ show f ++ " (unreachable)"))
+    Nearest t -> sameUnary t
+    Min t -> arith t
+    Max t -> arith t
+    Copysign t -> arith t
+    Convert op -> let (from, to) = convertSig op in pushKnown to <$> popKnown from s
+    Call (FunctionIdx f) -> case lookupFuncRef (funcTypesSing (env.eeShape)) f of
+        Nothing -> Left (IndexOutOfRange ("call " ++ show f ++ " (unreachable)"))
         Just (SomeFuncRef psS rsS _) -> afterFrame (stackToList psS) (stackToList rsS) s
-    Nop        -> Right s
+    Nop -> Right s
     Block (FuncType psT rsT) body -> validateFrame env rsT psT rsT body >> afterFrame psT rsT s
-    Loop  (FuncType psT rsT) body -> validateFrame env psT psT rsT body >> afterFrame psT rsT s
+    Loop (FuncType psT rsT) body -> validateFrame env psT psT rsT body >> afterFrame psT rsT s
     If (FuncType psT rsT) thenB elseB -> do
-        s1 <- popKnown (Num I32) s
+        s1 <- popKnown I32 s
         validateFrame env rsT psT rsT thenB
         validateFrame env rsT psT rsT elseB
         afterFrame psT rsT s1
-    Br (LabelIdx l)        -> checkLabel env l >> Right s
-    BrIf (LabelIdx l)      -> popKnown (Num I32) s >>= \s' -> checkLabel env l >> Right s'
+    Br (LabelIdx l) -> checkLabel env l >> Right s
+    BrIf (LabelIdx l) -> popKnown I32 s >>= \s' -> checkLabel env l >> Right s'
     BrTable targets (LabelIdx d) -> do
-        s' <- popKnown (Num I32) s
+        s' <- popKnown I32 s
         mapM_ (\(LabelIdx t) -> checkLabel env t) targets
         checkLabel env d
         Right s'
-    Return     -> Right s
+    Return -> Right s
     Unreachable -> Right s
   where
-    arith :: SNumType t -> Either ElabError PolyStack
-    arith t = pushKnown (numVal t) <$> (popKnown (numVal t) s >>= popKnown (numVal t))
-    compare' :: SNumType t -> Either ElabError PolyStack
-    compare' t = pushKnown (Num I32) <$> (popKnown (numVal t) s >>= popKnown (numVal t))
-    sameUnary :: SNumType t -> Either ElabError PolyStack
-    sameUnary t = pushKnown (numVal t) <$> popKnown (numVal t) s
-
-data SomeNum where
-    SomeNum :: SNumType n -> SomeNum
-
-reflectNum :: NumType -> SomeNum
-reflectNum I32 = SomeNum SI32
-reflectNum I64 = SomeNum SI64
-reflectNum F32 = SomeNum SF32
-reflectNum F64 = SomeNum SF64
+    arith :: Sing (t :: ValType) -> Either ElabError PolyStack
+    arith t = pushKnown (valTypeOf t) <$> (popKnown (valTypeOf t) s >>= popKnown (valTypeOf t))
+    compare' :: Sing (t :: ValType) -> Either ElabError PolyStack
+    compare' t = pushKnown I32 <$> (popKnown (valTypeOf t) s >>= popKnown (valTypeOf t))
+    sameUnary :: Sing (t :: ValType) -> Either ElabError PolyStack
+    sameUnary t = pushKnown (valTypeOf t) <$> popKnown (valTypeOf t) s
 
 -- | The source and result value types of a conversion (for dead-code validation).
 convertSig :: ConvertOp -> (ValType, ValType)
 convertSig op = case op of
-    I32WrapI64        -> (Num I64, Num I32)
-    I64ExtendI32 _    -> (Num I32, Num I64)
-    I32TruncF32 _     -> (Num F32, Num I32)
-    I32TruncF64 _     -> (Num F64, Num I32)
-    I64TruncF32 _     -> (Num F32, Num I64)
-    I64TruncF64 _     -> (Num F64, Num I64)
-    F32ConvertI32 _   -> (Num I32, Num F32)
-    F32ConvertI64 _   -> (Num I64, Num F32)
-    F64ConvertI32 _   -> (Num I32, Num F64)
-    F64ConvertI64 _   -> (Num I64, Num F64)
-    F32DemoteF64      -> (Num F64, Num F32)
-    F64PromoteF32     -> (Num F32, Num F64)
-    I32ReinterpretF32 -> (Num F32, Num I32)
-    F32ReinterpretI32 -> (Num I32, Num F32)
-    I64ReinterpretF64 -> (Num F64, Num I64)
-    F64ReinterpretI64 -> (Num I64, Num F64)
-    I32Extend8S       -> (Num I32, Num I32)
-    I32Extend16S      -> (Num I32, Num I32)
-    I64Extend8S       -> (Num I64, Num I64)
-    I64Extend16S      -> (Num I64, Num I64)
-    I64Extend32S      -> (Num I64, Num I64)
+    I32WrapI64 -> (I64, I32)
+    I64ExtendI32 _ -> (I32, I64)
+    I32TruncF32 _ -> (F32, I32)
+    I32TruncF64 _ -> (F64, I32)
+    I64TruncF32 _ -> (F32, I64)
+    I64TruncF64 _ -> (F64, I64)
+    F32ConvertI32 _ -> (I32, F32)
+    F32ConvertI64 _ -> (I64, F32)
+    F64ConvertI32 _ -> (I32, F64)
+    F64ConvertI64 _ -> (I64, F64)
+    F32DemoteF64 -> (F64, F32)
+    F64PromoteF32 -> (F32, F64)
+    I32ReinterpretF32 -> (F32, I32)
+    F32ReinterpretI32 -> (I32, F32)
+    I64ReinterpretF64 -> (F64, I64)
+    F64ReinterpretI64 -> (I64, F64)
+    I32Extend8S -> (I32, I32)
+    I32Extend16S -> (I32, I32)
+    I64Extend8S -> (I64, I64)
+    I64Extend16S -> (I64, I64)
+    I64Extend32S -> (I64, I64)
 
 -- | Validate a nested block/loop/if body — a fresh, reachable frame — discarding its AST.
-validateFrame :: ElabEnv shape ret locals labels
-              -> [ValType] -> [ValType] -> [ValType] -> [RawInstr] -> Either ElabError ()
+validateFrame ::
+    ElabEnv shape ret locals labels ->
+    [ValType] ->
+    [ValType] ->
+    [ValType] ->
+    [RawInstr] ->
+    Either ElabError ()
 validateFrame env labelT psT rsT body =
     case (reflectStack labelT, reflectStack psT, reflectStack rsT) of
         (SomeStack labS, SomeStack psS, SomeStack rsS) ->
@@ -551,127 +587,132 @@ afterFrame psT rsT s = Right (pushResults rsT (popN (length psT) s))
     pushResults vs t = foldr pushKnown t (reverse vs)
 
 withLocal :: ElabEnv shape ret locals labels -> Word32 -> (ValType -> Either ElabError a) -> Either ElabError a
-withLocal env i k = case mkLocalElem (eeLocals env) i of
-    Just (SomeElem sv _) -> k (numValOf sv)
-    Nothing              -> Left (IndexOutOfRange ("local " ++ show i ++ " (unreachable code)"))
+withLocal env i k = case mkLocalElem (env.eeLocals) i of
+    Just (SomeElem sv _) -> k (valTypeOf sv)
+    Nothing -> Left (IndexOutOfRange ("local " ++ show i ++ " (unreachable code)"))
 
 checkLabel :: ElabEnv shape ret locals labels -> Word32 -> Either ElabError ()
-checkLabel env l = case mkLabelElem (eeLabels env) l of
-    Just _  -> Right ()
+checkLabel env l = case mkLabelElem (env.eeLabels) l of
+    Just _ -> Right ()
     Nothing -> Left (IndexOutOfRange ("label " ++ show l ++ " (unreachable code)"))
 
-numVal :: SNumType t -> ValType
-numVal SI32 = Num I32
-numVal SI64 = Num I64
-numVal SF32 = Num F32
-numVal SF64 = Num F64
+{- | The term-level value type a value-type singleton stands for (and, lifted, a whole stack
+  shape). Now that 'ValType' is flat, these are exactly the library's 'fromSing'.
+-}
+valTypeOf :: Sing (t :: ValType) -> ValType
+valTypeOf = fromSing
 
-numValOf :: SValType v -> ValType
-numValOf (SNum n) = numVal n
-
-stackToList :: StackS s -> [ValType]
-stackToList SSNil         = []
-stackToList (SSCons v vs) = numValOf v : stackToList vs
+stackToList :: Sing (s :: [ValType]) -> [ValType]
+stackToList = fromSing
 
 orElse :: Maybe a -> Maybe a -> Maybe a
 orElse (Just x) _ = Just x
-orElse Nothing  y = y
+orElse Nothing y = y
 
 unStack :: PolyStack -> [Maybe ValType]
 unStack (PolyStack xs) = xs
 
-{- *** Whole-module elaboration *** -}
+-- *** Whole-module elaboration ***
 
--- | A fully elaborated, well-typed module: its signature witness, its typed instances, and
---   its exports (for resolving entry points).
+{- | A fully elaborated, well-typed module: its signature witness, its typed instances, and
+  its exports (for resolving entry points).
+-}
 data SomeModule where
-    SomeModule :: ModuleShapeS shape -> ModuleInst shape -> [Export] -> SomeModule
+    SomeModule :: SModuleShape shape -> ModuleInst shape -> [Export] -> SomeModule
 
--- | Type-check an entire decoded module: build its signature, elaborate every function
---   against it, and assemble the typed functions, initial globals and memories.
+{- | Type-check an entire decoded module: build its signature, elaborate every function
+  against it, and assemble the typed functions, initial globals and memories.
+-}
 elaborateModule :: RawModule -> Either ElabError SomeModule
 elaborateModule m =
     case reflectCtx funcSigs globalTypes memTypes of
-        SomeModuleShapeS ctxS@(ModuleShapeS ftsS gsS msS) -> do
-            funcs   <- elaborateFuncs ctxS ftsS (moduleFuncs m)
-            globals <- buildGlobals gsS (moduleGlobals m)
-            mems    <- buildMems msS (moduleMemories m)
-            Right (SomeModule ctxS (ModuleInst funcs globals mems) (moduleExports m))
+        SomeModuleShape ctxS@(SModuleShape ftsS gsS msS) -> do
+            funcs <- elaborateFuncs ctxS ftsS (m.moduleFuncs)
+            globals <- buildGlobals gsS (m.moduleGlobals)
+            mems <- buildMems msS (m.moduleMemories)
+            Right (SomeModule ctxS (ModuleInst funcs globals mems) (m.moduleExports))
   where
-    funcSigs    = map (\(RawFunction sig _ _) -> sig) (moduleFuncs m)
-    globalTypes = map (\(RawGlobal gt _) -> gt) (moduleGlobals m)
-    memTypes    = map (\(RawMemory mt) -> mt) (moduleMemories m)
+    funcSigs = map (\(RawFunction sig _ _) -> sig) (m.moduleFuncs)
+    globalTypes = map (\(RawGlobal gt _) -> gt) (m.moduleGlobals)
+    memTypes = map (\(RawMemory mt) -> mt) (m.moduleMemories)
 
-elaborateFuncs :: ModuleShapeS shape -> FuncTypesS fts -> [RawFunction] -> Either ElabError (FuncInsts shape fts)
-elaborateFuncs _    FtSNil          []          = Right FsNil
-elaborateFuncs ctxS (FtSCons ft fs) (rf : rfs)  = do
-    f  <- elaborateFunctionIn ctxS ft rf
+elaborateFuncs :: SModuleShape shape -> Sing fts -> [RawFunction] -> Either ElabError (FuncInsts shape fts)
+elaborateFuncs _ SNil [] = Right FsNil
+elaborateFuncs ctxS (SCons ft fs) (rf : rfs) = do
+    f <- elaborateFunctionIn ctxS ft rf
     fs' <- elaborateFuncs ctxS fs rfs
     Right (FsCons f fs')
 elaborateFuncs _ _ _ = Left (Malformed "function/signature count mismatch")
 
-elaborateFunctionIn :: ModuleShapeS shape -> FuncTypeS ft -> RawFunction
-                    -> Either ElabError (FuncInst shape ft)
-elaborateFunctionIn ctxS (FuncTypeS psS rsS) (RawFunction _ declaredT body) =
+elaborateFunctionIn ::
+    SModuleShape shape ->
+    SFuncType ft ->
+    RawFunction ->
+    Either ElabError (FuncInst shape ft)
+elaborateFunctionIn ctxS (SFuncType psS rsS) (RawFunction _ declaredT body) =
     case reflectStack declaredT of
         SomeStack declS ->
-            let env      = ElabEnv ctxS rsS (sAppendS psS declS) (LSCons rsS LSNil)
+            let env = ElabEnv ctxS rsS (psS %++ declS) (SCons rsS SNil)
                 defaults = defaultLocals declS
-            in do
-                elaborated <- elabSeq env SSNil body
-                case elaborated of
-                    Reachable soS bodySeq -> do
-                        Refl <- note (ResultMismatch "function body does not match its result type")
-                                     (decideStack soS rsS)
-                        Right (FuncInst defaults bodySeq)
-                    Diverged poly -> Right (FuncInst defaults poly)
+             in do
+                    elaborated <- elabSeq env SNil body
+                    case elaborated of
+                        Reachable soS bodySeq -> do
+                            Refl <-
+                                note
+                                    (ResultMismatch "function body does not match its result type")
+                                    (decideEquality soS rsS)
+                            Right (FuncInst defaults bodySeq)
+                        Diverged poly -> Right (FuncInst defaults poly)
 
-buildGlobals :: GlobalsS gs -> [RawGlobal] -> Either ElabError (GlobalInsts gs)
-buildGlobals GsSNil [] = Right GNil
-buildGlobals (GsSCons (GlobalTypeS _ (SNum sn)) gs) (RawGlobal _ initExpr : rest) = do
+buildGlobals :: Sing gs -> [RawGlobal] -> Either ElabError (GlobalInsts gs)
+buildGlobals SNil [] = Right GNil
+buildGlobals (SCons (SGlobalType _ sn) gs) (RawGlobal _ initExpr : rest) = do
     value <- evalConstInit sn initExpr
     rest' <- buildGlobals gs rest
     Right (GCons value rest')
 buildGlobals _ _ = Left (Malformed "global/type count mismatch")
 
-evalConstInit :: SNumType n -> [RawInstr] -> Either ElabError (RuntimeHostType ('Num n))
-evalConstInit sn [Const st literal] = case decideNumType st sn of
+evalConstInit :: Sing (n :: ValType) -> [RawInstr] -> Either ElabError (HostType n)
+evalConstInit sn [Const st literal] = case decideEquality st sn of
     Just Refl -> Right literal
-    Nothing   -> Left (TypeMismatch "global initializer type mismatch")
+    Nothing -> Left (TypeMismatch "global initializer type mismatch")
 evalConstInit _ _ = Left (UnsupportedInstr "non-constant global initializer")
 
--- | Build the runtime memories matching the module's declared memory shapes, each allocated
---   at its minimum page count.
-buildMems :: MemsS ms -> [RawMemory] -> Either ElabError (MemInsts ms)
-buildMems MsSNil           []                                                = Right MNil
-buildMems (MsSCons _ rest) (RawMemory (MemType _ (Limits minPages _)) : rms) =
+{- | Build the runtime memories matching the module's declared memory shapes, each allocated
+  at its minimum page count.
+-}
+buildMems :: Sing ms -> [RawMemory] -> Either ElabError (MemInsts ms)
+buildMems SNil [] = Right MNil
+buildMems (SCons _ rest) (RawMemory (MemType _ (Limits minPages _)) : rms) =
     MCons (allocMemory minPages) <$> buildMems rest rms
 buildMems _ _ = Left (Malformed "memory/type count mismatch")
 
 -- | Zero-initialise a locals frame of the given shape.
-defaultLocals :: StackS ds -> LocalInsts ds
-defaultLocals SSNil                 = LNil
-defaultLocals (SSCons (SNum sn) ds) = zeroOf sn :& defaultLocals ds
+defaultLocals :: Sing ds -> LocalInsts ds
+defaultLocals SNil = LNil
+defaultLocals (SCons sn ds) = zeroOf sn :& defaultLocals ds
 
-zeroOf :: SNumType n -> RuntimeHostType ('Num n)
+zeroOf :: Sing (n :: ValType) -> HostType n
 zeroOf SI32 = 0
 zeroOf SI64 = 0
 zeroOf SF32 = 0
 zeroOf SF64 = 0
 
-{- *** Running an exported function *** -}
+-- *** Running an exported function ***
 
--- | Resolve an export, build a typed argument stack from integer literals, run the
---   function on the module, and render the results.
+{- | Resolve an export, build a typed argument stack from integer literals, run the
+  function on the module, and render the results.
+-}
 runModuleFunction :: SomeModule -> Text -> [Integer] -> Either String [String]
 runModuleFunction (SomeModule ctxS typedModule exports) name args =
     case exportedFuncIndex name exports of
         Nothing -> Left ("no exported function named " ++ T.unpack name)
-        Just (FunctionIdx idx) -> case lookupFuncRef (shapeFuncsS ctxS) idx of
+        Just (FunctionIdx idx) -> case lookupFuncRef (funcTypesSing ctxS) idx of
             Nothing -> Left "exported function index out of range"
             Just (SomeFuncRef paramsS resultsS funcIx) -> do
                 argStack <- buildArgs paramsS args
-                case runFunction typedModule (getFunc funcIx (miFuncs typedModule)) argStack of
+                case runFunction typedModule (getFunc funcIx (typedModule.miFuncs)) argStack of
                     Left aTrap -> Left ("trap: " ++ show aTrap)
                     Right vals -> Right (renderResults resultsS vals)
 
@@ -679,25 +720,25 @@ exportedFuncIndex :: Text -> [Export] -> Maybe FunctionIdx
 exportedFuncIndex name exports =
     case [idx | Export n (ExportFunc idx) <- exports, n == name] of
         (idx : _) -> Just idx
-        []        -> Nothing
+        [] -> Nothing
 
-buildArgs :: StackS ps -> [Integer] -> Either String (ValueStack ps)
-buildArgs SSNil                []       = Right VNil
-buildArgs SSNil                _        = Left "too many arguments"
-buildArgs (SSCons _ _)         []       = Left "too few arguments"
-buildArgs (SSCons (SNum sn) r) (a : as) = (fromIntegerOf sn a :#) <$> buildArgs r as
+buildArgs :: Sing ps -> [Integer] -> Either String (ValueStack ps)
+buildArgs SNil [] = Right VNil
+buildArgs SNil _ = Left "too many arguments"
+buildArgs (SCons _ _) [] = Left "too few arguments"
+buildArgs (SCons sn r) (a : as) = (fromIntegerOf sn a :#) <$> buildArgs r as
 
-renderResults :: StackS rs -> ValueStack rs -> [String]
-renderResults SSNil                VNil      = []
-renderResults (SSCons (SNum sn) r) (v :# vs) = showOf sn v : renderResults r vs
+renderResults :: Sing rs -> ValueStack rs -> [String]
+renderResults SNil VNil = []
+renderResults (SCons sn r) (v :# vs) = showOf sn v : renderResults r vs
 
-fromIntegerOf :: SNumType n -> Integer -> RuntimeHostType ('Num n)
+fromIntegerOf :: Sing (n :: ValType) -> Integer -> HostType n
 fromIntegerOf SI32 = fromInteger
 fromIntegerOf SI64 = fromInteger
 fromIntegerOf SF32 = fromInteger
 fromIntegerOf SF64 = fromInteger
 
-showOf :: SNumType n -> RuntimeHostType ('Num n) -> String
+showOf :: Sing (n :: ValType) -> HostType n -> String
 showOf SI32 = show
 showOf SI64 = show
 showOf SF32 = show
