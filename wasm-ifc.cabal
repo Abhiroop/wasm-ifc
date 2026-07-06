@@ -52,14 +52,27 @@ common warnings
     -- @-Werror=incomplete-patterns@ enforces the totality the typed interpreter's
     -- soundness argument relies on: a non-exhaustive 'step' would be a hole in the
     -- progress proof, so it must fail the build, not merely warn.
-    ghc-options: -Wall -fno-cse -Werror=incomplete-patterns
+    --
+    -- We follow STYLE.md's baseline. (Omitted deliberately: @-Wincomplete-uni-patterns@,
+    -- which false-positives on this codebase's GADT-total single-clause binds such as
+    -- @stepBin … (b :# a :# r)@; and @-Werror@ generally, which is left to CI.)
+    ghc-options: -Wall -Wcompat
+                 -Wincomplete-record-updates
+                 -Wpartial-fields
+                 -Wredundant-constraints
+                 -Werror=incomplete-patterns
+    default-language: GHC2024
+    default-extensions:
+        OverloadedStrings
+        OverloadedRecordDot
+        NoFieldSelectors
+        DuplicateRecordFields
 
 -- The decoder, the typed interpreter, and the elaborator live in a library so they can be
 -- reused by the executable and exercised directly by the test-suite.
 library
     import:           warnings
     hs-source-dirs:   src
-    default-language: Haskell2010
     exposed-modules:
         Syntax.Types
       , Syntax.Indices
@@ -88,6 +101,7 @@ library
       , containers    ^>=0.7
       , vector        ^>=0.13
       , singletons-th ==3.5
+      , singletons-base ^>=3.5
       , bytestring    ^>=0.12
       , binary        ^>=0.8
       , transformers  ^>=0.6
@@ -97,7 +111,6 @@ executable wasm-ifc
     import:           warnings
     main-is:          Main.hs
     hs-source-dirs:   app
-    default-language: Haskell2010
     build-depends:
         base
       , wasm-ifc
@@ -109,7 +122,10 @@ test-suite wasm-ifc-test
     type:             exitcode-stdio-1.0
     main-is:          Spec.hs
     hs-source-dirs:   test
-    default-language: Haskell2010
     build-depends:
         base
       , wasm-ifc
+      , text
+      , hspec          ^>=2.11
+      , hedgehog       ^>=1.5
+      , hspec-hedgehog ^>=0.3

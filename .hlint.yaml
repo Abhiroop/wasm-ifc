@@ -1,0 +1,8 @@
+# hlint configuration for wasm-ifc.
+#
+# STYLE.md §4 (the readability mandate) prefers an explicit lambda over a point-free section
+# when the section needs any thought to parse. hlint's "avoid lambda using infix/section"
+# family pushes the other way, so we decline it — a non-expert reads `\v -> popKnown v s` more
+# easily than `` (`popKnown` s) ``. (STYLE §9: decline a hint that conflicts with a rule here.)
+- ignore: { name: "Avoid lambda using `infix`" }
+- ignore: { name: "Avoid lambda using `section`" }

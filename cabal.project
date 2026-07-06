@@ -1,0 +1,5 @@
+packages: .
+
+-- Enable the test suite in the default build plan so `cabal build` / `cabal test` resolve its
+-- dependencies (hspec, hedgehog) without needing `--enable-tests` on every invocation.
+tests: True
