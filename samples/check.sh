@@ -20,7 +20,7 @@ pass=0; fail=0
 # check <wasm> <func> <expected> [args...]
 check () {
     local file=$1 func=$2 expected=$3; shift 3
-    local out; out=$("$BIN" "samples/wat/$file" "$func" "$@")
+    local out; out=$("$BIN" "samples/wat/$file" "$func" "$@" 2>&1)
     local label; label=$(printf '%-22s %-10s %s' "$file" "$func" "$*")
     if [ "$out" = "$expected" ]
         then printf 'ok   %s = %s\n' "$label" "$out"; pass=$((pass+1))
@@ -33,7 +33,7 @@ check () {
 # zero, out-of-bounds access) — the interpreter must report it, not crash.
 checkTrap () {
     local file=$1 func=$2 needle=$3; shift 3
-    local out; out=$("$BIN" "samples/wat/$file" "$func" "$@")
+    local out; out=$("$BIN" "samples/wat/$file" "$func" "$@" 2>&1)
     local label; label=$(printf '%-22s %-10s %s' "$file" "$func" "$*")
     if [[ "$out" == *"$needle"* ]]
         then printf 'ok   %s -> trap (%s)\n' "$label" "$needle"; pass=$((pass+1))
