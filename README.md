@@ -1,14 +1,63 @@
 ## wasm-ifc
 
-Experiments with WASM and IFC
+Experiments with WebAssembly and information-flow control, in Haskell.
+
+The pipeline is a single path: decode the binary into an untyped AST, *elaborate* it
+(validation = type-checking, recovering the type indices), and run the resulting
+intrinsically-typed AST on a small-step machine.
 
 ```
-> cabal --version
-cabal-install version 3.14.2.0
-compiled using version 3.14.2.0 of the Cabal library 
+  bytes ──decode──▶ RawModule ──elaborate──▶ ModuleInst ──step machine──▶ result
+   Codec.Wasm      Syntax.*    Validation.*   Runtime.*      Runtime.Interpreter
+                  (untyped)    (validate +    (instances)    (total `step`)
+                               recover indices)
+```
 
+The three layers follow one naming convention (with `Raw` for the decoder's untyped output):
 
-> ghc --version
-The Glorious Glasgow Haskell Compilation System, version 9.12.2
+* **Syntax** (`Syntax.*`): the program as written. Both the raw, unvalidated AST (`RawInstr`,
+  `RawModule`, …) and the *intrinsically-typed* `Instr`/`Expr` — indexed by the value-stack
+  shape, locals, labels and module shape they run within, so ill-typed programs are not
+  representable.
+* **Validation** (`Validation.*`): the type-level *shapes* the syntax is indexed by
+  (`Validation.Shape`: `ModuleShape`, `MemShape`, `Append`, `Elem`), the singleton witnesses
+  and decidable equality (`Validation.Reflect`), and the elaborator (`Validation.Elaborate`),
+  which checks a whole decoded module and recovers its hidden type indices.
+* **Runtime** (`Runtime.*`): the *instances* (`ModuleInst`, `FuncInst`, `MemInst`, the value
+  containers) and the interpreter. `Runtime.Interpreter` is a total small-step abstract
+  machine: a `Config` steps to the next `Config` (or finishes, or traps). Because only
+  well-typed configurations are representable and `step` is total (enforced by
+  `-Werror=incomplete-patterns`, no `error`/`unsafeCoerce`), the machine *is* the
+  type-soundness argument — preservation by construction, progress by totality.
 
+Naming: `Foo` is the static syntax (in `Syntax`); `FooShape` is its type-level abstraction
+(in `Validation`); `FooInst (shape :: FooShape)` is the runtime instance (in `Runtime`).
+
+### Layout
+
+| Path | Contents |
+|------|----------|
+| `src/Syntax/`     | the program syntax: raw AST + intrinsically-typed `Instr`/`Expr`, base types |
+| `src/Codec/`      | the binary decoder |
+| `src/Validation/` | type-level shapes (`Shape`), singletons + decidable equality (`Reflect`), the elaborator (`Elaborate`) |
+| `src/Runtime/`    | the small-step interpreter, the runtime instances, value/memory machinery, shared numerics |
+| `app.old/`        | the original prototype, kept for reference (not built) |
+| `app/Main.hs`     | the CLI |
+| `samples/wat/`    | example programs (`.wat`); `samples/build.sh` compiles them with `wat2wasm` |
+
+### Usage
+
+```sh
+cabal build
+cabal run wasm-ifc -- <file.wasm> <export> [int args...]   # decode → elaborate → run
+
+samples/build.sh    # compile every sample .wat to .wasm  (needs wabt's wat2wasm)
+samples/check.sh    # run every sample and check it against its expected result
+cabal test          # run the typed-example smoke tests
+```
+
+### Toolchain
+
+```
+cabal 3.14.2.0, GHC 9.12.2
 ```
