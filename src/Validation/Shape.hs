@@ -1,4 +1,5 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE ExplicitForAll #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -25,10 +26,10 @@ module Validation.Shape
     , MemShape (..)
     ) where
 
-import Data.Kind       (Type)
+import Data.Kind       (Constraint, Type)
 import Numeric.Natural (Natural)
 
-import Syntax.Types (AddrType, FuncType, GlobalType, ValType)
+import Syntax.Types (AddrType, FuncType, GlobalType)
 
 -- | Type-level list concatenation. Stack shapes compose by appending the part a scope
 --   produces on top of the part it leaves untouched. There is no list @++@ at the type level
@@ -45,7 +46,11 @@ infixr 5 ++
 -- | Evidence that @c@ is @a ++ b@. Its spine is the length of @a@; because @a@, @b@ and
 --   @c@ are independent indices, consuming it (in @splitStack@) never requires inverting
 --   @++@. Carried by the framed/branching instructions so the interpreter can peel operands.
-type Append :: [ValType] -> [ValType] -> [ValType] -> Type
+-- The 'k' here is deliberately an inferred binder ('forall {k}.'), not a specified one — a
+-- specified 'k' would insert itself ahead of 'a'/'b' in the 'TypeApplications' order and
+-- break every existing @appendWitness \@ps \@s@ call site (this used to be monomorphic in
+-- 'ValType', so none of those call sites expect a leading kind argument).
+type Append :: forall {k}. [k] -> [k] -> [k] -> Type
 data Append a b c where
     ANil  :: Append '[] b b
     ACons :: Append a b c -> Append (x ': a) b (x ': c)
@@ -53,7 +58,8 @@ data Append a b c where
 -- | Build the 'Append' witness for a statically known prefix @a@ (the suffix @b@ is
 --   whatever the use site fixes). Instruction smart constructors use this so call sites
 --   need not write witnesses by hand.
-class KnownAppend (a :: [ValType]) (b :: [ValType]) where
+type KnownAppend :: forall {k}. [k] -> [k] -> Constraint
+class KnownAppend a b where
     appendWitness :: Append a b (a ++ b)
 
 instance KnownAppend '[] b where

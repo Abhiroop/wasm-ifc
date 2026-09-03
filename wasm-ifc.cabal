@@ -62,9 +62,11 @@ library
     default-language: Haskell2010
     exposed-modules:
         Syntax.Types
+      , Syntax.TypesIFC
       , Syntax.Indices
       , Syntax.Immediates
       , Syntax.Instructions
+      , Syntax.InstructionsIFC
       , Syntax.Expressions
       , Syntax.Globals
       , Syntax.Memories
