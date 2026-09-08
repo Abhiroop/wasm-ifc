@@ -62,6 +62,8 @@ check memory.wasm    roundtrip 42     21
 check absval.wasm    abs      42      -42
 check nested_br.wasm nested   4
 check hypot.wasm     hypot    5.0     3 4
+check floats.wasm    faddmul  21.0    3 4
+check floats.wasm    f32div   2.5     5 2
 check bigmul.wasm    bigmul   1000000000000 1000000 1000000
 check widen.wasm     widen    5       5
 check power.wasm     power    1024    2 10
