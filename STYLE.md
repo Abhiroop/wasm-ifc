@@ -64,6 +64,16 @@ recurring, propose promoting it into §11 as a deliberate amendment.
 - **[invariant]** Make illegal states unrepresentable. Model the domain with data types; keep
   distinct concepts in distinct types; use sum types to enumerate the real cases rather than
   encoding them in `Bool`/`Int`/`Maybe` combinations.
+- **[invariant]** **Soundness is never deferred — we do things to the end.** Do not ship a
+  definition that leaves an illegal state representable, or that skips a constraint the domain
+  or the spec mandates, with a note to tighten it "later". Enforcing the constraint *is* part of
+  writing the definition and is done in the same change: a `TODO`/`XXX` is not a substitute for
+  a missing constraint. **"It happens to work because the current data only has valid cases" is
+  never an argument** — that reliance on an internal, changeable fact is itself the bug (e.g. an
+  op typed `Sing (t :: ValType)` "because every `ValType` is numeric today"). Deferring *feature
+  scope* (an unimplemented instruction, a missing subsystem) is fine and expected; deferring
+  *correctness* (a constraint, an unrepresentable-illegal-state) is not. If enforcing a
+  constraint is genuinely blocked, **stop and say so** rather than leaving the weaker version in.
 - **[preference]** **Newtype floor.** Introduce a `newtype` as soon as **any** holds, in order of
   strength: **(b, strongest)** it carries an invariant worth enforcing; **(a)** it crosses a module
   or public boundary; **(c, weakest)** it is confusable with another value of the same underlying
