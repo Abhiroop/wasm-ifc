@@ -121,8 +121,8 @@ when there is a choice. See item **E1** (record this as the signed-off §11 over
   elaborator.
 - [x] **[P1·soundness]** Closed the remaining representable-illegal-states in the typed `Instr`
   (per the "soundness is never deferred" invariant, STYLE §2):
-    - **Signed float div/compare** — `IDiv`/`ILt`/`IGt`/`ILe`/`IGe` now carry a `SignedNum t`
-      witness (`IntWithSign`/`FloatNoSign`); a signed float comparison/division is unrepresentable.
+    - **Signed float div/compare** — `IDiv`/`ILt`/`IGt`/`ILe`/`IGe` now carry a `NumWithSign t`
+      witness (`IntsHaveSign`/`FloatsHaveNoSign`); a signed float comparison/division is unrepresentable.
       `eq`/`ne` (no signedness) split off to `numEqNe`.
     - **`IConvert` op/type mismatch** — `ConvertOp` is now a GADT indexed by `from`/`to`, so the
       opcode *is* the type evidence; `IConvert :: ConvertOp from to -> …` (no separate witnesses).

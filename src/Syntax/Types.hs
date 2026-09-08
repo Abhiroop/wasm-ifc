@@ -54,57 +54,57 @@ $(singDecideInstances [''ValType])
   the concrete one, so it doubles as the singleton the interpreter dispatches on.
 -}
 data IsNum (t :: ValType) where
-    NumI32 :: IsNum 'I32
-    NumI64 :: IsNum 'I64
-    NumF32 :: IsNum 'F32
-    NumF64 :: IsNum 'F64
+    I32IsNum :: IsNum 'I32
+    I64IsNum :: IsNum 'I64
+    F32IsNum :: IsNum 'F32
+    F64IsNum :: IsNum 'F64
 
 {- | Evidence that a value type is one of the two integer types, refined to its width.
   Carried by integer-only instructions (@eqz@, the bitwise/shift/count ops, narrow load/
   store) so their interpretation is total (no float/ref case can arise).
 -}
 data IsInt (t :: ValType) where
-    IntI32 :: IsInt 'I32
-    IntI64 :: IsInt 'I64
+    I32IsInt :: IsInt 'I32
+    I64IsInt :: IsInt 'I64
 
 -- | The floating-point counterpart of 'IsInt', carried by float-only instructions.
 data IsFloat (t :: ValType) where
-    FloatF32 :: IsFloat 'F32
-    FloatF64 :: IsFloat 'F64
+    F32IsFloat :: IsFloat 'F32
+    F64IsFloat :: IsFloat 'F64
 
 {- | Refine a value-type singleton to numeric (resp. integer, floating-point) evidence, or
   fail if it is of another kind. Elaboration uses these to reject e.g. @funcref.add@,
   @f32.and@ or @i32.sqrt@.
 -}
 numType :: Sing (t :: ValType) -> Maybe (IsNum t)
-numType SI32 = Just NumI32
-numType SI64 = Just NumI64
-numType SF32 = Just NumF32
-numType SF64 = Just NumF64
+numType SI32 = Just I32IsNum
+numType SI64 = Just I64IsNum
+numType SF32 = Just F32IsNum
+numType SF64 = Just F64IsNum
 
 -- | The width in bytes of a numeric type (4 for i32/f32, 8 for i64/f64).
 numBytes :: IsNum t -> Int
-numBytes NumI32 = 4
-numBytes NumF32 = 4
-numBytes NumI64 = 8
-numBytes NumF64 = 8
+numBytes I32IsNum = 4
+numBytes F32IsNum = 4
+numBytes I64IsNum = 8
+numBytes F64IsNum = 8
 
 -- | Recover the value-type singleton from a numeric witness.
 numSing :: IsNum t -> Sing t
-numSing NumI32 = SI32
-numSing NumI64 = SI64
-numSing NumF32 = SF32
-numSing NumF64 = SF64
+numSing I32IsNum = SI32
+numSing I64IsNum = SI64
+numSing F32IsNum = SF32
+numSing F64IsNum = SF64
 
 intType :: Sing (t :: ValType) -> Maybe (IsInt t)
-intType SI32 = Just IntI32
-intType SI64 = Just IntI64
+intType SI32 = Just I32IsInt
+intType SI64 = Just I64IsInt
 intType SF32 = Nothing
 intType SF64 = Nothing
 
 floatType :: Sing (t :: ValType) -> Maybe (IsFloat t)
-floatType SF32 = Just FloatF32
-floatType SF64 = Just FloatF64
+floatType SF32 = Just F32IsFloat
+floatType SF64 = Just F64IsFloat
 floatType SI32 = Nothing
 floatType SI64 = Nothing
 
@@ -113,14 +113,14 @@ floatType SI64 = Nothing
   integer carries its 'Signedness'; a float carries none, so a signed float comparison or
   division is unrepresentable.
 -}
-data SignedNum (t :: ValType) where
-    IntWithSign :: IsInt t -> Signedness -> SignedNum t
-    FloatNoSign :: IsFloat t -> SignedNum t
+data NumWithSign (t :: ValType) where
+    IntsHaveSign :: IsInt t -> Signedness -> NumWithSign t
+    FloatsHaveNoSign :: IsFloat t -> NumWithSign t
 
-signedNum :: Sing (t :: ValType) -> Signedness -> Maybe (SignedNum t)
-signedNum st sign = case intType st of
-    Just isInt -> Just (IntWithSign isInt sign)
-    Nothing -> FloatNoSign <$> floatType st
+numWithSign :: Sing (t :: ValType) -> Signedness -> Maybe (NumWithSign t)
+numWithSign st sign = case intType st of
+    Just isInt -> Just (IntsHaveSign isInt sign)
+    Nothing -> FloatsHaveNoSign <$> floatType st
 
 {- | The storage width of a narrow integer load/store: one or two bytes for any integer, plus
   four bytes for @i64@ only (a narrow access must be strictly narrower than the value, so an

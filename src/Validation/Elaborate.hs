@@ -396,11 +396,11 @@ withInt st k = maybe (Left (TypeMismatch "operation requires an integer type")) 
 withFloat :: Sing (t :: ValType) -> (IsFloat t -> Either ElabError a) -> Either ElabError a
 withFloat st k = maybe (Left (TypeMismatch "operation requires a floating-point type")) k (floatType st)
 
-{- | Refine to a 'SignedNum' for @div@ and the ordered comparisons: the signedness is kept for
+{- | Refine to a 'NumWithSign' for @div@ and the ordered comparisons: the signedness is kept for
   integers and dropped for floats (a signed float comparison/division is thus unrepresentable).
 -}
-withSignedNum :: Sing (t :: ValType) -> Signedness -> (SignedNum t -> Either ElabError a) -> Either ElabError a
-withSignedNum st sign k = maybe (Left (TypeMismatch "operation requires a numeric type")) k (signedNum st sign)
+withSignedNum :: Sing (t :: ValType) -> Signedness -> (NumWithSign t -> Either ElabError a) -> Either ElabError a
+withSignedNum st sign k = maybe (Left (TypeMismatch "operation requires a numeric type")) k (numWithSign st sign)
 
 {- | Refine an integer type and a byte width to a 'NarrowWidth', rejecting widths that are not
   a valid narrow access for the type (so @i32.load8@ is fine but a 100-byte narrow load is not).

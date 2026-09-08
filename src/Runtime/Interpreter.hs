@@ -474,20 +474,20 @@ numBinary ::
     HostType t ->
     HostType t ->
     HostType t
-numBinary NumI32 op a b = op a b
-numBinary NumI64 op a b = op a b
-numBinary NumF32 op a b = op a b
-numBinary NumF64 op a b = op a b
+numBinary I32IsNum op a b = op a b
+numBinary I64IsNum op a b = op a b
+numBinary F32IsNum op a b = op a b
+numBinary F64IsNum op a b = op a b
 
 numDiv ::
-    SignedNum t ->
+    NumWithSign t ->
     HostType t ->
     HostType t ->
     Either Trap (HostType t)
-numDiv (IntWithSign IntI32 sign) a b = intDiv32 sign a b
-numDiv (IntWithSign IntI64 sign) a b = intDiv64 sign a b
-numDiv (FloatNoSign FloatF32) a b = Right (a / b)
-numDiv (FloatNoSign FloatF64) a b = Right (a / b)
+numDiv (IntsHaveSign I32IsInt sign) a b = intDiv32 sign a b
+numDiv (IntsHaveSign I64IsInt sign) a b = intDiv64 sign a b
+numDiv (FloatsHaveNoSign F32IsFloat) a b = Right (a / b)
+numDiv (FloatsHaveNoSign F64IsFloat) a b = Right (a / b)
 
 numRem ::
     IsInt t ->
@@ -495,24 +495,24 @@ numRem ::
     HostType t ->
     HostType t ->
     Either Trap (HostType t)
-numRem IntI32 sign a b = intRem32 sign a b
-numRem IntI64 sign a b = intRem64 sign a b
+numRem I32IsInt sign a b = intRem32 sign a b
+numRem I64IsInt sign a b = intRem64 sign a b
 
 {- | The ordered comparisons (@lt@/@gt@/@le@/@ge@): signed vs. unsigned on integers, plain on
-  floats — driven by the 'SignedNum' witness, so no signedness ever reaches a float compare.
+  floats — driven by the 'NumWithSign' witness, so no signedness ever reaches a float compare.
 -}
 numCompare ::
     (forall a. Ord a => a -> a -> Bool) ->
-    SignedNum t ->
+    NumWithSign t ->
     HostType t ->
     HostType t ->
     HostType 'I32
-numCompare cmp (IntWithSign IntI32 Signed) a b = boolWord (cmp (toSigned32 a) (toSigned32 b))
-numCompare cmp (IntWithSign IntI32 Unsigned) a b = boolWord (cmp a b)
-numCompare cmp (IntWithSign IntI64 Signed) a b = boolWord (cmp (toSigned64 a) (toSigned64 b))
-numCompare cmp (IntWithSign IntI64 Unsigned) a b = boolWord (cmp a b)
-numCompare cmp (FloatNoSign FloatF32) a b = boolWord (cmp a b)
-numCompare cmp (FloatNoSign FloatF64) a b = boolWord (cmp a b)
+numCompare cmp (IntsHaveSign I32IsInt Signed) a b = boolWord (cmp (toSigned32 a) (toSigned32 b))
+numCompare cmp (IntsHaveSign I32IsInt Unsigned) a b = boolWord (cmp a b)
+numCompare cmp (IntsHaveSign I64IsInt Signed) a b = boolWord (cmp (toSigned64 a) (toSigned64 b))
+numCompare cmp (IntsHaveSign I64IsInt Unsigned) a b = boolWord (cmp a b)
+numCompare cmp (FloatsHaveNoSign F32IsFloat) a b = boolWord (cmp a b)
+numCompare cmp (FloatsHaveNoSign F64IsFloat) a b = boolWord (cmp a b)
 
 -- | Equality/inequality (@eq@/@ne@): no signedness on either integers or floats.
 numEqNe ::
@@ -521,14 +521,14 @@ numEqNe ::
     HostType t ->
     HostType t ->
     HostType 'I32
-numEqNe cmp NumI32 a b = boolWord (cmp a b)
-numEqNe cmp NumI64 a b = boolWord (cmp a b)
-numEqNe cmp NumF32 a b = boolWord (cmp a b)
-numEqNe cmp NumF64 a b = boolWord (cmp a b)
+numEqNe cmp I32IsNum a b = boolWord (cmp a b)
+numEqNe cmp I64IsNum a b = boolWord (cmp a b)
+numEqNe cmp F32IsNum a b = boolWord (cmp a b)
+numEqNe cmp F64IsNum a b = boolWord (cmp a b)
 
 numEqz :: IsInt t -> HostType t -> HostType 'I32
-numEqz IntI32 a = boolWord (a == 0)
-numEqz IntI64 a = boolWord (a == 0)
+numEqz I32IsInt a = boolWord (a == 0)
+numEqz I64IsInt a = boolWord (a == 0)
 
 boolWord :: Bool -> Word32
 boolWord True = 1
@@ -537,16 +537,16 @@ boolWord False = 0
 -- *** Memory <-> value marshalling ***
 
 loadValue :: IsNum t -> [Word8] -> HostType t
-loadValue NumI32 = word32OfBytes
-loadValue NumI64 = word64OfBytes
-loadValue NumF32 = castWord32ToFloat . word32OfBytes
-loadValue NumF64 = castWord64ToDouble . word64OfBytes
+loadValue I32IsNum = word32OfBytes
+loadValue I64IsNum = word64OfBytes
+loadValue F32IsNum = castWord32ToFloat . word32OfBytes
+loadValue F64IsNum = castWord64ToDouble . word64OfBytes
 
 storeBytes :: IsNum t -> HostType t -> [Word8]
-storeBytes NumI32 = bytesOfWord32
-storeBytes NumI64 = bytesOfWord64
-storeBytes NumF32 = bytesOfWord32 . castFloatToWord32
-storeBytes NumF64 = bytesOfWord64 . castDoubleToWord64
+storeBytes I32IsNum = bytesOfWord32
+storeBytes I64IsNum = bytesOfWord64
+storeBytes F32IsNum = bytesOfWord32 . castFloatToWord32
+storeBytes F64IsNum = bytesOfWord64 . castDoubleToWord64
 
 -- *** Bitwise / count / float / narrow-memory helpers ***
 
@@ -556,8 +556,8 @@ bitwiseT ::
     HostType t ->
     HostType t ->
     HostType t
-bitwiseT IntI32 op a b = bitwise32 op a b
-bitwiseT IntI64 op a b = bitwise64 op a b
+bitwiseT I32IsInt op a b = bitwise32 op a b
+bitwiseT I64IsInt op a b = bitwise64 op a b
 
 bitwise32 :: BitwiseOp -> Word32 -> Word32 -> Word32
 bitwise32 op a b = case op of
@@ -585,8 +585,8 @@ modBits :: Integral a => Int -> a -> Int
 modBits width n = fromIntegral n `mod` width
 
 countT :: IsInt t -> CountOp -> HostType t -> HostType t
-countT IntI32 op a = fromIntegral (countOp op a)
-countT IntI64 op a = fromIntegral (countOp op a)
+countT I32IsInt op a = fromIntegral (countOp op a)
+countT I64IsInt op a = fromIntegral (countOp op a)
 
 countOp :: FiniteBits a => CountOp -> a -> Int
 countOp OpClz = countLeadingZeros
@@ -594,8 +594,8 @@ countOp OpCtz = countTrailingZeros
 countOp OpPopcnt = popCount
 
 floatUnT :: IsFloat t -> FloatUnOp -> HostType t -> HostType t
-floatUnT FloatF32 op a = floatUnOp op a
-floatUnT FloatF64 op a = floatUnOp op a
+floatUnT F32IsFloat op a = floatUnOp op a
+floatUnT F64IsFloat op a = floatUnOp op a
 
 floatUnOp :: RealFloat a => FloatUnOp -> a -> a
 floatUnOp op a = case op of
@@ -613,8 +613,8 @@ floatBinT ::
     HostType t ->
     HostType t ->
     HostType t
-floatBinT FloatF32 op a b = floatBinOp op a b
-floatBinT FloatF64 op a b = floatBinOp op a b
+floatBinT F32IsFloat op a b = floatBinOp op a b
+floatBinT F64IsFloat op a b = floatBinOp op a b
 
 floatBinOp :: RealFloat a => FloatBinOp -> a -> a -> a
 floatBinOp FMin = wasmMin
@@ -622,10 +622,10 @@ floatBinOp FMax = wasmMax
 floatBinOp FCopysign = copysign
 
 narrowLoadT :: NarrowWidth t -> Signedness -> [Word8] -> HostType t
-narrowLoadT (Narrow8 IntI32) sign bytes = fromIntegral (assembleNarrow 1 sign bytes)
-narrowLoadT (Narrow16 IntI32) sign bytes = fromIntegral (assembleNarrow 2 sign bytes)
-narrowLoadT (Narrow8 IntI64) sign bytes = assembleNarrow 1 sign bytes
-narrowLoadT (Narrow16 IntI64) sign bytes = assembleNarrow 2 sign bytes
+narrowLoadT (Narrow8 I32IsInt) sign bytes = fromIntegral (assembleNarrow 1 sign bytes)
+narrowLoadT (Narrow16 I32IsInt) sign bytes = fromIntegral (assembleNarrow 2 sign bytes)
+narrowLoadT (Narrow8 I64IsInt) sign bytes = assembleNarrow 1 sign bytes
+narrowLoadT (Narrow16 I64IsInt) sign bytes = assembleNarrow 2 sign bytes
 narrowLoadT Narrow32 sign bytes = assembleNarrow 4 sign bytes
 
 assembleNarrow :: Int -> Signedness -> [Word8] -> Word64
@@ -637,23 +637,23 @@ assembleNarrow width sign bytes =
             else raw
 
 narrowStoreT :: NarrowWidth t -> HostType t -> [Word8]
-narrowStoreT (Narrow8 IntI32) value = take 1 (bytesOfWord64 (fromIntegral value))
-narrowStoreT (Narrow16 IntI32) value = take 2 (bytesOfWord64 (fromIntegral value))
-narrowStoreT (Narrow8 IntI64) value = take 1 (bytesOfWord64 value)
-narrowStoreT (Narrow16 IntI64) value = take 2 (bytesOfWord64 value)
+narrowStoreT (Narrow8 I32IsInt) value = take 1 (bytesOfWord64 (fromIntegral value))
+narrowStoreT (Narrow16 I32IsInt) value = take 2 (bytesOfWord64 (fromIntegral value))
+narrowStoreT (Narrow8 I64IsInt) value = take 1 (bytesOfWord64 value)
+narrowStoreT (Narrow16 I64IsInt) value = take 2 (bytesOfWord64 value)
 narrowStoreT Narrow32 value = take 4 (bytesOfWord64 value)
 
 {- | Move a typed host value in and out of the untyped 'Val' slot, so conversions can reuse
   the shared 'convertVal'.
 -}
 toVal :: IsNum t -> HostType t -> Val
-toVal NumI32 = fromI32
-toVal NumI64 = fromI64
-toVal NumF32 = fromF32
-toVal NumF64 = fromF64
+toVal I32IsNum = fromI32
+toVal I64IsNum = fromI64
+toVal F32IsNum = fromF32
+toVal F64IsNum = fromF64
 
 fromVal :: IsNum t -> Val -> HostType t
-fromVal NumI32 = toI32
-fromVal NumI64 = toI64
-fromVal NumF32 = toF32
-fromVal NumF64 = toF64
+fromVal I32IsNum = toI32
+fromVal I64IsNum = toI64
+fromVal F32IsNum = toF32
+fromVal F64IsNum = toF64
