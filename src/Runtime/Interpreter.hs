@@ -603,12 +603,13 @@ floatBinOp FMin = wasmMin
 floatBinOp FMax = wasmMax
 floatBinOp FCopysign = copysign
 
+{- | Widen loaded bytes to the access's integer type, sign- or zero-extending from the narrow
+  width the witness names.
+-}
 narrowLoadT :: NarrowWidth t -> Signedness -> [Word8] -> HostType t
-narrowLoadT (Narrow8 I32IsInt) sign bytes = fromIntegral (assembleNarrow 1 sign bytes)
-narrowLoadT (Narrow16 I32IsInt) sign bytes = fromIntegral (assembleNarrow 2 sign bytes)
-narrowLoadT (Narrow8 I64IsInt) sign bytes = assembleNarrow 1 sign bytes
-narrowLoadT (Narrow16 I64IsInt) sign bytes = assembleNarrow 2 sign bytes
-narrowLoadT Narrow32 sign bytes = assembleNarrow 4 sign bytes
+narrowLoadT nw sign bytes = case narrowInt nw of
+    I32IsInt -> fromIntegral (assembleNarrow (narrowBytes nw) sign bytes)
+    I64IsInt -> assembleNarrow (narrowBytes nw) sign bytes
 
 assembleNarrow :: Int -> Signedness -> [Word8] -> Word64
 assembleNarrow width sign bytes =
@@ -618,9 +619,8 @@ assembleNarrow width sign bytes =
             then raw .|. (complement 0 `shiftL` bits)
             else raw
 
+-- | The low bytes of the value, as many as the narrow width names.
 narrowStoreT :: NarrowWidth t -> HostType t -> [Word8]
-narrowStoreT (Narrow8 I32IsInt) value = take 1 (bytesOfWord64 (fromIntegral value))
-narrowStoreT (Narrow16 I32IsInt) value = take 2 (bytesOfWord64 (fromIntegral value))
-narrowStoreT (Narrow8 I64IsInt) value = take 1 (bytesOfWord64 value)
-narrowStoreT (Narrow16 I64IsInt) value = take 2 (bytesOfWord64 value)
-narrowStoreT Narrow32 value = take 4 (bytesOfWord64 value)
+narrowStoreT nw value = case narrowInt nw of
+    I32IsInt -> take (narrowBytes nw) (bytesOfWord64 (fromIntegral value))
+    I64IsInt -> take (narrowBytes nw) (bytesOfWord64 value)

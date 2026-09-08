@@ -137,6 +137,12 @@ narrowBytes (Narrow8 _) = 1
 narrowBytes (Narrow16 _) = 2
 narrowBytes Narrow32 = 4
 
+-- | The integer type a narrow access is for; a four-byte narrow access is only ever an i64's.
+narrowInt :: NarrowWidth t -> IsInt t
+narrowInt (Narrow8 isInt) = isInt
+narrowInt (Narrow16 isInt) = isInt
+narrowInt Narrow32 = I64IsInt
+
 narrowWidth :: Sing (t :: ValType) -> Int -> Maybe (NarrowWidth t)
 narrowWidth st 1 = Narrow8 <$> intType st
 narrowWidth st 2 = Narrow16 <$> intType st
