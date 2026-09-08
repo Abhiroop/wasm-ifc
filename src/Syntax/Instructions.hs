@@ -39,7 +39,7 @@ module Syntax.Instructions (
 ) where
 
 import Data.List.Singletons (type (++))
-import Data.Singletons.TH (Sing)
+import Data.Singletons.TH (Sing, SingI (sing))
 import Syntax.Immediates
 import Syntax.Indices
 import Syntax.Types
@@ -49,11 +49,11 @@ import Validation.Shape (
     FrameLocals,
     FrameReturn,
     FrameShape,
-    KnownAppend (..),
     ModuleFuncs,
     ModuleGlobals,
     ModuleMems,
     ModuleShape,
+    appendFromSing,
  )
 
 {- | The untyped WebAssembly instruction AST: the raw, unvalidated representation produced by
@@ -323,15 +323,16 @@ data
 
 infixr 5 :.
 
-{- | Ergonomic forms of the framed/branching instructions: they fill the 'Append' witness
-  from 'KnownAppend', so call sites with concrete stack shapes need not write it. (Only
-  the forms actually used by hand-written examples are provided; add more as needed.)
+{- | Ergonomic forms of the framed/branching instructions: they build the 'Append' witness
+  from the prefix's singleton (via 'SingI'), so call sites with concrete stack shapes need
+  not write it. (Only the forms actually used by hand-written examples are provided; add
+  more as needed.)
 -}
 call ::
     forall ps rs s m f l.
-    KnownAppend ps s =>
+    SingI ps =>
     Elem ('FuncType ps rs) (ModuleFuncs m) -> Instr m f l (ps ++ s) (rs ++ s)
-call = ICall (appendWitness @ps @s)
+call = ICall (appendFromSing @ps @s (sing @ps))
 
 {- | Specialised forms for the common case of an empty-result block/loop and a branch to
   an empty-result label. With @rs ~ '[]@ fixed, @rs ++ s@ reduces to @s@, so these infer

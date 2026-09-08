@@ -26,7 +26,7 @@ module Validation.Shape where
 
 import Data.Kind (Type)
 import Data.List.Singletons (type (++))
-import Data.Singletons.Base.TH (genSingletons)
+import Data.Singletons.Base.TH (SList (SCons, SNil), Sing, genSingletons)
 import Numeric.Natural (Natural)
 
 import Syntax.Types (AddrType, FuncType, GlobalType, ResultType, ValType)
@@ -47,18 +47,15 @@ data Append a b c where
     ANil :: Append '[] b b
     ACons :: Append a b c -> Append (x ': a) b (x ': c)
 
-{- | Build the 'Append' witness for a statically known prefix @a@ (the suffix @b@ is
-  whatever the use site fixes). Instruction smart constructors use this so call sites
-  need not write witnesses by hand.
+{- | Build the 'Append' witness for a prefix from its singleton. The witness is just the spine
+  of the prefix, so the suffix @b@ is whatever the use site fixes. The smart constructors in
+  "Syntax.Instructions" use this with 'sing', so call sites with static stack shapes need not
+  write witnesses by hand; the elaborator builds the same witness from decoded data with
+  'Validation.Reflect.matchPrefix'.
 -}
-class KnownAppend (a :: [ValType]) (b :: [ValType]) where
-    appendWitness :: Append a b (a ++ b)
-
-instance KnownAppend '[] b where
-    appendWitness = ANil
-
-instance KnownAppend a b => KnownAppend (x ': a) b where
-    appendWitness = ACons appendWitness
+appendFromSing :: forall a b. Sing (a :: [ValType]) -> Append a b (a ++ b)
+appendFromSing SNil = ANil
+appendFromSing (SCons _ rest) = ACons (appendFromSing rest)
 
 {- | A typed de Bruijn index: a proof that @x@ is the element of @xs@ at this position,
   carrying both the position (its term-level structure) and the element (in its type).
