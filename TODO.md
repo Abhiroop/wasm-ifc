@@ -64,8 +64,8 @@ when there is a choice. See item **E1** (record this as the signed-off §11 over
   decoder byte fixtures for the malformed-input paths (A1/A2/A6), the remaining traps (OOB,
   `unreachable`, invalid conversion), and dead-code accept/reject.
 - [x] **[P1·test]** Property tests (`hedgehog`): `Runtime.Bytes` word↔bytes round-trips (32/64)
-  and unsigned `intDiv32` vs host `div`. (Convert-reinterpret + generated-module properties still
-  open.)
+  unsigned `intDiv32` vs host `div`, and the conversion round-trips (extend/wrap, reinterpret,
+  promote/demote, convert/trunc). (Generated-module properties still open.)
 - [ ] **[P2·test]** — **BLOCKED:** `wasmtime` is not installed, so no external `--invoke` oracle
   yet; `samples/check.sh` still uses hand-written expected values.
 
@@ -98,14 +98,14 @@ when there is a choice. See item **E1** (record this as the signed-off §11 over
 - [x] **[P2·readability]** Dense function-body signature — introduced the `FunctionBody mod locals
   rs` synonym; `FuncInst` now reads `LocalInsts declared -> FunctionBody mod (ps ++ declared) rs`.
   (`src/Runtime/Interpreter.hs`)
-- [ ] **[P2·design]** Typed conversions — retire the untyped `Val` bridge. Originally declined
-  because it would have forced indexing `ConvertOp` by source/target; the soundness pass below
-  did exactly that (`ConvertOp from to`), so `convertVal` can now be typed
-  `ConvertOp from to -> HostType from -> Either Trap (HostType to)`, deleting `Val`, its
-  `from*`/`to*` marshalling and the interpreter's `toVal`/`fromVal`. (`src/Runtime/Values.hs`,
-  `src/Runtime/Convert.hs`, `src/Runtime/Interpreter.hs`)
+- [x] **[P2·design]** Typed conversions — the untyped `Val` bridge is gone. `convertVal ::
+  ConvertOp from to -> HostType from -> Either Trap (HostType to)` is typed by the indexed
+  opcode (which the soundness pass below made possible); `Runtime.Values` is deleted and its
+  signed/unsigned views live in `Runtime.Numeric`. Demote/promote now use `double2Float`/
+  `float2Double`, exact for NaN/∞ where `realToFrac` only is when GHC's rewrite rules fire.
+  (`src/Runtime/Convert.hs`)
 - [x] **[P2·modules]** Explicit export lists added to `Runtime.MemInst` (hides the constructor +
-  `pageSize`; dropped dead `memoryBytes`), `Runtime.Values` (hides the `Val` bit-rep), `Syntax.*`
+  `pageSize`; dropped dead `memoryBytes`), `Runtime.Numeric`, `Syntax.*`
   leaves, and `Syntax.Instructions`. `Syntax.Types`/`Validation.Shape` kept **open** (documented:
   single-constructor `Sing` constructors need an open import).
 - [x] **[P2·records]** `NoFieldSelectors` + `DuplicateRecordFields` adopted; selector uses rewritten

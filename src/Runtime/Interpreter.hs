@@ -62,24 +62,9 @@ import Data.List.Singletons (type (++))
 import Runtime.Bytes (bytesOfWord32, bytesOfWord64, word32OfBytes, word64OfBytes)
 import Runtime.Convert (convertVal)
 import Runtime.MemInst (MemInst, growMemory, memoryPages, readBytes, writeBytes)
-import Runtime.Numeric (copysign, intDiv32, intDiv64, intRem32, intRem64, wasmMax, wasmMin)
+import Runtime.Numeric (copysign, fromSigned32, fromSigned64, intDiv32, intDiv64, intRem32, intRem64, toSigned32, toSigned64, wasmMax, wasmMin)
 import Runtime.Stack
 import Runtime.Trap (Trap (..))
-import Runtime.Values (
-    Val,
-    fromF32,
-    fromF64,
-    fromI32,
-    fromI64,
-    fromSigned32,
-    fromSigned64,
-    toF32,
-    toF64,
-    toI32,
-    toI64,
-    toSigned32,
-    toSigned64,
- )
 import Syntax.Immediates (HostType)
 import Syntax.Instructions (
     BitwiseOp (..),
@@ -88,7 +73,6 @@ import Syntax.Instructions (
     FloatBinOp (..),
     FloatUnOp (..),
     Instr (..),
-    convertEnds,
  )
 import Syntax.Types
 import Validation.Shape (Elem (..), FrameShape (..), ModuleFuncs, ModuleGlobals, ModuleMems, ModuleShape)
@@ -248,12 +232,10 @@ step funcs (Config store locals stack code control) = case code of
         ILe sn -> stepBin store locals stack (numCompare (<=) sn) rest control
         IGe sn -> stepBin store locals stack (numCompare (>=) sn) rest control
         {- Conversions -}
-        IConvert op ->
-            let (nf, nt) = convertEnds op
-             in case stack of
-                    v :# r -> case convertVal op (toVal nf v) of
-                        Right result -> stepped store locals (fromVal nt result :# r) rest control
-                        Left t -> Left t
+        IConvert op -> case stack of
+            v :# r -> case convertVal op v of
+                Right result -> stepped store locals (result :# r) rest control
+                Left t -> Left t
         {- Integer bitwise / shift / count, floating-point unary / binary -}
         IBitwise nt op -> stepBin store locals stack (bitwiseT nt op) rest control
         ICount nt op -> stepUn store locals stack (countT nt op) rest control
@@ -642,18 +624,3 @@ narrowStoreT (Narrow16 I32IsInt) value = take 2 (bytesOfWord64 (fromIntegral val
 narrowStoreT (Narrow8 I64IsInt) value = take 1 (bytesOfWord64 value)
 narrowStoreT (Narrow16 I64IsInt) value = take 2 (bytesOfWord64 value)
 narrowStoreT Narrow32 value = take 4 (bytesOfWord64 value)
-
-{- | Move a typed host value in and out of the untyped 'Val' slot, so conversions can reuse
-  the shared 'convertVal'.
--}
-toVal :: IsNum t -> HostType t -> Val
-toVal I32IsNum = fromI32
-toVal I64IsNum = fromI64
-toVal F32IsNum = fromF32
-toVal F64IsNum = fromF64
-
-fromVal :: IsNum t -> Val -> HostType t
-fromVal I32IsNum = toI32
-fromVal I64IsNum = toI64
-fromVal F32IsNum = toF32
-fromVal F64IsNum = toF64

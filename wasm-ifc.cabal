@@ -86,7 +86,6 @@ library
       , Validation.Shape
       , Validation.Reflect
       , Validation.Elaborate
-      , Runtime.Values
       , Runtime.MemInst
       , Runtime.Trap
       , Runtime.Bytes

@@ -10,14 +10,17 @@ module Main (main) where
 import Control.Monad (void)
 import Data.Either (isLeft)
 import Data.List (isInfixOf)
+import Data.Word (Word32)
 import Hedgehog.Gen qualified as Gen
 import Hedgehog.Range qualified as Range
 import Test.Hspec
 import Test.Hspec.Hedgehog (forAll, hedgehog, (===))
 
 import Runtime.Bytes (bytesOfWord32, bytesOfWord64, word32OfBytes, word64OfBytes)
+import Runtime.Convert (convertVal)
 import Runtime.Examples (runFactorial, runIncrement, runSquare)
 import Runtime.Numeric (intDiv32)
+import Runtime.Trap (Trap (..))
 import Syntax.Functions (RawFunction (..))
 import Syntax.Indices
 import Syntax.Instructions
@@ -112,6 +115,33 @@ spec = do
             x <- forAll (Gen.word32 Range.linearBounded)
             y <- forAll (Gen.filter (/= 0) (Gen.word32 Range.linearBounded))
             intDiv32 Unsigned x y === Right (x `div` y)
+        it "i64.extend_i32_u then i32.wrap_i64 is the identity" $ hedgehog $ do
+            w <- forAll (Gen.word32 Range.linearBounded)
+            (convertVal I32WrapI64 =<< convertVal (I64ExtendI32 Unsigned) w) === Right w
+        it "i64.extend_i32_s then i32.wrap_i64 is the identity" $ hedgehog $ do
+            w <- forAll (Gen.word32 Range.linearBounded)
+            (convertVal I32WrapI64 =<< convertVal (I64ExtendI32 Signed) w) === Right w
+        it "f32.reinterpret_i32 then i32.reinterpret_f32 is the identity on the bits" $ hedgehog $ do
+            w <- forAll (Gen.word32 Range.linearBounded)
+            (convertVal I32ReinterpretF32 =<< convertVal F32ReinterpretI32 w) === Right w
+        it "f64.promote_f32 then f32.demote_f64 is the identity on finite floats" $ hedgehog $ do
+            f <- forAll (Gen.float (Range.linearFracFrom 0 (-1e30) 1e30))
+            (convertVal F32DemoteF64 =<< convertVal F64PromoteF32 f) === Right f
+        it "f64.convert_i32_s then i32.trunc_f64_s is the identity" $ hedgehog $ do
+            w <- forAll (Gen.word32 Range.linearBounded)
+            (convertVal (I32TruncF64 Signed) =<< convertVal (F64ConvertI32 Signed) w) === Right w
+
+    describe "conversion corner cases" $ do
+        it "f32.demote_f64 keeps NaN a NaN" $
+            fmap isNaN (convertVal F32DemoteF64 (0 / 0 :: Double)) `shouldBe` Right True
+        it "f32.demote_f64 keeps infinity infinite" $
+            fmap isInfinite (convertVal F32DemoteF64 (1 / 0 :: Double)) `shouldBe` Right True
+        it "i32.trunc_f32_u traps on NaN" $
+            convertVal (I32TruncF32 Unsigned) (0 / 0 :: Float) `shouldBe` Left InvalidConversionToInteger
+        it "i32.trunc_f32_u traps on 2^32" $
+            convertVal (I32TruncF32 Unsigned) (4294967296 :: Float) `shouldBe` Left IntegerOverflow
+        it "i32.trunc_f64_s truncates toward zero" $
+            convertVal (I32TruncF64 Signed) (-3.9 :: Double) `shouldBe` Right (fromSigned32Test (-3))
 
 -- | Build a single-function module exporting @f@, elaborate it, and run @f@ on integer args.
 elabRun :: [ValType] -> [ValType] -> [ValType] -> [RawInstr] -> [Integer] -> Either String [String]
@@ -154,6 +184,10 @@ singleFunctionModule memories params results locals body =
 
 onePageMemory :: RawMemory
 onePageMemory = RawMemory (MemType AddrI32 (Limits 1 Nothing))
+
+-- | An i32 written as a signed literal (the stack holds raw bits).
+fromSigned32Test :: Int -> Word32
+fromSigned32Test = fromIntegral
 
 trapContaining :: String -> Either String [String] -> Bool
 trapContaining needle = either (needle `isInfixOf`) (const False)
