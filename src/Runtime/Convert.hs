@@ -13,7 +13,7 @@ import Runtime.Values
 import Syntax.Instructions (ConvertOp (..))
 import Syntax.Types (Signedness (..))
 
-convertVal :: ConvertOp -> Val -> Either Trap Val
+convertVal :: ConvertOp from to -> Val -> Either Trap Val
 convertVal op a = case op of
     I32WrapI64 -> Right (fromI32 (fromIntegral (toI64 a)))
     I64ExtendI32 Signed -> Right (fromI64 (fromIntegral (toSigned32 (toI32 a))))

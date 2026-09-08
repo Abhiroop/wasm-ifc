@@ -25,8 +25,10 @@ import Syntax.Instructions
 import Syntax.Types (
     FuncType (..),
     GlobalType (..),
+    IsInt (..),
+    IsNum (..),
     Mutability (..),
-    SValType (..),
+    SignedNum (..),
     Signedness (..),
     ValType (..),
  )
@@ -46,21 +48,21 @@ factorial :: FuncInst shape ('FuncType '[ 'I32] '[ 'I32])
 factorial =
     FuncInst
         (0 :& LNil)
-        ( IConst SI32 1
+        ( IConst NumI32 1
             :. ILocalSet acc
             :. block_
                 ( loop_
                     ( ILocalGet n
-                        :. IConst SI32 1
-                        :. ILe SI32 Signed
+                        :. IConst NumI32 1
+                        :. ILe (IntWithSign IntI32 Signed)
                         :. brIf_ toDone
                         :. ILocalGet acc
                         :. ILocalGet n
-                        :. IMul SI32
+                        :. IMul NumI32
                         :. ILocalSet acc
                         :. ILocalGet n
-                        :. IConst SI32 1
-                        :. ISub SI32
+                        :. IConst NumI32 1
+                        :. ISub NumI32
                         :. ILocalSet n
                         :. br_ toContinue
                         :. INil
@@ -94,7 +96,7 @@ runFactorial input =
 type CallCtx = 'ModuleShape '[ 'FuncType '[ 'I32, 'I32] '[ 'I32]] '[] '[]
 
 multiply :: FuncInst CallCtx ('FuncType '[ 'I32, 'I32] '[ 'I32])
-multiply = FuncInst LNil (ILocalGet Here :. ILocalGet (There Here) :. IMul SI32 :. INil)
+multiply = FuncInst LNil (ILocalGet Here :. ILocalGet (There Here) :. IMul NumI32 :. INil)
 
 square :: FuncInst CallCtx ('FuncType '[ 'I32] '[ 'I32])
 square = FuncInst LNil (ILocalGet Here :. ILocalGet Here :. call toMultiply :. INil)
@@ -122,8 +124,8 @@ increment =
     FuncInst
         LNil
         ( IGlobalGet Here
-            :. IConst SI32 1
-            :. IAdd SI32
+            :. IConst NumI32 1
+            :. IAdd NumI32
             :. IGlobalSet Here
             :. IGlobalGet Here
             :. INil
@@ -144,8 +146,8 @@ runIncrement initial = extractI32 <$> runFunction globalModule increment VNil
 
        • Couldn't match type: '[ 'I32]
                         with: '[]
-         In the first argument of ‘(:.)’, namely ‘IAdd SI32’
+         In the first argument of ‘(:.)’, namely ‘IAdd NumI32’
 
    broken :: FuncInst shape ('FuncType '[ 'I32 ] '[ 'I32 ])
-   broken = FuncInst LNil (ILocalGet Here :. IAdd SI32 :. INil)
+   broken = FuncInst LNil (ILocalGet Here :. IAdd NumI32 :. INil)
 -}

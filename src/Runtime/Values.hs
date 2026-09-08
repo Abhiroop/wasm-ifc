@@ -22,8 +22,8 @@ import GHC.Float (castDoubleToWord64, castFloatToWord32, castWord32ToFloat, cast
 
 -- In the typed interpreter a value-stack slot of type @t@ literally /is/ a
 -- @'Syntax.Immediates.HostType' t@: the type, not the value, says how to read the bits. The
--- untyped 'Val' below is the type-erased counterpart used by the decoder and the conversion
--- bridge, with the @from*@/@to*@ helpers shadowing 'HostType' at the term level.
+-- untyped 'Val' below is the type-erased counterpart used by the conversion bridge, with the
+-- @from*@/@to*@ helpers shadowing 'HostType' at the term level.
 
 {- | A runtime value: just 64 bits, with no record of its type.
 
@@ -32,12 +32,12 @@ typed interpreter marshals a host value into it, applies a bit-level conversion,
 reads it back. 32-bit values occupy the low half; floats are stored as their IEEE-754
 bit pattern.
 
-It is deliberately untyped. A @Val (t :: ValType)@ would let the marshalling be checked,
-but it would force 'Syntax.Instructions.ConvertOp' to be indexed by its source and target
-types and threaded through the interpreter, for little gain: a conversion is exactly a
-change of type, so a single flat bit-bag is the natural home for it, and this slot never
-escapes into the typed operand stack (the interpreter converts back to 'HostType' at the
-source/target types it already knows).
+It is untyped, and safely so: this slot never escapes into the typed operand stack (the
+interpreter converts back to 'HostType' at the source/target types it already knows). It
+used to be kept untyped because a typed version would have required indexing
+'Syntax.Instructions.ConvertOp' by its source and target types; that indexing has since
+happened, so the bridge can now be retired in favour of a conversion typed directly
+@HostType from -> HostType to@ (see @TODO.md@, section D).
 -}
 newtype Val = Val Word64
     deriving stock (Eq, Show)

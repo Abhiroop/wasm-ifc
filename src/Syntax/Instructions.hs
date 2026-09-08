@@ -20,6 +20,7 @@ module Syntax.Instructions (
     -- * Untyped (decoded) AST
     RawInstr (..),
     ConvertOp (..),
+    convertEnds,
     BitwiseOp (..),
     CountOp (..),
     FloatUnOp (..),
@@ -119,7 +120,7 @@ data RawInstr where
     Max :: Sing (t :: ValType) -> RawInstr
     Copysign :: Sing (t :: ValType) -> RawInstr
     -- \*** Conversions ***
-    Convert :: ConvertOp -> RawInstr
+    Convert :: ConvertOp from to -> RawInstr
     -- \*** Comparison ***
     Eqz :: Sing (t :: ValType) -> RawInstr
     Eq :: Sing (t :: ValType) -> RawInstr
@@ -132,30 +133,59 @@ data RawInstr where
     Drop :: RawInstr
     Select :: RawInstr
 
--- | The fixed-opcode type conversions. Each names its source and target concretely.
-data ConvertOp
-    = I32WrapI64
-    | I64ExtendI32 Signedness
-    | I32TruncF32 Signedness
-    | I32TruncF64 Signedness
-    | I64TruncF32 Signedness
-    | I64TruncF64 Signedness
-    | F32ConvertI32 Signedness
-    | F32ConvertI64 Signedness
-    | F64ConvertI32 Signedness
-    | F64ConvertI64 Signedness
-    | F32DemoteF64
-    | F64PromoteF32
-    | I32ReinterpretF32
-    | F32ReinterpretI32
-    | I64ReinterpretF64
-    | F64ReinterpretI64
-    | I32Extend8S
-    | I32Extend16S
-    | I64Extend8S
-    | I64Extend16S
-    | I64Extend32S
-    deriving stock (Eq, Show)
+{- | The fixed-opcode numeric conversions, each indexed by its concrete source and target
+  value types — so the op /is/ the evidence of what it converts, and a conversion cannot be
+  typed at anything other than the types its opcode names. @Signedness@ selects the signed or
+  unsigned form where the opcode has both.
+-}
+data ConvertOp (from :: ValType) (to :: ValType) where
+    I32WrapI64 :: ConvertOp 'I64 'I32
+    I64ExtendI32 :: Signedness -> ConvertOp 'I32 'I64
+    I32TruncF32 :: Signedness -> ConvertOp 'F32 'I32
+    I32TruncF64 :: Signedness -> ConvertOp 'F64 'I32
+    I64TruncF32 :: Signedness -> ConvertOp 'F32 'I64
+    I64TruncF64 :: Signedness -> ConvertOp 'F64 'I64
+    F32ConvertI32 :: Signedness -> ConvertOp 'I32 'F32
+    F32ConvertI64 :: Signedness -> ConvertOp 'I64 'F32
+    F64ConvertI32 :: Signedness -> ConvertOp 'I32 'F64
+    F64ConvertI64 :: Signedness -> ConvertOp 'I64 'F64
+    F32DemoteF64 :: ConvertOp 'F64 'F32
+    F64PromoteF32 :: ConvertOp 'F32 'F64
+    I32ReinterpretF32 :: ConvertOp 'F32 'I32
+    F32ReinterpretI32 :: ConvertOp 'I32 'F32
+    I64ReinterpretF64 :: ConvertOp 'F64 'I64
+    F64ReinterpretI64 :: ConvertOp 'I64 'F64
+    I32Extend8S :: ConvertOp 'I32 'I32
+    I32Extend16S :: ConvertOp 'I32 'I32
+    I64Extend8S :: ConvertOp 'I64 'I64
+    I64Extend16S :: ConvertOp 'I64 'I64
+    I64Extend32S :: ConvertOp 'I64 'I64
+
+{- | The numeric source/target witnesses of a conversion — the value-level companion to its
+  type indices, used to reflect the types (elaboration) and marshal operands (interpreter).
+-}
+convertEnds :: ConvertOp from to -> (IsNum from, IsNum to)
+convertEnds I32WrapI64 = (NumI64, NumI32)
+convertEnds (I64ExtendI32 _) = (NumI32, NumI64)
+convertEnds (I32TruncF32 _) = (NumF32, NumI32)
+convertEnds (I32TruncF64 _) = (NumF64, NumI32)
+convertEnds (I64TruncF32 _) = (NumF32, NumI64)
+convertEnds (I64TruncF64 _) = (NumF64, NumI64)
+convertEnds (F32ConvertI32 _) = (NumI32, NumF32)
+convertEnds (F32ConvertI64 _) = (NumI64, NumF32)
+convertEnds (F64ConvertI32 _) = (NumI32, NumF64)
+convertEnds (F64ConvertI64 _) = (NumI64, NumF64)
+convertEnds F32DemoteF64 = (NumF64, NumF32)
+convertEnds F64PromoteF32 = (NumF32, NumF64)
+convertEnds I32ReinterpretF32 = (NumF32, NumI32)
+convertEnds F32ReinterpretI32 = (NumI32, NumF32)
+convertEnds I64ReinterpretF64 = (NumF64, NumI64)
+convertEnds F64ReinterpretI64 = (NumI64, NumF64)
+convertEnds I32Extend8S = (NumI32, NumI32)
+convertEnds I32Extend16S = (NumI32, NumI32)
+convertEnds I64Extend8S = (NumI64, NumI64)
+convertEnds I64Extend16S = (NumI64, NumI64)
+convertEnds I64Extend32S = (NumI64, NumI64)
 
 -- | Same-type operation groups, so the GADT (and interpreter) stay compact.
 data BitwiseOp = BwAnd | BwOr | BwXor | BwShl | BwShr Signedness | BwRotl | BwRotr
@@ -182,51 +212,47 @@ data
         (stackOut :: [ValType])
     where
     {- Constants -}
-    IConst :: Sing (t :: ValType) -> HostType t -> Instr m f l s (t ': s)
+    IConst :: IsNum t -> HostType t -> Instr m f l s (t ': s)
     {- Numeric (both operands and the result share the type) -}
-    IAdd :: Sing (t :: ValType) -> Instr m f l (t ': t ': s) (t ': s)
-    ISub :: Sing (t :: ValType) -> Instr m f l (t ': t ': s) (t ': s)
-    IMul :: Sing (t :: ValType) -> Instr m f l (t ': t ': s) (t ': s)
-    IDiv :: Sing (t :: ValType) -> Signedness -> Instr m f l (t ': t ': s) (t ': s)
+    IAdd :: IsNum t -> Instr m f l (t ': t ': s) (t ': s)
+    ISub :: IsNum t -> Instr m f l (t ': t ': s) (t ': s)
+    IMul :: IsNum t -> Instr m f l (t ': t ': s) (t ': s)
+    IDiv :: SignedNum t -> Instr m f l (t ': t ': s) (t ': s)
     IRem :: IsInt t -> Signedness -> Instr m f l (t ': t ': s) (t ': s)
-    {- Comparison (consume two @t@, produce an i32 boolean) -}
-    IEqz :: Sing (t :: ValType) -> Instr m f l (t ': s) ('I32 ': s)
-    IEq :: Sing (t :: ValType) -> Instr m f l (t ': t ': s) ('I32 ': s)
-    INe :: Sing (t :: ValType) -> Instr m f l (t ': t ': s) ('I32 ': s)
-    ILt :: Sing (t :: ValType) -> Signedness -> Instr m f l (t ': t ': s) ('I32 ': s)
-    IGt :: Sing (t :: ValType) -> Signedness -> Instr m f l (t ': t ': s) ('I32 ': s)
-    ILe :: Sing (t :: ValType) -> Signedness -> Instr m f l (t ': t ': s) ('I32 ': s)
-    IGe :: Sing (t :: ValType) -> Signedness -> Instr m f l (t ': t ': s) ('I32 ': s)
+    {- Comparison (consume two @t@, produce an i32 boolean). @eqz@ is integer-only; @eq@/@ne@
+       have no signedness; the ordered comparisons carry a 'SignedNum' (signed on ints only). -}
+    IEqz :: IsInt t -> Instr m f l (t ': s) ('I32 ': s)
+    IEq :: IsNum t -> Instr m f l (t ': t ': s) ('I32 ': s)
+    INe :: IsNum t -> Instr m f l (t ': t ': s) ('I32 ': s)
+    ILt :: SignedNum t -> Instr m f l (t ': t ': s) ('I32 ': s)
+    IGt :: SignedNum t -> Instr m f l (t ': t ': s) ('I32 ': s)
+    ILe :: SignedNum t -> Instr m f l (t ': t ': s) ('I32 ': s)
+    IGe :: SignedNum t -> Instr m f l (t ': t ': s) ('I32 ': s)
     {- Integer bitwise / shift / count, and floating-point unary / binary (all same-type) -}
     IBitwise :: IsInt t -> BitwiseOp -> Instr m f l (t ': t ': s) (t ': s)
     ICount :: IsInt t -> CountOp -> Instr m f l (t ': s) (t ': s)
     IFloatUn :: IsFloat t -> FloatUnOp -> Instr m f l (t ': s) (t ': s)
     IFloatBin :: IsFloat t -> FloatBinOp -> Instr m f l (t ': t ': s) (t ': s)
-    {- Conversions: pop one @from@, push one @to@ (the 'ConvertOp' is the term-level tag). -}
-    IConvert ::
-        Sing (from :: ValType) ->
-        Sing (to :: ValType) ->
-        ConvertOp ->
-        Instr m f l (from ': s) (to ': s)
+    {- Conversions: pop one @from@, push one @to@. The 'ConvertOp' is indexed by exactly those
+       types, so the operand/result and the opcode cannot disagree. -}
+    IConvert :: ConvertOp from to -> Instr m f l (from ': s) (to ': s)
     {- Memory size / grow and narrow load/store -}
     IMemSize :: (ModuleMems m ~ (mem ': mems)) => Instr m f l s ('I32 ': s)
     IMemGrow :: (ModuleMems m ~ (mem ': mems)) => Instr m f l ('I32 ': s) ('I32 ': s)
     ILoadN ::
         (ModuleMems m ~ (mem ': mems)) =>
-        IsInt t ->
-        Int ->
+        NarrowWidth t ->
         Signedness ->
         MemArg ->
         Instr m f l ('I32 ': s) (t ': s)
     IStoreN ::
         (ModuleMems m ~ (mem ': mems)) =>
-        IsInt t ->
-        Int ->
+        NarrowWidth t ->
         MemArg ->
         Instr m f l (t ': 'I32 ': s) s
-    {- Stack management -}
+    {- Stack management. @drop@ works on any value type; @select@ (0x1B) on numeric operands. -}
     IDrop :: Instr m f l (t ': s) s
-    ISelect :: Instr m f l ('I32 ': t ': t ': s) (t ': s)
+    ISelect :: IsNum t -> Instr m f l ('I32 ': t ': t ': s) (t ': s)
     {- Locals (from the @frame@) & globals (from the @mod@) -}
     ILocalGet :: Elem t (FrameLocals f) -> Instr m f l s (t ': s)
     ILocalSet :: Elem t (FrameLocals f) -> Instr m f l (t ': s) s
@@ -236,12 +262,12 @@ data
     {- Memory (requires the module to declare a memory) -}
     ILoad ::
         (ModuleMems m ~ (mem ': mems)) =>
-        Sing (t :: ValType) ->
+        IsNum t ->
         MemArg ->
         Instr m f l ('I32 ': s) (t ': s)
     IStore ::
         (ModuleMems m ~ (mem ': mems)) =>
-        Sing (t :: ValType) ->
+        IsNum t ->
         MemArg ->
         Instr m f l (t ': 'I32 ': s) s
     {- Calls. The 'Append' witness lets the interpreter peel the arguments off the stack. -}

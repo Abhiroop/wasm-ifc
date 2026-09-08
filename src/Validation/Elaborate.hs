@@ -27,7 +27,7 @@ import Data.Type.Equality ((:~:) (Refl))
 import Data.Word (Word32)
 
 import Data.List.Singletons ((%++))
-import Data.Singletons.Base.TH (SList (SCons, SNil), Sing, fromSing, withSomeSing)
+import Data.Singletons.Base.TH (SList (SCons, SNil), Sing, fromSing)
 import Data.Singletons.Decide (decideEquality)
 import Runtime.Interpreter (FuncInst (..), FuncInsts (..), ModuleInst (..), getFunc, runFunction)
 import Runtime.MemInst (allocMemory)
@@ -45,6 +45,7 @@ import Syntax.Instructions (
     FloatUnOp (..),
     Instr (..),
     RawInstr (..),
+    convertEnds,
  )
 import Syntax.Memories (RawMemory (RawMemory))
 import Syntax.Module
@@ -151,24 +152,24 @@ elabInstr ::
     Either ElabError (ElaboratedInstr shape ret locals labels stackIn)
 elabInstr env stackIn instr = case instr of
     {- Constants -}
-    Const st literal -> Right (Produces (SCons st stackIn) (IConst st literal))
+    Const st literal -> withNum st $ \isNum -> Right (Produces (SCons st stackIn) (IConst isNum literal))
     {- Numeric (consume two of type t, produce one of type t) -}
-    Add st -> consumeTwo st st stackIn (IAdd st)
-    Sub st -> consumeTwo st st stackIn (ISub st)
-    Mul st -> consumeTwo st st stackIn (IMul st)
-    Div st sign -> consumeTwo st st stackIn (IDiv st sign)
+    Add st -> withNum st $ \isNum -> consumeTwo st st stackIn (IAdd isNum)
+    Sub st -> withNum st $ \isNum -> consumeTwo st st stackIn (ISub isNum)
+    Mul st -> withNum st $ \isNum -> consumeTwo st st stackIn (IMul isNum)
+    Div st sign -> withSignedNum st sign $ \sn -> consumeTwo st st stackIn (IDiv sn)
     Rem st sign -> withInt st $ \isInt -> consumeTwo st st stackIn (IRem isInt sign)
-    {- Comparison (consume two of type t, produce one i32) -}
-    Eq st -> consumeTwo st SI32 stackIn (IEq st)
-    Ne st -> consumeTwo st SI32 stackIn (INe st)
-    Lt st sign -> consumeTwo st SI32 stackIn (ILt st sign)
-    Gt st sign -> consumeTwo st SI32 stackIn (IGt st sign)
-    Le st sign -> consumeTwo st SI32 stackIn (ILe st sign)
-    Ge st sign -> consumeTwo st SI32 stackIn (IGe st sign)
-    Eqz st -> case stackIn of
+    {- Comparison (consume two of type t, produce one i32). @eqz@ is integer-only. -}
+    Eq st -> withNum st $ \isNum -> consumeTwo st SI32 stackIn (IEq isNum)
+    Ne st -> withNum st $ \isNum -> consumeTwo st SI32 stackIn (INe isNum)
+    Lt st sign -> withSignedNum st sign $ \sn -> consumeTwo st SI32 stackIn (ILt sn)
+    Gt st sign -> withSignedNum st sign $ \sn -> consumeTwo st SI32 stackIn (IGt sn)
+    Le st sign -> withSignedNum st sign $ \sn -> consumeTwo st SI32 stackIn (ILe sn)
+    Ge st sign -> withSignedNum st sign $ \sn -> consumeTwo st SI32 stackIn (IGe sn)
+    Eqz st -> withInt st $ \isInt -> case stackIn of
         SCons sa rest -> do
             Refl <- note (TypeMismatch "eqz operand") (decideEquality sa st)
-            Right (Produces (SCons SI32 rest) (IEqz st))
+            Right (Produces (SCons SI32 rest) (IEqz isInt))
         _ -> Left (StackUnderflow "eqz")
     {- Stack management -}
     Drop -> case stackIn of
@@ -178,7 +179,7 @@ elabInstr env stackIn instr = case instr of
         SCons sc (SCons va (SCons vb rest)) -> do
             Refl <- note (TypeMismatch "select condition must be i32") (decideEquality sc SI32)
             Refl <- note (TypeMismatch "select operands have different types") (decideEquality va vb)
-            Right (Produces (SCons va rest) ISelect)
+            withNum va $ \isNum -> Right (Produces (SCons va rest) (ISelect isNum))
         _ -> Left (StackUnderflow "select")
     {- Locals -}
     LocalGet (LocalIdx i) -> case mkLocalElem (env.eeLocals) i of
@@ -214,33 +215,37 @@ elabInstr env stackIn instr = case instr of
     {- Memory -}
     Load st memArg -> case memsNonEmpty (memShapesSing (env.eeShape)) of
         Nothing -> Left (TypeMismatch "load: module declares no memory")
-        Just NonEmptyMems -> case stackIn of
+        Just NonEmptyMems -> withNum st $ \isNum -> case stackIn of
             SCons sc rest -> do
                 Refl <- note (TypeMismatch "load address must be i32") (decideEquality sc SI32)
-                Right (Produces (SCons st rest) (ILoad st memArg))
+                checkAlign memArg (numBytes isNum)
+                Right (Produces (SCons st rest) (ILoad isNum memArg))
             _ -> Left (StackUnderflow "load")
     Store st memArg -> case memsNonEmpty (memShapesSing (env.eeShape)) of
         Nothing -> Left (TypeMismatch "store: module declares no memory")
-        Just NonEmptyMems -> case stackIn of
+        Just NonEmptyMems -> withNum st $ \isNum -> case stackIn of
             SCons sv (SCons sc rest) -> do
                 Refl <- note (TypeMismatch "store value type") (decideEquality sv st)
                 Refl <- note (TypeMismatch "store address must be i32") (decideEquality sc SI32)
-                Right (Produces rest (IStore st memArg))
+                checkAlign memArg (numBytes isNum)
+                Right (Produces rest (IStore isNum memArg))
             _ -> Left (StackUnderflow "store")
     LoadN st width sign memArg -> case memsNonEmpty (memShapesSing (env.eeShape)) of
         Nothing -> Left (TypeMismatch "load: module declares no memory")
-        Just NonEmptyMems -> withInt st $ \isInt -> case stackIn of
+        Just NonEmptyMems -> withNarrow st width $ \nw -> case stackIn of
             SCons sc rest -> do
                 Refl <- note (TypeMismatch "load address must be i32") (decideEquality sc SI32)
-                Right (Produces (SCons st rest) (ILoadN isInt width sign memArg))
+                checkAlign memArg (narrowBytes nw)
+                Right (Produces (SCons st rest) (ILoadN nw sign memArg))
             _ -> Left (StackUnderflow "load")
     StoreN st width memArg -> case memsNonEmpty (memShapesSing (env.eeShape)) of
         Nothing -> Left (TypeMismatch "store: module declares no memory")
-        Just NonEmptyMems -> withInt st $ \isInt -> case stackIn of
+        Just NonEmptyMems -> withNarrow st width $ \nw -> case stackIn of
             SCons sv (SCons sc rest) -> do
                 Refl <- note (TypeMismatch "store value type") (decideEquality sv st)
                 Refl <- note (TypeMismatch "store address must be i32") (decideEquality sc SI32)
-                Right (Produces rest (IStoreN isInt width memArg))
+                checkAlign memArg (narrowBytes nw)
+                Right (Produces rest (IStoreN nw memArg))
             _ -> Left (StackUnderflow "store")
     MemorySize -> case memsNonEmpty (memShapesSing (env.eeShape)) of
         Nothing -> Left (TypeMismatch "memory.size: module declares no memory")
@@ -280,13 +285,13 @@ elabInstr env stackIn instr = case instr of
     Min st -> withFloat st $ \isFloat -> sameTypeBinary st stackIn (IFloatBin isFloat FMin)
     Max st -> withFloat st $ \isFloat -> sameTypeBinary st stackIn (IFloatBin isFloat FMax)
     Copysign st -> withFloat st $ \isFloat -> sameTypeBinary st stackIn (IFloatBin isFloat FCopysign)
-    {- Conversions: derive the source/result singletons from the opcode -}
+    {- Conversions: the opcode's own type indices are the source/result -}
     Convert op ->
-        let (fromN, toN) = convertSig op
-         in withSomeSing fromN $ \sFrom -> withSomeSing toN $ \sTo -> case stackIn of
+        let (nf, nt) = convertEnds op
+         in case stackIn of
                 SCons sa rest -> do
-                    Refl <- note (TypeMismatch "conversion source type") (decideEquality sa sFrom)
-                    Right (Produces (SCons sTo rest) (IConvert sFrom sTo op))
+                    Refl <- note (TypeMismatch "conversion source type") (decideEquality sa (numSing nf))
+                    Right (Produces (SCons (numSing nt) rest) (IConvert op))
                 _ -> Left (StackUnderflow "conversion")
     {- Inert -}
     Nop -> Right (Produces stackIn INop)
@@ -377,18 +382,42 @@ resolveTarget env rsS (LabelIdx t) = case mkLabelElem (env.eeLabels) t of
         Just Refl -> Right targetIx
         Nothing -> Left (TypeMismatch "br_table targets have different types")
 
-{- | Check the top two operands are both @t@ and replace them with the instruction's
-  single result of element type @r@.
-| Refine an operation's number type to integer (resp. floating-point) evidence, failing
-  elaboration if it is of the wrong kind (e.g. @f32.and@ or @i32.sqrt@). This is what
-  lets the typed interpreter dispatch those instructions totally, with no float/int
-  fall-through to reject at run time.
+{- | Refine an operation's operand type to numeric (resp. integer, floating-point) evidence,
+  failing elaboration if it is of the wrong kind (e.g. @funcref.add@, @f32.and@ or
+  @i32.sqrt@). This is what lets the typed instruction carry the exact constraint the spec
+  demands, and lets the interpreter dispatch it totally with no wrong-kind fall-through.
 -}
+withNum :: Sing (t :: ValType) -> (IsNum t -> Either ElabError a) -> Either ElabError a
+withNum st k = maybe (Left (TypeMismatch "operation requires a numeric type")) k (numType st)
+
 withInt :: Sing (t :: ValType) -> (IsInt t -> Either ElabError a) -> Either ElabError a
 withInt st k = maybe (Left (TypeMismatch "operation requires an integer type")) k (intType st)
 
 withFloat :: Sing (t :: ValType) -> (IsFloat t -> Either ElabError a) -> Either ElabError a
 withFloat st k = maybe (Left (TypeMismatch "operation requires a floating-point type")) k (floatType st)
+
+{- | Refine to a 'SignedNum' for @div@ and the ordered comparisons: the signedness is kept for
+  integers and dropped for floats (a signed float comparison/division is thus unrepresentable).
+-}
+withSignedNum :: Sing (t :: ValType) -> Signedness -> (SignedNum t -> Either ElabError a) -> Either ElabError a
+withSignedNum st sign k = maybe (Left (TypeMismatch "operation requires a numeric type")) k (signedNum st sign)
+
+{- | Refine an integer type and a byte width to a 'NarrowWidth', rejecting widths that are not
+  a valid narrow access for the type (so @i32.load8@ is fine but a 100-byte narrow load is not).
+-}
+withNarrow :: Sing (t :: ValType) -> Int -> (NarrowWidth t -> Either ElabError a) -> Either ElabError a
+withNarrow st width k = maybe (Left (TypeMismatch "invalid narrow memory access width")) k (narrowWidth st width)
+
+{- | The spec bounds a memory access's alignment by its width: @2^align <= accessBytes@. The
+  binary format stores @align@ as the log2 exponent, so a valid exponent is at most 3 (for an
+  8-byte access); anything larger is rejected without computing an overflowing @2^align@.
+-}
+checkAlign :: MemArg -> Int -> Either ElabError ()
+checkAlign memArg accessBytes
+    | align <= 3 && (2 ^ align :: Int) <= accessBytes = Right ()
+    | otherwise = Left (TypeMismatch "alignment exceeds the access width")
+  where
+    align = fromIntegral memArg.alignment :: Int
 
 consumeTwo ::
     forall t r shape ret locals labels stackIn.
@@ -541,30 +570,11 @@ stepDead env s instr = case instr of
     sameUnary :: Sing (t :: ValType) -> Either ElabError PolyStack
     sameUnary t = pushKnown (valTypeOf t) <$> popKnown (valTypeOf t) s
 
--- | The source and result value types of a conversion (for dead-code validation).
-convertSig :: ConvertOp -> (ValType, ValType)
-convertSig op = case op of
-    I32WrapI64 -> (I64, I32)
-    I64ExtendI32 _ -> (I32, I64)
-    I32TruncF32 _ -> (F32, I32)
-    I32TruncF64 _ -> (F64, I32)
-    I64TruncF32 _ -> (F32, I64)
-    I64TruncF64 _ -> (F64, I64)
-    F32ConvertI32 _ -> (I32, F32)
-    F32ConvertI64 _ -> (I64, F32)
-    F64ConvertI32 _ -> (I32, F64)
-    F64ConvertI64 _ -> (I64, F64)
-    F32DemoteF64 -> (F64, F32)
-    F64PromoteF32 -> (F32, F64)
-    I32ReinterpretF32 -> (F32, I32)
-    F32ReinterpretI32 -> (I32, F32)
-    I64ReinterpretF64 -> (F64, I64)
-    F64ReinterpretI64 -> (I64, F64)
-    I32Extend8S -> (I32, I32)
-    I32Extend16S -> (I32, I32)
-    I64Extend8S -> (I64, I64)
-    I64Extend16S -> (I64, I64)
-    I64Extend32S -> (I64, I64)
+{- | The source and result value types of a conversion (for dead-code validation), read off
+  the opcode's type indices via 'convertEnds'.
+-}
+convertSig :: ConvertOp from to -> (ValType, ValType)
+convertSig op = let (nf, nt) = convertEnds op in (fromSing (numSing nf), fromSing (numSing nt))
 
 -- | Validate a nested block/loop/if body — a fresh, reachable frame — discarding its AST.
 validateFrame ::

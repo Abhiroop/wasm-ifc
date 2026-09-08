@@ -98,10 +98,12 @@ when there is a choice. See item **E1** (record this as the signed-off §11 over
 - [x] **[P2·readability]** Dense function-body signature — introduced the `FunctionBody mod locals
   rs` synonym; `FuncInst` now reads `LocalInsts declared -> FunctionBody mod (ps ++ declared) rs`.
   (`src/Runtime/Interpreter.hs`)
-- [x] **[P2·design]** Typed `Val (t :: ValType)` — **evaluated, decided against**: it would force
-  indexing `ConvertOp` by source/target and threading it through the interpreter, for little gain,
-  since the untyped `Val` is a contained bit-bridge that never escapes into the typed stack.
-  Rationale recorded on `Val`. (`src/Runtime/Values.hs`)
+- [ ] **[P2·design]** Typed conversions — retire the untyped `Val` bridge. Originally declined
+  because it would have forced indexing `ConvertOp` by source/target; the soundness pass below
+  did exactly that (`ConvertOp from to`), so `convertVal` can now be typed
+  `ConvertOp from to -> HostType from -> Either Trap (HostType to)`, deleting `Val`, its
+  `from*`/`to*` marshalling and the interpreter's `toVal`/`fromVal`. (`src/Runtime/Values.hs`,
+  `src/Runtime/Convert.hs`, `src/Runtime/Interpreter.hs`)
 - [x] **[P2·modules]** Explicit export lists added to `Runtime.MemInst` (hides the constructor +
   `pageSize`; dropped dead `memoryBytes`), `Runtime.Values` (hides the `Val` bit-rep), `Syntax.*`
   leaves, and `Syntax.Instructions`. `Syntax.Types`/`Validation.Shape` kept **open** (documented:
@@ -111,8 +113,23 @@ when there is a choice. See item **E1** (record this as the signed-off §11 over
   `signature`/`locals`/`body` selectors no longer pollute the top level.
 - [x] **[P2·decoder]** `Codec.Wasm`: explicit `Data.Binary.Get` import; redundant parens stripped.
 - [x] **[P3·naming]** `SomeModuleShapeS` → `SomeModuleShape`. (`src/Validation/Reflect.hs`)
-- [ ] **[P3·extensibility]** — **N/A until ref/vec types land:** add `IsNum` (+ `intIsNum`/
-  `floatIsNum`) then (documented extension point already in `Syntax.Types`).
+- [x] **[P1·soundness]** `IsNum` witness added (this had been wrongly deferred to "when ref/vec
+  land" — the deferral *was* the gap). Every numeric instruction now carries `IsNum`/`IsInt`/
+  `IsFloat`, never a bare `Sing (t :: ValType)`, so the constraint holds by construction and does
+  not rely on `ValType` being all-numeric. Fixes a latent gap (`funcref.add` would type-check once
+  ref types exist) and a live bug (`IEqz` accepted `f32.eqz`). `numType` + `withNum` refine in the
+  elaborator.
+- [x] **[P1·soundness]** Closed the remaining representable-illegal-states in the typed `Instr`
+  (per the "soundness is never deferred" invariant, STYLE §2):
+    - **Signed float div/compare** — `IDiv`/`ILt`/`IGt`/`ILe`/`IGe` now carry a `SignedNum t`
+      witness (`IntWithSign`/`FloatNoSign`); a signed float comparison/division is unrepresentable.
+      `eq`/`ne` (no signedness) split off to `numEqNe`.
+    - **`IConvert` op/type mismatch** — `ConvertOp` is now a GADT indexed by `from`/`to`, so the
+      opcode *is* the type evidence; `IConvert :: ConvertOp from to -> …` (no separate witnesses).
+    - **Arbitrary narrow width** — `ILoadN`/`IStoreN` carry a `NarrowWidth t` witness (8/16 for any
+      int, 32 for i64 only) instead of a raw `Int`.
+    - **Over-alignment** — the elaborator now rejects `2^align > access width` (spec validation
+      rule), which was previously skipped.
 
 ## E. Documentation (consumer-facing)
 

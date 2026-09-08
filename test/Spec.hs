@@ -21,6 +21,7 @@ import Runtime.Numeric (intDiv32)
 import Syntax.Functions (RawFunction (..))
 import Syntax.Indices
 import Syntax.Instructions
+import Syntax.Memories (RawMemory (..))
 import Syntax.Module
 import Syntax.Types
 import Validation.Elaborate (ElabError, elaborateModule, runModuleFunction)
@@ -73,6 +74,32 @@ spec = do
         it "operand type mismatch (adds f32 where i32 expected)" $
             elabError [I32] [I32] [] [LocalGet (LocalIdx 0), Const SF32 1.0, Add SI32]
                 `shouldSatisfy` isLeft
+        it "eqz on a float (an integer-only instruction)" $
+            elabError [F32] [I32] [] [LocalGet (LocalIdx 0), Eqz SF32] `shouldSatisfy` isLeft
+        it "4-byte narrow load of an i32 (not narrower than the value)" $
+            elabErrorWithMemory [I32] [I32] [] [LocalGet (LocalIdx 0), LoadN SI32 4 Signed (MemArg 0 0)]
+                `shouldSatisfy` isLeft
+        it "over-aligned load (2^align exceeds the access width)" $
+            elabErrorWithMemory [I32] [I32] [] [LocalGet (LocalIdx 0), Load SI32 (MemArg 3 0)]
+                `shouldSatisfy` isLeft
+
+    describe "elaborator refines witnesses (accepts what the spec allows)" $ do
+        it "float comparison drops the (meaningless) signedness" $
+            elabRun
+                [F32, F32]
+                [I32]
+                []
+                [LocalGet (LocalIdx 0), LocalGet (LocalIdx 1), Lt SF32 Signed]
+                [1, 2]
+                `shouldBe` Right ["1"]
+        it "maximal legal alignment on an i64 load (2^3 = 8 bytes)" $
+            elabRunWithMemory
+                [I32]
+                [I64]
+                []
+                [LocalGet (LocalIdx 0), Load SI64 (MemArg 3 0)]
+                [0]
+                `shouldBe` Right ["0"]
 
     describe "algebraic laws (properties)" $ do
         it "word32 -> bytes -> word32 round-trips" $ hedgehog $ do
@@ -88,28 +115,45 @@ spec = do
 
 -- | Build a single-function module exporting @f@, elaborate it, and run @f@ on integer args.
 elabRun :: [ValType] -> [ValType] -> [ValType] -> [RawInstr] -> [Integer] -> Either String [String]
-elabRun params results locals body args =
-    case elaborateModule (singleFunctionModule params results locals body) of
+elabRun = elabRunIn []
+
+-- | 'elabRun' for a module that also declares one (one-page) memory.
+elabRunWithMemory :: [ValType] -> [ValType] -> [ValType] -> [RawInstr] -> [Integer] -> Either String [String]
+elabRunWithMemory = elabRunIn [onePageMemory]
+
+elabRunIn :: [RawMemory] -> [ValType] -> [ValType] -> [ValType] -> [RawInstr] -> [Integer] -> Either String [String]
+elabRunIn memories params results locals body args =
+    case elaborateModule (singleFunctionModule memories params results locals body) of
         Left err -> Left (show err)
         Right sm -> runModuleFunction sm "f" args
 
 -- | Elaborate a single-function module and discard the result — for rejection tests.
 elabError :: [ValType] -> [ValType] -> [ValType] -> [RawInstr] -> Either ElabError ()
-elabError params results locals body =
-    void (elaborateModule (singleFunctionModule params results locals body))
+elabError = elabErrorIn []
 
-singleFunctionModule :: [ValType] -> [ValType] -> [ValType] -> [RawInstr] -> RawModule
-singleFunctionModule params results locals body =
+-- | 'elabError' for a module that also declares one memory (so memory instructions elaborate).
+elabErrorWithMemory :: [ValType] -> [ValType] -> [ValType] -> [RawInstr] -> Either ElabError ()
+elabErrorWithMemory = elabErrorIn [onePageMemory]
+
+elabErrorIn :: [RawMemory] -> [ValType] -> [ValType] -> [ValType] -> [RawInstr] -> Either ElabError ()
+elabErrorIn memories params results locals body =
+    void (elaborateModule (singleFunctionModule memories params results locals body))
+
+singleFunctionModule :: [RawMemory] -> [ValType] -> [ValType] -> [ValType] -> [RawInstr] -> RawModule
+singleFunctionModule memories params results locals body =
     RawModule
         { moduleTypes = [ft]
         , moduleFuncs = [RawFunction ft locals body]
         , moduleGlobals = []
-        , moduleMemories = []
+        , moduleMemories = memories
         , moduleExports = [Export "f" (ExportFunc (FunctionIdx 0))]
         , moduleStart = Nothing
         }
   where
     ft = FuncType params results
+
+onePageMemory :: RawMemory
+onePageMemory = RawMemory (MemType AddrI32 (Limits 1 Nothing))
 
 trapContaining :: String -> Either String [String] -> Bool
 trapContaining needle = either (needle `isInfixOf`) (const False)

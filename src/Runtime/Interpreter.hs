@@ -59,7 +59,6 @@ import Data.Word (Word32, Word64, Word8)
 import GHC.Float (castDoubleToWord64, castFloatToWord32, castWord32ToFloat, castWord64ToDouble)
 
 import Data.List.Singletons (type (++))
-import Data.Singletons.TH (Sing)
 import Runtime.Bytes (bytesOfWord32, bytesOfWord64, word32OfBytes, word64OfBytes)
 import Runtime.Convert (convertVal)
 import Runtime.MemInst (MemInst, growMemory, memoryPages, readBytes, writeBytes)
@@ -89,6 +88,7 @@ import Syntax.Instructions (
     FloatBinOp (..),
     FloatUnOp (..),
     Instr (..),
+    convertEnds,
  )
 import Syntax.Types
 import Validation.Shape (Elem (..), FrameShape (..), ModuleFuncs, ModuleGlobals, ModuleMems, ModuleShape)
@@ -231,8 +231,8 @@ step funcs (Config store locals stack code control) = case code of
         IAdd nt -> stepBin store locals stack (numBinary nt (+)) rest control
         ISub nt -> stepBin store locals stack (numBinary nt (-)) rest control
         IMul nt -> stepBin store locals stack (numBinary nt (*)) rest control
-        IDiv nt sign -> case stack of
-            b :# a :# r -> case numDiv nt sign a b of
+        IDiv sn -> case stack of
+            b :# a :# r -> case numDiv sn a b of
                 Right v -> stepped store locals (v :# r) rest control
                 Left t -> Left t
         IRem nt sign -> case stack of
@@ -241,17 +241,19 @@ step funcs (Config store locals stack code control) = case code of
                 Left t -> Left t
         {- Comparison -}
         IEqz nt -> stepUn store locals stack (numEqz nt) rest control
-        IEq nt -> stepBin store locals stack (numCompare (==) nt Unsigned) rest control
-        INe nt -> stepBin store locals stack (numCompare (/=) nt Unsigned) rest control
-        ILt nt sign -> stepBin store locals stack (numCompare (<) nt sign) rest control
-        IGt nt sign -> stepBin store locals stack (numCompare (>) nt sign) rest control
-        ILe nt sign -> stepBin store locals stack (numCompare (<=) nt sign) rest control
-        IGe nt sign -> stepBin store locals stack (numCompare (>=) nt sign) rest control
+        IEq nt -> stepBin store locals stack (numEqNe (==) nt) rest control
+        INe nt -> stepBin store locals stack (numEqNe (/=) nt) rest control
+        ILt sn -> stepBin store locals stack (numCompare (<) sn) rest control
+        IGt sn -> stepBin store locals stack (numCompare (>) sn) rest control
+        ILe sn -> stepBin store locals stack (numCompare (<=) sn) rest control
+        IGe sn -> stepBin store locals stack (numCompare (>=) sn) rest control
         {- Conversions -}
-        IConvert from to op -> case stack of
-            v :# r -> case convertVal op (toVal from v) of
-                Right result -> stepped store locals (fromVal to result :# r) rest control
-                Left t -> Left t
+        IConvert op ->
+            let (nf, nt) = convertEnds op
+             in case stack of
+                    v :# r -> case convertVal op (toVal nf v) of
+                        Right result -> stepped store locals (fromVal nt result :# r) rest control
+                        Left t -> Left t
         {- Integer bitwise / shift / count, floating-point unary / binary -}
         IBitwise nt op -> stepBin store locals stack (bitwiseT nt op) rest control
         ICount nt op -> stepUn store locals stack (countT nt op) rest control
@@ -263,19 +265,19 @@ step funcs (Config store locals stack code control) = case code of
             delta :# r ->
                 let mem = currentMem store
                  in stepped (storeMem (growMemory delta mem) store) locals (memoryPages mem :# r) rest control
-        ILoadN nt width sign memArg -> case stack of
+        ILoadN nw sign memArg -> case stack of
             addr :# r ->
-                case readBytes (currentMem store) (effectiveAddr addr memArg) width of
-                    Just bytes -> stepped store locals (narrowLoadT nt width sign bytes :# r) rest control
+                case readBytes (currentMem store) (effectiveAddr addr memArg) (narrowBytes nw) of
+                    Just bytes -> stepped store locals (narrowLoadT nw sign bytes :# r) rest control
                     Nothing -> Left OutOfBoundsMemoryAccess
-        IStoreN nt width memArg -> case stack of
+        IStoreN nw memArg -> case stack of
             value :# addr :# r ->
-                case writeBytes (currentMem store) (effectiveAddr addr memArg) (narrowStoreT nt width value) of
+                case writeBytes (currentMem store) (effectiveAddr addr memArg) (narrowStoreT nw value) of
                     Just mem' -> stepped (storeMem mem' store) locals r rest control
                     Nothing -> Left OutOfBoundsMemoryAccess
         {- Stack management -}
         IDrop -> case stack of _ :# r -> stepped store locals r rest control
-        ISelect -> case stack of
+        ISelect _ -> case stack of
             cond :# a :# b :# r -> stepped store locals ((if cond /= 0 then a else b) :# r) rest control
         {- Locals & globals -}
         ILocalGet ix -> stepped store locals (getLocal ix locals :# stack) rest control
@@ -287,7 +289,7 @@ step funcs (Config store locals stack code control) = case code of
         {- Memory -}
         ILoad nt memArg -> case stack of
             addr :# r ->
-                case readBytes (currentMem store) (effectiveAddr addr memArg) (byteWidth nt) of
+                case readBytes (currentMem store) (effectiveAddr addr memArg) (numBytes nt) of
                     Just bytes -> stepped store locals (loadValue nt bytes :# r) rest control
                     Nothing -> Left OutOfBoundsMemoryAccess
         IStore nt memArg -> case stack of
@@ -467,26 +469,25 @@ runFunction tm (FuncInst defaults body) args =
 -}
 
 numBinary ::
-    Sing (t :: ValType) ->
+    IsNum t ->
     (forall a. Num a => a -> a -> a) ->
     HostType t ->
     HostType t ->
     HostType t
-numBinary SI32 op a b = op a b
-numBinary SI64 op a b = op a b
-numBinary SF32 op a b = op a b
-numBinary SF64 op a b = op a b
+numBinary NumI32 op a b = op a b
+numBinary NumI64 op a b = op a b
+numBinary NumF32 op a b = op a b
+numBinary NumF64 op a b = op a b
 
 numDiv ::
-    Sing (t :: ValType) ->
-    Signedness ->
+    SignedNum t ->
     HostType t ->
     HostType t ->
     Either Trap (HostType t)
-numDiv SI32 sign a b = intDiv32 sign a b
-numDiv SI64 sign a b = intDiv64 sign a b
-numDiv SF32 _ a b = Right (a / b)
-numDiv SF64 _ a b = Right (a / b)
+numDiv (IntWithSign IntI32 sign) a b = intDiv32 sign a b
+numDiv (IntWithSign IntI64 sign) a b = intDiv64 sign a b
+numDiv (FloatNoSign FloatF32) a b = Right (a / b)
+numDiv (FloatNoSign FloatF64) a b = Right (a / b)
 
 numRem ::
     IsInt t ->
@@ -497,25 +498,37 @@ numRem ::
 numRem IntI32 sign a b = intRem32 sign a b
 numRem IntI64 sign a b = intRem64 sign a b
 
+{- | The ordered comparisons (@lt@/@gt@/@le@/@ge@): signed vs. unsigned on integers, plain on
+  floats — driven by the 'SignedNum' witness, so no signedness ever reaches a float compare.
+-}
 numCompare ::
     (forall a. Ord a => a -> a -> Bool) ->
-    Sing (t :: ValType) ->
-    Signedness ->
+    SignedNum t ->
     HostType t ->
     HostType t ->
     HostType 'I32
-numCompare cmp SI32 Signed a b = boolWord (cmp (toSigned32 a) (toSigned32 b))
-numCompare cmp SI32 Unsigned a b = boolWord (cmp a b)
-numCompare cmp SI64 Signed a b = boolWord (cmp (toSigned64 a) (toSigned64 b))
-numCompare cmp SI64 Unsigned a b = boolWord (cmp a b)
-numCompare cmp SF32 _ a b = boolWord (cmp a b)
-numCompare cmp SF64 _ a b = boolWord (cmp a b)
+numCompare cmp (IntWithSign IntI32 Signed) a b = boolWord (cmp (toSigned32 a) (toSigned32 b))
+numCompare cmp (IntWithSign IntI32 Unsigned) a b = boolWord (cmp a b)
+numCompare cmp (IntWithSign IntI64 Signed) a b = boolWord (cmp (toSigned64 a) (toSigned64 b))
+numCompare cmp (IntWithSign IntI64 Unsigned) a b = boolWord (cmp a b)
+numCompare cmp (FloatNoSign FloatF32) a b = boolWord (cmp a b)
+numCompare cmp (FloatNoSign FloatF64) a b = boolWord (cmp a b)
 
-numEqz :: Sing (t :: ValType) -> HostType t -> HostType 'I32
-numEqz SI32 a = boolWord (a == 0)
-numEqz SI64 a = boolWord (a == 0)
-numEqz SF32 a = boolWord (a == 0)
-numEqz SF64 a = boolWord (a == 0)
+-- | Equality/inequality (@eq@/@ne@): no signedness on either integers or floats.
+numEqNe ::
+    (forall a. Eq a => a -> a -> Bool) ->
+    IsNum t ->
+    HostType t ->
+    HostType t ->
+    HostType 'I32
+numEqNe cmp NumI32 a b = boolWord (cmp a b)
+numEqNe cmp NumI64 a b = boolWord (cmp a b)
+numEqNe cmp NumF32 a b = boolWord (cmp a b)
+numEqNe cmp NumF64 a b = boolWord (cmp a b)
+
+numEqz :: IsInt t -> HostType t -> HostType 'I32
+numEqz IntI32 a = boolWord (a == 0)
+numEqz IntI64 a = boolWord (a == 0)
 
 boolWord :: Bool -> Word32
 boolWord True = 1
@@ -523,23 +536,17 @@ boolWord False = 0
 
 -- *** Memory <-> value marshalling ***
 
-byteWidth :: Sing (t :: ValType) -> Int
-byteWidth SI32 = 4
-byteWidth SF32 = 4
-byteWidth SI64 = 8
-byteWidth SF64 = 8
+loadValue :: IsNum t -> [Word8] -> HostType t
+loadValue NumI32 = word32OfBytes
+loadValue NumI64 = word64OfBytes
+loadValue NumF32 = castWord32ToFloat . word32OfBytes
+loadValue NumF64 = castWord64ToDouble . word64OfBytes
 
-loadValue :: Sing (t :: ValType) -> [Word8] -> HostType t
-loadValue SI32 = word32OfBytes
-loadValue SI64 = word64OfBytes
-loadValue SF32 = castWord32ToFloat . word32OfBytes
-loadValue SF64 = castWord64ToDouble . word64OfBytes
-
-storeBytes :: Sing (t :: ValType) -> HostType t -> [Word8]
-storeBytes SI32 = bytesOfWord32
-storeBytes SI64 = bytesOfWord64
-storeBytes SF32 = bytesOfWord32 . castFloatToWord32
-storeBytes SF64 = bytesOfWord64 . castDoubleToWord64
+storeBytes :: IsNum t -> HostType t -> [Word8]
+storeBytes NumI32 = bytesOfWord32
+storeBytes NumI64 = bytesOfWord64
+storeBytes NumF32 = bytesOfWord32 . castFloatToWord32
+storeBytes NumF64 = bytesOfWord64 . castDoubleToWord64
 
 -- *** Bitwise / count / float / narrow-memory helpers ***
 
@@ -614,9 +621,12 @@ floatBinOp FMin = wasmMin
 floatBinOp FMax = wasmMax
 floatBinOp FCopysign = copysign
 
-narrowLoadT :: IsInt t -> Int -> Signedness -> [Word8] -> HostType t
-narrowLoadT IntI32 width sign bytes = fromIntegral (assembleNarrow width sign bytes)
-narrowLoadT IntI64 width sign bytes = assembleNarrow width sign bytes
+narrowLoadT :: NarrowWidth t -> Signedness -> [Word8] -> HostType t
+narrowLoadT (Narrow8 IntI32) sign bytes = fromIntegral (assembleNarrow 1 sign bytes)
+narrowLoadT (Narrow16 IntI32) sign bytes = fromIntegral (assembleNarrow 2 sign bytes)
+narrowLoadT (Narrow8 IntI64) sign bytes = assembleNarrow 1 sign bytes
+narrowLoadT (Narrow16 IntI64) sign bytes = assembleNarrow 2 sign bytes
+narrowLoadT Narrow32 sign bytes = assembleNarrow 4 sign bytes
 
 assembleNarrow :: Int -> Signedness -> [Word8] -> Word64
 assembleNarrow width sign bytes =
@@ -626,21 +636,24 @@ assembleNarrow width sign bytes =
             then raw .|. (complement 0 `shiftL` bits)
             else raw
 
-narrowStoreT :: IsInt t -> Int -> HostType t -> [Word8]
-narrowStoreT IntI32 width value = take width (bytesOfWord64 (fromIntegral value))
-narrowStoreT IntI64 width value = take width (bytesOfWord64 value)
+narrowStoreT :: NarrowWidth t -> HostType t -> [Word8]
+narrowStoreT (Narrow8 IntI32) value = take 1 (bytesOfWord64 (fromIntegral value))
+narrowStoreT (Narrow16 IntI32) value = take 2 (bytesOfWord64 (fromIntegral value))
+narrowStoreT (Narrow8 IntI64) value = take 1 (bytesOfWord64 value)
+narrowStoreT (Narrow16 IntI64) value = take 2 (bytesOfWord64 value)
+narrowStoreT Narrow32 value = take 4 (bytesOfWord64 value)
 
 {- | Move a typed host value in and out of the untyped 'Val' slot, so conversions can reuse
   the shared 'convertVal'.
 -}
-toVal :: Sing (t :: ValType) -> HostType t -> Val
-toVal SI32 = fromI32
-toVal SI64 = fromI64
-toVal SF32 = fromF32
-toVal SF64 = fromF64
+toVal :: IsNum t -> HostType t -> Val
+toVal NumI32 = fromI32
+toVal NumI64 = fromI64
+toVal NumF32 = fromF32
+toVal NumF64 = fromF64
 
-fromVal :: Sing (t :: ValType) -> Val -> HostType t
-fromVal SI32 = toI32
-fromVal SI64 = toI64
-fromVal SF32 = toF32
-fromVal SF64 = toF64
+fromVal :: IsNum t -> Val -> HostType t
+fromVal NumI32 = toI32
+fromVal NumI64 = toI64
+fromVal NumF32 = toF32
+fromVal NumF64 = toF64
