@@ -58,11 +58,12 @@ when there is a choice. See item **E1** (record this as the signed-off §11 over
 
 - [x] **[P1·test]** Test suite migrated to `hspec`. (`test/Spec.hs`, `cabal.project` sets
   `tests: True` so the deps resolve by default.)
-- [~] **[P1·test]** Haskell-level tests (no `wat2wasm`): **done** — elaborator acceptance
-  (add/div), elaborator rejection (stack underflow, result mismatch, out-of-range local, operand
-  type mismatch), and a divide-by-zero trap, all built from `RawModule` values. **Still open:**
-  decoder byte fixtures for the malformed-input paths (A1/A2/A6), the remaining traps (OOB,
-  `unreachable`, invalid conversion), and dead-code accept/reject.
+- [x] **[P1·test]** Haskell-level tests (no `wat2wasm`): elaborator acceptance and rejection
+  (stack underflow, result mismatch, out-of-range local, operand type mismatch, the witness
+  refinements), every trap (divide-by-zero, OOB, `unreachable`, invalid conversion), dead-code
+  accept/reject under the polymorphic stack, and hand-assembled decoder byte fixtures for the
+  malformed-input paths (bad magic/version, A1 block type index, A2 function type index, A6
+  function/code length mismatch, unknown opcode). Built from `RawModule` values and raw bytes.
 - [x] **[P1·test]** Property tests (`hedgehog`): `Runtime.Bytes` word↔bytes round-trips (32/64)
   unsigned `intDiv32` vs host `div`, and the conversion round-trips (extend/wrap, reinterpret,
   promote/demote, convert/trunc). (Generated-module properties still open.)

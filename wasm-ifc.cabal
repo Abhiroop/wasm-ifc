@@ -125,6 +125,7 @@ test-suite wasm-ifc-test
     build-depends:
         base
       , wasm-ifc
+      , bytestring
       , text
       , hspec          ^>=2.11
       , hedgehog       ^>=1.5

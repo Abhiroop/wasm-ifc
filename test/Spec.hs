@@ -8,14 +8,16 @@
 module Main (main) where
 
 import Control.Monad (void)
-import Data.Either (isLeft)
+import Data.ByteString.Lazy qualified as BL
+import Data.Either (isLeft, isRight)
 import Data.List (isInfixOf)
-import Data.Word (Word32)
+import Data.Word (Word32, Word8)
 import Hedgehog.Gen qualified as Gen
 import Hedgehog.Range qualified as Range
 import Test.Hspec
 import Test.Hspec.Hedgehog (forAll, hedgehog, (===))
 
+import Codec.Wasm (decodeModule)
 import Runtime.Bytes (bytesOfWord32, bytesOfWord64, word32OfBytes, word64OfBytes)
 import Runtime.Convert (convertVal)
 import Runtime.Examples (runFactorial, runIncrement, runSquare)
@@ -66,6 +68,42 @@ spec = do
                 [LocalGet (LocalIdx 0), LocalGet (LocalIdx 1), Div SI32 Signed]
                 [7, 0]
                 `shouldSatisfy` trapContaining "IntegerDivideByZero"
+        it "traps on unreachable" $
+            elabRun [] [I32] [] [Unreachable] [] `shouldSatisfy` trapContaining "UnreachableExecuted"
+        it "traps on an invalid float-to-int conversion (NaN)" $
+            elabRun [] [I32] [] [Const SF32 (0 / 0), Convert (I32TruncF32 Signed)] []
+                `shouldSatisfy` trapContaining "InvalidConversionToInteger"
+        it "traps on an out-of-bounds load" $
+            elabRunWithMemory [I32] [I32] [] [LocalGet (LocalIdx 0), Load SI32 (MemArg 0 0)] [70000]
+                `shouldSatisfy` trapContaining "OutOfBoundsMemoryAccess"
+
+    describe "dead code after an unconditional transfer" $ do
+        it "is typed under the polymorphic stack (an add with nothing pushed is fine)" $
+            elabError [] [I32] [] [Const SI32 1, Return, Add SI32] `shouldSatisfy` isRight
+        it "is still checked where operand types are known (f32 fed to i32.add)" $
+            elabError [] [I32] [] [Const SI32 1, Return, Const SF32 1.0, Add SI32] `shouldSatisfy` isLeft
+        it "may not branch to a label that does not exist" $
+            elabError [] [I32] [] [Const SI32 1, Return, Br (LabelIdx 5)] `shouldSatisfy` isLeft
+
+    describe "decoder (hand-assembled binaries)" $ do
+        it "accepts a minimal module with one empty function" $
+            decodeSections [typeSection, funcSection [0], codeSection [[0x0B]]] `shouldBe` Right 1
+        it "rejects a bad magic number" $
+            decodeBytes [0x00, 0x61, 0x73, 0x6E, 0x01, 0x00, 0x00, 0x00] `shouldSatisfy` isLeft
+        it "rejects an unsupported version" $
+            decodeBytes [0x00, 0x61, 0x73, 0x6D, 0x02, 0x00, 0x00, 0x00] `shouldSatisfy` isLeft
+        it "rejects function and code sections of different lengths" $
+            decodeSections [typeSection, funcSection [0], codeSection []]
+                `shouldSatisfy` decodeErrorContaining "different lengths"
+        it "rejects a function type index out of range" $
+            decodeSections [typeSection, funcSection [7], codeSection [[0x0B]]]
+                `shouldSatisfy` decodeErrorContaining "function type index out of range"
+        it "rejects a block type index out of range" $
+            decodeSections [typeSection, funcSection [0], codeSection [[0x02, 0x05, 0x0B, 0x0B]]]
+                `shouldSatisfy` decodeErrorContaining "block type index out of range"
+        it "rejects an unknown opcode" $
+            decodeSections [typeSection, funcSection [0], codeSection [[0xFF, 0x0B]]]
+                `shouldSatisfy` decodeErrorContaining "unsupported opcode"
 
     describe "elaborator rejects ill-typed / malformed modules" $ do
         it "stack underflow (add with no operands)" $
@@ -184,6 +222,47 @@ singleFunctionModule memories params results locals body =
 
 onePageMemory :: RawMemory
 onePageMemory = RawMemory (MemType AddrI32 (Limits 1 Nothing))
+
+{- *** Hand-assembled binaries ***
+
+   Just enough of the binary format to reach the decoder's error paths without @wat2wasm@:
+   a header, and sections whose payloads are short enough for one-byte LEB128 sizes.
+-}
+
+-- | Decode raw bytes, reduced to the number of functions ('RawModule' has no 'Show').
+decodeBytes :: [Word8] -> Either String Int
+decodeBytes bytes = fmap (length . (.moduleFuncs)) (decodeModule (BL.pack bytes))
+
+decodeSections :: [[Word8]] -> Either String Int
+decodeSections sections = decodeBytes (wasmHeader ++ concat sections)
+
+wasmHeader :: [Word8]
+wasmHeader = [0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00]
+
+-- | A section: its id, its byte size, its payload.
+section :: Word8 -> [Word8] -> [Word8]
+section sectionId payload = sectionId : fromIntegral (length payload) : payload
+
+-- | A length-prefixed vector.
+vec :: [[Word8]] -> [Word8]
+vec items = fromIntegral (length items) : concat items
+
+-- | The type section with a single type, @() -> ()@.
+typeSection :: [Word8]
+typeSection = section 1 (vec [[0x60, 0x00, 0x00]])
+
+-- | The function section: one type index per function.
+funcSection :: [Word8] -> [Word8]
+funcSection typeIndices = section 3 (vec [[i] | i <- typeIndices])
+
+-- | The code section: one body per function, declaring no locals (each body must end in 0x0B).
+codeSection :: [[Word8]] -> [Word8]
+codeSection bodies = section 10 (vec [entry body | body <- bodies])
+  where
+    entry body = let content = 0x00 : body in fromIntegral (length content) : content
+
+decodeErrorContaining :: String -> Either String Int -> Bool
+decodeErrorContaining needle = either (needle `isInfixOf`) (const False)
 
 -- | An i32 written as a signed literal (the stack holds raw bits).
 fromSigned32Test :: Int -> Word32
