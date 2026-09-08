@@ -328,7 +328,16 @@ ghc-options: -Wall -Wcompat
 
 ## 11. Project-specific overrides
 
-*(None yet. Add deliberate, signed-off amendments here when a module genuinely needs to deviate —
-for example, a component that truly requires GADTs/type-level machinery to model a domain
-invariant, or a boundary that needs a heavier library. Each entry: the rule overridden, the scope,
-and the reason. This section, where present, takes precedence over the corresponding general rule.)*
+Each entry names the rule overridden, its scope, and the reason. This section takes precedence
+over the corresponding general rule.
+
+- **§2 "Cap type-level machinery" — overridden for the intrinsically-typed core.**
+  *Scope:* `Syntax.Instructions`, `Validation.*`, `Runtime.*`. *Reason:* this project is
+  *about* modelling WebAssembly's type system at the type level. GADTs, `DataKinds`, type
+  families and singletons are what make ill-typed programs unrepresentable and turn the
+  interpreter into a type-soundness artifact (preservation by construction, progress as the
+  totality of `step`). *Limits:* everything else in this guide still applies to those modules,
+  and the spirit of §2 still binds inside them — prefer the simpler type-level encoding when
+  there is a choice (a refinement-witness GADT over a class hierarchy; the library's singletons
+  over hand-rolled ones; an explicit witness argument over a `KnownX` constraint outside the
+  convenience API) — and the machinery stays out of the decoder, the CLI and the tests.

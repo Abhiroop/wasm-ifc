@@ -56,6 +56,19 @@ samples/check.sh    # run every sample and check it against its expected result
 cabal test          # run the typed-example smoke tests
 ```
 
+### Status and limitations
+
+Runs today: the numeric, comparison and conversion instructions; memory loads and stores
+(including the narrow forms), `memory.size`/`memory.grow`; structured control, branches,
+calls and globals; whole-module validation; one linear memory per module; exported functions
+invoked from the CLI with integer arguments.
+
+Not yet: information-flow control (the project's goal; `TODO.md` §F); imports and WASI
+(`TODO.md` §H — only an isolated host scaffold exists); tables and `call_indirect`; the start
+function (decoded, not run); exported globals and memories (decoded, not reachable from the
+CLI); typed `select` (`0x1C`); float CLI arguments; multiple memories; bulk memory, data
+segments, reference and SIMD types. Linear memory is copy-on-write, `O(n)` per store.
+
 ### Toolchain
 
 ```

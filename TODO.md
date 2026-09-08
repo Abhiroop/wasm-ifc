@@ -24,13 +24,13 @@ singletons *are* the point here (they make ill-typed WebAssembly unrepresentable
 interpreter into a type-soundness artifact). The rest of `STYLE.md` (totality, naming,
 tests, tooling, records, deriving strategies, comments-say-why) **does** apply, and the
 *spirit* of §2 still applies inside the type-level code: prefer the simpler type-level encoding
-when there is a choice. See item **E1** (record this as the signed-off §11 override).
+when there is a choice. Recorded as the signed-off override in `STYLE.md` §11 (item **E1**).
 
 ---
 
-> **Tech-debt pass (2026-07):** all of §A, §D, and most of §B/§C are **done** — see checkboxes.
-> Deferred by request: §E (docs), §F (IFC/roadmap). Blocked by missing tooling: `wasmtime`
-> oracle (B4).
+> **Tech-debt pass (2026-07, continued 2026-09):** §A, §B, §D and most of §C/§E are **done** —
+> see checkboxes. Open: the repo-hygiene decisions in §E, §F (IFC/roadmap), §H (WASI).
+> Blocked by missing tooling: `wasmtime` oracle (B4).
 
 ## A. Correctness & robustness
 
@@ -134,13 +134,13 @@ when there is a choice. See item **E1** (record this as the signed-off §11 over
 
 ## E. Documentation (consumer-facing)
 
-- [ ] **[P1·docs]** Record the type-level override in `STYLE.md` §11: the intrinsically-typed core
+- [x] **[P1·docs]** Record the type-level override in `STYLE.md` §11: the intrinsically-typed core
   deliberately uses GADTs/`DataKinds`/type families/singletons to model WASM's type system as an
   unrepresentable-illegal-states soundness artifact; §2's cap is overridden for those modules,
   while the simplicity spirit still applies.
 - [x] **[docs]** README layout table referenced `src/Old/`; the reference prototype is `app.old/`.
   Fixed in this pass.
-- [ ] **[P2·docs]** README: add a "Status / limitations" section (single memory; no
+- [x] **[P2·docs]** README: add a "Status / limitations" section (single memory; no
   tables/`call_indirect`; no imports; integer CLI args only; start function not run; IFC pending).
 - [ ] **[P2·docs]** `Formalisation/wasmifc/README.md` is a GitHub template stub ("remove this
   section…") — replace with real content or remove. (Separate Lean subproject.)
