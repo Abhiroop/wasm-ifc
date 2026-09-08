@@ -178,6 +178,49 @@ when there is a choice. See item **E1** (record this as the signed-off §11 over
 - [ ] **[P3]** `run` is the only partial (non-terminating) function — optionally add a
   fuel-bounded `runFor :: Int -> …` for tests and to make termination explicit.
 
+## H. Import system + WASI (parallel track)
+
+WASI functions *are* imports, so the **import system is the prerequisite** ("natural
+dependency"). The guiding constraint: **admit imports + IO without breaking the pure/total
+`step`** (the soundness artifact). Solution: an **effect-request boundary** — `step` stays pure
+and, when a `call` resolves to a host function, *yields a request* rather than doing IO; a thin
+IO driver performs the effect and resumes. IO is quarantined to the driver + `Runtime.Wasi`.
+
+Scaffold already landed (isolated, additive, non-churning): **`Runtime.Wasi`** — the WASI
+Preview 1 host layer (`wasi_snapshot_preview1`): `fd_write`/`proc_exit`, errno subset, iovec
+parsing over `MemInst`, and `runWasiCall :: WasiFunc -> [Word32] -> MemInst m -> IO
+(WasiOutcome m)` (the driver's entry point). Builds under `-Werror`, hlint-clean.
+
+Remaining pieces (these edit the audited core):
+
+- [ ] **[H1·decoder]** Import section in `Codec.Wasm` (currently hard-`fail`s on any import).
+  Parse import entries (module name, field name, kind + type). MVP: imported **functions** only
+  (kind 0x00 → typeidx); `fail` on imported tables/memories/globals for now (a WASI module
+  provides and *exports* its own memory).
+- [ ] **[H2·types]** Function index space `= imports ++ defined` (imports first, per spec).
+  `ModuleFuncs shape` covers both; `FuncInst` becomes a sum — `HostFunc` (an opaque host id +
+  its `FuncType`) vs. `WasmFunc` (the typed body). Touches `Runtime.Interpreter`
+  (`FuncInst`/`FuncInsts`) and `Validation.Shape`/elaboration.
+- [ ] **[H3·machine]** Effect-request boundary in `Runtime.Interpreter`: a new `StepResult`
+  variant `HostCall`, carrying the host id, the popped `[Word32]` args, and a resume
+  continuation `(WasiOutcome → Config)`. `step` stays pure/total (it only *builds* the request).
+  Add `runIO :: … -> Config -> IO (Either Trap (ValueStack res))` alongside `run`, which on a
+  `HostCall` calls `Runtime.Wasi.runWasiCall` with the store's memory, applies the result
+  (store memory back, push the errno) and resumes; `WasiExit` short-circuits.
+- [ ] **[H4·elaborate]** `Validation.Elaborate`: build `ModuleShape` with imports first; resolve
+  each import `(module, field)` — for `wasi_snapshot_preview1`, check its declared `FuncType`
+  against `Runtime.Wasi.wasiSignature`; map it to a host id. `ICall` into a host slot is typed
+  exactly like any call.
+- [ ] **[H5·entry]** Run the `_start` export (the WASI entry) — overlaps the deferred
+  start-function item (**F2**); the module's own memory is what WASI reads/writes.
+- [ ] **[H6·sample]** A `hello world` `.wat`/`.wasm` (imported `fd_write` + `proc_exit`, exported
+  memory) end-to-end through `runIO`.
+
+**Open design questions:** whether host imports type-check against `wasiSignature` or stay
+generic typed slots; how the `HostCall` request threads the store's single memory (the driver
+holds the `Store`, so it can read/write directly); whether host funcs live in `FuncInsts` (as a
+sum) or a parallel host table.
+
 ---
 
 ### Provenance

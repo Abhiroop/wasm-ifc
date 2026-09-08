@@ -95,6 +95,7 @@ library
       , Runtime.Stack
       , Runtime.Interpreter
       , Runtime.Examples
+      , Runtime.Wasi
       , Codec.Wasm
     build-depends:
         base          ^>=4.21.0.0
