@@ -118,7 +118,7 @@ when there is a choice. Recorded as the signed-off override in `STYLE.md` §11 (
   land" — the deferral *was* the gap). Every numeric instruction now carries `IsNum`/`IsInt`/
   `IsFloat`, never a bare `Sing (t :: ValType)`, so the constraint holds by construction and does
   not rely on `ValType` being all-numeric. Fixes a latent gap (`funcref.add` would type-check once
-  ref types exist) and a live bug (`IEqz` accepted `f32.eqz`). `numType` + `withNum` refine in the
+  ref types exist) and a live bug (`IEqz` accepted `f32.eqz`). `decideNum` + `requireNum` refine in the
   elaborator.
 - [x] **[P1·soundness]** Closed the remaining representable-illegal-states in the typed `Instr`
   (per the "soundness is never deferred" invariant, STYLE §2):

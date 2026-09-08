@@ -72,15 +72,15 @@ data IsFloat (t :: ValType) where
     F32IsFloat :: IsFloat 'F32
     F64IsFloat :: IsFloat 'F64
 
-{- | Refine a value-type singleton to numeric (resp. integer, floating-point) evidence, or
-  fail if it is of another kind. Elaboration uses these to reject e.g. @funcref.add@,
-  @f32.and@ or @i32.sqrt@.
+{- | Decide whether a value type is numeric (resp. integer, floating-point), yielding the
+  evidence when it is — the same shape as the library's 'decideEquality'. Elaboration uses
+  these to reject e.g. @funcref.add@, @f32.and@ or @i32.sqrt@.
 -}
-numType :: Sing (t :: ValType) -> Maybe (IsNum t)
-numType SI32 = Just I32IsNum
-numType SI64 = Just I64IsNum
-numType SF32 = Just F32IsNum
-numType SF64 = Just F64IsNum
+decideNum :: Sing (t :: ValType) -> Maybe (IsNum t)
+decideNum SI32 = Just I32IsNum
+decideNum SI64 = Just I64IsNum
+decideNum SF32 = Just F32IsNum
+decideNum SF64 = Just F64IsNum
 
 -- | The width in bytes of a numeric type (4 for i32/f32, 8 for i64/f64).
 numBytes :: IsNum t -> Int
@@ -96,17 +96,17 @@ numSing I64IsNum = SI64
 numSing F32IsNum = SF32
 numSing F64IsNum = SF64
 
-intType :: Sing (t :: ValType) -> Maybe (IsInt t)
-intType SI32 = Just I32IsInt
-intType SI64 = Just I64IsInt
-intType SF32 = Nothing
-intType SF64 = Nothing
+decideInt :: Sing (t :: ValType) -> Maybe (IsInt t)
+decideInt SI32 = Just I32IsInt
+decideInt SI64 = Just I64IsInt
+decideInt SF32 = Nothing
+decideInt SF64 = Nothing
 
-floatType :: Sing (t :: ValType) -> Maybe (IsFloat t)
-floatType SF32 = Just F32IsFloat
-floatType SF64 = Just F64IsFloat
-floatType SI32 = Nothing
-floatType SI64 = Nothing
+decideFloat :: Sing (t :: ValType) -> Maybe (IsFloat t)
+decideFloat SF32 = Just F32IsFloat
+decideFloat SF64 = Just F64IsFloat
+decideFloat SI32 = Nothing
+decideFloat SI64 = Nothing
 
 {- | A numeric operand for the operations that are signed/unsigned on integers but have a
   single form on floats — division and the ordered comparisons (@lt@/@gt@/@le@/@ge@). An
@@ -117,10 +117,10 @@ data NumWithSign (t :: ValType) where
     IntsHaveSign :: IsInt t -> Signedness -> NumWithSign t
     FloatsHaveNoSign :: IsFloat t -> NumWithSign t
 
-numWithSign :: Sing (t :: ValType) -> Signedness -> Maybe (NumWithSign t)
-numWithSign st sign = case intType st of
+decideNumWithSign :: Sing (t :: ValType) -> Signedness -> Maybe (NumWithSign t)
+decideNumWithSign st sign = case decideInt st of
     Just isInt -> Just (IntsHaveSign isInt sign)
-    Nothing -> FloatsHaveNoSign <$> floatType st
+    Nothing -> FloatsHaveNoSign <$> decideFloat st
 
 {- | The storage width of a narrow integer load/store: one or two bytes for any integer, plus
   four bytes for @i64@ only (a narrow access must be strictly narrower than the value, so an
@@ -143,11 +143,11 @@ narrowInt (Narrow8 isInt) = isInt
 narrowInt (Narrow16 isInt) = isInt
 narrowInt Narrow32 = I64IsInt
 
-narrowWidth :: Sing (t :: ValType) -> Int -> Maybe (NarrowWidth t)
-narrowWidth st 1 = Narrow8 <$> intType st
-narrowWidth st 2 = Narrow16 <$> intType st
-narrowWidth SI64 4 = Just Narrow32
-narrowWidth _ _ = Nothing
+decideNarrow :: Sing (t :: ValType) -> Int -> Maybe (NarrowWidth t)
+decideNarrow st 1 = Narrow8 <$> decideInt st
+decideNarrow st 2 = Narrow16 <$> decideInt st
+decideNarrow SI64 4 = Just Narrow32
+decideNarrow _ _ = Nothing
 
 {- | A result type — the stack shape a block, loop, if, or function yields (the spec's
   @resulttype@). It is exactly a list of value types; the synonym names the intent so
@@ -189,5 +189,5 @@ data MemArg = MemArg {alignment :: Word32, offset :: Word32} deriving stock (Eq,
 
 -- Singletons for the remaining promotable types. Split from the 'NumType'/'ValType' splice
 -- above because Template Haskell needs each type defined before its splice, and
--- 'IsInt'/'intType' (which use the number-type singleton) sit in between.
+-- 'IsInt'/'decideInt' (which use the number-type singleton) sit in between.
 $(genSingletons [''Mutability, ''AddrType, ''FuncType, ''GlobalType])
