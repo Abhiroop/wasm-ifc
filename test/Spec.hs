@@ -18,9 +18,9 @@ import Test.Hspec
 import Test.Hspec.Hedgehog (forAll, hedgehog, (===))
 
 import Codec.Wasm (decodeModule)
+import Examples (runFactorial, runIncrement, runSquare)
 import Runtime.Bytes (bytesOfWord32, bytesOfWord64, word32OfBytes, word64OfBytes)
 import Runtime.Convert (convertVal)
-import Runtime.Examples (runFactorial, runIncrement, runSquare)
 import Runtime.Host (WasiFunc (..))
 import Runtime.Interpreter (HostRequest (..), resumeWith)
 import Runtime.Module (Invocation (..), SomeHostRequest (..), SomeModule, Value (..), continueWith, exportSignature, invokeExport, renderValue)
@@ -44,7 +44,7 @@ main = hspec spec
 
 spec :: Spec
 spec = do
-    describe "hand-written intrinsically-typed examples" $ do
+    describe "hand-written intrinsically-typed examples (test/Examples.hs)" $ do
         it "factorial 5  = 120" $ runFactorial 5 `shouldBe` Right 120
         it "factorial 10 = 3628800" $ runFactorial 10 `shouldBe` Right 3628800
         it "factorial 0  = 1" $ runFactorial 0 `shouldBe` Right 1

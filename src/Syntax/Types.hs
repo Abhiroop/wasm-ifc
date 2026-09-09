@@ -127,26 +127,26 @@ decideNumWithSign st sign = case decideInt st of
   @i32@ has no four-byte narrow form). Makes an out-of-range width unrepresentable.
 -}
 data NarrowWidth (t :: ValType) where
-    Narrow8 :: IsInt t -> NarrowWidth t
-    Narrow16 :: IsInt t -> NarrowWidth t
-    Narrow32 :: NarrowWidth 'I64
+    OneByte :: IsInt t -> NarrowWidth t
+    TwoBytes :: IsInt t -> NarrowWidth t
+    FourBytes :: NarrowWidth 'I64
 
 -- | The width in bytes a 'NarrowWidth' stands for (1, 2 or 4).
 narrowBytes :: NarrowWidth t -> Int
-narrowBytes (Narrow8 _) = 1
-narrowBytes (Narrow16 _) = 2
-narrowBytes Narrow32 = 4
+narrowBytes (OneByte _) = 1
+narrowBytes (TwoBytes _) = 2
+narrowBytes FourBytes = 4
 
 -- | The integer type a narrow access is for; a four-byte narrow access is only ever an i64's.
 narrowInt :: NarrowWidth t -> IsInt t
-narrowInt (Narrow8 isInt) = isInt
-narrowInt (Narrow16 isInt) = isInt
-narrowInt Narrow32 = I64IsInt
+narrowInt (OneByte isInt) = isInt
+narrowInt (TwoBytes isInt) = isInt
+narrowInt FourBytes = I64IsInt
 
 decideNarrow :: Sing (t :: ValType) -> Int -> Maybe (NarrowWidth t)
-decideNarrow st 1 = Narrow8 <$> decideInt st
-decideNarrow st 2 = Narrow16 <$> decideInt st
-decideNarrow SI64 4 = Just Narrow32
+decideNarrow st 1 = OneByte <$> decideInt st
+decideNarrow st 2 = TwoBytes <$> decideInt st
+decideNarrow SI64 4 = Just FourBytes
 decideNarrow _ _ = Nothing
 
 {- | A result type — the stack shape a block, loop, if, or function yields (the spec's

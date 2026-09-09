@@ -145,9 +145,9 @@ data ModuleInst (mod :: ModuleShape) = ModuleInst
 
    'Control' is the runtime realisation of the type-level @labels@ environment: the stack of
    what to do when the running code finishes or a branch unwinds to it. Each entry is a block
-   or @if@ label ('FLabel'), a @loop@ label ('FLoop'), a call boundary — the spec's
-   /activation frame/ — ('FCall'), or the entry boundary ('FHalt'); each label a branch can
-   target corresponds to one entry. It is indexed by
+   or @if@ label ('BlockLabel'), a @loop@ label ('LoopLabel'), a call boundary — the spec's
+   /activation frame/ — ('CallBoundary'), or the boundary of the entry function
+   ('EntryBoundary'); each label a branch can target corresponds to one entry. It is indexed by
 
      * @res@    — the result of the whole computation (the entry function),
      * @ret@    — the result of the /current/ activation,
@@ -169,19 +169,19 @@ data
     {- | The bottom of the stack: the entry activation. Falling through (or @br@ to its only
     label, or @return@) leaving @res@ completes the whole computation.
     -}
-    FHalt :: Control mod res res locals '[res] res
+    EntryBoundary :: Control mod res res locals '[res] res
     {- | A @block@/@if@ label. On normal completion or a branch to it, put the produced @rs@
     on top of the saved @below@ and run the continuation in the enclosing environment.
     -}
-    FLabel ::
+    BlockLabel ::
         ValueStack below ->
         Expr mod ('FrameShape locals ret) labels (rs ++ below) contOut ->
         Control mod res ret locals labels contOut ->
         Control mod res ret locals (rs ': labels) rs
     {- | A @loop@ label. A branch to it (carrying the loop's parameters) restarts the body;
-    normal completion runs the continuation, exactly like 'FLabel'.
+    normal completion runs the continuation, exactly like 'BlockLabel'.
     -}
-    FLoop ::
+    LoopLabel ::
         ValueStack below ->
         Expr mod ('FrameShape locals ret) (ps ': labels) ps rs ->
         Expr mod ('FrameShape locals ret) labels (rs ++ below) contOut ->
@@ -190,7 +190,7 @@ data
     {- | A call boundary: the callee's bottom frame. When the callee finishes (or returns),
     put its @rs@ results on the caller's saved stack and resume the caller.
     -}
-    FCall ::
+    CallBoundary ::
         ValueStack below ->
         LocalInsts callerLocals ->
         Expr mod ('FrameShape callerLocals callerRet) callerLabels (rs ++ below) contOut ->
@@ -337,7 +337,7 @@ step funcs (Config store locals stack code control) = case code of
             WasmFunc defaults body ->
                 let (args, below) = splitStack witness stack
                     calleeLocals = reverseOnto args defaults
-                 in Right (Stepped (Config store calleeLocals VNil body (FCall below locals rest control)))
+                 in Right (Stepped (Config store calleeLocals VNil body (CallBoundary below locals rest control)))
             HostFunc wasiFunc -> case wasiFuncType wasiFunc of
                 SFuncType _ resultsS ->
                     let (args, below) = splitStack witness stack
@@ -346,15 +346,15 @@ step funcs (Config store locals stack code control) = case code of
         {- Structured control: push the matching frame and run the body -}
         IBlock witness body ->
             let (params, below) = splitStack witness stack
-             in Right (Stepped (Config store locals params body (FLabel below rest control)))
+             in Right (Stepped (Config store locals params body (BlockLabel below rest control)))
         ILoop witness body ->
             let (params, below) = splitStack witness stack
-             in Right (Stepped (Config store locals params body (FLoop below body rest control)))
+             in Right (Stepped (Config store locals params body (LoopLabel below body rest control)))
         IIf witness thenArm elseArm -> case stack of
             cond :# below' ->
                 let (params, below) = splitStack witness below'
                     arm = if cond /= 0 then thenArm else elseArm
-                 in Right (Stepped (Config store locals params arm (FLabel below rest control)))
+                 in Right (Stepped (Config store locals params arm (BlockLabel below rest control)))
         {- Branches: unwind the control stack to the targeted frame -}
         IBr witness ix -> let (vs, _) = splitStack witness stack in Right (unwind store locals ix vs control)
         IBrIf witness ix -> case stack of
@@ -446,10 +446,10 @@ popControl ::
     ValueStack cur ->
     Control mod res ret locals labels cur ->
     StepResult mod res
-popControl store _ vs FHalt = Done store vs
-popControl store locals vs (FLabel below cont rest) = resume store locals vs below cont rest
-popControl store locals vs (FLoop below _ cont rest) = resume store locals vs below cont rest
-popControl store _ vs (FCall below cl cont cf) = resume store cl vs below cont cf
+popControl store _ vs EntryBoundary = Done store vs
+popControl store locals vs (BlockLabel below cont rest) = resume store locals vs below cont rest
+popControl store locals vs (LoopLabel below _ cont rest) = resume store locals vs below cont rest
+popControl store _ vs (CallBoundary below cl cont cf) = resume store cl vs below cont cf
 
 {- | Unwind to the @ix@-th enclosing label, carrying that label's values. A block/if label
   resumes after the construct; a loop label restarts the body; the function's own label
@@ -462,15 +462,15 @@ unwind ::
     ValueStack rs ->
     Control mod res ret locals labels cur ->
     StepResult mod res
-unwind store _ Here vs FHalt = Done store vs
-unwind store locals Here vs (FLabel below cont rest) = resume store locals vs below cont rest
-unwind store locals Here vs (FLoop below body cont rest) =
-    Stepped (Config store locals vs body (FLoop below body cont rest))
-unwind store _ Here vs (FCall below cl cont cf) = resume store cl vs below cont cf
-unwind store locals (There ix') vs (FLabel _ _ rest) = unwind store locals ix' vs rest
-unwind store locals (There ix') vs (FLoop _ _ _ rest) = unwind store locals ix' vs rest
-unwind _ _ (There ix') _ (FCall {}) = case ix' of {}
-unwind _ _ (There ix') _ FHalt = case ix' of {}
+unwind store _ Here vs EntryBoundary = Done store vs
+unwind store locals Here vs (BlockLabel below cont rest) = resume store locals vs below cont rest
+unwind store locals Here vs (LoopLabel below body cont rest) =
+    Stepped (Config store locals vs body (LoopLabel below body cont rest))
+unwind store _ Here vs (CallBoundary below cl cont cf) = resume store cl vs below cont cf
+unwind store locals (There ix') vs (BlockLabel _ _ rest) = unwind store locals ix' vs rest
+unwind store locals (There ix') vs (LoopLabel _ _ _ rest) = unwind store locals ix' vs rest
+unwind _ _ (There ix') _ (CallBoundary {}) = case ix' of {}
+unwind _ _ (There ix') _ EntryBoundary = case ix' of {}
 
 -- | @return@: unwind past every label frame in the current activation to the call boundary.
 returnUnwind ::
@@ -479,10 +479,10 @@ returnUnwind ::
     ValueStack ret ->
     Control mod res ret locals labels cur ->
     StepResult mod res
-returnUnwind store _ vs FHalt = Done store vs
-returnUnwind store _ vs (FCall below cl cont cf) = resume store cl vs below cont cf
-returnUnwind store locals vs (FLabel _ _ rest) = returnUnwind store locals vs rest
-returnUnwind store locals vs (FLoop _ _ _ rest) = returnUnwind store locals vs rest
+returnUnwind store _ vs EntryBoundary = Done store vs
+returnUnwind store _ vs (CallBoundary below cl cont cf) = resume store cl vs below cont cf
+returnUnwind store locals vs (BlockLabel _ _ rest) = returnUnwind store locals vs rest
+returnUnwind store locals vs (LoopLabel _ _ _ rest) = returnUnwind store locals vs rest
 
 -- | Where a run stops: with its results and final store, or waiting for the host.
 data Halt (mod :: ModuleShape) (res :: ResultType) where
@@ -516,7 +516,7 @@ runFunction ::
     ValueStack ps ->
     Either Trap (Outcome mod rs)
 runFunction tm (WasmFunc defaults body) args = do
-    halt <- run (tm.miFuncs) (Config store locals VNil body FHalt)
+    halt <- run (tm.miFuncs) (Config store locals VNil body EntryBoundary)
     Right $ case halt of
         Finished store' results -> Completed tm {miGlobals = store'.stGlobals, miMems = store'.stMems} results
         AwaitingHost request -> NeedsHost request
@@ -525,7 +525,7 @@ runFunction tm (WasmFunc defaults body) args = do
     locals = reverseOnto args defaults
 runFunction tm (HostFunc wasiFunc) args = case wasiFuncType wasiFunc of
     SFuncType _ resultsS ->
-        Right (NeedsHost (HostRequest wasiFunc args (Store (tm.miGlobals) (tm.miMems)) (Suspended (appendNil resultsS) LNil VNil INil FHalt)))
+        Right (NeedsHost (HostRequest wasiFunc args (Store (tm.miGlobals) (tm.miMems)) (Suspended (appendNil resultsS) LNil VNil INil EntryBoundary)))
 
 {- *** Numeric dispatch ***
 

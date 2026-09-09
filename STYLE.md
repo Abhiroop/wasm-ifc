@@ -341,3 +341,9 @@ over the corresponding general rule.
   there is a choice (a refinement-witness GADT over a class hierarchy; the library's singletons
   over hand-rolled ones; an explicit witness argument over a `KnownX` constraint outside the
   convenience API) — and the machinery stays out of the decoder, the CLI and the tests.
+- **§4 "Do not define custom operators" — overridden for three cons-like constructors.**
+  *Scope:* `:.` (`Expr`), `:#` (`ValueStack`) and `:&` (`LocalInsts`). *Reason:* they are
+  constructors of list-shaped GADTs, not functions, and they let a hand-written program read
+  as the instruction sequence it is (`ILocalGet Here :. IAdd I32IsNum :. INil`) rather than a
+  tower of parentheses — the ecosystem's own convention for `:|`. *Limits:* no other operators;
+  every other list-shaped type uses prefix constructors (`GCons`, `MCons`, `FsCons`, `SCons`).

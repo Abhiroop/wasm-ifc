@@ -132,16 +132,15 @@ Beyond P0, mostly *verification*; the spec-test runner (R1) is the instrument.
   `eeShape`→`shape`, `miFuncs`→`funcs`, `stGlobals`→`globals`, `frLocals`→`locals`,
   `frReturn`→`results`, `msMin`→`minPages`, `secTypes`→`types`, `moduleFuncs`→`funcs`,
   `exportName`→`name`, and so on.
-- [ ] **[P2·test]** Move `Runtime.Examples` out of the library into `test/` (only the tests use it).
-- [ ] **[P2·ci]** Run CI on every branch (today only `main` and pull requests, so this branch has
+- [x] **[P2·test]** Move `Runtime.Examples` out of the library into `test/` (only the tests use it).
+- [x] **[P2·ci]** Run CI on every branch (today only `main` and pull requests, so this branch has
   never been through it).
-- [ ] **[P2·repo]** Remove the committed Agda interface file `Formalisation/WASM-IFC.agdai` (a
+- [x] **[P2·repo]** Remove the committed Agda interface file `Formalisation/WASM-IFC.agdai` (a
   213 KB build artifact) and ignore `*.agdai`.
-- [ ] **[P2·style]** **[decision]** The constructor operators `:.`, `:#`, `:&` conflict with STYLE §4
-  "no custom operators": either bless them in §11 (cons-like, and the hand-written examples read
-  well with them) or rename them to prefix constructors.
-- [ ] **[P3·naming]** **[decision]** Remaining tag-style names: `Narrow8/16/32`, `ANil/ACons`,
-  `FHalt/FLabel/FLoop/FCall`, and the one-letter `m f l s` in the `Instr` constructor signatures.
+- [x] **[P2·style]** The constructor operators `:.`, `:#`, `:&` are blessed in STYLE §11 (cons-like
+  constructors of list-shaped GADTs; the hand-written examples read as instruction sequences).
+- [ ] **[P3·naming]** **[decision]** Remaining tag-style names: `OneByte/16/32`, `ANil/ACons`,
+  `EntryBoundary/BlockLabel/LoopLabel/CallBoundary`, and the one-letter `m f l s` in the `Instr` constructor signatures.
 - [ ] **[P3·meta]** **[decision]** cabal `author`/`maintainer` (still Abhiroop), `synopsis`,
   `CHANGELOG` date.
 

@@ -97,7 +97,6 @@ library
       , Runtime.Interpreter
       , Runtime.Module
       , Runtime.Host
-      , Runtime.Examples
       , Runtime.Wasi
       , Codec.Wasm
     build-depends:
@@ -125,6 +124,7 @@ test-suite wasm-ifc-test
     import:           warnings
     type:             exitcode-stdio-1.0
     main-is:          Spec.hs
+    other-modules:    Examples
     hs-source-dirs:   test
     build-depends:
         base

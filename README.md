@@ -40,7 +40,8 @@ Naming: `Foo` is the static syntax (in `Syntax`); `FooShape` is its type-level a
 | `src/Syntax/`     | the program syntax: raw AST + intrinsically-typed `Instr`/`Expr`, base types |
 | `src/Codec/`      | the binary decoder |
 | `src/Validation/` | type-level shapes (`Shape`), singletons + decidable equality (`Reflect`), the elaborator (`Elaborate`) |
-| `src/Runtime/`    | the small-step interpreter, the runtime instances, value/memory machinery, shared numerics |
+| `src/Runtime/`    | the small-step interpreter, the runtime instances, value/memory machinery, shared numerics, the WASI host |
+| `test/`           | the hspec/hedgehog suite, the hand-written typed examples, the spec-testsuite runner |
 | `app.old/`        | the original prototype, kept for reference (not built) |
 | `app/Main.hs`     | the CLI |
 | `samples/wat/`    | example programs (`.wat`); `samples/build.sh` compiles them with `wat2wasm` |

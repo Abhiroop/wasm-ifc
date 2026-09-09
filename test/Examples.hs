@@ -10,7 +10,7 @@
   the type checker has verified they are stack- and type-correct WebAssembly. Running
   them (see @test/@) is just a sanity check on the interpreter.
 -}
-module Runtime.Examples (
+module Examples (
     runFactorial,
     runSquare,
     runIncrement,
