@@ -3,8 +3,9 @@
 {- | A decoder from the WebAssembly binary format into the raw AST.
 
 Only the instruction subset declared in "Syntax.Instructions" is recognised; any other
-opcode (or an unsupported feature such as imports) fails the decode. Sections we do not
-model (tables, elements, data, custom) are skipped.
+opcode, and any feature outside the subset (imports, tables, elements), fails the decode
+with a message starting @unsupported@. Everything the format itself requires is checked:
+integer encodings, section order and uniqueness, section and code-entry sizes, UTF-8 names.
 -}
 module Codec.Wasm (
     decodeModule,
@@ -14,21 +15,22 @@ import Control.Monad (replicateM, when)
 import Data.Binary.Get (
     Get,
     getByteString,
+    getRemainingLazyByteString,
     getWord32le,
     getWord64le,
     getWord8,
     isEmpty,
     isolate,
     runGetOrFail,
-    skip,
  )
-import Data.Bits (shiftL, testBit, (.&.), (.|.))
+import Data.Bits (shiftL, shiftR, testBit, (.&.), (.|.))
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as BL
-import Data.Int (Int64)
+import Data.Int (Int32, Int64)
+import Data.List (elemIndex)
 import Data.Text (Text)
-import Data.Text.Encoding (decodeUtf8)
-import Data.Word (Word32, Word8)
+import Data.Text.Encoding (decodeUtf8')
+import Data.Word (Word32, Word64, Word8)
 import GHC.Float (castWord32ToFloat, castWord64ToDouble)
 import Numeric (showHex)
 
@@ -49,30 +51,59 @@ decodeModule bytes = case runGetOrFail getModule bytes of
 
 -- *** LEB128 ***
 
--- | Unsigned little-endian base-128 integer.
-getULEB128 :: Get Word32
-getULEB128 = go 0 0
+{- | Unsigned LEB128 for an integer of @bits@ bits: at most @ceil(bits/7)@ bytes ("integer
+  representation too long" beyond that), and the unused high bits of the last byte must be
+  zero ("integer too large"), as the binary format requires.
+-}
+getUnsignedLeb :: Int -> Get Word64
+getUnsignedLeb bits = go 0 0
   where
+    maxBytes = (bits + 6) `div` 7
     go shift acc = do
+        when (shift `div` 7 >= maxBytes) (fail "integer representation too long")
         byte <- getWord8
-        let acc' = acc .|. (fromIntegral (byte .&. 0x7F) `shiftL` shift)
+        let payload = byte .&. 0x7F
+            remainingBits = bits - shift
+        when (remainingBits < 7 && payload `shiftR` remainingBits /= 0) (fail "integer too large")
+        let acc' = acc .|. (fromIntegral payload `shiftL` shift)
         if testBit byte 7 then go (shift + 7) acc' else pure acc'
 
--- | Signed little-endian base-128 integer (sign-extended).
-getSLEB128 :: Get Int64
-getSLEB128 = go 0 0
+{- | Signed LEB128 for an integer of @bits@ bits, sign-extended: the same length bound, and
+  the unused bits of the last byte must all equal the value's sign bit.
+-}
+getSignedLeb :: Int -> Get Int64
+getSignedLeb bits = go 0 0
   where
+    maxBytes = (bits + 6) `div` 7
     go shift acc = do
+        when (shift `div` 7 >= maxBytes) (fail "integer representation too long")
         byte <- getWord8
-        let acc' = acc .|. (fromIntegral (byte .&. 0x7F) `shiftL` shift)
+        let payload = byte .&. 0x7F
+            acc' = acc .|. (fromIntegral payload `shiftL` shift)
             shift' = shift + 7
+            remainingBits = bits - shift
         if testBit byte 7
             then go shift' acc'
-            else
-                pure $
-                    if shift' < 64 && testBit byte 6
-                        then acc' .|. ((-1) `shiftL` shift')
-                        else acc'
+            else do
+                when (remainingBits < 7) $ do
+                    let unusedMask = (0x7F `shiftL` remainingBits) .&. 0x7F
+                        signExtension = if testBit payload (remainingBits - 1) then unusedMask else 0
+                    when (payload .&. unusedMask /= signExtension) (fail "integer too large")
+                pure (if shift' < 64 && testBit byte 6 then acc' .|. ((-1) `shiftL` shift') else acc')
+
+-- | The @u32@ used for every count, size and index.
+getULEB128 :: Get Word32
+getULEB128 = fromIntegral <$> getUnsignedLeb 32
+
+getS32 :: Get Int32
+getS32 = fromIntegral <$> getSignedLeb 32
+
+-- | Block types are encoded as @s33@ (negative for the short forms, a type index otherwise).
+getS33 :: Get Int64
+getS33 = getSignedLeb 33
+
+getS64 :: Get Int64
+getS64 = getSignedLeb 64
 
 -- | A length-prefixed vector.
 getVec :: Get a -> Get [a]
@@ -80,11 +111,12 @@ getVec getItem = do
     count <- getULEB128
     replicateM (fromIntegral count) getItem
 
--- | A length-prefixed UTF-8 name.
+-- | A length-prefixed UTF-8 name (rejected, not thrown, when the bytes are not UTF-8).
 getName :: Get Text
 getName = do
     count <- getULEB128
-    decodeUtf8 <$> getByteString (fromIntegral count)
+    bytes <- getByteString (fromIntegral count)
+    either (const (fail "malformed UTF-8 encoding")) pure (decodeUtf8' bytes)
 
 -- *** Types ***
 
@@ -126,7 +158,7 @@ getGlobalType = do
 -}
 getBlockType :: [FuncType] -> Get BlockType
 getBlockType types = do
-    code <- getSLEB128
+    code <- getS33
     case code of
         -64 -> pure (FuncType [] [])
         -1 -> pure (FuncType [] [I32])
@@ -216,11 +248,11 @@ getInstr types opcode = case opcode of
     0x3C -> StoreN SI64 1 <$> getMemArg
     0x3D -> StoreN SI64 2 <$> getMemArg
     0x3E -> StoreN SI64 4 <$> getMemArg
-    0x3F -> getWord8 >> pure MemorySize -- reserved memory index byte (0x00)
-    0x40 -> getWord8 >> pure MemoryGrow
+    0x3F -> reservedZero >> pure MemorySize
+    0x40 -> reservedZero >> pure MemoryGrow
     {- Constants -}
-    0x41 -> Const SI32 . fromIntegral <$> getSLEB128
-    0x42 -> Const SI64 . fromIntegral <$> getSLEB128
+    0x41 -> Const SI32 . fromIntegral <$> getS32
+    0x42 -> Const SI64 . fromIntegral <$> getS64
     0x43 -> Const SF32 . castWord32ToFloat <$> getWord32le
     0x44 -> Const SF64 . castWord64ToDouble <$> getWord64le
     {- Comparison: i32 -}
@@ -364,6 +396,12 @@ getInstr types opcode = case opcode of
     0x1B -> pure Select
     _ -> fail ("unsupported opcode 0x" ++ showHex opcode "")
 
+-- | The memory-index byte of @memory.size@/@memory.grow@, which must be @0x00@.
+reservedZero :: Get ()
+reservedZero = do
+    byte <- getWord8
+    when (byte /= 0) (fail "zero byte expected")
+
 -- *** Sections ***
 
 {- | Accumulator gathering sections as they are read. The function and code sections are
@@ -380,10 +418,12 @@ data Sections = Sections
     , secExports :: [Export]
     , secStart :: Maybe FunctionIdx
     , secData :: [RawData]
+    , secDataCount :: Maybe Word32
+    -- ^ the data count section, which must agree with the data section
     }
 
 emptySections :: Sections
-emptySections = Sections [] [] [] [] [] [] Nothing []
+emptySections = Sections [] [] [] [] [] [] Nothing [] Nothing
 
 getModule :: Get RawModule
 getModule = do
@@ -396,38 +436,49 @@ getModule = do
 wasmMagic :: BS.ByteString
 wasmMagic = BS.pack [0x00, 0x61, 0x73, 0x6D]
 
+{- | Read the sections in order. Non-custom sections must appear in the spec's fixed order,
+  each at most once; custom sections may appear anywhere. Each section is parsed in isolation
+  so it must consume exactly its declared size.
+-}
 readSections :: Sections -> Get Sections
-readSections acc = do
-    done <- isEmpty
-    if done
-        then pure acc
-        else do
-            sectionId <- getWord8
-            size <- getULEB128
-            acc' <-
-                if isModelledSection sectionId
-                    then isolate (fromIntegral size) (parseSection sectionId acc)
-                    else skip (fromIntegral size) >> pure acc
-            readSections acc'
+readSections = go 0
+  where
+    go lastRank acc = do
+        done <- isEmpty
+        if done
+            then pure acc
+            else do
+                sectionId <- getWord8
+                size <- getULEB128
+                rank <- maybe (fail ("malformed section id " ++ show sectionId)) pure (sectionRank sectionId)
+                when (sectionId /= 0 && rank <= lastRank) (fail ("section " ++ show sectionId ++ " out of order or repeated"))
+                acc' <- isolate (fromIntegral size) (parseSection sectionId acc)
+                go (if sectionId == 0 then lastRank else rank) acc'
 
-isModelledSection :: Word8 -> Bool
-isModelledSection sectionId = sectionId `elem` [1, 2, 3, 5, 6, 7, 8, 10, 11]
+-- | The position of a section id in the required order; the data count (12) precedes code (10).
+sectionRank :: Word8 -> Maybe Int
+sectionRank 0 = Just 0
+sectionRank sectionId = (+ 1) <$> elemIndex sectionId [1, 2, 3, 4, 5, 6, 7, 8, 9, 12, 10, 11]
 
 parseSection :: Word8 -> Sections -> Get Sections
 parseSection sectionId acc = case sectionId of
+    0 -> getName >> getRemainingLazyByteString >> pure acc -- a custom section: a name, then anything
     1 -> (\ts -> acc {secTypes = ts}) <$> getVec getFuncType
     2 -> do
         importCount <- getULEB128
         when (importCount /= 0) (fail "imports are not supported")
         pure acc
     3 -> (\is -> acc {secFuncTypes = is}) <$> getVec getULEB128
+    4 -> fail "unsupported: table section"
     5 -> (\ms -> acc {secMems = ms}) <$> getVec getMemory
     6 -> (\gs -> acc {secGlobals = gs}) <$> getVec getGlobal
     7 -> (\es -> acc {secExports = es}) <$> getVec getExport
     8 -> (\i -> acc {secStart = Just (FunctionIdx i)}) <$> getULEB128
+    9 -> fail "unsupported: element section"
     10 -> (\cs -> acc {secCodes = cs}) <$> getVec (getCode (acc.secTypes))
     11 -> (\ds -> acc {secData = ds}) <$> getVec getData
-    _ -> fail ("unexpected section id " ++ show sectionId)
+    12 -> (\n -> acc {secDataCount = Just n}) <$> getULEB128
+    _ -> fail ("malformed section id " ++ show sectionId)
 
 {- | A data segment. Only the active form for memory 0 (@0x00 offset-expr bytes@) is
   supported; passive segments and explicit memory indices are bulk-memory features.
@@ -464,11 +515,12 @@ getExport = do
 -}
 getCode :: [FuncType] -> Get ([ValType], [RawInstr])
 getCode types = do
-    _entrySize <- getULEB128
-    localGroups <- getVec getLocalGroup
-    when (sum [toInteger count | (count, _) <- localGroups] > toInteger maxLocals) (fail "too many locals")
-    body <- getExpr types
-    pure (concatMap expand localGroups, body)
+    entrySize <- getULEB128
+    isolate (fromIntegral entrySize) $ do
+        localGroups <- getVec getLocalGroup
+        when (sum [toInteger count | (count, _) <- localGroups] > toInteger maxLocals) (fail "too many locals")
+        body <- getExpr types
+        pure (concatMap expand localGroups, body)
   where
     expand (count, valType) = replicate (fromIntegral count) valType
 
@@ -487,6 +539,9 @@ assemble secs = do
     when
         (length secs.secFuncTypes /= length secs.secCodes)
         (Left "function and code sections have different lengths")
+    when
+        (maybe False (\n -> fromIntegral n /= length secs.secData) secs.secDataCount)
+        (Left "data count and data section have inconsistent lengths")
     funcs <- traverse toFunction (zip secs.secFuncTypes secs.secCodes)
     pure
         RawModule

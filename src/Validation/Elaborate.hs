@@ -655,16 +655,34 @@ stepDead env s instr = case instr of
         validateFrame env rsT psT rsT thenB
         validateFrame env rsT psT rsT elseB
         afterFrame (stackOrder psT) (stackOrder rsT) s1
-    Br (LabelIdx l) -> checkLabel env l >> Right s
-    BrIf (LabelIdx l) -> popKnown I32 s >>= \s' -> checkLabel env l >> Right s'
+    {- The transfers follow the spec's validation algorithm: pop what the target expects
+       (checking the known entries), and after an unconditional one the stack is polymorphic
+       again — an empty 'PolyStack' over the implicit unknown bottom. -}
+    Br (LabelIdx l) -> do
+        ts <- labelTypes env l
+        _ <- popTypes ts s
+        Right (PolyStack [])
+    BrIf (LabelIdx l) -> do
+        s1 <- popKnown I32 s
+        ts <- labelTypes env l
+        pushTypes ts <$> popTypes ts s1
     BrTable targets (LabelIdx d) -> do
-        s' <- popKnown I32 s
-        mapM_ (\(LabelIdx t) -> checkLabel env t) targets
-        checkLabel env d
-        Right s'
-    Return -> Right s
-    Unreachable -> Right s
+        s1 <- popKnown I32 s
+        defaultTypes <- labelTypes env d
+        mapM_ (checkTarget s1 (length defaultTypes)) targets
+        _ <- popTypes defaultTypes s1
+        Right (PolyStack [])
+    Return -> do
+        _ <- popTypes (stackToList (env.eeRet)) s
+        Right (PolyStack [])
+    Unreachable -> Right (PolyStack [])
   where
+    -- A br_table target must have the default's arity and be poppable from the same stack.
+    checkTarget s1 arity (LabelIdx t) = do
+        ts <- labelTypes env t
+        when (length ts /= arity) (Left (DeadCodeError "br_table targets have different arities"))
+        _ <- popTypes ts s1
+        Right ()
     arith :: Sing (t :: ValType) -> Either ElabError PolyStack
     arith t = pushKnown (valTypeOf t) <$> (popKnown (valTypeOf t) s >>= popKnown (valTypeOf t))
     compare' :: Sing (t :: ValType) -> Either ElabError PolyStack
@@ -708,10 +726,19 @@ withLocal env i k = case mkLocalElem (env.eeLocals) i of
     Just (SomeElem sv _) -> k (valTypeOf sv)
     Nothing -> Left (IndexOutOfRange ("local " ++ show i ++ " (unreachable code)"))
 
-checkLabel :: ElabEnv shape ret locals labels -> Word32 -> Either ElabError ()
-checkLabel env l = case mkLabelElem (env.eeLabels) l of
-    Just _ -> Right ()
+-- | The result types of a label, in stack order.
+labelTypes :: ElabEnv shape ret locals labels -> Word32 -> Either ElabError [ValType]
+labelTypes env l = case mkLabelElem (env.eeLabels) l of
+    Just (SomeLabel rsS _) -> Right (stackToList rsS)
     Nothing -> Left (IndexOutOfRange ("label " ++ show l ++ " (unreachable code)"))
+
+-- | Pop a list of types given in stack order (top first); known entries must match.
+popTypes :: [ValType] -> PolyStack -> Either ElabError PolyStack
+popTypes ts s = foldM (flip popKnown) s ts
+
+-- | Push a list of types given in stack order (top first).
+pushTypes :: [ValType] -> PolyStack -> PolyStack
+pushTypes ts s = foldr pushKnown s ts
 
 {- | The term-level value type a value-type singleton stands for (and, lifted, a whole stack
   shape). Now that 'ValType' is flat, these are exactly the library's 'fromSing'.

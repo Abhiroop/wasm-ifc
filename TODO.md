@@ -86,21 +86,21 @@ Suggested order: **P0 → R1 → W0…W6 → R2/R3 → R5** (R5 interleaved as f
 
 ### R2 — decoder audit against the binary format (spec §5)
 
-- [ ] **[P1·decoder]** LEB128 bounds: `u32` ≤ 5 bytes, `s32` ≤ 5, `s33` (block types) ≤ 5, `s64` ≤
+- [x] **[P1·decoder]** LEB128 bounds: `u32` ≤ 5 bytes, `s32` ≤ 5, `s33` (block types) ≤ 5, `s64` ≤
   10; reject non-zero/non-sign unused bits in the last byte. `i32.const` currently reads an `s64`
   and truncates; give it a real `s32` reader.
-- [ ] **[P1·decoder]** Invalid UTF-8 in a name crashes: `decodeUtf8` throws a pure exception that
+- [x] **[P1·decoder]** Invalid UTF-8 in a name crashes: `decodeUtf8` throws a pure exception that
   `runGetOrFail` cannot catch; use `decodeUtf8'` and `fail`.
-- [ ] **[P1·decoder]** Section order and uniqueness: ids must increase and appear at most once
+- [x] **[P1·decoder]** Section order and uniqueness: ids must increase and appear at most once
   (custom sections anywhere); a duplicate section currently overwrites silently.
-- [ ] **[P1·decoder]** Code entries: `isolate` each function body with its declared size (read and
+- [x] **[P1·decoder]** Code entries: `isolate` each function body with its declared size (read and
   ignored today), so a body/size mismatch is a decode error.
-- [ ] **[P2·decoder]** The reserved memory-index byte of `memory.size`/`memory.grow` must be `0x00`
+- [x] **[P2·decoder]** The reserved memory-index byte of `memory.size`/`memory.grow` must be `0x00`
   (read and ignored today).
-- [ ] **[P2·decoder]** Resource bounds: a six-byte input can declare 2³² locals or a 4 GB memory
+- [x] **[P2·decoder]** Resource bounds: a six-byte input can declare 2³² locals or a 4 GB memory
   minimum. Cap total locals per function (document the bound) and either cap initial memory or
   allocate it lazily (ties in with the `memory.grow` item).
-- [ ] **[P2·decoder]** A hand-assembled byte fixture for each new rejection.
+- [x] **[P2·decoder]** A hand-assembled byte fixture for each new rejection.
 
 ### R3 — validation audit against the validation rules (spec §3)
 

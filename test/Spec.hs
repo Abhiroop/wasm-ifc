@@ -174,6 +174,24 @@ spec = do
         it "rejects a block type index out of range" $
             decodeSections [typeSection, funcSection [0], codeSection [[0x02, 0x05, 0x0B, 0x0B]]]
                 `shouldSatisfy` decodeErrorContaining "block type index out of range"
+        it "rejects an over-long integer encoding (a 6-byte u32)" $
+            decodeSections [section 1 [0x80, 0x80, 0x80, 0x80, 0x80, 0x00]]
+                `shouldSatisfy` decodeErrorContaining "too long"
+        it "rejects an integer with its unused high bits set" $
+            decodeSections [section 1 [0xFF, 0xFF, 0xFF, 0xFF, 0x7F]]
+                `shouldSatisfy` decodeErrorContaining "too large"
+        it "rejects an unknown section id" $
+            decodeSections [section 13 []] `shouldSatisfy` decodeErrorContaining "malformed section id"
+        it "rejects sections out of order" $
+            decodeSections [funcSection [0], typeSection] `shouldSatisfy` decodeErrorContaining "out of order"
+        it "rejects a custom section without a name" $
+            decodeSections [section 0 []] `shouldSatisfy` isLeft
+        it "rejects a code entry whose declared size disagrees with its content" $
+            decodeSections [typeSection, funcSection [0], section 10 (vec [[0x03, 0x00, 0x0B]])]
+                `shouldSatisfy` isLeft
+        it "rejects a data count that disagrees with the data section" $
+            decodeSections [typeSection, funcSection [0], section 12 [0x01], codeSection [[0x0B]]]
+                `shouldSatisfy` decodeErrorContaining "inconsistent"
         it "rejects an unknown opcode" $
             decodeSections [typeSection, funcSection [0], codeSection [[0xFF, 0x0B]]]
                 `shouldSatisfy` decodeErrorContaining "unsupported opcode"
