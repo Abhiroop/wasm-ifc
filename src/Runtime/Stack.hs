@@ -24,6 +24,7 @@ module Runtime.Stack (
     GlobalInsts (..),
     MemInsts (..),
     appendStack,
+    appendWith,
     splitStack,
     reverseOnto,
     getLocal,
@@ -70,6 +71,11 @@ data GlobalInsts gs where
 appendStack :: ValueStack a -> ValueStack b -> ValueStack (a ++ b)
 appendStack VNil ys = ys
 appendStack (x :# xs) ys = x :# appendStack xs ys
+
+-- | Concatenate two stacks, guided by an 'Append' witness (so the result type is the witness's).
+appendWith :: Append a b c -> ValueStack a -> ValueStack b -> ValueStack c
+appendWith ANil VNil ys = ys
+appendWith (ACons w) (x :# xs) ys = x :# appendWith w xs ys
 
 -- | Split a concatenated stack into its parts, guided by an 'Append' witness.
 splitStack :: Append a b c -> ValueStack c -> (ValueStack a, ValueStack b)

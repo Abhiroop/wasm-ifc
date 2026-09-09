@@ -23,6 +23,7 @@ module Validation.Reflect (
     stackOrder,
     declaredOrder,
     sReverseOnto,
+    appendNil,
     mkLocalElem,
     mkLabelElem,
     matchPrefix,
@@ -76,6 +77,11 @@ declaredOrder = reverse
 -- | A decoded function type with its parameter and result lists in stack order.
 stackOrderFuncType :: FuncType -> FuncType
 stackOrderFuncType (FuncType params results) = FuncType (stackOrder params) (stackOrder results)
+
+-- | The witness that appending nothing changes nothing, for a stack whose singleton we hold.
+appendNil :: Sing (xs :: [ValType]) -> Append xs '[] xs
+appendNil SNil = ANil
+appendNil (SCons _ rest) = ACons (appendNil rest)
 
 -- | The singleton of 'ReverseOnto', built the same structural way.
 sReverseOnto :: Sing (xs :: [ValType]) -> Sing (acc :: [ValType]) -> Sing (ReverseOnto xs acc)

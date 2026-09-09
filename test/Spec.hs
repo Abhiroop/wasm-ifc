@@ -21,12 +21,17 @@ import Codec.Wasm (decodeModule)
 import Runtime.Bytes (bytesOfWord32, bytesOfWord64, word32OfBytes, word64OfBytes)
 import Runtime.Convert (convertVal)
 import Runtime.Examples (runFactorial, runIncrement, runSquare)
-import Runtime.Module (SomeModule, Value (..), exportSignature, invokeExport, renderValue)
+import Runtime.Host (WasiFunc (..))
+import Runtime.Interpreter (HostRequest (..), resumeWith)
+import Runtime.Module (Invocation (..), SomeHostRequest (..), SomeModule, Value (..), continueWith, exportSignature, invokeExport, renderValue)
 import Runtime.Numeric (intDiv32)
+import Runtime.Stack (ValueStack (..))
 import Runtime.Trap (Trap (..))
+import Runtime.Wasi (Completion (..), runWithWasi)
 import Syntax.DataSegments (RawData (..))
 import Syntax.Functions (RawFunction (..))
 import Syntax.Globals (RawGlobal (..))
+import Syntax.Imports (ImportDesc (..), RawImport (..))
 import Syntax.Indices
 import Syntax.Instructions
 import Syntax.Memories (RawMemory (..))
@@ -85,6 +90,32 @@ spec = do
         it "traps on an out-of-bounds load" $
             elabRunWithMemory [I32] [I32] [] [LocalGet (LocalIdx 0), Load SI32 (MemArg 0 0)] [70000]
                 `shouldSatisfy` trapContaining "OutOfBoundsMemoryAccess"
+
+    describe "WASI imports" $ do
+        it "resolve to typed host functions; proc_exit ends the run with its code" $ do
+            completion <- runWithWasi (either (error . show) id (elaborateModule (wasiModule procExitImport [Const SI32 3, Call (FunctionIdx 0)] []))) "f" []
+            fmap describeCompletion completion `shouldBe` Right "exited 3"
+        it "fd_write on an unknown descriptor reports errno 8 (badf) and the module continues" $ do
+            completion <- runWithWasi (either (error . show) id (elaborateModule (wasiModule fdWriteImport [Const SI32 7, Const SI32 0, Const SI32 0, Const SI32 8, Call (FunctionIdx 0)] [I32]))) "f" []
+            fmap describeCompletion completion `shouldBe` Right "returned [I32Value 8]"
+        it "suspend the pure invocation, which a pure driver can answer itself" $
+            case elaborateModule (wasiModule fdWriteImport [Const SI32 1, Const SI32 0, Const SI32 0, Const SI32 8, Call (FunctionIdx 0)] [I32]) of
+                Left err -> expectationFailure (show err)
+                Right sm -> case invokeExport sm "f" [] of
+                    Right (CalledHost (SomeHostRequest shapeS funcs exports rsS (HostRequest FdWrite _ store suspended))) ->
+                        case continueWith shapeS funcs exports rsS (resumeWith store (99 :# VNil) suspended) of
+                            Right (Returned _ results) -> results `shouldBe` [I32Value 99]
+                            _ -> expectationFailure "expected the module to return the fake errno"
+                    _ -> expectationFailure "expected a suspended fd_write call"
+        it "must be declared at the host function's type" $
+            void (elaborateModule (wasiModule (RawImport "wasi_snapshot_preview1" "proc_exit" (ImportFunc (FuncType [I64] []))) [] []))
+                `shouldBe` Left (ImportTypeMismatch "proc_exit")
+        it "must be provided by this host" $
+            void (elaborateModule (wasiModule (RawImport "spectest" "print" (ImportFunc (FuncType [] []))) [] []))
+                `shouldBe` Left (UnsupportedImport "spectest" "print")
+        it "need a memory in the module" $
+            void (elaborateModule ((wasiModule procExitImport [] []) {moduleMemories = []}))
+                `shouldBe` Left WasiNeedsMemory
 
     describe "module-level validation" $ do
         it "rejects a memory whose minimum exceeds its maximum" $
@@ -325,6 +356,7 @@ moduleOf :: [RawMemory] -> [RawFunction] -> FunctionIdx -> RawModule
 moduleOf memories funcs exported =
     RawModule
         { moduleTypes = [f.signature | f <- funcs]
+        , moduleImports = []
         , moduleFuncs = funcs
         , moduleGlobals = []
         , moduleMemories = memories
@@ -344,7 +376,10 @@ invokeWithIntegers :: SomeModule -> [Integer] -> Either String [String]
 invokeWithIntegers sm args = do
     FuncType params _ <- maybe (Left "no export f") Right (exportSignature sm "f")
     let values = zipWith integerValue params args
-    either (Left . show) (Right . map renderValue . snd) (invokeExport sm "f" values)
+    case invokeExport sm "f" values of
+        Left err -> Left (show err)
+        Right (Returned _ results) -> Right (map renderValue results)
+        Right (CalledHost _) -> Left "called into the host"
   where
     integerValue I32 n = I32Value (fromInteger n)
     integerValue I64 n = I64Value (fromInteger n)
@@ -353,6 +388,26 @@ invokeWithIntegers sm args = do
 
 onePageMemory :: RawMemory
 onePageMemory = RawMemory (MemType AddrI32 (Limits 1 Nothing))
+
+procExitImport, fdWriteImport :: RawImport
+procExitImport = RawImport "wasi_snapshot_preview1" "proc_exit" (ImportFunc (FuncType [I32] []))
+fdWriteImport = RawImport "wasi_snapshot_preview1" "fd_write" (ImportFunc (FuncType [I32, I32, I32, I32] [I32]))
+
+{- | One import (function 0), one page of memory, and the export @f@ (function 1) with the
+  given body and result type.
+-}
+wasiModule :: RawImport -> [RawInstr] -> [ValType] -> RawModule
+wasiModule imported body results =
+    (moduleOf [onePageMemory] [RawFunction (FuncType [] results) [] body] (FunctionIdx 1))
+        { moduleImports = [imported]
+        , moduleTypes = [importType imported, FuncType [] results]
+        }
+  where
+    importType (RawImport _ _ (ImportFunc ft)) = ft
+
+describeCompletion :: Completion -> String
+describeCompletion (Ran _ results) = "returned " ++ show results
+describeCompletion (Exited code) = "exited " ++ show code
 
 {- | Function 0 is the start function with the given body; the export @f@ (function 1) reads
   the module's one mutable i32 global, initially 0.

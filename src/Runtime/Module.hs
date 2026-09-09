@@ -13,8 +13,11 @@ module Runtime.Module (
     valueType,
     renderValue,
     RunError (..),
+    Invocation (..),
+    SomeHostRequest (..),
     exportSignature,
     invokeExport,
+    continueWith,
 ) where
 
 import Data.Bifunctor (first)
@@ -23,7 +26,7 @@ import Data.Singletons.Base.TH (SList (SCons, SNil))
 import Data.Text (Text)
 import Data.Word (Word32, Word64)
 
-import Runtime.Interpreter (ModuleInst (..), getFunc, runFunction)
+import Runtime.Interpreter (Config, FuncInsts, Halt (..), HostRequest, ModuleInst (..), Outcome (..), Store (..), getFunc, run, runFunction)
 import Runtime.Stack (ValueStack (..))
 import Runtime.Trap (Trap)
 import Syntax.Immediates (HostType)
@@ -31,7 +34,7 @@ import Syntax.Indices (FunctionIdx (..))
 import Syntax.Module (Export (..), ExportDesc (..))
 import Syntax.Types
 import Validation.Reflect (SomeFuncRef (..), declaredOrder, funcTypesSing, lookupFuncRef, stackOrder)
-import Validation.Shape (ModuleShape)
+import Validation.Shape (ModuleFuncs, ModuleShape)
 
 {- | A fully elaborated, well-typed module: its shape witness, its instances, and its exports
   (for resolving entry points).
@@ -67,7 +70,29 @@ data RunError
     | -- | the argument at this (zero-based) position should have the first type, has the second
       ArgumentType Int ValType ValType
     | Trapped Trap
+    | -- | the function called into the host, and the caller had no host to offer
+      HostCallNotServed
     deriving stock (Eq, Show)
+
+{- | How an invocation ends, short of a trap: with its results and the module as the call left
+  it, or suspended on a call into the host. The pure core stops there; a driver (see
+  "Runtime.Wasi") performs the call and continues with 'continueWith'.
+-}
+data Invocation
+    = Returned SomeModule [Value]
+    | CalledHost SomeHostRequest
+
+{- | A pending host call together with everything needed to resume the module afterwards:
+  its shape witness, its functions, its exports, and the result type of the invocation.
+-}
+data SomeHostRequest where
+    SomeHostRequest ::
+        Sing (shape :: ModuleShape) ->
+        FuncInsts shape (ModuleFuncs shape) ->
+        [Export] ->
+        Sing (rs :: [ValType]) ->
+        HostRequest shape rs ->
+        SomeHostRequest
 
 -- | The type of an exported function, parameters and results in declared order.
 exportSignature :: SomeModule -> Text -> Maybe FuncType
@@ -80,14 +105,33 @@ exportSignature (SomeModule shapeS _ exports) name = do
   module comes back with the globals and memories the call left behind, so a sequence of
   invocations shares state as the spec's instance does.
 -}
-invokeExport :: SomeModule -> Text -> [Value] -> Either RunError (SomeModule, [Value])
+invokeExport :: SomeModule -> Text -> [Value] -> Either RunError Invocation
 invokeExport (SomeModule shapeS inst exports) name args = do
     FunctionIdx idx <- note (NoSuchExport name) (exportedFuncIndex name exports)
     SomeFuncRef psS rsS funcIx <- note (NoSuchExport name) (lookupFuncRef (funcTypesSing shapeS) idx)
     checkArguments (declaredOrder (fromSing psS)) args
     argStack <- note (ArgumentCount 0 0) (buildStack psS (stackOrder args))
-    (inst', results) <- first Trapped (runFunction inst (getFunc funcIx inst.miFuncs) argStack)
-    pure (SomeModule shapeS inst' exports, declaredOrder (toValues rsS results))
+    outcome <- first Trapped (runFunction inst (getFunc funcIx inst.miFuncs) argStack)
+    pure $ case outcome of
+        Completed inst' results -> Returned (SomeModule shapeS inst' exports) (declaredOrder (toValues rsS results))
+        NeedsHost request -> CalledHost (SomeHostRequest shapeS inst.miFuncs exports rsS request)
+
+{- | Continue a suspended invocation from the configuration the host's answer produced (see
+  'Runtime.Interpreter.resumeWith'); it may finish, or call the host again.
+-}
+continueWith ::
+    Sing (shape :: ModuleShape) ->
+    FuncInsts shape (ModuleFuncs shape) ->
+    [Export] ->
+    Sing (rs :: [ValType]) ->
+    Config shape rs ->
+    Either RunError Invocation
+continueWith shapeS funcs exports rsS config = do
+    halt <- first Trapped (run funcs config)
+    pure $ case halt of
+        Finished store results ->
+            Returned (SomeModule shapeS (ModuleInst funcs store.stGlobals store.stMems) exports) (declaredOrder (toValues rsS results))
+        AwaitingHost request -> CalledHost (SomeHostRequest shapeS funcs exports rsS request)
 
 exportedFuncIndex :: Text -> [Export] -> Maybe FunctionIdx
 exportedFuncIndex name exports =

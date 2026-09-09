@@ -28,7 +28,7 @@ import Test.Hspec
 import Text.Read (readMaybe)
 
 import Codec.Wasm (decodeModule)
-import Runtime.Module (RunError (..), SomeModule, Value (..), invokeExport, valueType)
+import Runtime.Module (Invocation (..), RunError (..), SomeModule, Value (..), invokeExport, valueType)
 import Runtime.Trap (Trap (..))
 import Syntax.Types (ValType (..))
 import Validation.Elaborate (ElabError (..), elaborateModule)
@@ -251,6 +251,7 @@ loadModule path = do
             | otherwise -> Unavailable ("decode error: " ++ err)
         Right raw -> case elaborateModule raw of
             Left (UnsupportedInstr what) -> Unavailable ("unsupported by the elaborator: " ++ what)
+            Left (UnsupportedImport modName field) -> Unavailable ("unsupported import: " ++ T.unpack modName ++ "." ++ T.unpack field)
             Left err -> Unavailable ("elaboration error: " ++ show err)
             Right m -> Loaded m
   where
@@ -260,7 +261,10 @@ loadModule path = do
 invoke :: SomeModule -> Action -> Either RunError (SomeModule, [Value])
 invoke m act = case traverse literalValue act.args of
     Nothing -> Left (NoSuchExport "(non-numeric argument)")
-    Just values -> invokeExport m act.field values
+    Just values -> case invokeExport m act.field values of
+        Left err -> Left err
+        Right (Returned m' results) -> Right (m', results)
+        Right (CalledHost _) -> Left HostCallNotServed
 
 -- | Each check hands back the instance to continue with (unchanged when the call failed).
 assertReturn :: SomeModule -> Action -> [Literal] -> (SomeModule, Outcome)

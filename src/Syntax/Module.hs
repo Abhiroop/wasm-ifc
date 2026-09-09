@@ -9,6 +9,7 @@ import Data.Text (Text)
 import Syntax.DataSegments (RawData)
 import Syntax.Functions (RawFunction)
 import Syntax.Globals (RawGlobal)
+import Syntax.Imports (RawImport)
 import Syntax.Indices (FunctionIdx, GlobalIdx, MemoryIdx)
 import Syntax.Memories (RawMemory)
 import Syntax.Types (FuncType)
@@ -36,6 +37,8 @@ these as type-level lists, which is far more tractable than type-level arrays.
 data RawModule = RawModule
     { moduleTypes :: [FuncType]
     -- ^ the type section
+    , moduleImports :: [RawImport]
+    -- ^ imported functions; they come first in the function index space
     , moduleFuncs :: [RawFunction]
     -- ^ function + code sections, merged by the decoder
     , moduleGlobals :: [RawGlobal]

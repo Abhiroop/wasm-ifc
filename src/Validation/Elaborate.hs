@@ -30,7 +30,8 @@ import Data.Word (Word32)
 import Data.List.Singletons ((%++))
 import Data.Singletons.Base.TH (SList (SCons, SNil), Sing, fromSing)
 import Data.Singletons.Decide (decideEquality)
-import Runtime.Interpreter (FuncInst (..), FuncInsts (..), ModuleInst (..), getFunc, runFunction)
+import Runtime.Host (SomeWasiFunc (..), resolveWasiImport, wasiFuncType, wasiModuleName)
+import Runtime.Interpreter (FuncInst (..), FuncInsts (..), ModuleInst (..), Outcome (..), getFunc, runFunction)
 import Runtime.MemInst (allocMemory, maxMemoryPages, writeBytes)
 import Runtime.Module (SomeModule (..))
 import Runtime.Stack (GlobalInsts (..), LocalInsts (..), MemInsts (..), ValueStack (..))
@@ -39,6 +40,7 @@ import Syntax.DataSegments (RawData (RawData))
 import Syntax.Functions (RawFunction (RawFunction))
 import Syntax.Globals (RawGlobal (RawGlobal))
 import Syntax.Immediates (HostType)
+import Syntax.Imports (ImportDesc (..), RawImport (..))
 import Syntax.Indices (FunctionIdx (..), GlobalIdx (..), LabelIdx (..), LocalIdx (..), MemoryIdx (..))
 import Syntax.Instructions (
     BitwiseOp (..),
@@ -84,6 +86,14 @@ data ElabError
       InvalidStartFunction
     | -- | the start function trapped, so instantiation failed
       StartFunctionTrapped Trap
+    | -- | the start function called into the host, which instantiation cannot serve
+      StartFunctionNeedsHost
+    | -- | an import (module, name) this host does not provide
+      UnsupportedImport Text Text
+    | -- | the import's declared type is not the host function's
+      ImportTypeMismatch Text
+    | -- | a WASI import requires the module to have a memory
+      WasiNeedsMemory
     deriving stock (Eq, Show)
 
 -- *** Elaboration environment & results ***
@@ -767,13 +777,14 @@ elaborateModule m = do
     validateStructure m
     case reflectCtx funcSigs globalTypes memTypes of
         SomeModuleShape ctxS@(SModuleShape ftsS gsS msS) -> do
-            funcs <- elaborateFuncs ctxS ftsS (m.moduleFuncs)
+            funcs <- elaborateFuncs ctxS ftsS (map Left m.moduleImports ++ map Right m.moduleFuncs)
             globals <- buildGlobals gsS (m.moduleGlobals)
             mems <- buildMems msS (m.moduleMemories) >>= initialiseData (m.moduleData)
             started <- runStart ctxS (ModuleInst funcs globals mems) (m.moduleStart)
             Right (SomeModule ctxS started (m.moduleExports))
   where
-    funcSigs = map (\(RawFunction sig _ _) -> sig) (m.moduleFuncs)
+    -- The function index space: imports first, then the module's own functions.
+    funcSigs = [ft | RawImport _ _ (ImportFunc ft) <- m.moduleImports] ++ map (\(RawFunction sig _ _) -> sig) (m.moduleFuncs)
     globalTypes = map (\(RawGlobal gt _) -> gt) (m.moduleGlobals)
     memTypes = map (\(RawMemory mt) -> mt) (m.moduleMemories)
 
@@ -796,7 +807,7 @@ validateStructure m = do
         [] -> Right ()
         n : _ -> Left (DuplicateExport n)
     checkExport (Export name desc) = case desc of
-        ExportFunc (FunctionIdx i) -> inRange name i (length m.moduleFuncs)
+        ExportFunc (FunctionIdx i) -> inRange name i (length m.moduleImports + length m.moduleFuncs)
         ExportGlobal (GlobalIdx i) -> inRange name i (length m.moduleGlobals)
         ExportMem (MemoryIdx i) -> inRange name i (length m.moduleMemories)
     inRange name i count
@@ -811,16 +822,41 @@ runStart ctxS inst (Just (FunctionIdx idx)) = case lookupFuncRef (funcTypesSing 
     Just (SomeFuncRef psS rsS funcIx) -> do
         Refl <- note InvalidStartFunction (decideEquality psS SNil)
         Refl <- note InvalidStartFunction (decideEquality rsS SNil)
-        (started, _) <- first StartFunctionTrapped (runFunction inst (getFunc funcIx inst.miFuncs) VNil)
-        Right started
+        outcome <- first StartFunctionTrapped (runFunction inst (getFunc funcIx inst.miFuncs) VNil)
+        case outcome of
+            Completed started _ -> Right started
+            NeedsHost _ -> Left StartFunctionNeedsHost
 
-elaborateFuncs :: SModuleShape shape -> Sing fts -> [RawFunction] -> Either ElabError (FuncInsts shape fts)
+{- | The function instances, one per entry of the index space: imports resolve to host
+functions, the module's own functions are elaborated.
+-}
+elaborateFuncs ::
+    SModuleShape shape ->
+    Sing fts ->
+    [Either RawImport RawFunction] ->
+    Either ElabError (FuncInsts shape fts)
 elaborateFuncs _ SNil [] = Right FsNil
-elaborateFuncs ctxS (SCons ft fs) (rf : rfs) = do
-    f <- elaborateFunctionIn ctxS ft rf
-    fs' <- elaborateFuncs ctxS fs rfs
+elaborateFuncs ctxS (SCons ft fs) (entry : rest) = do
+    f <- either (resolveImport ctxS ft) (elaborateFunctionIn ctxS ft) entry
+    fs' <- elaborateFuncs ctxS fs rest
     Right (FsCons f fs')
 elaborateFuncs _ _ _ = Left (Malformed "function/signature count mismatch")
+
+{- | Resolve an import to a host function: it must come from the WASI module, be one we
+  provide, be declared at exactly the host function's type, and the module must have a
+  memory (WASI requires one, and 'HostFunc' cannot be built without it).
+-}
+resolveImport :: SModuleShape shape -> SFuncType ft -> RawImport -> Either ElabError (FuncInst shape ft)
+resolveImport ctxS (SFuncType psS rsS) (RawImport moduleName fieldName (ImportFunc _))
+    | moduleName /= wasiModuleName = Left (UnsupportedImport moduleName fieldName)
+    | otherwise = case resolveWasiImport fieldName of
+        Nothing -> Left (UnsupportedImport moduleName fieldName)
+        Just (SomeWasiFunc wasiFunc) -> case wasiFuncType wasiFunc of
+            SFuncType hostPsS hostRsS -> do
+                Refl <- note (ImportTypeMismatch fieldName) (decideEquality psS hostPsS)
+                Refl <- note (ImportTypeMismatch fieldName) (decideEquality rsS hostRsS)
+                NonEmptyMems <- note WasiNeedsMemory (memsNonEmpty (memShapesSing ctxS))
+                Right (HostFunc wasiFunc)
 
 elaborateFunctionIn ::
     SModuleShape shape ->
@@ -840,10 +876,10 @@ elaborateFunctionIn ctxS (SFuncType psS rsS) (RawFunction _ declaredT body) =
                                 note
                                     (ResultMismatch "function body does not match its result type")
                                     (decideEquality soS rsS)
-                            Right (FuncInst defaults bodySeq)
+                            Right (WasmFunc defaults bodySeq)
                         Diverged final poly -> do
                             checkDeadResult final rsS
-                            Right (FuncInst defaults poly)
+                            Right (WasmFunc defaults poly)
 
 buildGlobals :: Sing gs -> [RawGlobal] -> Either ElabError (GlobalInsts gs)
 buildGlobals SNil [] = Right GNil

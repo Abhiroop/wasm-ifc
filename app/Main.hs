@@ -9,11 +9,12 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import GHC.Float (castWord32ToFloat, castWord64ToDouble)
 import System.Environment (getArgs)
-import System.Exit (die)
+import System.Exit (ExitCode (..), die, exitSuccess, exitWith)
 import Text.Read (readMaybe)
 
 import Codec.Wasm (decodeModule)
-import Runtime.Module (RunError (..), SomeModule, Value (..), exportSignature, invokeExport, renderValue)
+import Runtime.Module (RunError (..), SomeModule, Value (..), exportSignature, renderValue)
+import Runtime.Wasi (Completion (..), runWithWasi)
 import Syntax.Types (FuncType (..), ValType (..))
 import Validation.Elaborate (elaborateModule)
 
@@ -24,9 +25,14 @@ main = do
         ["check", path] -> withModule path (\_ -> putStrLn "ok")
         ("invoke" : path : name : rawArgs) ->
             withModule path $ \wasmModule ->
-                case invokeWithText wasmModule (T.pack name) (map T.pack rawArgs) of
+                case parseArguments wasmModule (T.pack name) (map T.pack rawArgs) of
                     Left err -> die err
-                    Right results -> mapM_ (putStrLn . renderValue) results
+                    Right values -> runUnderWasi wasmModule (T.pack name) values (mapM_ (putStrLn . renderValue))
+        ["run", path] ->
+            withModule path $ \wasmModule -> case exportSignature wasmModule "_start" of
+                Nothing -> die "the module has no _start export"
+                Just (FuncType [] []) -> runUnderWasi wasmModule "_start" [] (\_ -> pure ())
+                Just _ -> die "_start must take no parameters and return nothing"
         _ -> die usage
 
 usage :: String
@@ -35,10 +41,22 @@ usage =
         [ "Usage:"
         , "  wasm-ifc check  <file.wasm>                    decode and validate"
         , "  wasm-ifc invoke <file.wasm> <export> [args...] run an exported function"
+        , "  wasm-ifc run    <file.wasm>                    run a WASI program (its _start export)"
         , ""
         , "Arguments are typed by the export: integers (decimal or 0x…) for i32/i64; decimals,"
-        , "inf, -inf, nan, -nan or a bit pattern nan:0x… for f32/f64."
+        , "inf, -inf, nan, -nan or a bit pattern nan:0x… for f32/f64. Host calls (fd_write to"
+        , "the standard streams, proc_exit) are served; proc_exit's code becomes the exit code."
         ]
+
+-- | Invoke an export with the WASI host serving its calls; hand the results to the printer.
+runUnderWasi :: SomeModule -> Text -> [Value] -> ([Value] -> IO ()) -> IO ()
+runUnderWasi wasmModule name args printResults = do
+    completion <- runWithWasi wasmModule name args
+    case completion of
+        Left err -> die (describeRunError err)
+        Right (Ran _ results) -> printResults results
+        Right (Exited 0) -> exitSuccess
+        Right (Exited code) -> exitWith (ExitFailure code)
 
 {- | Decode and elaborate a module from disk, then hand it to the action. All the fallible
   work is a pure @Either String@; IO is only reading the file and printing. Any failure is
@@ -57,14 +75,13 @@ withModule path action = do
         raw <- first ("Decode error: " ++) (decodeModule bytes)
         first (\e -> "Elaboration error: " ++ show e) (elaborateModule raw)
 
--- | Parse the textual arguments at the export's parameter types, then invoke it.
-invokeWithText :: SomeModule -> Text -> [Text] -> Either String [Value]
-invokeWithText wasmModule name rawArgs = do
+-- | Parse the textual arguments at the export's parameter types.
+parseArguments :: SomeModule -> Text -> [Text] -> Either String [Value]
+parseArguments wasmModule name rawArgs = do
     FuncType params _ <- maybe (Left ("no exported function named " ++ T.unpack name)) Right (exportSignature wasmModule name)
     unless (length params == length rawArgs) $
         Left ("expected " ++ show (length params) ++ " argument(s), got " ++ show (length rawArgs))
-    args <- traverse parseArgument (zip params rawArgs)
-    snd <$> first describeRunError (invokeExport wasmModule name args)
+    traverse parseArgument (zip params rawArgs)
   where
     parseArgument (valType, raw) =
         maybe (Left ("cannot read " ++ T.unpack raw ++ " as " ++ show valType)) Right (parseValue valType raw)
@@ -77,6 +94,7 @@ describeRunError err = case err of
     ArgumentType position expectedType actualType ->
         "argument " ++ show position ++ " should be " ++ show expectedType ++ ", got " ++ show actualType
     Trapped trap -> "trap: " ++ show trap
+    HostCallNotServed -> "the function called into the host, which this path cannot serve"
 
 {- | Read one argument at a value type. Integers wrap to the type's width (so @-1@ is a valid
   i32); floats accept decimals, the infinities, NaN, and a NaN with an explicit payload

@@ -32,9 +32,16 @@ module Runtime.Interpreter (
     getFunc,
     ModuleInst (..),
     Store (..),
+    currentMem,
+    storeMem,
     Config (..),
     Control (..),
     StepResult (..),
+    HostRequest (..),
+    Suspended (..),
+    resumeWith,
+    Halt (..),
+    Outcome (..),
     step,
     run,
     runFunction,
@@ -61,6 +68,7 @@ import GHC.Float (castDoubleToWord64, castFloatToWord32, castWord32ToFloat, cast
 import Data.List.Singletons (type (++))
 import Runtime.Bytes (bytesOfWord32, bytesOfWord64, word32OfBytes, word64OfBytes)
 import Runtime.Convert (convertVal)
+import Runtime.Host (WasiFunc, wasiFuncType)
 import Runtime.MemInst (MemInst, growMemory, memoryPages, readBytes, writeBytes)
 import Runtime.Numeric (copysign32, copysign64, fromSigned32, fromSigned64, intDiv32, intDiv64, intRem32, intRem64, toSigned32, toSigned64, wasmMax, wasmMin)
 import Runtime.Stack
@@ -75,7 +83,8 @@ import Syntax.Instructions (
     Instr (..),
  )
 import Syntax.Types
-import Validation.Shape (Elem (..), FrameShape (..), ModuleFuncs, ModuleGlobals, ModuleMems, ModuleShape, ReverseOnto)
+import Validation.Reflect (appendNil)
+import Validation.Shape (Append, Elem (..), FrameShape (..), ModuleFuncs, ModuleGlobals, ModuleMems, ModuleShape, ReverseOnto, appendFromSing)
 
 -- *** Module and runtime state ***
 
@@ -86,18 +95,21 @@ import Validation.Shape (Elem (..), FrameShape (..), ModuleFuncs, ModuleGlobals,
 -}
 type FunctionBody mod locals rs = Expr mod ('FrameShape locals rs) '[rs] '[] rs
 
-{- | A function instance: the zero-initialised values of the locals it declares, together with
-  its body. The body's locals are the parameters (local 0 is the first parameter, so the
-  argument segment — last argument on top — is reversed onto them) followed by those declared
-  locals.
+{- | A function instance: either a WebAssembly function — the zero-initialised values of the
+  locals it declares, together with its body — or an imported host function. A body's locals
+  are the parameters (local 0 is the first parameter, so the argument segment — last argument
+  on top — is reversed onto them) followed by the declared locals. A host function can only
+  live in a module that has a memory, which WASI requires; the constraint is packed here so
+  the driver can reach that memory without asking.
 -}
 data FuncInst (mod :: ModuleShape) (ft :: FuncType) where
-    FuncInst ::
+    WasmFunc ::
         -- | zero-inits for the declared (non-parameter) locals
         LocalInsts declared ->
         -- | the body, typed @'[] -> rs@
         FunctionBody mod (ReverseOnto ps declared) rs ->
         FuncInst mod ('FuncType ps rs)
+    HostFunc :: (ModuleMems mod ~ (mem ': mems)) => WasiFunc ft -> FuncInst mod ft
 
 -- | The functions of a module, one typed body per signature in 'ModuleFuncs'.
 data FuncInsts (mod :: ModuleShape) (fts :: [FuncType]) where
@@ -198,12 +210,45 @@ data Config (mod :: ModuleShape) (res :: ResultType) where
         Control mod res ret locals labels out ->
         Config mod res
 
-{- | The result of one 'step': either a successor configuration, or the final value stack
-  together with the store as the computation left it.
+{- | The result of one 'step': a successor configuration; the final value stack together with
+  the store as the computation left it; or a call into the host, which the pure machine
+  cannot perform and so hands out as a request.
 -}
 data StepResult (mod :: ModuleShape) (res :: ResultType) where
     Stepped :: Config mod res -> StepResult mod res
     Done :: Store mod -> ValueStack res -> StepResult mod res
+    HostCall :: HostRequest mod res -> StepResult mod res
+
+{- | A call into the host, suspended: which function, its arguments (a stack of exactly its
+  parameter shape), the store to perform it against, and how to continue once the results
+  are known. The memory constraint travels with it so the driver can read and write memory.
+-}
+data HostRequest (mod :: ModuleShape) (res :: ResultType) where
+    HostRequest ::
+        (ModuleMems mod ~ (mem ': mems)) =>
+        WasiFunc ('FuncType ps rs) ->
+        ValueStack ps ->
+        Store mod ->
+        Suspended mod res rs ->
+        HostRequest mod res
+
+{- | A configuration with an @rs@-shaped hole where a call's results go: the caller's locals,
+  the stack it saved below the arguments, the code after the call and its control stack. The
+  'Append' witness says where the results sit on that stack.
+-}
+data Suspended (mod :: ModuleShape) (res :: ResultType) (rs :: ResultType) where
+    Suspended ::
+        Append rs below full ->
+        LocalInsts locals ->
+        ValueStack below ->
+        Expr mod ('FrameShape locals ret) labels full contOut ->
+        Control mod res ret locals labels contOut ->
+        Suspended mod res rs
+
+-- | Fill the hole: continue the suspended computation with the host's results and store.
+resumeWith :: Store mod -> ValueStack rs -> Suspended mod res rs -> Config mod res
+resumeWith store results (Suspended witness locals below cont control) =
+    Config store locals (appendWith witness results below) cont control
 
 -- *** The step relation ***
 
@@ -286,12 +331,18 @@ step funcs (Config store locals stack code control) = case code of
                 case writeBytes (currentMem store) (effectiveAddr addr memArg) (storeBytes nt value) of
                     Just mem' -> stepped (storeMem mem' store) locals r rest control
                     Nothing -> Left OutOfBoundsMemoryAccess
-        {- Calls: push a call frame and start the callee over an empty stack -}
+        {- Calls: push a call frame and start the callee over an empty stack — or, for a host
+           function, hand the call out as a request with the caller suspended around it -}
         ICall witness ix -> case getFunc ix funcs of
-            FuncInst defaults body ->
+            WasmFunc defaults body ->
                 let (args, below) = splitStack witness stack
                     calleeLocals = reverseOnto args defaults
                  in Right (Stepped (Config store calleeLocals VNil body (FCall below locals rest control)))
+            HostFunc wasiFunc -> case wasiFuncType wasiFunc of
+                SFuncType _ resultsS ->
+                    let (args, below) = splitStack witness stack
+                        suspended = Suspended (appendFromSing resultsS) locals below rest control
+                     in Right (HostCall (HostRequest wasiFunc args store suspended))
         {- Structured control: push the matching frame and run the body -}
         IBlock witness body ->
             let (params, below) = splitStack witness stack
@@ -433,30 +484,48 @@ returnUnwind store _ vs (FCall below cl cont cf) = resume store cl vs below cont
 returnUnwind store locals vs (FLabel _ _ rest) = returnUnwind store locals vs rest
 returnUnwind store locals vs (FLoop _ _ _ rest) = returnUnwind store locals vs rest
 
-{- | Iterate 'step' to completion. (This is the only partial function here — it loops, which
-  is termination, a property orthogonal to the progress/preservation that 'step' carries.)
+-- | Where a run stops: with its results and final store, or waiting for the host.
+data Halt (mod :: ModuleShape) (res :: ResultType) where
+    Finished :: Store mod -> ValueStack res -> Halt mod res
+    AwaitingHost :: HostRequest mod res -> Halt mod res
+
+{- | Iterate 'step' until the computation finishes or needs the host. (This is the only partial
+  function here — it loops, which is termination, a property orthogonal to the progress and
+  preservation that 'step' carries.)
 -}
-run :: FuncInsts mod (ModuleFuncs mod) -> Config mod res -> Either Trap (Store mod, ValueStack res)
+run :: FuncInsts mod (ModuleFuncs mod) -> Config mod res -> Either Trap (Halt mod res)
 run funcs config = case step funcs config of
     Left t -> Left t
-    Right (Done store vs) -> Right (store, vs)
+    Right (Done store vs) -> Right (Finished store vs)
+    Right (HostCall request) -> Right (AwaitingHost request)
     Right (Stepped next) -> run funcs next
+
+-- | How a function invocation ends: with the module as the call left it, or needing the host.
+data Outcome (mod :: ModuleShape) (rs :: ResultType) where
+    Completed :: ModuleInst mod -> ValueStack rs -> Outcome mod rs
+    NeedsHost :: HostRequest mod rs -> Outcome mod rs
 
 {- | Run a function against an instantiated module: seed the entry activation and iterate.
   The module comes back with its globals and memories as the call left them, so state
   persists from one invocation to the next; on a trap the caller keeps the module it had.
+  Calling a host function directly (an exported import) is a request straight away.
 -}
 runFunction ::
     ModuleInst mod ->
     FuncInst mod ('FuncType ps rs) ->
     ValueStack ps ->
-    Either Trap (ModuleInst mod, ValueStack rs)
-runFunction tm (FuncInst defaults body) args = do
-    (store', results) <- run (tm.miFuncs) (Config store locals VNil body FHalt)
-    Right (tm {miGlobals = store'.stGlobals, miMems = store'.stMems}, results)
+    Either Trap (Outcome mod rs)
+runFunction tm (WasmFunc defaults body) args = do
+    halt <- run (tm.miFuncs) (Config store locals VNil body FHalt)
+    Right $ case halt of
+        Finished store' results -> Completed tm {miGlobals = store'.stGlobals, miMems = store'.stMems} results
+        AwaitingHost request -> NeedsHost request
   where
     store = Store (tm.miGlobals) (tm.miMems)
     locals = reverseOnto args defaults
+runFunction tm (HostFunc wasiFunc) args = case wasiFuncType wasiFunc of
+    SFuncType _ resultsS ->
+        Right (NeedsHost (HostRequest wasiFunc args (Store (tm.miGlobals) (tm.miMems)) (Suspended (appendNil resultsS) LNil VNil INil FHalt)))
 
 {- *** Numeric dispatch ***
 

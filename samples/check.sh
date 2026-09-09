@@ -41,6 +41,18 @@ checkTrap () {
     fi
 }
 
+# checkRun <wasm in samples/wasi> <expected stdout> <expected exit code>
+# A WASI program: its _start export runs under the host; stdout and the exit code are checked.
+checkRun () {
+    local file=$1 expectedOut=$2 expectedCode=$3
+    local out; out=$("$BIN" run "samples/wasi/$file" 2>/dev/null); local code=$?
+    local label; label=$(printf '%-22s %-10s' "$file" "run")
+    if [ "$out" = "$expectedOut" ] && [ "$code" -eq "$expectedCode" ]
+        then printf 'ok   %s -> %q, exit %s\n' "$label" "$out" "$code"; pass=$((pass+1))
+        else printf 'FAIL %s : got %q exit %s, expected %q exit %s\n' "$label" "$out" "$code" "$expectedOut" "$expectedCode"; fail=$((fail+1))
+    fi
+}
+
 check factorial.wasm fac      3628800 10
 check factorial.wasm fac      120     5
 check recfac.wasm    fac      720     6
@@ -76,6 +88,8 @@ check collatz.wasm   collatz  8       6
 check memreverse.wasm memreverse 9    10
 
 checkTrap divs.wasm divs IntegerDivideByZero       7 0
+checkRun hello.wasm "Hello, world!" 0
+checkRun exit.wasm  ""              7
 checkTrap oob.wasm  oob  OutOfBoundsMemoryAccess    1000000
 
 echo "-----"

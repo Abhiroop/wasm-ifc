@@ -37,6 +37,7 @@ import Numeric (showHex)
 import Syntax.DataSegments (RawData (RawData))
 import Syntax.Functions (RawFunction (RawFunction))
 import Syntax.Globals (RawGlobal (RawGlobal))
+import Syntax.Imports (ImportDesc (..), RawImport (RawImport))
 import Syntax.Indices
 import Syntax.Instructions
 import Syntax.Memories (RawMemory (RawMemory))
@@ -409,6 +410,7 @@ reservedZero = do
 -}
 data Sections = Sections
     { secTypes :: [FuncType]
+    , secImports :: [RawImport]
     , secFuncTypes :: [Word32]
     -- ^ function section: type index per function
     , secCodes :: [([ValType], [RawInstr])]
@@ -423,7 +425,7 @@ data Sections = Sections
     }
 
 emptySections :: Sections
-emptySections = Sections [] [] [] [] [] [] Nothing [] Nothing
+emptySections = Sections [] [] [] [] [] [] [] Nothing [] Nothing
 
 getModule :: Get RawModule
 getModule = do
@@ -464,10 +466,7 @@ parseSection :: Word8 -> Sections -> Get Sections
 parseSection sectionId acc = case sectionId of
     0 -> getName >> getRemainingLazyByteString >> pure acc -- a custom section: a name, then anything
     1 -> (\ts -> acc {secTypes = ts}) <$> getVec getFuncType
-    2 -> do
-        importCount <- getULEB128
-        when (importCount /= 0) (fail "imports are not supported")
-        pure acc
+    2 -> (\is -> acc {secImports = is}) <$> getVec (getImport (acc.secTypes))
     3 -> (\is -> acc {secFuncTypes = is}) <$> getVec getULEB128
     4 -> fail "unsupported: table section"
     5 -> (\ms -> acc {secMems = ms}) <$> getVec getMemory
@@ -491,6 +490,24 @@ getData = do
         1 -> fail "unsupported: passive data segment"
         2 -> fail "unsupported: data segment with an explicit memory index"
         _ -> fail ("unknown data segment mode " ++ show mode)
+
+-- | An import: module name, field name, and what it is. Only function imports are supported.
+getImport :: [FuncType] -> Get RawImport
+getImport types = do
+    moduleName <- getName
+    fieldName <- getName
+    kind <- getWord8
+    desc <- case kind of
+        0x00 -> do
+            typeIdx <- getULEB128
+            case nth types (fromIntegral typeIdx) of
+                Just ft -> pure (ImportFunc ft)
+                Nothing -> fail ("import type index out of range: " ++ show typeIdx)
+        0x01 -> fail "unsupported: table import"
+        0x02 -> fail "unsupported: memory import"
+        0x03 -> fail "unsupported: global import"
+        _ -> fail ("unknown import kind 0x" ++ showHex kind "")
+    pure (RawImport moduleName fieldName desc)
 
 getMemory :: Get RawMemory
 getMemory = RawMemory . MemType AddrI32 <$> getLimits
@@ -546,6 +563,7 @@ assemble secs = do
     pure
         RawModule
             { moduleTypes = secs.secTypes
+            , moduleImports = secs.secImports
             , moduleFuncs = funcs
             , moduleGlobals = secs.secGlobals
             , moduleMemories = secs.secMems

@@ -82,6 +82,7 @@ library
       , Syntax.Globals
       , Syntax.Memories
       , Syntax.DataSegments
+      , Syntax.Imports
       , Syntax.Functions
       , Syntax.Module
       , Validation.Shape
@@ -95,6 +96,7 @@ library
       , Runtime.Stack
       , Runtime.Interpreter
       , Runtime.Module
+      , Runtime.Host
       , Runtime.Examples
       , Runtime.Wasi
       , Codec.Wasm

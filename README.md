@@ -44,6 +44,8 @@ Naming: `Foo` is the static syntax (in `Syntax`); `FooShape` is its type-level a
 | `app.old/`        | the original prototype, kept for reference (not built) |
 | `app/Main.hs`     | the CLI |
 | `samples/wat/`    | example programs (`.wat`); `samples/build.sh` compiles them with `wat2wasm` |
+| `samples/wasi/`   | WASI programs run with `run`; checked by `samples/check.sh` |
+| `test/spec/`      | the official spec testsuite (a pinned submodule) driven by `test/SpecSuite.hs` |
 
 ### Usage
 
@@ -51,6 +53,7 @@ Naming: `Foo` is the static syntax (in `Syntax`); `FooShape` is its type-level a
 cabal build
 cabal run wasm-ifc -- invoke <file.wasm> <export> [args...]   # decode → elaborate → run
 cabal run wasm-ifc -- check <file.wasm>                        # decode → elaborate only
+cabal run wasm-ifc -- run <file.wasm>                          # a WASI program: run its _start
 
 samples/build.sh    # compile every sample .wat to .wasm  (needs wabt's wat2wasm)
 samples/check.sh    # run every sample and check it against its expected result
@@ -64,11 +67,16 @@ Runs today: the numeric, comparison and conversion instructions; memory loads an
 calls and globals; whole-module validation; one linear memory per module; exported functions
 invoked from the CLI with integer arguments.
 
-Not yet: information-flow control (the project's goal; `TODO.md` §F); imports and WASI
-(`TODO.md` §H — only an isolated host scaffold exists); tables and `call_indirect`; the start
-function (decoded, not run); exported globals and memories (decoded, not reachable from the
-CLI); typed `select` (`0x1C`); multiple memories; bulk memory, passive data segments,
-reference and SIMD types. Linear memory is sparse and copy-on-write per 64 KiB page.
+WASI: a module may import `fd_write` (to the standard streams) and `proc_exit` from
+`wasi_snapshot_preview1`; `run` executes its `_start`. The interpreter stays pure: a call into
+the host is handed out as a request and a small IO driver (`Runtime.Wasi`) serves it and
+resumes the module.
+
+Not yet: information-flow control (the project's goal; `TODO.md` §F); other imports (tables,
+memories, globals, or host functions beyond the two above); tables and `call_indirect`;
+exported globals and memories (decoded, not reachable from the CLI); typed `select` (`0x1C`);
+multiple memories; bulk memory, passive data segments, reference and SIMD types. Linear
+memory is sparse and copy-on-write per 64 KiB page.
 
 ### Toolchain
 

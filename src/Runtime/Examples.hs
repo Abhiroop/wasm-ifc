@@ -20,7 +20,6 @@ import Data.Word (Word32)
 
 import Runtime.Interpreter
 import Runtime.Stack
-import Runtime.Trap (Trap)
 import Syntax.Instructions
 import Syntax.Types (
     FuncType (..),
@@ -34,8 +33,12 @@ import Syntax.Types (
  )
 import Validation.Shape (Elem (..), ModuleShape (..))
 
-extractI32 :: ValueStack '[ 'I32] -> Word32
-extractI32 (x :# VNil) = x
+{- | The single i32 a completed run produced. (These modules import nothing, so a call into
+the host cannot arise; the case is still spelled out because the type admits it.)
+-}
+completedI32 :: Outcome mod '[ 'I32] -> Either String Word32
+completedI32 (Completed _ (x :# VNil)) = Right x
+completedI32 (NeedsHost _) = Left "the example called into the host"
 
 {- *** factorial *** -
 
@@ -46,7 +49,7 @@ extractI32 (x :# VNil) = x
 
 factorial :: FuncInst shape ('FuncType '[ 'I32] '[ 'I32])
 factorial =
-    FuncInst
+    WasmFunc
         (0 :& LNil)
         ( IConst I32IsNum 1
             :. ILocalSet acc
@@ -81,9 +84,9 @@ factorial =
     toContinue = Here -- branch to the loop header (restarts it)
     toDone = There Here -- branch out of the block (exits the loop)
 
-runFactorial :: Word32 -> Either Trap Word32
+runFactorial :: Word32 -> Either String Word32
 runFactorial input =
-    extractI32 . snd <$> runFunction emptyModule factorial (input :# VNil)
+    either (Left . show) completedI32 (runFunction emptyModule factorial (input :# VNil))
   where
     emptyModule :: ModuleInst ('ModuleShape '[] '[] '[])
     emptyModule = ModuleInst FsNil GNil MNil
@@ -96,17 +99,17 @@ runFactorial input =
 type CallCtx = 'ModuleShape '[ 'FuncType '[ 'I32, 'I32] '[ 'I32]] '[] '[]
 
 multiply :: FuncInst CallCtx ('FuncType '[ 'I32, 'I32] '[ 'I32])
-multiply = FuncInst LNil (ILocalGet Here :. ILocalGet (There Here) :. IMul I32IsNum :. INil)
+multiply = WasmFunc LNil (ILocalGet Here :. ILocalGet (There Here) :. IMul I32IsNum :. INil)
 
 square :: FuncInst CallCtx ('FuncType '[ 'I32] '[ 'I32])
-square = FuncInst LNil (ILocalGet Here :. ILocalGet Here :. call toMultiply :. INil)
+square = WasmFunc LNil (ILocalGet Here :. ILocalGet Here :. call toMultiply :. INil)
   where
     -- function index 0 in the module signature
     toMultiply :: Elem ('FuncType '[ 'I32, 'I32] '[ 'I32]) '[ 'FuncType '[ 'I32, 'I32] '[ 'I32]]
     toMultiply = Here
 
-runSquare :: Word32 -> Either Trap Word32
-runSquare input = extractI32 . snd <$> runFunction callModule square (input :# VNil)
+runSquare :: Word32 -> Either String Word32
+runSquare input = either (Left . show) completedI32 (runFunction callModule square (input :# VNil))
   where
     callModule :: ModuleInst CallCtx
     callModule = ModuleInst (FsCons multiply FsNil) GNil MNil
@@ -121,7 +124,7 @@ type GlobalCtx = 'ModuleShape '[] '[ 'GlobalType 'Mutable 'I32] '[]
 
 increment :: FuncInst GlobalCtx ('FuncType '[] '[ 'I32])
 increment =
-    FuncInst
+    WasmFunc
         LNil
         ( IGlobalGet Here
             :. IConst I32IsNum 1
@@ -131,8 +134,8 @@ increment =
             :. INil
         )
 
-runIncrement :: Word32 -> Either Trap Word32
-runIncrement initial = extractI32 . snd <$> runFunction globalModule increment VNil
+runIncrement :: Word32 -> Either String Word32
+runIncrement initial = either (Left . show) completedI32 (runFunction globalModule increment VNil)
   where
     globalModule :: ModuleInst GlobalCtx
     globalModule = ModuleInst FsNil (GCons initial GNil) MNil
@@ -149,5 +152,5 @@ runIncrement initial = extractI32 . snd <$> runFunction globalModule increment V
          In the first argument of ‘(:.)’, namely ‘IAdd I32IsNum’
 
    broken :: FuncInst shape ('FuncType '[ 'I32 ] '[ 'I32 ])
-   broken = FuncInst LNil (ILocalGet Here :. IAdd I32IsNum :. INil)
+   broken = WasmFunc LNil (ILocalGet Here :. IAdd I32IsNum :. INil)
 -}

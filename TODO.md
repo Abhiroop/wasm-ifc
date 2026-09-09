@@ -63,7 +63,7 @@ Suggested order: **P0 → R1 → W0…W6 → R2/R3 → R5** (R5 interleaved as f
 
 ### R1 — a conformance harness, so this class of bug cannot hide again
 
-- [ ] **[P1·test]** **Spec-test runner** over the official WebAssembly test suite: wabt's
+- [x] **[P1·test]** **Spec-test runner** over the official WebAssembly test suite: wabt's
   `wast2json` (installed, 1.0.27) turns each `test/core/*.wast` into `.wasm` modules plus a JSON of
   `assert_return`/`assert_trap`/`assert_invalid`/`assert_malformed` commands. A Haskell runner (a
   second test-suite) executes them for the supported subset — `i32`, `i64`, `f32`, `f64`,
@@ -153,17 +153,17 @@ go in after P0 and the spec runner exist to guard them.
 - [x] **[W0·decoder+runtime]** Active data segments: decode section 11 (`0x00 expr bytes`: memory
   0, constant `i32.const` offset; `fail` on passive and other forms) into `RawModule.moduleData`;
   elaboration checks that offset + length fit the memory's minimum; instantiation writes the bytes.
-- [ ] **[W1·decoder]** Import section: `Import {module, name, desc}` with `ImportDesc = ImportFunc
+- [x] **[W1·decoder]** Import section: `Import {module, name, desc}` with `ImportDesc = ImportFunc
   TypeIdx`; `fail` on imported tables/memories/globals. The function index space is imports ++
   defined (calls and exports already index that space).
-- [ ] **[W2·types]** Host functions typed by construction: a `WasiFunc (ft :: FuncType)` GADT
+- [x] **[W2·types]** Host functions typed by construction: a `WasiFunc (ft :: FuncType)` GADT
   (`FdWrite :: WasiFunc ('FuncType '[I32,I32,I32,I32] '[I32])`, `ProcExit :: WasiFunc ('FuncType
   '[I32] '[])`), and `FuncInst` gains `HostFunc :: (ModuleMems mod ~ (m ': ms)) => WasiFunc ft ->
   FuncInst mod ft` — a WASI import is unrepresentable in a module without a memory, and a host
   function at the wrong type cannot be built. `runWasiCall :: WasiFunc ('FuncType ps rs) ->
   ValueStack ps -> MemInst m -> IO (WasiOutcome rs m)`: the arguments arrive exact by construction
   (no `[Word32]`), and `ProcExit`'s `rs ~ '[]` says it never resumes.
-- [ ] **[W3·machine]** The effect-request boundary, first-order: `StepResult` gains `HostCall ::
+- [x] **[W3·machine]** The effect-request boundary, first-order: `StepResult` gains `HostCall ::
   WasiFunc ('FuncType ps rs) -> ValueStack ps -> Store mod -> Suspended mod res rs -> StepResult mod
   res`, where `Suspended` is the caller's continuation *as data* (locals, saved stack, remaining
   code, control stack) and `resumeWith :: Store mod -> ValueStack rs -> Suspended mod res rs ->
@@ -171,14 +171,14 @@ go in after P0 and the spec runner exist to guard them.
   `Either Trap (Halt mod res)` with `Halt = Finished (ValueStack res) | AwaitingHost …`, so a test
   can drive host calls with a fake `fd_write` purely; `runIO` performs `AwaitingHost` through
   `Runtime.Wasi`, writes the memory back, resumes and loops; `proc_exit` ends in `Exited code`.
-- [ ] **[W4·elaborate]** Imports: resolve `(wasi_snapshot_preview1, name)` to a `SomeWasiFunc`;
+- [x] **[W4·elaborate]** Imports: resolve `(wasi_snapshot_preview1, name)` to a `SomeWasiFunc`;
   `decideEquality` the declared type's singleton against the function's; require a memory; anything
   else is `UnsupportedImport`. `FuncInsts` = host entries first, then the defined functions.
-- [ ] **[W5·entry]** `wasm-ifc run file.wasm`: validate and run the start function if present, then
+- [x] **[W5·entry]** `wasm-ifc run file.wasm`: validate and run the start function if present, then
   the `_start` export through `runIO`; the process exit code is `proc_exit`'s. The existing
   `wasm-ifc file.wasm fn args…` stays pure and reports "module needs WASI; use run" on
   `AwaitingHost`.
-- [ ] **[W6·sample]** `samples/wasi/hello.wat` (imports `fd_write`/`proc_exit`, exports `memory`,
+- [x] **[W6·sample]** `samples/wasi/hello.wat` (imports `fd_write`/`proc_exit`, exports `memory`,
   data segment `"Hello, world!\n"`); `check.sh` compares stdout and exit code; plus the pure
   `AwaitingHost` test.
 - [ ] **[W7·later]** Widen the WASI surface only on demand: a wasi-sdk C hello world also imports
