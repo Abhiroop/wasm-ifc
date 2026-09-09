@@ -62,7 +62,7 @@ import Data.List.Singletons (type (++))
 import Runtime.Bytes (bytesOfWord32, bytesOfWord64, word32OfBytes, word64OfBytes)
 import Runtime.Convert (convertVal)
 import Runtime.MemInst (MemInst, growMemory, memoryPages, readBytes, writeBytes)
-import Runtime.Numeric (copysign, fromSigned32, fromSigned64, intDiv32, intDiv64, intRem32, intRem64, toSigned32, toSigned64, wasmMax, wasmMin)
+import Runtime.Numeric (copysign32, copysign64, fromSigned32, fromSigned64, intDiv32, intDiv64, intRem32, intRem64, toSigned32, toSigned64, wasmMax, wasmMin)
 import Runtime.Stack
 import Runtime.Trap (Trap (..))
 import Syntax.Immediates (HostType)
@@ -198,10 +198,12 @@ data Config (mod :: ModuleShape) (res :: ResultType) where
         Control mod res ret locals labels out ->
         Config mod res
 
--- | The result of one 'step': either a successor configuration, or the final value stack.
+{- | The result of one 'step': either a successor configuration, or the final value stack
+  together with the store as the computation left it.
+-}
 data StepResult (mod :: ModuleShape) (res :: ResultType) where
     Stepped :: Config mod res -> StepResult mod res
-    Done :: ValueStack res -> StepResult mod res
+    Done :: Store mod -> ValueStack res -> StepResult mod res
 
 -- *** The step relation ***
 
@@ -393,7 +395,7 @@ popControl ::
     ValueStack cur ->
     Control mod res ret locals labels cur ->
     StepResult mod res
-popControl _ _ vs FHalt = Done vs
+popControl store _ vs FHalt = Done store vs
 popControl store locals vs (FLabel below cont rest) = resume store locals vs below cont rest
 popControl store locals vs (FLoop below _ cont rest) = resume store locals vs below cont rest
 popControl store _ vs (FCall below cl cont cf) = resume store cl vs below cont cf
@@ -409,7 +411,7 @@ unwind ::
     ValueStack rs ->
     Control mod res ret locals labels cur ->
     StepResult mod res
-unwind _ _ Here vs FHalt = Done vs
+unwind store _ Here vs FHalt = Done store vs
 unwind store locals Here vs (FLabel below cont rest) = resume store locals vs below cont rest
 unwind store locals Here vs (FLoop below body cont rest) =
     Stepped (Config store locals vs body (FLoop below body cont rest))
@@ -426,7 +428,7 @@ returnUnwind ::
     ValueStack ret ->
     Control mod res ret locals labels cur ->
     StepResult mod res
-returnUnwind _ _ vs FHalt = Done vs
+returnUnwind store _ vs FHalt = Done store vs
 returnUnwind store _ vs (FCall below cl cont cf) = resume store cl vs below cont cf
 returnUnwind store locals vs (FLabel _ _ rest) = returnUnwind store locals vs rest
 returnUnwind store locals vs (FLoop _ _ _ rest) = returnUnwind store locals vs rest
@@ -434,20 +436,24 @@ returnUnwind store locals vs (FLoop _ _ _ rest) = returnUnwind store locals vs r
 {- | Iterate 'step' to completion. (This is the only partial function here — it loops, which
   is termination, a property orthogonal to the progress/preservation that 'step' carries.)
 -}
-run :: FuncInsts mod (ModuleFuncs mod) -> Config mod res -> Either Trap (ValueStack res)
+run :: FuncInsts mod (ModuleFuncs mod) -> Config mod res -> Either Trap (Store mod, ValueStack res)
 run funcs config = case step funcs config of
     Left t -> Left t
-    Right (Done vs) -> Right vs
+    Right (Done store vs) -> Right (store, vs)
     Right (Stepped next) -> run funcs next
 
--- | Run a function against an instantiated module: seed the entry activation and iterate.
+{- | Run a function against an instantiated module: seed the entry activation and iterate.
+  The module comes back with its globals and memories as the call left them, so state
+  persists from one invocation to the next; on a trap the caller keeps the module it had.
+-}
 runFunction ::
     ModuleInst mod ->
     FuncInst mod ('FuncType ps rs) ->
     ValueStack ps ->
-    Either Trap (ValueStack rs)
-runFunction tm (FuncInst defaults body) args =
-    run (tm.miFuncs) (Config store locals VNil body FHalt)
+    Either Trap (ModuleInst mod, ValueStack rs)
+runFunction tm (FuncInst defaults body) args = do
+    (store', results) <- run (tm.miFuncs) (Config store locals VNil body FHalt)
+    Right (tm {miGlobals = store'.stGlobals, miMems = store'.stMems}, results)
   where
     store = Store (tm.miGlobals) (tm.miMems)
     locals = reverseOnto args defaults
@@ -616,13 +622,14 @@ floatBinT ::
     HostType t ->
     HostType t ->
     HostType t
-floatBinT F32IsFloat op a b = floatBinOp op a b
-floatBinT F64IsFloat op a b = floatBinOp op a b
-
-floatBinOp :: RealFloat a => FloatBinOp -> a -> a -> a
-floatBinOp FMin = wasmMin
-floatBinOp FMax = wasmMax
-floatBinOp FCopysign = copysign
+floatBinT F32IsFloat op = case op of
+    FMin -> wasmMin
+    FMax -> wasmMax
+    FCopysign -> copysign32
+floatBinT F64IsFloat op = case op of
+    FMin -> wasmMin
+    FMax -> wasmMax
+    FCopysign -> copysign64
 
 {- | Widen loaded bytes to the access's integer type, sign- or zero-extending from the narrow
   width the witness names.

@@ -83,7 +83,7 @@ factorial =
 
 runFactorial :: Word32 -> Either Trap Word32
 runFactorial input =
-    extractI32 <$> runFunction emptyModule factorial (input :# VNil)
+    extractI32 . snd <$> runFunction emptyModule factorial (input :# VNil)
   where
     emptyModule :: ModuleInst ('ModuleShape '[] '[] '[])
     emptyModule = ModuleInst FsNil GNil MNil
@@ -106,7 +106,7 @@ square = FuncInst LNil (ILocalGet Here :. ILocalGet Here :. call toMultiply :. I
     toMultiply = Here
 
 runSquare :: Word32 -> Either Trap Word32
-runSquare input = extractI32 <$> runFunction callModule square (input :# VNil)
+runSquare input = extractI32 . snd <$> runFunction callModule square (input :# VNil)
   where
     callModule :: ModuleInst CallCtx
     callModule = ModuleInst (FsCons multiply FsNil) GNil MNil
@@ -132,7 +132,7 @@ increment =
         )
 
 runIncrement :: Word32 -> Either Trap Word32
-runIncrement initial = extractI32 <$> runFunction globalModule increment VNil
+runIncrement initial = extractI32 . snd <$> runFunction globalModule increment VNil
   where
     globalModule :: ModuleInst GlobalCtx
     globalModule = ModuleInst FsNil (GCons initial GNil) MNil

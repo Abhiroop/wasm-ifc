@@ -182,10 +182,18 @@ data Outcome = Passed | Failed String | Skipped String
 -- | A module the script refers to: usable, or unavailable for a stated reason.
 data Loaded = Loaded SomeModule | Unavailable String
 
-data State = State {current :: Loaded, named :: Map.Map Text Loaded}
+{- | The script's instances: the named ones, the anonymous latest one, and which of them the
+  last @module@ command made current. Invocations update the instance they ran on, since
+  module state persists across a script.
+-}
+data State = State
+    { anonymous :: Loaded
+    , named :: Map.Map Text Loaded
+    , current :: Maybe Text
+    }
 
 runScript :: FilePath -> [Command] -> IO [(Int, Outcome)]
-runScript dir = fmap (reverse . snd) . foldM step (State (Unavailable "no module yet") Map.empty, [])
+runScript dir = fmap (reverse . snd) . foldM step (State (Unavailable "no module yet") Map.empty Nothing, [])
   where
     step (state, acc) cmd = do
         (state', outcome) <- runCommand dir state cmd
@@ -200,21 +208,32 @@ runCommand dir state cmd = case cmd.kind of
                 Unavailable reason
                     | "unsupported" `isInfixOf` reason -> Skipped reason
                     | otherwise -> Failed ("valid module rejected: " ++ reason)
-            named' = maybe state.named (\n -> Map.insert n loaded state.named) cmd.name
-        pure (State loaded named', outcome)
-    "assert_return" -> pure (state, withAction (\m act -> assertReturn m act cmd.expected))
-    "assert_trap" -> pure (state, withAction (\m act -> assertTrap m act cmd.trapText))
-    "action" -> pure (state, withAction (\m act -> either (Failed . show) (const Passed) (invoke m act)))
+            state' = case cmd.name of
+                Just n -> state {named = Map.insert n loaded state.named, current = Just n}
+                Nothing -> state {anonymous = loaded, current = Nothing}
+        pure (state', outcome)
+    "assert_return" -> pure (withAction (\m act -> assertReturn m act cmd.expected))
+    "assert_trap" -> pure (withAction (\m act -> assertTrap m act cmd.trapText))
+    "action" -> pure (withAction (\m act -> either (\e -> (m, Failed (show e))) (\(m', _) -> (m', Passed)) (invoke m act)))
     "assert_invalid" -> rejection
     "assert_malformed" -> rejection
     other -> pure (state, Skipped ("command " ++ T.unpack other))
   where
+    -- Run a check on the instance an action names, and store the instance it hands back.
     withAction check = case cmd.action of
-        Nothing -> Failed "command without an action"
-        Just act -> case resolve act of
-            Unavailable reason -> Skipped reason
-            Loaded m -> check m act
-    resolve act = maybe state.current (\n -> Map.findWithDefault (Unavailable "unknown module") n state.named) act.actionModule
+        Nothing -> (state, Failed "command without an action")
+        Just act -> case lookupInstance (act.actionModule) of
+            Unavailable reason -> (state, Skipped reason)
+            Loaded m -> let (m', outcome) = check m act in (storeInstance (act.actionModule) (Loaded m'), outcome)
+    lookupInstance which = case which of
+        Just n -> namedInstance n
+        Nothing -> maybe state.anonymous namedInstance state.current
+    namedInstance n = Map.findWithDefault (Unavailable "unknown module") n state.named
+    storeInstance which loaded = case which of
+        Just n -> state {named = Map.insert n loaded state.named}
+        Nothing -> case state.current of
+            Just n -> state {named = Map.insert n loaded state.named}
+            Nothing -> state {anonymous = loaded}
     rejection
         | cmd.moduleType /= Just "binary" = pure (state, Skipped "text-format module")
         | otherwise = do
@@ -238,31 +257,32 @@ loadModule path = do
     -- The decoder's messages for features outside the implemented subset.
     isFeatureGap err = any (`isInfixOf` err) ["unsupported", "not supported", "unknown valtype", "unknown limits flag"]
 
-invoke :: SomeModule -> Action -> Either RunError [Value]
+invoke :: SomeModule -> Action -> Either RunError (SomeModule, [Value])
 invoke m act = case traverse literalValue act.args of
     Nothing -> Left (NoSuchExport "(non-numeric argument)")
     Just values -> invokeExport m act.field values
 
-assertReturn :: SomeModule -> Action -> [Literal] -> Outcome
+-- | Each check hands back the instance to continue with (unchanged when the call failed).
+assertReturn :: SomeModule -> Action -> [Literal] -> (SomeModule, Outcome)
 assertReturn m act expectations
-    | act.actionKind /= "invoke" = Skipped ("action " ++ T.unpack act.actionKind)
-    | any (\a -> a.litType `notElem` numericTypes) act.args = Skipped "non-numeric argument"
+    | act.actionKind /= "invoke" = (m, Skipped ("action " ++ T.unpack act.actionKind))
+    | any (\a -> a.litType `notElem` numericTypes) act.args = (m, Skipped "non-numeric argument")
     | otherwise = case invoke m act of
-        Left err -> Failed ("invoke " ++ T.unpack act.field ++ ": " ++ show err)
-        Right results
-            | length results /= length expectations -> Failed ("expected " ++ show (length expectations) ++ " result(s), got " ++ show results)
-            | and (zipWith matches expectations results) -> Passed
-            | otherwise -> Failed ("invoke " ++ T.unpack act.field ++ " " ++ show (map render act.args) ++ ": expected " ++ show (map render expectations) ++ ", got " ++ show results)
+        Left err -> (m, Failed ("invoke " ++ T.unpack act.field ++ ": " ++ show err))
+        Right (m', results)
+            | length results /= length expectations -> (m', Failed ("expected " ++ show (length expectations) ++ " result(s), got " ++ show results))
+            | and (zipWith matches expectations results) -> (m', Passed)
+            | otherwise -> (m', Failed ("invoke " ++ T.unpack act.field ++ " " ++ show (map render act.args) ++ ": expected " ++ show (map render expectations) ++ ", got " ++ show results))
   where
     render l = T.unpack l.litType ++ ":" ++ maybe "?" T.unpack l.litValue
 
-assertTrap :: SomeModule -> Action -> Maybe Text -> Outcome
+assertTrap :: SomeModule -> Action -> Maybe Text -> (SomeModule, Outcome)
 assertTrap m act expectedText = case invoke m act of
     Left (Trapped trap)
-        | Just (trapText trap) == expectedText -> Passed
-        | otherwise -> Failed ("trapped with " ++ show trap ++ ", expected " ++ maybe "?" T.unpack expectedText)
-    Left err -> Failed ("invoke " ++ T.unpack act.field ++ ": " ++ show err)
-    Right results -> Failed ("expected a trap (" ++ maybe "?" T.unpack expectedText ++ "), got " ++ show results)
+        | Just (trapText trap) == expectedText -> (m, Passed)
+        | otherwise -> (m, Failed ("trapped with " ++ show trap ++ ", expected " ++ maybe "?" T.unpack expectedText))
+    Left err -> (m, Failed ("invoke " ++ T.unpack act.field ++ ": " ++ show err))
+    Right (m', results) -> (m', Failed ("expected a trap (" ++ maybe "?" T.unpack expectedText ++ "), got " ++ show results))
 
 -- | The spec's wording for each trap, as the scripts assert it.
 trapText :: Trap -> Text

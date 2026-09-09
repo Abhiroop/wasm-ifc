@@ -76,15 +76,18 @@ exportSignature (SomeModule shapeS _ exports) name = do
     SomeFuncRef psS rsS _ <- lookupFuncRef (funcTypesSing shapeS) idx
     pure (FuncType (declaredOrder (fromSing psS)) (declaredOrder (fromSing rsS)))
 
--- | Run an exported function on arguments given in declared order; results likewise.
-invokeExport :: SomeModule -> Text -> [Value] -> Either RunError [Value]
+{- | Run an exported function on arguments given in declared order; results likewise. The
+  module comes back with the globals and memories the call left behind, so a sequence of
+  invocations shares state as the spec's instance does.
+-}
+invokeExport :: SomeModule -> Text -> [Value] -> Either RunError (SomeModule, [Value])
 invokeExport (SomeModule shapeS inst exports) name args = do
     FunctionIdx idx <- note (NoSuchExport name) (exportedFuncIndex name exports)
     SomeFuncRef psS rsS funcIx <- note (NoSuchExport name) (lookupFuncRef (funcTypesSing shapeS) idx)
     checkArguments (declaredOrder (fromSing psS)) args
     argStack <- note (ArgumentCount 0 0) (buildStack psS (stackOrder args))
-    results <- first Trapped (runFunction inst (getFunc funcIx inst.miFuncs) argStack)
-    pure (declaredOrder (toValues rsS results))
+    (inst', results) <- first Trapped (runFunction inst (getFunc funcIx inst.miFuncs) argStack)
+    pure (SomeModule shapeS inst' exports, declaredOrder (toValues rsS results))
 
 exportedFuncIndex :: Text -> [Export] -> Maybe FunctionIdx
 exportedFuncIndex name exports =

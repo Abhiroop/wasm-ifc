@@ -26,6 +26,7 @@ import Runtime.Numeric (intDiv32)
 import Runtime.Trap (Trap (..))
 import Syntax.DataSegments (RawData (..))
 import Syntax.Functions (RawFunction (..))
+import Syntax.Globals (RawGlobal (..))
 import Syntax.Indices
 import Syntax.Instructions
 import Syntax.Memories (RawMemory (..))
@@ -85,6 +86,31 @@ spec = do
             elabRunWithMemory [I32] [I32] [] [LocalGet (LocalIdx 0), Load SI32 (MemArg 0 0)] [70000]
                 `shouldSatisfy` trapContaining "OutOfBoundsMemoryAccess"
 
+    describe "module-level validation" $ do
+        it "rejects a memory whose minimum exceeds its maximum" $
+            void (elaborateModule (singleFunctionModule [memoryWithMax 2 1] [] [] [] []))
+                `shouldBe` Left (InvalidMemoryLimits (Limits 2 (Just 1)))
+        it "rejects a memory beyond 65536 pages" $
+            void (elaborateModule (singleFunctionModule [memoryWithMax 1 70000] [] [] [] []))
+                `shouldBe` Left (InvalidMemoryLimits (Limits 1 (Just 70000)))
+        it "rejects two memories" $
+            void (elaborateModule (singleFunctionModule [onePageMemory, onePageMemory] [] [] [] []))
+                `shouldBe` Left TooManyMemories
+        it "rejects duplicate export names" $
+            void (elaborateModule ((singleFunctionModule [] [] [] [] []) {moduleExports = [Export "f" (ExportFunc (FunctionIdx 0)), Export "f" (ExportFunc (FunctionIdx 0))]}))
+                `shouldBe` Left (DuplicateExport "f")
+        it "rejects an export of a function that does not exist" $
+            void (elaborateModule ((singleFunctionModule [] [] [] [] []) {moduleExports = [Export "g" (ExportFunc (FunctionIdx 7))]}))
+                `shouldSatisfy` isLeft
+        it "runs the start function at instantiation (it bumps a global the export reads)" $
+            elabRunModule (startModule [Const SI32 1, GlobalSet (GlobalIdx 0)]) [] `shouldBe` Right ["1"]
+        it "rejects a start function with parameters" $
+            void (elaborateModule (twoFunctions (FuncType [I32] []) [] (FuncType [] [I32]) [Const SI32 0]) {moduleStart = Just (FunctionIdx 0)})
+                `shouldBe` Left InvalidStartFunction
+        it "fails instantiation when the start function traps" $
+            void (elaborateModule (startModule [Unreachable]))
+                `shouldBe` Left (StartFunctionTrapped UnreachableExecuted)
+
     describe "data segments" $ do
         it "are copied into memory at instantiation" $
             elabRunModule (withData [RawData [Const SI32 8] "hi"] (singleFunctionModule [onePageMemory] [] [I32] [] [Const SI32 9, LoadN SI32 1 Unsigned (MemArg 0 0)])) []
@@ -123,6 +149,10 @@ spec = do
     describe "dead code after an unconditional transfer" $ do
         it "is typed under the polymorphic stack (an add with nothing pushed is fine)" $
             elabError [] [I32] [] [Const SI32 1, Return, Add SI32] `shouldSatisfy` isRight
+        it "must end with the block's result type (an extra value is an error)" $
+            elabError [] [] [] [Unreachable, Const SI32 0] `shouldSatisfy` isLeft
+        it "may not select between two known but different types" $
+            elabError [] [I32] [] [Unreachable, Const SI64 0, Const SI32 0, Select] `shouldSatisfy` isLeft
         it "is still checked where operand types are known (f32 fed to i32.add)" $
             elabError [] [I32] [] [Const SI32 1, Return, Const SF32 1.0, Add SI32] `shouldSatisfy` isLeft
         it "may not branch to a label that does not exist" $
@@ -296,7 +326,7 @@ invokeWithIntegers :: SomeModule -> [Integer] -> Either String [String]
 invokeWithIntegers sm args = do
     FuncType params _ <- maybe (Left "no export f") Right (exportSignature sm "f")
     let values = zipWith integerValue params args
-    either (Left . show) (Right . map renderValue) (invokeExport sm "f" values)
+    either (Left . show) (Right . map renderValue . snd) (invokeExport sm "f" values)
   where
     integerValue I32 n = I32Value (fromInteger n)
     integerValue I64 n = I64Value (fromInteger n)
@@ -305,6 +335,16 @@ invokeWithIntegers sm args = do
 
 onePageMemory :: RawMemory
 onePageMemory = RawMemory (MemType AddrI32 (Limits 1 Nothing))
+
+{- | Function 0 is the start function with the given body; the export @f@ (function 1) reads
+  the module's one mutable i32 global, initially 0.
+-}
+startModule :: [RawInstr] -> RawModule
+startModule startBody =
+    (twoFunctions (FuncType [] []) startBody (FuncType [] [I32]) [GlobalGet (GlobalIdx 0)])
+        { moduleGlobals = [RawGlobal (GlobalType Mutable I32) [Const SI32 0]]
+        , moduleStart = Just (FunctionIdx 0)
+        }
 
 withData :: [RawData] -> RawModule -> RawModule
 withData segments m = m {moduleData = segments}

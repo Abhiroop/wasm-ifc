@@ -104,7 +104,7 @@ Suggested order: **P0 → R1 → W0…W6 → R2/R3 → R5** (R5 interleaved as f
 
 ### R3 — validation audit against the validation rules (spec §3)
 
-- [ ] **[P1·validation]** Module-level checks missing today: memory limits well-formed (`min ≤ max`,
+- [x] **[P1·validation]** Module-level checks missing today: memory limits well-formed (`min ≤ max`,
   `max ≤ 65536`); at most one memory (the MVP rule — today several are accepted and only the first
   is used); export names pairwise distinct; export indices in range for functions, globals *and*
   memories at elaboration time (today only functions, and only when invoked); the start function's

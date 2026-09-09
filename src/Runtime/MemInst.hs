@@ -21,6 +21,7 @@ module Runtime.MemInst (
     allocMemory,
     growMemory,
     memoryPages,
+    maxMemoryPages,
     readBytes,
     writeBytes,
 ) where
@@ -51,8 +52,8 @@ pageSize :: Int
 pageSize = 65536
 
 -- | The hard ceiling of a 32-bit memory, in pages (4 GiB).
-maxPages :: Word32
-maxPages = 65536
+maxMemoryPages :: Word32
+maxMemoryPages = 65536
 
 -- | Allocate a memory at its declared minimum size, zero-initialised.
 allocMemory :: Limits -> MemInst m
@@ -72,7 +73,7 @@ growMemory delta mem
     | otherwise = Just mem {pageCount = fromInteger requested}
   where
     requested = toInteger mem.pageCount + toInteger delta
-    allowed = maybe maxPages (min maxPages) mem.limits.max
+    allowed = maybe maxMemoryPages (min maxMemoryPages) mem.limits.max
 
 byteSize :: MemInst m -> Integer
 byteSize mem = toInteger mem.pageCount * toInteger pageSize

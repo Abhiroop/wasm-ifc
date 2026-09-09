@@ -15,11 +15,14 @@ module Runtime.Numeric (
     intRem64,
     wasmMin,
     wasmMax,
-    copysign,
+    copysign32,
+    copysign64,
 ) where
 
+import Data.Bits ((.&.), (.|.))
 import Data.Int (Int32, Int64)
 import Data.Word (Word32, Word64)
+import GHC.Float (castDoubleToWord64, castFloatToWord32, castWord32ToFloat, castWord64ToDouble)
 
 import Runtime.Trap (Trap (..))
 import Syntax.Types (Signedness (..))
@@ -98,8 +101,13 @@ wasmMax x y
     | x == 0 && y == 0 = if isNegativeZero x && isNegativeZero y then -0 else 0
     | otherwise = max x y
 
--- | The magnitude of @x@ with the sign of @y@.
-copysign :: RealFloat a => a -> a -> a
-copysign x y
-    | y < 0 || isNegativeZero y = negate (abs x)
-    | otherwise = abs x
+{- | The magnitude of @x@ with the sign bit of @y@ — on the bits, because the sign of a NaN
+  is not observable through comparisons, and a NaN's payload must survive.
+-}
+copysign32 :: Float -> Float -> Float
+copysign32 x y =
+    castWord32ToFloat ((castFloatToWord32 x .&. 0x7FFFFFFF) .|. (castFloatToWord32 y .&. 0x80000000))
+
+copysign64 :: Double -> Double -> Double
+copysign64 x y =
+    castWord64ToDouble ((castDoubleToWord64 x .&. 0x7FFFFFFFFFFFFFFF) .|. (castDoubleToWord64 y .&. 0x8000000000000000))

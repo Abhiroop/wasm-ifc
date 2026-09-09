@@ -19,23 +19,27 @@ module Validation.Elaborate (
     elaborateModule,
 ) where
 
-import Control.Monad (foldM)
+import Control.Monad (foldM, when)
+import Data.Bifunctor (first)
 import Data.ByteString qualified as BS
+import Data.Text (Text)
+import Data.Text qualified as T
 import Data.Type.Equality ((:~:) (Refl))
 import Data.Word (Word32)
 
 import Data.List.Singletons ((%++))
 import Data.Singletons.Base.TH (SList (SCons, SNil), Sing, fromSing)
 import Data.Singletons.Decide (decideEquality)
-import Runtime.Interpreter (FuncInst (..), FuncInsts (..), ModuleInst (..))
-import Runtime.MemInst (allocMemory, writeBytes)
+import Runtime.Interpreter (FuncInst (..), FuncInsts (..), ModuleInst (..), getFunc, runFunction)
+import Runtime.MemInst (allocMemory, maxMemoryPages, writeBytes)
 import Runtime.Module (SomeModule (..))
-import Runtime.Stack (GlobalInsts (..), LocalInsts (..), MemInsts (..))
+import Runtime.Stack (GlobalInsts (..), LocalInsts (..), MemInsts (..), ValueStack (..))
+import Runtime.Trap (Trap)
 import Syntax.DataSegments (RawData (RawData))
 import Syntax.Functions (RawFunction (RawFunction))
 import Syntax.Globals (RawGlobal (RawGlobal))
 import Syntax.Immediates (HostType)
-import Syntax.Indices (FunctionIdx (..), GlobalIdx (..), LabelIdx (..), LocalIdx (..))
+import Syntax.Indices (FunctionIdx (..), GlobalIdx (..), LabelIdx (..), LocalIdx (..), MemoryIdx (..))
 import Syntax.Instructions (
     BitwiseOp (..),
     ConvertOp (..),
@@ -70,6 +74,16 @@ data ElabError
       Malformed String
     | -- | a data segment does not fit in memory 0 (or there is no memory)
       DataSegmentOutOfBounds Int
+    | -- | a memory's limits are not well-formed or exceed 65536 pages
+      InvalidMemoryLimits Limits
+    | -- | more than one memory (the spec allows at most one)
+      TooManyMemories
+    | -- | two exports share this name
+      DuplicateExport Text
+    | -- | the start function is not of type @[] -> []@
+      InvalidStartFunction
+    | -- | the start function trapped, so instantiation failed
+      StartFunctionTrapped Trap
     deriving stock (Eq, Show)
 
 -- *** Elaboration environment & results ***
@@ -93,9 +107,10 @@ data ElaboratedExpr (shape :: ModuleShape) (ret :: ResultType) (locals :: [ValTy
     Reachable :: Sing stackOut -> Expr shape ('FrameShape locals ret) labels stackIn stackOut -> ElaboratedExpr shape ret locals labels stackIn
     {- | The sequence ended in an unconditional transfer (@br@ / @return@ / @unreachable@), so
     control never falls out the bottom. Nothing constrains the output stack, so it is left
-    universally quantified — exactly the spec's stack-polymorphism for dead code.
+    universally quantified — exactly the spec's stack-polymorphism for dead code. The
+    'PolyStack' is what the dead tail leaves, still to be checked against the expected result.
     -}
-    Diverged :: (forall stackOut. Expr shape ('FrameShape locals ret) labels stackIn stackOut) -> ElaboratedExpr shape ret locals labels stackIn
+    Diverged :: PolyStack -> (forall stackOut. Expr shape ('FrameShape locals ret) labels stackIn stackOut) -> ElaboratedExpr shape ret locals labels stackIn
 
 {- | The result of elaborating a single instruction — the per-instruction version of
   'ElaboratedExpr', with the same two cases. 'elabSeq' folds these into an 'ElaboratedExpr'
@@ -130,10 +145,10 @@ elabSeq env stackIn (raw : rest) = do
             rest' <- elabSeq env stackOut rest
             pure $ case rest' of
                 Reachable stackOut' seq' -> Reachable stackOut' (instr :. seq')
-                Diverged poly -> Diverged (instr :. poly)
+                Diverged final poly -> Diverged final (instr :. poly)
         Transfers transfer -> do
-            validateDead env rest
-            pure (Diverged (transfer :. INil))
+            final <- validateDead env rest
+            pure (Diverged final (transfer :. INil))
 
 -- *** Single instructions ***
 
@@ -430,7 +445,9 @@ elabBodyChecked env psS rsS body k = do
         Reachable soS seq' -> do
             Refl <- note (ResultMismatch "body result does not match its block type") (decideEquality soS rsS)
             k seq'
-        Diverged poly -> k poly
+        Diverged final poly -> do
+            checkDeadResult final rsS
+            k poly
 
 -- | Resolve one @br_table@ target, checking it carries the same result type as the rest.
 resolveTarget :: ElabEnv shape ret locals labels -> Sing rs -> LabelIdx -> Either ElabError (Elem rs labels)
@@ -549,11 +566,22 @@ popKnown t s = case popAny s of
       where
         msg = "unreachable code expected " ++ show t ++ ", found " ++ show v
 
-validateDead :: ElabEnv shape ret locals labels -> [RawInstr] -> Either ElabError ()
+validateDead :: ElabEnv shape ret locals labels -> [RawInstr] -> Either ElabError PolyStack
 validateDead env = go (PolyStack [])
   where
-    go _ [] = Right ()
+    go s [] = Right s
     go s (i : is) = stepDead env s i >>= \s' -> go s' is
+
+{- | A dead tail must still end with the block's result type: each expected type is popped
+  (a known entry must match, an unknown one may be anything) and nothing may be left above the
+  polymorphic bottom.
+-}
+checkDeadResult :: PolyStack -> Sing (rs :: [ValType]) -> Either ElabError ()
+checkDeadResult final rsS = do
+    remaining <- foldM (flip popKnown) final (stackToList rsS)
+    case unStack remaining of
+        [] -> Right ()
+        _ -> Left (DeadCodeError "values left on the stack at the end of unreachable code")
 
 stepDead :: ElabEnv shape ret locals labels -> PolyStack -> RawInstr -> Either ElabError PolyStack
 stepDead env s instr = case instr of
@@ -575,7 +603,9 @@ stepDead env s instr = case instr of
         s1 <- popKnown I32 s
         let (a, s2) = popAny s1
             (b, s3) = popAny s2
-        Right (PolyStack (orElse a b : unStack s3))
+        case (a, b) of
+            (Just x, Just y) | x /= y -> Left (DeadCodeError "select operands have different types")
+            _ -> Right (PolyStack (orElse a b : unStack s3))
     LocalGet (LocalIdx i) -> withLocal env i (\v -> Right (pushKnown v s))
     LocalSet (LocalIdx i) -> withLocal env i (\v -> popKnown v s)
     LocalTee (LocalIdx i) -> withLocal env i (\v -> pushKnown v <$> popKnown v s)
@@ -701,21 +731,61 @@ unStack (PolyStack xs) = xs
 
 -- *** Whole-module elaboration ***
 
-{- | Type-check an entire decoded module: build its signature, elaborate every function
-  against it, and assemble the typed functions, initial globals and memories.
+{- | Type-check and instantiate an entire decoded module: check its structure, build its
+  signature, elaborate every function against it, assemble the typed functions, initial
+  globals and memories, copy the data segments in, and run the start function.
 -}
 elaborateModule :: RawModule -> Either ElabError SomeModule
-elaborateModule m =
+elaborateModule m = do
+    validateStructure m
     case reflectCtx funcSigs globalTypes memTypes of
         SomeModuleShape ctxS@(SModuleShape ftsS gsS msS) -> do
             funcs <- elaborateFuncs ctxS ftsS (m.moduleFuncs)
             globals <- buildGlobals gsS (m.moduleGlobals)
             mems <- buildMems msS (m.moduleMemories) >>= initialiseData (m.moduleData)
-            Right (SomeModule ctxS (ModuleInst funcs globals mems) (m.moduleExports))
+            started <- runStart ctxS (ModuleInst funcs globals mems) (m.moduleStart)
+            Right (SomeModule ctxS started (m.moduleExports))
   where
     funcSigs = map (\(RawFunction sig _ _) -> sig) (m.moduleFuncs)
     globalTypes = map (\(RawGlobal gt _) -> gt) (m.moduleGlobals)
     memTypes = map (\(RawMemory mt) -> mt) (m.moduleMemories)
+
+{- | The module-level rules of the validation section that need no shape: well-formed,
+  bounded memory limits; at most one memory; distinct export names; export indices within
+  their index spaces.
+-}
+validateStructure :: RawModule -> Either ElabError ()
+validateStructure m = do
+    mapM_ checkLimits [declared | RawMemory (MemType _ declared) <- m.moduleMemories]
+    when (length m.moduleMemories > 1) (Left TooManyMemories)
+    checkDistinct [e.exportName | e <- m.moduleExports]
+    mapM_ checkExport m.moduleExports
+  where
+    checkLimits declared
+        | declared.min > maxMemoryPages = Left (InvalidMemoryLimits declared)
+        | Just hi <- declared.max, hi > maxMemoryPages || declared.min > hi = Left (InvalidMemoryLimits declared)
+        | otherwise = Right ()
+    checkDistinct names = case [n | (k, n) <- zip [0 :: Int ..] names, n `elem` take k names] of
+        [] -> Right ()
+        n : _ -> Left (DuplicateExport n)
+    checkExport (Export name desc) = case desc of
+        ExportFunc (FunctionIdx i) -> inRange name i (length m.moduleFuncs)
+        ExportGlobal (GlobalIdx i) -> inRange name i (length m.moduleGlobals)
+        ExportMem (MemoryIdx i) -> inRange name i (length m.moduleMemories)
+    inRange name i count
+        | fromIntegral i < count = Right ()
+        | otherwise = Left (IndexOutOfRange ("export " ++ T.unpack name))
+
+-- | Run the start function, if there is one, as the last step of instantiation.
+runStart :: SModuleShape shape -> ModuleInst shape -> Maybe FunctionIdx -> Either ElabError (ModuleInst shape)
+runStart _ inst Nothing = Right inst
+runStart ctxS inst (Just (FunctionIdx idx)) = case lookupFuncRef (funcTypesSing ctxS) idx of
+    Nothing -> Left (IndexOutOfRange ("start function " ++ show idx))
+    Just (SomeFuncRef psS rsS funcIx) -> do
+        Refl <- note InvalidStartFunction (decideEquality psS SNil)
+        Refl <- note InvalidStartFunction (decideEquality rsS SNil)
+        (started, _) <- first StartFunctionTrapped (runFunction inst (getFunc funcIx inst.miFuncs) VNil)
+        Right started
 
 elaborateFuncs :: SModuleShape shape -> Sing fts -> [RawFunction] -> Either ElabError (FuncInsts shape fts)
 elaborateFuncs _ SNil [] = Right FsNil
@@ -744,7 +814,9 @@ elaborateFunctionIn ctxS (SFuncType psS rsS) (RawFunction _ declaredT body) =
                                     (ResultMismatch "function body does not match its result type")
                                     (decideEquality soS rsS)
                             Right (FuncInst defaults bodySeq)
-                        Diverged poly -> Right (FuncInst defaults poly)
+                        Diverged final poly -> do
+                            checkDeadResult final rsS
+                            Right (FuncInst defaults poly)
 
 buildGlobals :: Sing gs -> [RawGlobal] -> Either ElabError (GlobalInsts gs)
 buildGlobals SNil [] = Right GNil

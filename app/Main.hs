@@ -64,7 +64,7 @@ invokeWithText wasmModule name rawArgs = do
     unless (length params == length rawArgs) $
         Left ("expected " ++ show (length params) ++ " argument(s), got " ++ show (length rawArgs))
     args <- traverse parseArgument (zip params rawArgs)
-    first describeRunError (invokeExport wasmModule name args)
+    snd <$> first describeRunError (invokeExport wasmModule name args)
   where
     parseArgument (valType, raw) =
         maybe (Left ("cannot read " ++ T.unpack raw ++ " as " ++ show valType)) Right (parseValue valType raw)
