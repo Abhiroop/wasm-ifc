@@ -31,6 +31,16 @@ import Numeric.Natural (Natural)
 
 import Syntax.Types (AddrType, FuncType, GlobalType, ResultType, ValType)
 
+{- *** Stack order ***
+
+   Every type-level @[ValType]@ that describes a stack segment lists the /top/ of the stack
+   first — the operand stack indices of 'Syntax.Instructions.Instr', the label result types,
+   and the parameter and result lists of a 'FuncType' or block type once it is inside a shape
+   (they are exactly the segment a call or block consumes and produces). Declared order, the
+   order the text and binary formats write, survives only in the decoded "Syntax" and in a
+   function's locals; "Validation.Reflect" converts at that boundary.
+-}
+
 -- We reuse @singletons-base@'s promoted list concatenation '(++)' (it is exactly the family we
 -- would otherwise hand-roll). Stack shapes compose by appending the part a scope produces on
 -- top of the part it leaves untouched. @++@ is not injective, so splitting a @ps ++ s@ stack
@@ -56,6 +66,16 @@ data Append a b c where
 appendFromSing :: forall a b. Sing (a :: [ValType]) -> Append a b (a ++ b)
 appendFromSing SNil = ANil
 appendFromSing (SCons _ rest) = ACons (appendFromSing rest)
+
+{- | @ReverseOnto xs acc@ is @reverse xs ++ acc@, defined with the structural accumulator so it
+  reduces one constructor at a time and never needs a lemma. It bridges the two orders in play:
+  a call's argument segment lists the last argument first (top of stack), while locals number
+  the first parameter 0 — so a function body's locals are @ReverseOnto params declared@.
+-}
+type ReverseOnto :: [ValType] -> [ValType] -> [ValType]
+type family ReverseOnto xs acc where
+    ReverseOnto '[] acc = acc
+    ReverseOnto (x ': xs) acc = ReverseOnto xs (x ': acc)
 
 {- | A typed de Bruijn index: a proof that @x@ is the element of @xs@ at this position,
   carrying both the position (its term-level structure) and the element (in its type).

@@ -75,7 +75,7 @@ import Syntax.Instructions (
     Instr (..),
  )
 import Syntax.Types
-import Validation.Shape (Elem (..), FrameShape (..), ModuleFuncs, ModuleGlobals, ModuleMems, ModuleShape)
+import Validation.Shape (Elem (..), FrameShape (..), ModuleFuncs, ModuleGlobals, ModuleMems, ModuleShape, ReverseOnto)
 
 -- *** Module and runtime state ***
 
@@ -87,14 +87,16 @@ import Validation.Shape (Elem (..), FrameShape (..), ModuleFuncs, ModuleGlobals,
 type FunctionBody mod locals rs = Expr mod ('FrameShape locals rs) '[rs] '[] rs
 
 {- | A function instance: the zero-initialised values of the locals it declares, together with
-  its body. The body's locals are its parameters followed by those declared locals.
+  its body. The body's locals are the parameters (local 0 is the first parameter, so the
+  argument segment — last argument on top — is reversed onto them) followed by those declared
+  locals.
 -}
 data FuncInst (mod :: ModuleShape) (ft :: FuncType) where
     FuncInst ::
         -- | zero-inits for the declared (non-parameter) locals
         LocalInsts declared ->
         -- | the body, typed @'[] -> rs@
-        FunctionBody mod (ps ++ declared) rs ->
+        FunctionBody mod (ReverseOnto ps declared) rs ->
         FuncInst mod ('FuncType ps rs)
 
 -- | The functions of a module, one typed body per signature in 'ModuleFuncs'.
@@ -286,7 +288,7 @@ step funcs (Config store locals stack code control) = case code of
         ICall witness ix -> case getFunc ix funcs of
             FuncInst defaults body ->
                 let (args, below) = splitStack witness stack
-                    calleeLocals = appendLocals (stackToLocals args) defaults
+                    calleeLocals = reverseOnto args defaults
                  in Right (Stepped (Config store calleeLocals VNil body (FCall below locals rest control)))
         {- Structured control: push the matching frame and run the body -}
         IBlock witness body ->
@@ -448,7 +450,7 @@ runFunction tm (FuncInst defaults body) args =
     run (tm.miFuncs) (Config store locals VNil body FHalt)
   where
     store = Store (tm.miGlobals) (tm.miMems)
-    locals = appendLocals (stackToLocals args) defaults
+    locals = reverseOnto args defaults
 
 {- *** Numeric dispatch ***
 

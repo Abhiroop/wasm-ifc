@@ -135,6 +135,19 @@ spec = do
             decodeSections [typeSection, funcSection [0], codeSection [[0xFF, 0x0B]]]
                 `shouldSatisfy` decodeErrorContaining "unsupported opcode"
 
+    describe "calls between functions" $ do
+        it "pass arguments in order (a - b through a call)" $
+            elabRunModule (twoFunctions (FuncType [I32, I32] [I32]) [LocalGet (LocalIdx 0), LocalGet (LocalIdx 1), Sub SI32] (FuncType [I32, I32] [I32]) [LocalGet (LocalIdx 0), LocalGet (LocalIdx 1), Call (FunctionIdx 0)]) [10, 3]
+                `shouldBe` Right ["7"]
+        it "accept parameters of different types" $
+            elabRunModule (twoFunctions (FuncType [I32, I64] [I64]) [LocalGet (LocalIdx 1)] (FuncType [I32, I64] [I64]) [LocalGet (LocalIdx 0), LocalGet (LocalIdx 1), Call (FunctionIdx 0)]) [5, 9]
+                `shouldBe` Right ["9"]
+        it "return several results in order (1 - 2 after a two-result call)" $
+            elabRunModule (twoFunctions (FuncType [] [I32, I32]) [Const SI32 1, Const SI32 2] (FuncType [] [I32]) [Call (FunctionIdx 0), Sub SI32]) []
+                `shouldBe` Right ["4294967295"]
+        it "render several results in declared order" $
+            elabRun [] [I32, I64] [] [Const SI32 1, Const SI64 2] [] `shouldBe` Right ["1", "2"]
+
     describe "elaborator rejects ill-typed / malformed modules" $ do
         it "stack underflow (add with no operands)" $
             elabError [] [I32] [] [Add SI32] `shouldSatisfy` isLeft
@@ -239,16 +252,30 @@ elabErrorIn memories params results locals body =
 
 singleFunctionModule :: [RawMemory] -> [ValType] -> [ValType] -> [ValType] -> [RawInstr] -> RawModule
 singleFunctionModule memories params results locals body =
+    moduleOf memories [RawFunction (FuncType params results) locals body] (FunctionIdx 0)
+
+-- | Two functions, the second (function 1) exported as @f@ and free to call function 0.
+twoFunctions :: FuncType -> [RawInstr] -> FuncType -> [RawInstr] -> RawModule
+twoFunctions calleeType callee mainType mainBody =
+    moduleOf [] [RawFunction calleeType [] callee, RawFunction mainType [] mainBody] (FunctionIdx 1)
+
+-- | A module of the given functions (no globals), exporting one of them as @f@.
+moduleOf :: [RawMemory] -> [RawFunction] -> FunctionIdx -> RawModule
+moduleOf memories funcs exported =
     RawModule
-        { moduleTypes = [ft]
-        , moduleFuncs = [RawFunction ft locals body]
+        { moduleTypes = [f.signature | f <- funcs]
+        , moduleFuncs = funcs
         , moduleGlobals = []
         , moduleMemories = memories
-        , moduleExports = [Export "f" (ExportFunc (FunctionIdx 0))]
+        , moduleExports = [Export "f" (ExportFunc exported)]
         , moduleStart = Nothing
         }
-  where
-    ft = FuncType params results
+
+-- | Elaborate a module and run its export @f@ on integer arguments.
+elabRunModule :: RawModule -> [Integer] -> Either String [String]
+elabRunModule m args = case elaborateModule m of
+    Left err -> Left (show err)
+    Right sm -> runModuleFunction sm "f" args
 
 onePageMemory :: RawMemory
 onePageMemory = RawMemory (MemType AddrI32 (Limits 1 Nothing))

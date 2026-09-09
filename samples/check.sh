@@ -57,6 +57,9 @@ check evenodd.wasm   isEven   1       10
 check evenodd.wasm   isOdd    0       10
 check evenodd.wasm   isEven   0       7
 check call.wasm      square   81      9
+check args.wasm      callsub  7       10 3
+check args.wasm      mixed    9       5 9
+check args.wasm      multi    4294967295
 check counter.wasm   bump     1105    5
 check memory.wasm    roundtrip 42     21
 check absval.wasm    abs      42      -42

@@ -20,6 +20,9 @@ module Validation.Reflect (
     SomeLabel (..),
     SomeSplit (..),
     reflectStack,
+    stackOrder,
+    declaredOrder,
+    sReverseOnto,
     mkLocalElem,
     mkLabelElem,
     matchPrefix,
@@ -40,7 +43,7 @@ import Data.Word (Word32)
 import Data.Singletons.Base.TH (SList (SCons, SNil), Sing, withSomeSing)
 import Data.Singletons.Decide (decideEquality)
 import Syntax.Types
-import Validation.Shape (Append (..), Elem (..), MemShape (..), ModuleShape (..))
+import Validation.Shape (Append (..), Elem (..), MemShape (..), ModuleShape (..), ReverseOnto)
 
 {- *** Reflecting term-level shapes to singletons ***
 
@@ -54,6 +57,25 @@ data SomeStack where
 
 reflectStack :: [ValType] -> SomeStack
 reflectStack vs = withSomeSing vs SomeStack
+
+{- | Convert between the decoded (declared) order of a parameter or result list and the stack
+  order the shapes use (top of stack first; see "Validation.Shape"). Both are a reversal; the
+  two names say which way a call site is going.
+-}
+stackOrder :: [a] -> [a]
+stackOrder = reverse
+
+declaredOrder :: [a] -> [a]
+declaredOrder = reverse
+
+-- | A decoded function type with its parameter and result lists in stack order.
+stackOrderFuncType :: FuncType -> FuncType
+stackOrderFuncType (FuncType params results) = FuncType (stackOrder params) (stackOrder results)
+
+-- | The singleton of 'ReverseOnto', built the same structural way.
+sReverseOnto :: Sing (xs :: [ValType]) -> Sing (acc :: [ValType]) -> Sing (ReverseOnto xs acc)
+sReverseOnto SNil acc = acc
+sReverseOnto (SCons x xs) acc = sReverseOnto xs (SCons x acc)
 
 {- *** Index and witness construction ***
 
@@ -109,11 +131,14 @@ memShapeOf :: MemType -> MemShape
 memShapeOf (MemType at (Limits lo hi)) = MemShape at (fromIntegral lo) (fmap fromIntegral hi)
 
 {- | Reflect a module's signature (function types, global types, memory types) to a runtime
-  witness with the type-level signature hidden existentially.
+  witness with the type-level signature hidden existentially. The function types are given in
+  declared order (as decoded) and stored in stack order.
 -}
 reflectCtx :: [FuncType] -> [GlobalType] -> [MemType] -> SomeModuleShape
 reflectCtx funcTypes globalTypes memTypes =
-    withSomeSing (ModuleShape funcTypes globalTypes (map memShapeOf memTypes)) SomeModuleShape
+    withSomeSing
+        (ModuleShape (map stackOrderFuncType funcTypes) globalTypes (map memShapeOf memTypes))
+        SomeModuleShape
 
 {- | @∃ps rs. (Sing ps, Sing rs, Elem ('FuncType ps rs) fts)@ — a function reference resolved
   against the signature, carrying its parameter and result shapes.

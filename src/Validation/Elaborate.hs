@@ -362,14 +362,14 @@ elabInstr env stackIn instr = case instr of
     Nop -> Right (Produces stackIn INop)
     {- Structured control -}
     Block (FuncType psT rsT) body ->
-        case (reflectStack psT, reflectStack rsT) of
+        case (reflectStack (stackOrder psT), reflectStack (stackOrder rsT)) of
             (SomeStack psS, SomeStack rsS) -> case matchPrefix psS stackIn of
                 Nothing -> Left (TypeMismatch "block parameters not on the stack")
                 Just (SomeSplit sS witness) ->
                     elabBodyChecked (pushLabel rsS env) psS rsS body $ \bodySeq ->
                         Right (Produces (rsS %++ sS) (IBlock witness bodySeq))
     Loop (FuncType psT rsT) body ->
-        case (reflectStack psT, reflectStack rsT) of
+        case (reflectStack (stackOrder psT), reflectStack (stackOrder rsT)) of
             (SomeStack psS, SomeStack rsS) -> case matchPrefix psS stackIn of
                 Nothing -> Left (TypeMismatch "loop parameters not on the stack")
                 Just (SomeSplit sS witness) ->
@@ -378,7 +378,7 @@ elabInstr env stackIn instr = case instr of
     If (FuncType psT rsT) thenBody elseBody -> case stackIn of
         SCons sc rest -> do
             Refl <- note (TypeMismatch "if condition must be i32") (decideEquality sc SI32)
-            case (reflectStack psT, reflectStack rsT) of
+            case (reflectStack (stackOrder psT), reflectStack (stackOrder rsT)) of
                 (SomeStack psS, SomeStack rsS) -> case matchPrefix psS rest of
                     Nothing -> Left (TypeMismatch "if parameters not on the stack")
                     Just (SomeSplit sS witness) ->
@@ -623,13 +623,15 @@ stepDead env s instr = case instr of
         Nothing -> Left (IndexOutOfRange ("call " ++ show f ++ " (unreachable)"))
         Just (SomeFuncRef psS rsS _) -> afterFrame (stackToList psS) (stackToList rsS) s
     Nop -> Right s
-    Block (FuncType psT rsT) body -> validateFrame env rsT psT rsT body >> afterFrame psT rsT s
-    Loop (FuncType psT rsT) body -> validateFrame env psT psT rsT body >> afterFrame psT rsT s
+    Block (FuncType psT rsT) body ->
+        validateFrame env rsT psT rsT body >> afterFrame (stackOrder psT) (stackOrder rsT) s
+    Loop (FuncType psT rsT) body ->
+        validateFrame env psT psT rsT body >> afterFrame (stackOrder psT) (stackOrder rsT) s
     If (FuncType psT rsT) thenB elseB -> do
         s1 <- popKnown I32 s
         validateFrame env rsT psT rsT thenB
         validateFrame env rsT psT rsT elseB
-        afterFrame psT rsT s1
+        afterFrame (stackOrder psT) (stackOrder rsT) s1
     Br (LabelIdx l) -> checkLabel env l >> Right s
     BrIf (LabelIdx l) -> popKnown I32 s >>= \s' -> checkLabel env l >> Right s'
     BrTable targets (LabelIdx d) -> do
@@ -653,7 +655,9 @@ stepDead env s instr = case instr of
 convertSig :: ConvertOp from to -> (ValType, ValType)
 convertSig op = let (nf, nt) = convertEnds op in (fromSing (numSing nf), fromSing (numSing nt))
 
--- | Validate a nested block/loop/if body — a fresh, reachable frame — discarding its AST.
+{- | Validate a nested block/loop/if body — a fresh, reachable frame — discarding its AST. The
+  label, parameter and result lists come straight from the decoded block type (declared order).
+-}
 validateFrame ::
     ElabEnv shape ret locals labels ->
     [ValType] ->
@@ -662,16 +666,19 @@ validateFrame ::
     [RawInstr] ->
     Either ElabError ()
 validateFrame env labelT psT rsT body =
-    case (reflectStack labelT, reflectStack psT, reflectStack rsT) of
+    case (reflectStack (stackOrder labelT), reflectStack (stackOrder psT), reflectStack (stackOrder rsT)) of
         (SomeStack labS, SomeStack psS, SomeStack rsS) ->
             elabBodyChecked (pushLabel labS env) psS rsS body (\_ -> Right ())
 
+{- | The polymorphic stack after a frame (block/loop/if/call) in dead code: its parameters are
+  popped and its results pushed. Both lists are in stack order (top first).
+-}
 afterFrame :: [ValType] -> [ValType] -> PolyStack -> Either ElabError PolyStack
 afterFrame psT rsT s = Right (pushResults rsT (popN (length psT) s))
   where
     popN 0 t = t
     popN n t = popN (n - 1) (snd (popAny t))
-    pushResults vs t = foldr pushKnown t (reverse vs)
+    pushResults vs t = foldr pushKnown t vs
 
 withLocal :: ElabEnv shape ret locals labels -> Word32 -> (ValType -> Either ElabError a) -> Either ElabError a
 withLocal env i k = case mkLocalElem (env.eeLocals) i of
@@ -739,7 +746,7 @@ elaborateFunctionIn ::
 elaborateFunctionIn ctxS (SFuncType psS rsS) (RawFunction _ declaredT body) =
     case reflectStack declaredT of
         SomeStack declS ->
-            let env = ElabEnv ctxS rsS (psS %++ declS) (SCons rsS SNil)
+            let env = ElabEnv ctxS rsS (sReverseOnto psS declS) (SCons rsS SNil)
                 defaults = defaultLocals declS
              in do
                     elaborated <- elabSeq env SNil body
@@ -789,7 +796,8 @@ zeroOf SF64 = 0
 -- *** Running an exported function ***
 
 {- | Resolve an export, build a typed argument stack from integer literals, run the
-  function on the module, and render the results.
+  function on the module, and render the results. Arguments and results are in declared
+  order at this boundary; the stack the function sees has the last argument on top.
 -}
 runModuleFunction :: SomeModule -> Text -> [Integer] -> Either String [String]
 runModuleFunction (SomeModule ctxS typedModule exports) name args =
@@ -798,10 +806,10 @@ runModuleFunction (SomeModule ctxS typedModule exports) name args =
         Just (FunctionIdx idx) -> case lookupFuncRef (funcTypesSing ctxS) idx of
             Nothing -> Left "exported function index out of range"
             Just (SomeFuncRef paramsS resultsS funcIx) -> do
-                argStack <- buildArgs paramsS args
+                argStack <- buildArgs paramsS (stackOrder args)
                 case runFunction typedModule (getFunc funcIx (typedModule.miFuncs)) argStack of
                     Left aTrap -> Left ("trap: " ++ show aTrap)
-                    Right vals -> Right (renderResults resultsS vals)
+                    Right vals -> Right (declaredOrder (renderResults resultsS vals))
 
 exportedFuncIndex :: Text -> [Export] -> Maybe FunctionIdx
 exportedFuncIndex name exports =

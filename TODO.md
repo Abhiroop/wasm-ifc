@@ -34,7 +34,7 @@ Suggested order: **P0 → R1 → W0…W6 → R2/R3 → R5** (R5 interleaved as f
 
 ### P0 — spec violations found by audit probes (2026-09-09, each reproduced on a hand-written `.wat`)
 
-- [ ] **[P0·runtime]** `call` passes arguments in reverse: `sub(10, 3)` through a two-parameter
+- [x] **[P0·runtime]** `call` passes arguments in reverse: `sub(10, 3)` through a two-parameter
   call computes `3 - 10`, and a call to a function whose parameters have *different* types
   (`i32, i64`) is rejected outright ("arguments not on the stack"). Root cause: the shape's
   `FuncType ps rs` keeps `ps` in declared order, but a stack-segment type is top-first, so the
@@ -50,12 +50,12 @@ Suggested order: **P0 → R1 → W0…W6 → R2/R3 → R5** (R5 interleaved as f
   LocalInsts (ReverseOnto ps acc)`; the entry path (`buildArgs`/`renderResults`) reverses. Tests:
   two-parameter `sub` through a call, the mixed-type call, a two-result function, and the
   hand-written `Runtime.Examples`.
-- [ ] **[P0·runtime]** `select` keeps the wrong operand: it returns the *second* value when the
+- [x] **[P0·runtime]** `select` keeps the wrong operand: it returns the *second* value when the
   condition is non-zero (spec: the first). One-line swap in `step`; test and sample.
-- [ ] **[P1·runtime]** `f32/f64.ceil/floor/trunc/nearest` go through `Integer`, so NaN becomes ∞,
+- [x] **[P1·runtime]** `f32/f64.ceil/floor/trunc/nearest` go through `Integer`, so NaN becomes ∞,
   ∞ becomes garbage and `-0.5` rounds to `+0.0` instead of `-0.0`. Implement the four with explicit
   NaN/∞ pass-through and sign-of-zero preservation (`nearest` keeps ties-to-even). Tests per corner.
-- [ ] **[P1·runtime]** `memory.grow` never fails and allocates without bound: growing a 1-page
+- [x] **[P1·runtime]** `memory.grow` never fails and allocates without bound: growing a 1-page
   memory by 70000 pages returns `1` and allocates ~4.5 GB (spec: return `-1` when the new size
   would exceed the declared maximum or 65536 pages). `MemInst` carries its `Limits` at the term
   level (the `MemShape` index already names them); `growMemory` returns `Maybe`; `IMemGrow` pushes

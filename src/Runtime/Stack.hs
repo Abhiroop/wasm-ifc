@@ -5,6 +5,7 @@
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
+{-# LANGUAGE TypeAbstractions #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -24,8 +25,7 @@ module Runtime.Stack (
     MemInsts (..),
     appendStack,
     splitStack,
-    stackToLocals,
-    appendLocals,
+    reverseOnto,
     getLocal,
     setLocal,
     getGlobal,
@@ -40,7 +40,7 @@ import Data.List.Singletons (type (++))
 import Runtime.MemInst (MemInst)
 import Syntax.Immediates (HostType)
 import Syntax.Types (GlobalType (..), ValType)
-import Validation.Shape (Append (..), Elem (..), MemShape)
+import Validation.Shape (Append (..), Elem (..), MemShape, ReverseOnto)
 
 -- | The operand stack (head = top of stack), indexed by the types it holds.
 type ValueStack :: [ValType] -> Type
@@ -76,15 +76,16 @@ splitStack :: Append a b c -> ValueStack c -> (ValueStack a, ValueStack b)
 splitStack ANil vs = (VNil, vs)
 splitStack (ACons w) (x :# vs) = let (upper, lower) = splitStack w vs in (x :# upper, lower)
 
--- | Reinterpret a value stack as locals (used to seed a callee's parameters).
-stackToLocals :: ValueStack s -> LocalInsts s
-stackToLocals VNil = LNil
-stackToLocals (x :# xs) = x :& stackToLocals xs
-
--- | Append two locals frames (parameters followed by declared locals).
-appendLocals :: LocalInsts a -> LocalInsts b -> LocalInsts (a ++ b)
-appendLocals LNil ys = ys
-appendLocals (x :& xs) ys = x :& appendLocals xs ys
+{- | Seed a callee's locals from its argument segment: the arguments go in front of @acc@ (the
+  zero-initialised declared locals), reversed on the way, because the segment lists the last
+  argument first (top of stack) while local 0 is the first parameter. Structural, mirroring
+  'ReverseOnto'.
+-}
+reverseOnto :: ValueStack xs -> LocalInsts acc -> LocalInsts (ReverseOnto xs acc)
+reverseOnto VNil acc = acc
+-- The slot's type @t@ is bound explicitly: 'HostType' is not injective, so it cannot be
+-- recovered from the value @x@ alone when it is pushed onto the locals.
+reverseOnto ((:#) @t x xs) acc = reverseOnto xs ((:&) @t x acc)
 
 getLocal :: Elem t ls -> LocalInsts ls -> HostType t
 getLocal Here (x :& _) = x
