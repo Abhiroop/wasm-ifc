@@ -6,6 +6,6 @@ module Syntax.Memories (
 import Syntax.Types
 
 newtype RawMemory = RawMemory
-    { wasmType :: MemType
+    { memType :: MemType
     }
     deriving stock (Eq, Show)

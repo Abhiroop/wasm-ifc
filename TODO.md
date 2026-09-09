@@ -128,10 +128,10 @@ Beyond P0, mostly *verification*; the spec-test runner (R1) is the instrument.
 
 ### R5 — style and hygiene (no behaviour change; interleave when touching a file)
 
-- [ ] **[P2·style]** Plain record field names (STYLE §7; the extensions are already on):
-  `eeShape`→`shape`, `miFuncs`→`funcs`, `stGlobals`→`globals`, `frLocals`→`locals`,
-  `frReturn`→`results`, `msMin`→`minPages`, `secTypes`→`types`, `moduleFuncs`→`funcs`,
-  `exportName`→`name`, and so on.
+- [x] **[P2·style]** Plain record field names (STYLE §7): `env.shape`, `store.globals`,
+  `inst.funcs`, `m.exports`, `e.name`, the `FrameShape`/`MemShape`/`ModuleShape` fields, and the
+  decoder's `typeSection`/`codeSection`/…; the three record updates that became ambiguous under
+  `DuplicateRecordFields` construct the record instead.
 - [x] **[P2·test]** Move `Runtime.Examples` out of the library into `test/` (only the tests use it).
 - [x] **[P2·ci]** Run CI on every branch (today only `main` and pull requests, so this branch has
   never been through it).
@@ -153,7 +153,7 @@ W0 goes first because a hello world needs its string in memory; W1–W4 change t
 go in after P0 and the spec runner exist to guard them.
 
 - [x] **[W0·decoder+runtime]** Active data segments: decode section 11 (`0x00 expr bytes`: memory
-  0, constant `i32.const` offset; `fail` on passive and other forms) into `RawModule.moduleData`;
+  0, constant `i32.const` offset; `fail` on passive and other forms) into `RawModule.dataSegments`;
   elaboration checks that offset + length fit the memory's minimum; instantiation writes the bytes.
 - [x] **[W1·decoder]** Import section: `Import {module, name, desc}` with `ImportDesc = ImportFunc
   TypeIdx`; `fail` on imported tables/memories/globals. The function index space is imports ++
@@ -273,7 +273,7 @@ Open P0/P1 correctness items live in the plan above (section **P0**); the list b
   leaves, and `Syntax.Instructions`. `Syntax.Types`/`Validation.Shape` kept **open** (documented:
   single-constructor `Sing` constructors need an open import).
 - [x] **[P2·records]** `NoFieldSelectors` + `DuplicateRecordFields` adopted; selector uses rewritten
-  to `OverloadedRecordDot`. The duplicate `wasmType` selector and the generic
+  to `OverloadedRecordDot`. The duplicate `globalType` selector and the generic
   `signature`/`locals`/`body` selectors no longer pollute the top level.
 - [x] **[P2·decoder]** `Codec.Wasm`: explicit `Data.Binary.Get` import; redundant parens stripped.
 - [x] **[P3·naming]** `SomeModuleShapeS` → `SomeModuleShape`. (`src/Validation/Reflect.hs`)
@@ -319,7 +319,7 @@ Open P0/P1 correctness items live in the plan above (section **P0**); the list b
   - WANILLA (CCS '25) — noninterference via SMT: <https://arxiv.org/pdf/2509.08758>
   - HLIO — hybrid IFC: <https://www.cse.chalmers.se/~russo/publications_files/hybrid-icfp2015.pdf>
   - In-place interpreter for WASM (perf, later): <https://dl.acm.org/doi/pdf/10.1145/3563311>
-- [ ] **[P2·feature]** Run the start function after instantiation — it is decoded (`moduleStart`)
+- [ ] **[P2·feature]** Run the start function after instantiation — it is decoded (`start`)
   but never invoked.
 - [ ] **[P2·feature]** Expose exported globals/memories to the CLI — only exported *functions* are
   runnable today (`ExportMem`/`ExportGlobal` are decoded but unused by `runModuleFunction`).

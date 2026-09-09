@@ -95,9 +95,9 @@ data Elem x xs where
   fields at the type level.
 -}
 data ModuleShape = ModuleShape
-    { moduleFuncTypes :: [FuncType]
-    , moduleGlobalTypes :: [GlobalType]
-    , moduleMemShapes :: [MemShape]
+    { funcTypes :: [FuncType]
+    , globalTypes :: [GlobalType]
+    , memShapes :: [MemShape]
     }
 
 type ModuleFuncs :: ModuleShape -> [FuncType]
@@ -118,8 +118,8 @@ type family ModuleMems s where
   together as one index on the typed AST.
 -}
 data FrameShape = FrameShape
-    { frLocals :: [ValType]
-    , frReturn :: ResultType
+    { locals :: [ValType]
+    , results :: ResultType
     }
 
 type FrameLocals :: FrameShape -> [ValType]
@@ -138,9 +138,9 @@ type family FrameReturn f where
   promoted; the term-level selectors document the fields.)
 -}
 data MemShape = MemShape
-    { msAddrType :: AddrType
-    , msMin :: Natural
-    , msMax :: Maybe Natural
+    { addrType :: AddrType
+    , minPages :: Natural
+    , maxPages :: Maybe Natural
     }
     deriving stock (Eq, Show)
 

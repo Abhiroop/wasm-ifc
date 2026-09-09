@@ -165,7 +165,7 @@ data Limits = Limits
     deriving stock (Eq, Show)
 data AddrType = AddrI32 | AddrI64 deriving stock (Eq, Show)
 data MemType = MemType
-    { addrtype :: AddrType
+    { addrType :: AddrType
     , limits :: Limits
     }
     deriving stock (Eq, Show)

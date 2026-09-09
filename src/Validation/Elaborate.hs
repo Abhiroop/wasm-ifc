@@ -131,10 +131,10 @@ data IndexSpace = Locals | Globals | Functions | Labels | Memories
   type and locals, and the result type of each enclosing label.
 -}
 data ElabEnv (shape :: ModuleShape) (ret :: ResultType) (locals :: [ValType]) (labels :: [ResultType]) = ElabEnv
-    { eeShape :: Sing shape
-    , eeRet :: Sing ret
-    , eeLocals :: Sing locals
-    , eeLabels :: Sing labels
+    { shape :: Sing shape
+    , results :: Sing ret
+    , locals :: Sing locals
+    , labels :: Sing labels
     }
 
 {- | The result of elaborating a whole instruction sequence that started from stack @stackIn@.
@@ -255,17 +255,17 @@ elabInstr env stackIn instr = case instr of
             Right (Produces (SCons va rest) (ISelect isNum))
         _ -> Left (StackUnderflow "select")
     {- Locals -}
-    LocalGet (LocalIdx i) -> case mkLocalElem (env.eeLocals) i of
+    LocalGet (LocalIdx i) -> case mkLocalElem (env.locals) i of
         Just (SomeElem sv ix) -> Right (Produces (SCons sv stackIn) (ILocalGet ix))
         Nothing -> Left (IndexOutOfRange Locals i)
-    LocalSet (LocalIdx i) -> case mkLocalElem (env.eeLocals) i of
+    LocalSet (LocalIdx i) -> case mkLocalElem (env.locals) i of
         Just (SomeElem sv ix) -> case stackIn of
             SCons stop rest -> do
                 Refl <- note (OperandMismatch "local.set" (valTypeOf sv) (valTypeOf stop)) (decideEquality stop sv)
                 Right (Produces rest (ILocalSet ix))
             _ -> Left (StackUnderflow "local.set")
         Nothing -> Left (IndexOutOfRange Locals i)
-    LocalTee (LocalIdx i) -> case mkLocalElem (env.eeLocals) i of
+    LocalTee (LocalIdx i) -> case mkLocalElem (env.locals) i of
         Just (SomeElem sv ix) -> case stackIn of
             SCons stop _ -> do
                 Refl <- note (OperandMismatch "local.tee" (valTypeOf sv) (valTypeOf stop)) (decideEquality stop sv)
@@ -273,10 +273,10 @@ elabInstr env stackIn instr = case instr of
             _ -> Left (StackUnderflow "local.tee")
         Nothing -> Left (IndexOutOfRange Locals i)
     {- Globals -}
-    GlobalGet (GlobalIdx g) -> case lookupGlobalRef (globalTypesSing (env.eeShape)) g of
+    GlobalGet (GlobalIdx g) -> case lookupGlobalRef (globalTypesSing (env.shape)) g of
         Nothing -> Left (IndexOutOfRange Globals g)
         Just (SomeGlobalRef _ st gix) -> Right (Produces (SCons st stackIn) (IGlobalGet gix))
-    GlobalSet (GlobalIdx g) -> case lookupGlobalRef (globalTypesSing (env.eeShape)) g of
+    GlobalSet (GlobalIdx g) -> case lookupGlobalRef (globalTypesSing (env.shape)) g of
         Nothing -> Left (IndexOutOfRange Globals g)
         Just (SomeGlobalRef smut st gix) -> case smut of
             SImmutable -> Left (ImmutableGlobal g)
@@ -330,7 +330,7 @@ elabInstr env stackIn instr = case instr of
             Right (Produces (SCons SI32 rest) IMemGrow)
         _ -> Left (StackUnderflow "memory.grow")
     {- Calls -}
-    Call (FunctionIdx f) -> case lookupFuncRef (funcTypesSing (env.eeShape)) f of
+    Call (FunctionIdx f) -> case lookupFuncRef (funcTypesSing (env.shape)) f of
         Nothing -> Left (IndexOutOfRange Functions f)
         Just (SomeFuncRef psS rsS fix) -> case matchPrefix psS stackIn of
             Nothing -> Left (StackMismatch "call" (stackToList psS) (stackToList stackIn))
@@ -434,7 +434,7 @@ elabInstr env stackIn instr = case instr of
                                 Right (Produces (rsS %++ sS) (IIf witness thenSeq elseSeq))
         _ -> Left (StackUnderflow "if")
     {- Branches (unconditional ones diverge) -}
-    Br (LabelIdx l) -> case mkLabelElem (env.eeLabels) l of
+    Br (LabelIdx l) -> case mkLabelElem (env.labels) l of
         Nothing -> Left (IndexOutOfRange Labels l)
         Just (SomeLabel rsS labelIx) -> case matchPrefix rsS stackIn of
             Nothing -> Left (StackMismatch "br" (stackToList rsS) (stackToList stackIn))
@@ -442,7 +442,7 @@ elabInstr env stackIn instr = case instr of
     BrIf (LabelIdx l) -> case stackIn of
         SCons sc rest -> do
             Refl <- note (OperandMismatch "br_if" I32 (valTypeOf sc)) (decideEquality sc SI32)
-            case mkLabelElem (env.eeLabels) l of
+            case mkLabelElem (env.labels) l of
                 Nothing -> Left (IndexOutOfRange Labels l)
                 Just (SomeLabel rsS labelIx) -> case matchPrefix rsS rest of
                     Nothing -> Left (StackMismatch "br_if" (stackToList rsS) (stackToList rest))
@@ -451,7 +451,7 @@ elabInstr env stackIn instr = case instr of
     BrTable targets (LabelIdx d) -> case stackIn of
         SCons sc rest -> case decideEquality sc SI32 of
             Nothing -> Left (OperandMismatch "br_table" I32 (valTypeOf sc))
-            Just Refl -> case mkLabelElem (env.eeLabels) d of
+            Just Refl -> case mkLabelElem (env.labels) d of
                 Nothing -> Left (IndexOutOfRange Labels d)
                 Just (SomeLabel rsS defIx) -> case mapM (resolveTarget env rsS) targets of
                     Left err -> Left err
@@ -459,14 +459,14 @@ elabInstr env stackIn instr = case instr of
                         Nothing -> Left (StackMismatch "br_table" (stackToList rsS) (stackToList rest))
                         Just (SomeSplit _ witness) -> Right (Transfers (IBrTable witness targetIxs defIx))
         _ -> Left (StackUnderflow "br_table")
-    Return -> case matchPrefix (env.eeRet) stackIn of
-        Nothing -> Left (StackMismatch "return" (stackToList (env.eeRet)) (stackToList stackIn))
+    Return -> case matchPrefix (env.results) stackIn of
+        Nothing -> Left (StackMismatch "return" (stackToList (env.results)) (stackToList stackIn))
         Just (SomeSplit _ witness) -> Right (Transfers (IReturn witness))
     Unreachable -> Right (Transfers IUnreachable)
 
 -- | Push a label's result type onto the elaboration environment's label context.
 pushLabel :: Sing rs -> ElabEnv shape ret locals labels -> ElabEnv shape ret locals (rs ': labels)
-pushLabel rsS env = env {eeLabels = SCons rsS (env.eeLabels)}
+pushLabel rsS env = env {labels = SCons rsS (env.labels)}
 
 {- | Elaborate a block/loop/if body (its label already pushed onto @env@), checking it
   transforms @ps@ into @rs@, and hand the resulting typed sequence to the continuation.
@@ -490,7 +490,7 @@ elabBodyChecked env psS rsS body k = do
 
 -- | Resolve one @br_table@ target, checking it carries the same result type as the rest.
 resolveTarget :: ElabEnv shape ret locals labels -> Sing rs -> LabelIdx -> Either ElabError (Elem rs labels)
-resolveTarget env rsS (LabelIdx t) = case mkLabelElem (env.eeLabels) t of
+resolveTarget env rsS (LabelIdx t) = case mkLabelElem (env.labels) t of
     Nothing -> Left (IndexOutOfRange Labels t)
     Just (SomeLabel rsS' targetIx) -> case decideEquality rsS' rsS of
         Just Refl -> Right targetIx
@@ -532,7 +532,7 @@ requireMemory ::
     Text ->
     Either ElabError (NonEmptyMems (ModuleMems shape))
 requireMemory env instrName =
-    note (NoMemory instrName) (memsNonEmpty (memShapesSing (env.eeShape)))
+    note (NoMemory instrName) (memsNonEmpty (memShapesSing (env.shape)))
 
 {- | The spec bounds a memory access's alignment by its width: @2^align <= accessBytes@. The
   binary format stores @align@ as the log2 exponent, so a valid exponent is at most 3 (for an
@@ -646,10 +646,10 @@ stepDead env s instr = case instr of
     LocalGet (LocalIdx i) -> withLocal env i (\v -> Right (pushKnown v s))
     LocalSet (LocalIdx i) -> withLocal env i (\v -> popKnown v s)
     LocalTee (LocalIdx i) -> withLocal env i (\v -> pushKnown v <$> popKnown v s)
-    GlobalGet (GlobalIdx g) -> case lookupGlobalRef (globalTypesSing (env.eeShape)) g of
+    GlobalGet (GlobalIdx g) -> case lookupGlobalRef (globalTypesSing (env.shape)) g of
         Nothing -> Left (IndexOutOfRange Globals g)
         Just (SomeGlobalRef _ st _) -> Right (pushKnown (valTypeOf st) s)
-    GlobalSet (GlobalIdx g) -> case lookupGlobalRef (globalTypesSing (env.eeShape)) g of
+    GlobalSet (GlobalIdx g) -> case lookupGlobalRef (globalTypesSing (env.shape)) g of
         Nothing -> Left (IndexOutOfRange Globals g)
         Just (SomeGlobalRef _ st _) -> popKnown (valTypeOf st) s
     Load t _ -> pushKnown (valTypeOf t) <$> popKnown I32 s
@@ -679,7 +679,7 @@ stepDead env s instr = case instr of
     Max t -> arith t
     Copysign t -> arith t
     Convert op -> let (from, to) = convertSig op in pushKnown to <$> popKnown from s
-    Call (FunctionIdx f) -> case lookupFuncRef (funcTypesSing (env.eeShape)) f of
+    Call (FunctionIdx f) -> case lookupFuncRef (funcTypesSing (env.shape)) f of
         Nothing -> Left (IndexOutOfRange Functions f)
         Just (SomeFuncRef psS rsS _) -> afterFrame (stackToList psS) (stackToList rsS) s
     Nop -> Right s
@@ -710,7 +710,7 @@ stepDead env s instr = case instr of
         _ <- popTypes defaultTypes s1
         Right (PolyStack [])
     Return -> do
-        _ <- popTypes (stackToList (env.eeRet)) s
+        _ <- popTypes (stackToList (env.results)) s
         Right (PolyStack [])
     Unreachable -> Right (PolyStack [])
   where
@@ -759,13 +759,13 @@ afterFrame psT rsT s = Right (pushResults rsT (popN (length psT) s))
     pushResults vs t = foldr pushKnown t vs
 
 withLocal :: ElabEnv shape ret locals labels -> Word32 -> (ValType -> Either ElabError a) -> Either ElabError a
-withLocal env i k = case mkLocalElem (env.eeLocals) i of
+withLocal env i k = case mkLocalElem (env.locals) i of
     Just (SomeElem sv _) -> k (valTypeOf sv)
     Nothing -> Left (IndexOutOfRange Locals i)
 
 -- | The result types of a label, in stack order.
 labelTypes :: ElabEnv shape ret locals labels -> Word32 -> Either ElabError [ValType]
-labelTypes env l = case mkLabelElem (env.eeLabels) l of
+labelTypes env l = case mkLabelElem (env.labels) l of
     Just (SomeLabel rsS _) -> Right (stackToList rsS)
     Nothing -> Left (IndexOutOfRange Labels l)
 
@@ -804,16 +804,16 @@ elaborateModule m = do
     validateStructure m
     case reflectCtx funcSigs globalTypes memTypes of
         SomeModuleShape ctxS@(SModuleShape ftsS gsS msS) -> do
-            funcs <- elaborateFuncs ctxS ftsS (map Left m.moduleImports ++ map Right m.moduleFuncs)
-            globals <- buildGlobals gsS (m.moduleGlobals)
-            mems <- buildMems msS (m.moduleMemories) >>= initialiseData (m.moduleData)
-            started <- runStart ctxS (ModuleInst funcs globals mems) (m.moduleStart)
-            Right (SomeModule ctxS started (m.moduleExports))
+            funcs <- elaborateFuncs ctxS ftsS (map Left m.imports ++ map Right m.funcs)
+            globals <- buildGlobals gsS (m.globals)
+            mems <- buildMems msS (m.memories) >>= initialiseData (m.dataSegments)
+            started <- runStart ctxS (ModuleInst funcs globals mems) (m.start)
+            Right (SomeModule ctxS started (m.exports))
   where
     -- The function index space: imports first, then the module's own functions.
-    funcSigs = [ft | RawImport _ _ (ImportFunc ft) <- m.moduleImports] ++ map (\(RawFunction sig _ _) -> sig) (m.moduleFuncs)
-    globalTypes = map (\(RawGlobal gt _) -> gt) (m.moduleGlobals)
-    memTypes = map (\(RawMemory mt) -> mt) (m.moduleMemories)
+    funcSigs = [ft | RawImport _ _ (ImportFunc ft) <- m.imports] ++ map (\(RawFunction sig _ _) -> sig) (m.funcs)
+    globalTypes = map (\(RawGlobal gt _) -> gt) (m.globals)
+    memTypes = map (\(RawMemory mt) -> mt) (m.memories)
 
 {- | The module-level rules of the validation section that need no shape: well-formed,
   bounded memory limits; at most one memory; distinct export names; export indices within
@@ -821,10 +821,10 @@ elaborateModule m = do
 -}
 validateStructure :: RawModule -> Either ElabError ()
 validateStructure m = do
-    mapM_ checkLimits [declared | RawMemory (MemType _ declared) <- m.moduleMemories]
-    when (length m.moduleMemories > 1) (Left TooManyMemories)
-    checkDistinct [e.exportName | e <- m.moduleExports]
-    mapM_ checkExport m.moduleExports
+    mapM_ checkLimits [declared | RawMemory (MemType _ declared) <- m.memories]
+    when (length m.memories > 1) (Left TooManyMemories)
+    checkDistinct [e.name | e <- m.exports]
+    mapM_ checkExport m.exports
   where
     checkLimits declared
         | declared.min > maxMemoryPages = Left (InvalidMemoryLimits declared)
@@ -834,9 +834,9 @@ validateStructure m = do
         [] -> Right ()
         n : _ -> Left (DuplicateExport n)
     checkExport (Export _ desc) = case desc of
-        ExportFunc (FunctionIdx i) -> inRange Functions i (length m.moduleImports + length m.moduleFuncs)
-        ExportGlobal (GlobalIdx i) -> inRange Globals i (length m.moduleGlobals)
-        ExportMem (MemoryIdx i) -> inRange Memories i (length m.moduleMemories)
+        ExportFunc (FunctionIdx i) -> inRange Functions i (length m.imports + length m.funcs)
+        ExportGlobal (GlobalIdx i) -> inRange Globals i (length m.globals)
+        ExportMem (MemoryIdx i) -> inRange Memories i (length m.memories)
     inRange space i count
         | fromIntegral i < count = Right ()
         | otherwise = Left (IndexOutOfRange space i)
@@ -849,7 +849,7 @@ runStart ctxS inst (Just (FunctionIdx idx)) = case lookupFuncRef (funcTypesSing 
     Just (SomeFuncRef psS rsS funcIx) -> do
         Refl <- note InvalidStartFunction (decideEquality psS SNil)
         Refl <- note InvalidStartFunction (decideEquality rsS SNil)
-        outcome <- first StartFunctionTrapped (runFunction inst (getFunc funcIx inst.miFuncs) VNil)
+        outcome <- first StartFunctionTrapped (runFunction inst (getFunc funcIx inst.funcs) VNil)
         case outcome of
             Completed started _ -> Right started
             NeedsHost _ -> Left StartFunctionNeedsHost

@@ -9,9 +9,9 @@ import Data.Text (Text)
 import Syntax.Types (FuncType)
 
 data RawImport = RawImport
-    { importModule :: Text
-    , importName :: Text
-    , importDesc :: ImportDesc
+    { moduleName :: Text
+    , name :: Text
+    , desc :: ImportDesc
     }
     deriving stock (Eq, Show)
 

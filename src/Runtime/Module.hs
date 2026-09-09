@@ -111,10 +111,10 @@ invokeExport (SomeModule shapeS inst exports) name args = do
     SomeFuncRef psS rsS funcIx <- note (NoSuchExport name) (lookupFuncRef (funcTypesSing shapeS) idx)
     checkArguments (declaredOrder (fromSing psS)) args
     argStack <- note (ArgumentCount 0 0) (buildStack psS (stackOrder args))
-    outcome <- first Trapped (runFunction inst (getFunc funcIx inst.miFuncs) argStack)
+    outcome <- first Trapped (runFunction inst (getFunc funcIx inst.funcs) argStack)
     pure $ case outcome of
         Completed inst' results -> Returned (SomeModule shapeS inst' exports) (declaredOrder (toValues rsS results))
-        NeedsHost request -> CalledHost (SomeHostRequest shapeS inst.miFuncs exports rsS request)
+        NeedsHost request -> CalledHost (SomeHostRequest shapeS inst.funcs exports rsS request)
 
 {- | Continue a suspended invocation from the configuration the host's answer produced (see
   'Runtime.Interpreter.resumeWith'); it may finish, or call the host again.
@@ -130,7 +130,7 @@ continueWith shapeS funcs exports rsS config = do
     halt <- first Trapped (run funcs config)
     pure $ case halt of
         Finished store results ->
-            Returned (SomeModule shapeS (ModuleInst funcs store.stGlobals store.stMems) exports) (declaredOrder (toValues rsS results))
+            Returned (SomeModule shapeS (ModuleInst funcs store.globals store.mems) exports) (declaredOrder (toValues rsS results))
         AwaitingHost request -> CalledHost (SomeHostRequest shapeS funcs exports rsS request)
 
 exportedFuncIndex :: Text -> [Export] -> Maybe FunctionIdx

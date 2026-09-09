@@ -116,7 +116,7 @@ spec = do
             void (elaborateModule (wasiModule (RawImport "spectest" "print" (ImportFunc (FuncType [] []))) [] []))
                 `shouldBe` Left (UnsupportedImport "spectest" "print")
         it "need a memory in the module" $
-            void (elaborateModule ((wasiModule procExitImport [] []) {moduleMemories = []}))
+            void (elaborateModule ((wasiModule procExitImport [] []) {memories = []}))
                 `shouldBe` Left WasiNeedsMemory
 
     describe "module-level validation" $ do
@@ -130,15 +130,15 @@ spec = do
             void (elaborateModule (singleFunctionModule [onePageMemory, onePageMemory] [] [] [] []))
                 `shouldBe` Left TooManyMemories
         it "rejects duplicate export names" $
-            void (elaborateModule ((singleFunctionModule [] [] [] [] []) {moduleExports = [Export "f" (ExportFunc (FunctionIdx 0)), Export "f" (ExportFunc (FunctionIdx 0))]}))
+            void (elaborateModule ((singleFunctionModule [] [] [] [] []) {exports = [Export "f" (ExportFunc (FunctionIdx 0)), Export "f" (ExportFunc (FunctionIdx 0))]}))
                 `shouldBe` Left (DuplicateExport "f")
         it "rejects an export of a function that does not exist" $
-            void (elaborateModule ((singleFunctionModule [] [] [] [] []) {moduleExports = [Export "g" (ExportFunc (FunctionIdx 7))]}))
+            void (elaborateModule ((singleFunctionModule [] [] [] [] []) {exports = [Export "g" (ExportFunc (FunctionIdx 7))]}))
                 `shouldSatisfy` isLeft
         it "runs the start function at instantiation (it bumps a global the export reads)" $
             elabRunModule (startModule [Const SI32 1, GlobalSet (GlobalIdx 0)]) [] `shouldBe` Right ["1"]
         it "rejects a start function with parameters" $
-            void (elaborateModule (twoFunctions (FuncType [I32] []) [] (FuncType [] [I32]) [Const SI32 0]) {moduleStart = Just (FunctionIdx 0)})
+            void (elaborateModule (twoFunctions (FuncType [I32] []) [] (FuncType [] [I32]) [Const SI32 0]) {start = Just (FunctionIdx 0)})
                 `shouldBe` Left InvalidStartFunction
         it "fails instantiation when the start function traps" $
             void (elaborateModule (startModule [Unreachable]))
@@ -371,14 +371,14 @@ twoFunctions calleeType callee mainType mainBody =
 moduleOf :: [RawMemory] -> [RawFunction] -> FunctionIdx -> RawModule
 moduleOf memories funcs exported =
     RawModule
-        { moduleTypes = [f.signature | f <- funcs]
-        , moduleImports = []
-        , moduleFuncs = funcs
-        , moduleGlobals = []
-        , moduleMemories = memories
-        , moduleData = []
-        , moduleExports = [Export "f" (ExportFunc exported)]
-        , moduleStart = Nothing
+        { types = [f.signature | f <- funcs]
+        , imports = []
+        , funcs = funcs
+        , globals = []
+        , memories = memories
+        , dataSegments = []
+        , exports = [Export "f" (ExportFunc exported)]
+        , start = Nothing
         }
 
 -- | Elaborate a module and run its export @f@ on integer arguments.
@@ -415,8 +415,8 @@ fdWriteImport = RawImport "wasi_snapshot_preview1" "fd_write" (ImportFunc (FuncT
 wasiModule :: RawImport -> [RawInstr] -> [ValType] -> RawModule
 wasiModule imported body results =
     (moduleOf [onePageMemory] [RawFunction (FuncType [] results) [] body] (FunctionIdx 1))
-        { moduleImports = [imported]
-        , moduleTypes = [importType imported, FuncType [] results]
+        { imports = [imported]
+        , types = [importType imported, FuncType [] results]
         }
   where
     importType (RawImport _ _ (ImportFunc ft)) = ft
@@ -431,12 +431,12 @@ describeCompletion (Exited code) = "exited " ++ show code
 startModule :: [RawInstr] -> RawModule
 startModule startBody =
     (twoFunctions (FuncType [] []) startBody (FuncType [] [I32]) [GlobalGet (GlobalIdx 0)])
-        { moduleGlobals = [RawGlobal (GlobalType Mutable I32) [Const SI32 0]]
-        , moduleStart = Just (FunctionIdx 0)
+        { globals = [RawGlobal (GlobalType Mutable I32) [Const SI32 0]]
+        , start = Just (FunctionIdx 0)
         }
 
 withData :: [RawData] -> RawModule -> RawModule
-withData segments m = m {moduleData = segments}
+withData segments m = m {dataSegments = segments}
 
 memoryWithMax :: Word32 -> Word32 -> RawMemory
 memoryWithMax lo hi = RawMemory (MemType AddrI32 (Limits lo (Just hi)))
@@ -449,7 +449,7 @@ memoryWithMax lo hi = RawMemory (MemType AddrI32 (Limits lo (Just hi)))
 
 -- | Decode raw bytes, reduced to the number of functions ('RawModule' has no 'Show').
 decodeBytes :: [Word8] -> Either String Int
-decodeBytes bytes = fmap (length . (.moduleFuncs)) (decodeModule (BL.pack bytes))
+decodeBytes bytes = fmap (length . (.funcs)) (decodeModule (BL.pack bytes))
 
 decodeSections :: [[Word8]] -> Either String Int
 decodeSections sections = decodeBytes (wasmHeader ++ concat sections)

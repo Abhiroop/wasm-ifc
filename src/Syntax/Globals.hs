@@ -7,6 +7,6 @@ import Syntax.Expressions
 import Syntax.Types
 
 data RawGlobal = RawGlobal
-    { wasmType :: GlobalType
+    { globalType :: GlobalType
     , initializer :: RawExpr
     }

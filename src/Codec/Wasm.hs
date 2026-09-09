@@ -422,18 +422,18 @@ reservedZero = do
   stored separately and merged into 'RawFunction's at the end.
 -}
 data Sections = Sections
-    { secTypes :: [FuncType]
-    , secImports :: [RawImport]
-    , secFuncTypes :: [Word32]
+    { typeSection :: [FuncType]
+    , importSection :: [RawImport]
+    , functionSection :: [Word32]
     -- ^ function section: type index per function
-    , secCodes :: [([ValType], [RawInstr])]
+    , codeSection :: [([ValType], [RawInstr])]
     -- ^ code section: locals and body per function
-    , secGlobals :: [RawGlobal]
-    , secMems :: [RawMemory]
-    , secExports :: [Export]
-    , secStart :: Maybe FunctionIdx
-    , secData :: [RawData]
-    , secDataCount :: Maybe Word32
+    , globalSection :: [RawGlobal]
+    , memorySection :: [RawMemory]
+    , exportSection :: [Export]
+    , startSection :: Maybe FunctionIdx
+    , dataSection :: [RawData]
+    , dataCountSection :: Maybe Word32
     -- ^ the data count section, which must agree with the data section
     }
 
@@ -478,18 +478,18 @@ sectionRank sectionId = (+ 1) <$> elemIndex sectionId [1, 2, 3, 4, 5, 6, 7, 8, 9
 parseSection :: Word8 -> Sections -> Get Sections
 parseSection sectionId acc = case sectionId of
     0 -> getName >> getRemainingLazyByteString >> pure acc -- a custom section: a name, then anything
-    1 -> (\ts -> acc {secTypes = ts}) <$> getVec getFuncType
-    2 -> (\is -> acc {secImports = is}) <$> getVec (getImport (acc.secTypes))
-    3 -> (\is -> acc {secFuncTypes = is}) <$> getVec getULEB128
+    1 -> (\ts -> acc {typeSection = ts}) <$> getVec getFuncType
+    2 -> (\is -> acc {importSection = is}) <$> getVec (getImport (acc.typeSection))
+    3 -> (\is -> acc {functionSection = is}) <$> getVec getULEB128
     4 -> fail "unsupported: table section"
-    5 -> (\ms -> acc {secMems = ms}) <$> getVec getMemory
-    6 -> (\gs -> acc {secGlobals = gs}) <$> getVec getGlobal
-    7 -> (\es -> acc {secExports = es}) <$> getVec getExport
-    8 -> (\i -> acc {secStart = Just (FunctionIdx i)}) <$> getULEB128
+    5 -> (\ms -> acc {memorySection = ms}) <$> getVec getMemory
+    6 -> (\gs -> acc {globalSection = gs}) <$> getVec getGlobal
+    7 -> (\es -> acc {exportSection = es}) <$> getVec getExport
+    8 -> (\i -> acc {startSection = Just (FunctionIdx i)}) <$> getULEB128
     9 -> fail "unsupported: element section"
-    10 -> (\cs -> acc {secCodes = cs}) <$> getVec (getCode (acc.secTypes))
-    11 -> (\ds -> acc {secData = ds}) <$> getVec getData
-    12 -> (\n -> acc {secDataCount = Just n}) <$> getULEB128
+    10 -> (\cs -> acc {codeSection = cs}) <$> getVec (getCode (acc.typeSection))
+    11 -> (\ds -> acc {dataSection = ds}) <$> getVec getData
+    12 -> (\n -> acc {dataCountSection = Just n}) <$> getULEB128
     _ -> fail ("malformed section id " ++ show sectionId)
 
 {- | A data segment. Only the active form for memory 0 (@0x00 offset-expr bytes@) is
@@ -567,25 +567,25 @@ getLocalGroup = (,) <$> getULEB128 <*> getValType
 assemble :: Sections -> Either String RawModule
 assemble secs = do
     when
-        (length secs.secFuncTypes /= length secs.secCodes)
+        (length secs.functionSection /= length secs.codeSection)
         (Left "function and code sections have different lengths")
     when
-        (maybe False (\n -> fromIntegral n /= length secs.secData) secs.secDataCount)
+        (maybe False (\n -> fromIntegral n /= length secs.dataSection) secs.dataCountSection)
         (Left "data count and data section have inconsistent lengths")
-    funcs <- traverse toFunction (zip secs.secFuncTypes secs.secCodes)
+    funcs <- traverse toFunction (zip secs.functionSection secs.codeSection)
     pure
         RawModule
-            { moduleTypes = secs.secTypes
-            , moduleImports = secs.secImports
-            , moduleFuncs = funcs
-            , moduleGlobals = secs.secGlobals
-            , moduleMemories = secs.secMems
-            , moduleData = secs.secData
-            , moduleExports = secs.secExports
-            , moduleStart = secs.secStart
+            { types = secs.typeSection
+            , imports = secs.importSection
+            , funcs = funcs
+            , globals = secs.globalSection
+            , memories = secs.memorySection
+            , dataSegments = secs.dataSection
+            , exports = secs.exportSection
+            , start = secs.startSection
             }
   where
     toFunction (typeIdx, (locals, body)) =
-        case nth secs.secTypes (fromIntegral typeIdx) of
+        case nth secs.typeSection (fromIntegral typeIdx) of
             Just sig -> Right (RawFunction sig locals body)
             Nothing -> Left ("function type index out of range: " ++ show typeIdx)

@@ -23,8 +23,8 @@ data ExportDesc
 
 -- | A named entry point exposed by the module.
 data Export = Export
-    { exportName :: Text
-    , exportDesc :: ExportDesc
+    { name :: Text
+    , desc :: ExportDesc
     }
     deriving stock (Eq, Show)
 
@@ -35,16 +35,16 @@ Component vectors are plain lists: an index is a position in the list. Lists
 these as type-level lists, which is far more tractable than type-level arrays.
 -}
 data RawModule = RawModule
-    { moduleTypes :: [FuncType]
+    { types :: [FuncType]
     -- ^ the type section
-    , moduleImports :: [RawImport]
+    , imports :: [RawImport]
     -- ^ imported functions; they come first in the function index space
-    , moduleFuncs :: [RawFunction]
+    , funcs :: [RawFunction]
     -- ^ function + code sections, merged by the decoder
-    , moduleGlobals :: [RawGlobal]
-    , moduleMemories :: [RawMemory]
-    , moduleData :: [RawData]
+    , globals :: [RawGlobal]
+    , memories :: [RawMemory]
+    , dataSegments :: [RawData]
     -- ^ active data segments, applied in order at instantiation
-    , moduleExports :: [Export]
-    , moduleStart :: Maybe FunctionIdx
+    , exports :: [Export]
+    , start :: Maybe FunctionIdx
     }

@@ -126,8 +126,8 @@ getFunc (There ix) (FsCons _ rest) = getFunc ix rest
   immutable, so they are passed to 'step' read-only rather than kept here.)
 -}
 data Store (mod :: ModuleShape) = Store
-    { stGlobals :: GlobalInsts (ModuleGlobals mod)
-    , stMems :: MemInsts (ModuleMems mod)
+    { globals :: GlobalInsts (ModuleGlobals mod)
+    , mems :: MemInsts (ModuleMems mod)
     }
 
 {- | A fully instantiated module: its function instances plus the initial globals and
@@ -136,9 +136,9 @@ data Store (mod :: ModuleShape) = Store
   'ModuleInst'.)
 -}
 data ModuleInst (mod :: ModuleShape) = ModuleInst
-    { miFuncs :: FuncInsts mod (ModuleFuncs mod)
-    , miGlobals :: GlobalInsts (ModuleGlobals mod)
-    , miMems :: MemInsts (ModuleMems mod)
+    { funcs :: FuncInsts mod (ModuleFuncs mod)
+    , globals :: GlobalInsts (ModuleGlobals mod)
+    , mems :: MemInsts (ModuleMems mod)
     }
 
 {- *** The control stack ***
@@ -317,9 +317,9 @@ step funcs (Config store locals stack code control) = case code of
         ILocalGet ix -> stepped store locals (getLocal ix locals :# stack) rest control
         ILocalSet ix -> case stack of v :# r -> stepped store (setLocal ix v locals) r rest control
         ILocalTee ix -> case stack of v :# _ -> stepped store (setLocal ix v locals) stack rest control
-        IGlobalGet ix -> stepped store locals (getGlobal ix (store.stGlobals) :# stack) rest control
+        IGlobalGet ix -> stepped store locals (getGlobal ix (store.globals) :# stack) rest control
         IGlobalSet ix -> case stack of
-            v :# r -> stepped store {stGlobals = setGlobal ix v (store.stGlobals)} locals r rest control
+            v :# r -> stepped (Store (setGlobal ix v store.globals) store.mems) locals r rest control
         {- Memory -}
         ILoad nt memArg -> case stack of
             addr :# r ->
@@ -410,10 +410,10 @@ stepUn store locals (a :# r) op = stepped store locals (op a :# r)
   constraint every memory instruction carries makes both total.
 -}
 currentMem :: (ModuleMems mod ~ (m ': ms)) => Store mod -> MemInst m
-currentMem store = firstMem store.stMems
+currentMem store = firstMem store.mems
 
 storeMem :: (ModuleMems mod ~ (m ': ms)) => MemInst m -> Store mod -> Store mod
-storeMem mem store = store {stMems = setFirstMem mem store.stMems}
+storeMem mem store = Store store.globals (setFirstMem mem store.mems)
 
 -- | What @memory.grow@ pushes when it cannot grow: the spec's @-1@, as an unsigned i32.
 growFailed :: Word32
@@ -516,16 +516,16 @@ runFunction ::
     ValueStack ps ->
     Either Trap (Outcome mod rs)
 runFunction tm (WasmFunc defaults body) args = do
-    halt <- run (tm.miFuncs) (Config store locals VNil body EntryBoundary)
+    halt <- run (tm.funcs) (Config store locals VNil body EntryBoundary)
     Right $ case halt of
-        Finished store' results -> Completed tm {miGlobals = store'.stGlobals, miMems = store'.stMems} results
+        Finished store' results -> Completed (ModuleInst tm.funcs store'.globals store'.mems) results
         AwaitingHost request -> NeedsHost request
   where
-    store = Store (tm.miGlobals) (tm.miMems)
+    store = Store (tm.globals) (tm.mems)
     locals = reverseOnto args defaults
 runFunction tm (HostFunc wasiFunc) args = case wasiFuncType wasiFunc of
     SFuncType _ resultsS ->
-        Right (NeedsHost (HostRequest wasiFunc args (Store (tm.miGlobals) (tm.miMems)) (Suspended (appendNil resultsS) LNil VNil INil EntryBoundary)))
+        Right (NeedsHost (HostRequest wasiFunc args (Store (tm.globals) (tm.mems)) (Suspended (appendNil resultsS) LNil VNil INil EntryBoundary)))
 
 {- *** Numeric dispatch ***
 
