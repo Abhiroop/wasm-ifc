@@ -71,7 +71,7 @@ Suggested order: **P0 → R1 → W0…W6 → R2/R3 → R5** (R5 interleaved as f
   `unreachable`, `local_get/set/tee`, `global`, `memory`, `load`, `store`, `align`, `nop`, `stack`,
   `labels`, `fac`, `forward` — skipping modules that need unsupported features and reporting
   counts. Vendor the suite under `test/spec/` and pin its commit.
-- [ ] **[P1·cli]** Typed arguments and results on the entry path (needed by the runner and by the
+- [x] **[P1·cli]** Typed arguments and results on the entry path (needed by the runner and by the
   float samples): parse each argument at its parameter type — `i32`/`i64` as integers (also
   `0x…`), `f32`/`f64` as decimals, `nan`, `inf` and bit patterns (`nan:0x…`) — replacing
   `[Integer]`; render results the same way. `runModuleFunction` returns a `RunError` sum and typed

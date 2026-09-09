@@ -16,22 +16,19 @@
 -}
 module Validation.Elaborate (
     ElabError (..),
-    SomeModule (..),
     elaborateModule,
-    runModuleFunction,
 ) where
 
-import Data.Text (Text)
-import Data.Text qualified as T
 import Data.Type.Equality ((:~:) (Refl))
 import Data.Word (Word32)
 
 import Data.List.Singletons ((%++))
 import Data.Singletons.Base.TH (SList (SCons, SNil), Sing, fromSing)
 import Data.Singletons.Decide (decideEquality)
-import Runtime.Interpreter (FuncInst (..), FuncInsts (..), ModuleInst (..), getFunc, runFunction)
+import Runtime.Interpreter (FuncInst (..), FuncInsts (..), ModuleInst (..))
 import Runtime.MemInst (allocMemory)
-import Runtime.Stack (GlobalInsts (..), LocalInsts (..), MemInsts (..), ValueStack (..))
+import Runtime.Module (SomeModule (..))
+import Runtime.Stack (GlobalInsts (..), LocalInsts (..), MemInsts (..))
 import Syntax.Functions (RawFunction (RawFunction))
 import Syntax.Globals (RawGlobal (RawGlobal))
 import Syntax.Immediates (HostType)
@@ -112,15 +109,6 @@ data ElaboratedInstr (shape :: ModuleShape) (ret :: ResultType) (locals :: [ValT
 
 note :: ElabError -> Maybe a -> Either ElabError a
 note e = maybe (Left e) Right
-
-funcTypesSing :: SModuleShape shape -> Sing (ModuleFuncs shape)
-funcTypesSing (SModuleShape fts _ _) = fts
-
-globalTypesSing :: SModuleShape shape -> Sing (ModuleGlobals shape)
-globalTypesSing (SModuleShape _ gs _) = gs
-
-memShapesSing :: SModuleShape shape -> Sing (ModuleMems shape)
-memShapesSing (SModuleShape _ _ ms) = ms
 
 -- *** Sequences ***
 
@@ -708,12 +696,6 @@ unStack (PolyStack xs) = xs
 
 -- *** Whole-module elaboration ***
 
-{- | A fully elaborated, well-typed module: its signature witness, its typed instances, and
-  its exports (for resolving entry points).
--}
-data SomeModule where
-    SomeModule :: SModuleShape shape -> ModuleInst shape -> [Export] -> SomeModule
-
 {- | Type-check an entire decoded module: build its signature, elaborate every function
   against it, and assemble the typed functions, initial globals and memories.
 -}
@@ -792,49 +774,3 @@ zeroOf SI32 = 0
 zeroOf SI64 = 0
 zeroOf SF32 = 0
 zeroOf SF64 = 0
-
--- *** Running an exported function ***
-
-{- | Resolve an export, build a typed argument stack from integer literals, run the
-  function on the module, and render the results. Arguments and results are in declared
-  order at this boundary; the stack the function sees has the last argument on top.
--}
-runModuleFunction :: SomeModule -> Text -> [Integer] -> Either String [String]
-runModuleFunction (SomeModule ctxS typedModule exports) name args =
-    case exportedFuncIndex name exports of
-        Nothing -> Left ("no exported function named " ++ T.unpack name)
-        Just (FunctionIdx idx) -> case lookupFuncRef (funcTypesSing ctxS) idx of
-            Nothing -> Left "exported function index out of range"
-            Just (SomeFuncRef paramsS resultsS funcIx) -> do
-                argStack <- buildArgs paramsS (stackOrder args)
-                case runFunction typedModule (getFunc funcIx (typedModule.miFuncs)) argStack of
-                    Left aTrap -> Left ("trap: " ++ show aTrap)
-                    Right vals -> Right (declaredOrder (renderResults resultsS vals))
-
-exportedFuncIndex :: Text -> [Export] -> Maybe FunctionIdx
-exportedFuncIndex name exports =
-    case [idx | Export n (ExportFunc idx) <- exports, n == name] of
-        (idx : _) -> Just idx
-        [] -> Nothing
-
-buildArgs :: Sing ps -> [Integer] -> Either String (ValueStack ps)
-buildArgs SNil [] = Right VNil
-buildArgs SNil _ = Left "too many arguments"
-buildArgs (SCons _ _) [] = Left "too few arguments"
-buildArgs (SCons sn r) (a : as) = (fromIntegerOf sn a :#) <$> buildArgs r as
-
-renderResults :: Sing rs -> ValueStack rs -> [String]
-renderResults SNil VNil = []
-renderResults (SCons sn r) (v :# vs) = showOf sn v : renderResults r vs
-
-fromIntegerOf :: Sing (n :: ValType) -> Integer -> HostType n
-fromIntegerOf SI32 = fromInteger
-fromIntegerOf SI64 = fromInteger
-fromIntegerOf SF32 = fromInteger
-fromIntegerOf SF64 = fromInteger
-
-showOf :: Sing (n :: ValType) -> HostType n -> String
-showOf SI32 = show
-showOf SI64 = show
-showOf SF32 = show
-showOf SF64 = show

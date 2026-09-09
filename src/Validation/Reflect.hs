@@ -32,6 +32,9 @@ module Validation.Reflect (
     SomeGlobalRef (..),
     NonEmptyMems (..),
     reflectCtx,
+    funcTypesSing,
+    globalTypesSing,
+    memShapesSing,
     lookupFuncRef,
     lookupGlobalRef,
     memsNonEmpty,
@@ -43,7 +46,9 @@ import Data.Word (Word32)
 import Data.Singletons.Base.TH (SList (SCons, SNil), Sing, withSomeSing)
 import Data.Singletons.Decide (decideEquality)
 import Syntax.Types
-import Validation.Shape (Append (..), Elem (..), MemShape (..), ModuleShape (..), ReverseOnto)
+
+-- Open import: the generated single-constructor 'SModuleShape' shares its name with its type.
+import Validation.Shape
 
 {- *** Reflecting term-level shapes to singletons ***
 
@@ -139,6 +144,16 @@ reflectCtx funcTypes globalTypes memTypes =
     withSomeSing
         (ModuleShape (map stackOrderFuncType funcTypes) globalTypes (map memShapeOf memTypes))
         SomeModuleShape
+
+-- | The three index spaces of a module-shape singleton.
+funcTypesSing :: SModuleShape shape -> Sing (ModuleFuncs shape)
+funcTypesSing (SModuleShape fts _ _) = fts
+
+globalTypesSing :: SModuleShape shape -> Sing (ModuleGlobals shape)
+globalTypesSing (SModuleShape _ gs _) = gs
+
+memShapesSing :: SModuleShape shape -> Sing (ModuleMems shape)
+memShapesSing (SModuleShape _ _ ms) = ms
 
 {- | @∃ps rs. (Sing ps, Sing rs, Elem ('FuncType ps rs) fts)@ — a function reference resolved
   against the signature, carrying its parameter and result shapes.

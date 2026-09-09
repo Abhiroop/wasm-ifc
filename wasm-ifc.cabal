@@ -93,6 +93,7 @@ library
       , Runtime.Convert
       , Runtime.Stack
       , Runtime.Interpreter
+      , Runtime.Module
       , Runtime.Examples
       , Runtime.Wasi
       , Codec.Wasm

@@ -21,6 +21,7 @@ import Codec.Wasm (decodeModule)
 import Runtime.Bytes (bytesOfWord32, bytesOfWord64, word32OfBytes, word64OfBytes)
 import Runtime.Convert (convertVal)
 import Runtime.Examples (runFactorial, runIncrement, runSquare)
+import Runtime.Module (SomeModule, Value (..), exportSignature, invokeExport, renderValue)
 import Runtime.Numeric (intDiv32)
 import Runtime.Trap (Trap (..))
 import Syntax.Functions (RawFunction (..))
@@ -29,7 +30,7 @@ import Syntax.Instructions
 import Syntax.Memories (RawMemory (..))
 import Syntax.Module
 import Syntax.Types
-import Validation.Elaborate (ElabError, elaborateModule, runModuleFunction)
+import Validation.Elaborate (ElabError, elaborateModule)
 
 main :: IO ()
 main = hspec spec
@@ -236,7 +237,7 @@ elabRunIn :: [RawMemory] -> [ValType] -> [ValType] -> [ValType] -> [RawInstr] ->
 elabRunIn memories params results locals body args =
     case elaborateModule (singleFunctionModule memories params results locals body) of
         Left err -> Left (show err)
-        Right sm -> runModuleFunction sm "f" args
+        Right sm -> invokeWithIntegers sm args
 
 -- | Elaborate a single-function module and discard the result — for rejection tests.
 elabError :: [ValType] -> [ValType] -> [ValType] -> [RawInstr] -> Either ElabError ()
@@ -275,7 +276,19 @@ moduleOf memories funcs exported =
 elabRunModule :: RawModule -> [Integer] -> Either String [String]
 elabRunModule m args = case elaborateModule m of
     Left err -> Left (show err)
-    Right sm -> runModuleFunction sm "f" args
+    Right sm -> invokeWithIntegers sm args
+
+-- | Invoke export @f@ on integer literals, typed by its parameters; render the results.
+invokeWithIntegers :: SomeModule -> [Integer] -> Either String [String]
+invokeWithIntegers sm args = do
+    FuncType params _ <- maybe (Left "no export f") Right (exportSignature sm "f")
+    let values = zipWith integerValue params args
+    either (Left . show) (Right . map renderValue) (invokeExport sm "f" values)
+  where
+    integerValue I32 n = I32Value (fromInteger n)
+    integerValue I64 n = I64Value (fromInteger n)
+    integerValue F32 n = F32Value (fromInteger n)
+    integerValue F64 n = F64Value (fromInteger n)
 
 onePageMemory :: RawMemory
 onePageMemory = RawMemory (MemType AddrI32 (Limits 1 Nothing))

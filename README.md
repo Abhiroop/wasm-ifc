@@ -49,7 +49,8 @@ Naming: `Foo` is the static syntax (in `Syntax`); `FooShape` is its type-level a
 
 ```sh
 cabal build
-cabal run wasm-ifc -- <file.wasm> <export> [int args...]   # decode → elaborate → run
+cabal run wasm-ifc -- invoke <file.wasm> <export> [args...]   # decode → elaborate → run
+cabal run wasm-ifc -- check <file.wasm>                        # decode → elaborate only
 
 samples/build.sh    # compile every sample .wat to .wasm  (needs wabt's wat2wasm)
 samples/check.sh    # run every sample and check it against its expected result
@@ -66,7 +67,7 @@ invoked from the CLI with integer arguments.
 Not yet: information-flow control (the project's goal; `TODO.md` §F); imports and WASI
 (`TODO.md` §H — only an isolated host scaffold exists); tables and `call_indirect`; the start
 function (decoded, not run); exported globals and memories (decoded, not reachable from the
-CLI); typed `select` (`0x1C`); float CLI arguments; multiple memories; bulk memory, data
+CLI); typed `select` (`0x1C`); multiple memories; bulk memory, data
 segments, reference and SIMD types. Linear memory is copy-on-write, `O(n)` per store.
 
 ### Toolchain
