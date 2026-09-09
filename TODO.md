@@ -109,7 +109,7 @@ Suggested order: **P0 → R1 → W0…W6 → R2/R3 → R5** (R5 interleaved as f
   is used); export names pairwise distinct; export indices in range for functions, globals *and*
   memories at elaboration time (today only functions, and only when invoked); the start function's
   type is `[] -> []`.
-- [ ] **[P1·style]** `ElabError` with structured fields (STYLE §3): the offending instruction and,
+- [x] **[P1·style]** `ElabError` with structured fields (STYLE §3): the offending instruction and,
   where relevant, expected/actual types or indices — instead of formatted `String`s. Tests then
   assert on constructors, not substrings.
 - [ ] **[P2·validation]** Global initialisers: `global.get` of an imported immutable global becomes

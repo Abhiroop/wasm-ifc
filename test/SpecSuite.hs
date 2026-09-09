@@ -250,7 +250,6 @@ loadModule path = do
             | isFeatureGap err -> Unavailable ("unsupported by the decoder: " ++ err)
             | otherwise -> Unavailable ("decode error: " ++ err)
         Right raw -> case elaborateModule raw of
-            Left (UnsupportedInstr what) -> Unavailable ("unsupported by the elaborator: " ++ what)
             Left (UnsupportedImport modName field) -> Unavailable ("unsupported import: " ++ T.unpack modName ++ "." ++ T.unpack field)
             Left err -> Unavailable ("elaboration error: " ++ show err)
             Right m -> Loaded m
