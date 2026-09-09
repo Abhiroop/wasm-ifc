@@ -59,15 +59,18 @@ cabal run wasm-ifc -- run <file.wasm>                          # a WASI program:
 samples/build.sh    # compile every sample .wat to .wasm  (needs wabt's wat2wasm)
 samples/check.sh    # run every sample and check it against its expected result (and against wasmtime, if installed)
 samples/validate.sh # every sample must be accepted by both wasm-validate and our own check
-cabal test          # run the typed-example smoke tests
+cabal test          # the hspec/hedgehog suite, and the spec testsuite (needs wabt's wast2json
+                    # and `git submodule update --init` for test/spec/testsuite)
 ```
 
 ### Status and limitations
 
 Runs today: the numeric, comparison and conversion instructions; memory loads and stores
 (including the narrow forms), `memory.size`/`memory.grow`; structured control, branches,
-calls and globals; whole-module validation; one linear memory per module; exported functions
-invoked from the CLI with integer arguments.
+calls and globals; whole-module validation; one linear memory per module; active data segments;
+the start function; exported functions invoked from the CLI with arguments typed by their
+signature. The official spec testsuite passes for everything in this subset (17,212 assertions;
+the rest are skipped for features we do not have), and `wasmtime` agrees on every sample it can run.
 
 WASI: a module may import `fd_write` (to the standard streams) and `proc_exit` from
 `wasi_snapshot_preview1`; `run` executes its `_start`. The interpreter stays pure: a call into
@@ -83,5 +86,6 @@ memory is sparse and copy-on-write per 64 KiB page.
 ### Toolchain
 
 ```
-cabal 3.14.2.0, GHC 9.12.2
+cabal 3.14.2.0, GHC 9.12.2; wabt (wat2wasm, wast2json, wasm-validate) for the samples and the
+spec testsuite; wasmtime (optional) as a differential oracle in samples/check.sh
 ```

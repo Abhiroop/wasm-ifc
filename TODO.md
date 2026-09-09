@@ -30,7 +30,8 @@ when there is a choice. Recorded as the signed-off override in `STYLE.md` §11 (
 
 Sequenced work packages. Each lands as separate commits gated on the `-Werror` build, `cabal test`,
 fourmolu, hlint and `samples/check.sh`. Items marked **[decision]** need Daniel's call first.
-Suggested order: **P0 → R1 → W0…W6 → R2/R3 → R5** (R5 interleaved as files are touched).
+**Status (2026-09-09):** P0, R1, R2, R4 and W0–W6 are done; R3 and R5 are done except the items
+marked **[decision]** and the ones that wait on a feature; open: `runFor` (G1), W7, and the decisions.
 
 ### P0 — spec violations found by audit probes (2026-09-09, each reproduced on a hand-written `.wat`)
 
@@ -120,11 +121,14 @@ Suggested order: **P0 → R1 → W0…W6 → R2/R3 → R5** (R5 interleaved as f
 
 Beyond P0, mostly *verification*; the spec-test runner (R1) is the instrument.
 
-- [ ] **[P2·runtime]** Integer→float conversions: confirm `fromIntegral :: Word64 -> Float/Double`
+- [x] **[P2·runtime]** Integer→float conversions: confirm `fromIntegral :: Word64 -> Float/Double`
   rounds to nearest-even at every magnitude (the spec requires it; pin with a property against the
   oracle).
-- [ ] **[P2·runtime]** Document the spec-permitted choices: NaN handling in `min`/`max` (we keep the
+  **Covered:** the spec's `conversions.wast` now runs in full (603 assertions, including every
+  i64→f32/f64 rounding case) and passes.
+- [x] **[P2·runtime]** Document the spec-permitted choices: NaN handling in `min`/`max` (we keep the
   operand), `nearest` ties-to-even (Haskell's `round` agrees).
+  **Done** in the code: `wasmMin`/`wasmMax` (NaN handling) and `roundWith` (ties-to-even).
 - [ ] **[P3]** `runFor :: Int -> …`, a fuel-bounded runner for tests (G1).
 
 ### R5 — style and hygiene (no behaviour change; interleave when touching a file)
@@ -190,9 +194,9 @@ go in after P0 and the spec runner exist to guard them.
 
 ---
 
-> **Tech-debt pass (2026-07, continued 2026-09):** §A, §B, §D and most of §C/§E are **done** —
-> see checkboxes. Open: the repo-hygiene decisions in §E, §F (IFC/roadmap), §H (WASI).
-> Blocked by missing tooling: `wasmtime` oracle (B4).
+> **Status (2026-09):** §A–§D are done; §E and §C keep only the decisions that are Daniel's
+> (cabal metadata, the Lean README stub, `exercises/`); §F is the roadmap (IFC first); §H is done
+> (see the plan's W items). Nothing is blocked on tooling any more: wabt and wasmtime are installed.
 
 ## A. Correctness & robustness
 
@@ -231,8 +235,9 @@ Open P0/P1 correctness items live in the plan above (section **P0**); the list b
 - [x] **[P1·test]** Property tests (`hedgehog`): `Runtime.Bytes` word↔bytes round-trips (32/64)
   unsigned `intDiv32` vs host `div`, and the conversion round-trips (extend/wrap, reinterpret,
   promote/demote, convert/trunc). (Generated-module properties still open.)
-- [ ] **[P2·test]** — **BLOCKED:** `wasmtime` is not installed, so no external `--invoke` oracle
+- [x] **[P2·test]** — **BLOCKED:** `wasmtime` is not installed, so no external `--invoke` oracle
   yet; `samples/check.sh` still uses hand-written expected values.
+  **Resolved (2026-09):** installed; see the plan's R1 item.
 
 ## C. Tooling & build hygiene
 
@@ -320,21 +325,24 @@ Open P0/P1 correctness items live in the plan above (section **P0**); the list b
   - WANILLA (CCS '25) — noninterference via SMT: <https://arxiv.org/pdf/2509.08758>
   - HLIO — hybrid IFC: <https://www.cse.chalmers.se/~russo/publications_files/hybrid-icfp2015.pdf>
   - In-place interpreter for WASM (perf, later): <https://dl.acm.org/doi/pdf/10.1145/3563311>
-- [ ] **[P2·feature]** Run the start function after instantiation — it is decoded (`start`)
+- [x] **[P2·feature]** Run the start function after instantiation — it is decoded (`start`)
   but never invoked.
+  **Done (2026-09):** validated (in range, `[] -> []`) and run as the last step of instantiation.
 - [ ] **[P2·feature]** Expose exported globals/memories to the CLI — only exported *functions* are
   runnable today (`ExportMem`/`ExportGlobal` are decoded but unused by `runModuleFunction`).
 - [ ] **[P3·feature]** Tables + `call_indirect` + element segments.
 - [ ] **[P3·feature]** `select` with an explicit result type (opcode `0x1C`); only untyped
   `select` (`0x1B`) is supported.
-- [ ] **[P3·feature]** Float CLI arguments (`app/Main.hs` and `runModuleFunction` take
+- [x] **[P3·feature]** Float CLI arguments (`app/Main.hs` and `runModuleFunction` take
   `[Integer]`).
+  **Done (2026-09):** arguments are parsed at the export's parameter types (`invoke`).
 - [ ] **[P3·feature]** Multi-memory (currently memory 0 only, via the `ModuleMems ~ (m ': ms)`
   non-empty constraint).
 - [ ] **[P3·feature]** Reference types & SIMD (`V128`) value types. `ValType` is flat and ready to
   extend, but `HostType` and the value stack would need reference/vector representations.
-- [ ] **[P3·feature]** Bulk memory (`memory.fill`/`copy`/`init`), data/passive segments, imports.
-- [ ] **[P3·perf]** Linear memory is O(n) copy-on-write (`Runtime.MemInst`); byte marshalling uses
+- [ ] **[P3·feature]** Bulk memory (`memory.fill`/`copy`/`init`) and passive data segments; imports of
+  tables, memories and globals. (Active data segments and function imports are done.)
+- [ ] **[P3·perf]** Linear memory is now sparse, copy-on-write per 64 KiB page; byte marshalling still uses
   `[Word8]` lists (`Runtime.Bytes`). Move to a mutable / growable-vector representation when perf
   matters.
 
@@ -343,7 +351,7 @@ Open P0/P1 correctness items live in the plan above (section **P0**); the list b
 - [ ] **[P3]** `run` is the only partial (non-terminating) function — optionally add a
   fuel-bounded `runFor :: Int -> …` for tests and to make termination explicit.
 
-## H. Import system + WASI (parallel track)
+## H. Import system + WASI (done — see the plan's W items)
 
 WASI functions *are* imports, so the **import system is the prerequisite** ("natural
 dependency"). The guiding constraint: **admit imports + IO without breaking the pure/total
