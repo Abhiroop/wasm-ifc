@@ -26,6 +26,165 @@ tests, tooling, records, deriving strategies, comments-say-why) **does** apply, 
 *spirit* of §2 still applies inside the type-level code: prefer the simpler type-level encoding
 when there is a choice. Recorded as the signed-off override in `STYLE.md` §11 (item **E1**).
 
+## Plan (September 2026): robustify what exists, audit against the spec, finish WASI
+
+Sequenced work packages. Each lands as separate commits gated on the `-Werror` build, `cabal test`,
+fourmolu, hlint and `samples/check.sh`. Items marked **[decision]** need Daniel's call first.
+Suggested order: **P0 → R1 → W0…W6 → R2/R3 → R5** (R5 interleaved as files are touched).
+
+### P0 — spec violations found by audit probes (2026-09-09, each reproduced on a hand-written `.wat`)
+
+- [ ] **[P0·runtime]** `call` passes arguments in reverse: `sub(10, 3)` through a two-parameter
+  call computes `3 - 10`, and a call to a function whose parameters have *different* types
+  (`i32, i64`) is rejected outright ("arguments not on the stack"). Root cause: the shape's
+  `FuncType ps rs` keeps `ps` in declared order, but a stack-segment type is top-first, so the
+  elaborator's `matchPrefix psS stackIn` and the interpreter's `stackToLocals args` both read the
+  segment backwards (same-typed parameters are silently swapped, mixed ones rejected). Fix, as one
+  invariant: **every type-level `[ValType]` that describes a stack segment is in stack order (top
+  first)**, including the params/results of `FuncType`/`BlockType` inside shapes; declared order
+  survives only in the decoded `Syntax` and in locals. Conversions happen at the boundaries only:
+  `reflectCtx`/`reflectStack` reverse the decoded lists before promoting; a hand-rolled
+  `ReverseOnto :: [ValType] -> [ValType] -> [ValType]` (structural accumulator, no lemmas) with its
+  `sReverseOnto` gives `FrameLocals = ReverseOnto ps declared`, so local 0 is the first parameter;
+  `ICall` builds the callee's locals with `reverseOnto :: ValueStack ps -> LocalInsts acc ->
+  LocalInsts (ReverseOnto ps acc)`; the entry path (`buildArgs`/`renderResults`) reverses. Tests:
+  two-parameter `sub` through a call, the mixed-type call, a two-result function, and the
+  hand-written `Runtime.Examples`.
+- [ ] **[P0·runtime]** `select` keeps the wrong operand: it returns the *second* value when the
+  condition is non-zero (spec: the first). One-line swap in `step`; test and sample.
+- [ ] **[P1·runtime]** `f32/f64.ceil/floor/trunc/nearest` go through `Integer`, so NaN becomes ∞,
+  ∞ becomes garbage and `-0.5` rounds to `+0.0` instead of `-0.0`. Implement the four with explicit
+  NaN/∞ pass-through and sign-of-zero preservation (`nearest` keeps ties-to-even). Tests per corner.
+- [ ] **[P1·runtime]** `memory.grow` never fails and allocates without bound: growing a 1-page
+  memory by 70000 pages returns `1` and allocates ~4.5 GB (spec: return `-1` when the new size
+  would exceed the declared maximum or 65536 pages). `MemInst` carries its `Limits` at the term
+  level (the `MemShape` index already names them); `growMemory` returns `Maybe`; `IMemGrow` pushes
+  `0xFFFFFFFF` on failure. Test.
+
+### R1 — a conformance harness, so this class of bug cannot hide again
+
+- [ ] **[P1·test]** **Spec-test runner** over the official WebAssembly test suite: wabt's
+  `wast2json` (installed, 1.0.27) turns each `test/core/*.wast` into `.wasm` modules plus a JSON of
+  `assert_return`/`assert_trap`/`assert_invalid`/`assert_malformed` commands. A Haskell runner (a
+  second test-suite) executes them for the supported subset — `i32`, `i64`, `f32`, `f64`,
+  `conversions`, `select`, `call`, `block`, `loop`, `br`, `br_if`, `br_table`, `return`,
+  `unreachable`, `local_get/set/tee`, `global`, `memory`, `load`, `store`, `align`, `nop`, `stack`,
+  `labels`, `fac`, `forward` — skipping modules that need unsupported features and reporting
+  counts. Vendor the suite under `test/spec/` and pin its commit.
+- [ ] **[P1·cli]** Typed arguments and results on the entry path (needed by the runner and by the
+  float samples): parse each argument at its parameter type — `i32`/`i64` as integers (also
+  `0x…`), `f32`/`f64` as decimals, `nan`, `inf` and bit patterns (`nan:0x…`) — replacing
+  `[Integer]`; render results the same way. `runModuleFunction` returns a `RunError` sum and typed
+  values; `app/Main.hs` renders them.
+- [ ] **[P1·test]** `wasm-validate` (installed) as a second oracle for the *elaborator*: every
+  sample and fixture our elaborator accepts must validate, and every module `wasm-validate` rejects
+  within our subset must be rejected (a script over `samples/` and the fixtures).
+- [ ] **[P2·test]** Property tests over *generated* well-typed modules (hedgehog): elaboration
+  accepts them; results agree with the oracle.
+- [ ] **[P2·test]** **[decision]** Install `wasmtime` for a differential oracle on the samples
+  (replaces the hand-written expected values; one installer script, Daniel's environment).
+
+### R2 — decoder audit against the binary format (spec §5)
+
+- [ ] **[P1·decoder]** LEB128 bounds: `u32` ≤ 5 bytes, `s32` ≤ 5, `s33` (block types) ≤ 5, `s64` ≤
+  10; reject non-zero/non-sign unused bits in the last byte. `i32.const` currently reads an `s64`
+  and truncates; give it a real `s32` reader.
+- [ ] **[P1·decoder]** Invalid UTF-8 in a name crashes: `decodeUtf8` throws a pure exception that
+  `runGetOrFail` cannot catch; use `decodeUtf8'` and `fail`.
+- [ ] **[P1·decoder]** Section order and uniqueness: ids must increase and appear at most once
+  (custom sections anywhere); a duplicate section currently overwrites silently.
+- [ ] **[P1·decoder]** Code entries: `isolate` each function body with its declared size (read and
+  ignored today), so a body/size mismatch is a decode error.
+- [ ] **[P2·decoder]** The reserved memory-index byte of `memory.size`/`memory.grow` must be `0x00`
+  (read and ignored today).
+- [ ] **[P2·decoder]** Resource bounds: a six-byte input can declare 2³² locals or a 4 GB memory
+  minimum. Cap total locals per function (document the bound) and either cap initial memory or
+  allocate it lazily (ties in with the `memory.grow` item).
+- [ ] **[P2·decoder]** A hand-assembled byte fixture for each new rejection.
+
+### R3 — validation audit against the validation rules (spec §3)
+
+- [ ] **[P1·validation]** Module-level checks missing today: memory limits well-formed (`min ≤ max`,
+  `max ≤ 65536`); at most one memory (the MVP rule — today several are accepted and only the first
+  is used); export names pairwise distinct; export indices in range for functions, globals *and*
+  memories at elaboration time (today only functions, and only when invoked); the start function's
+  type is `[] -> []`.
+- [ ] **[P1·style]** `ElabError` with structured fields (STYLE §3): the offending instruction and,
+  where relevant, expected/actual types or indices — instead of formatted `String`s. Tests then
+  assert on constructors, not substrings.
+- [ ] **[P2·validation]** Global initialisers: `global.get` of an imported immutable global becomes
+  legal once imports exist (W1); constant-only until then.
+
+### R4 — interpreter audit against the execution rules (spec §4)
+
+Beyond P0, mostly *verification*; the spec-test runner (R1) is the instrument.
+
+- [ ] **[P2·runtime]** Integer→float conversions: confirm `fromIntegral :: Word64 -> Float/Double`
+  rounds to nearest-even at every magnitude (the spec requires it; pin with a property against the
+  oracle).
+- [ ] **[P2·runtime]** Document the spec-permitted choices: NaN handling in `min`/`max` (we keep the
+  operand), `nearest` ties-to-even (Haskell's `round` agrees).
+- [ ] **[P3]** `runFor :: Int -> …`, a fuel-bounded runner for tests (G1).
+
+### R5 — style and hygiene (no behaviour change; interleave when touching a file)
+
+- [ ] **[P2·style]** Plain record field names (STYLE §7; the extensions are already on):
+  `eeShape`→`shape`, `miFuncs`→`funcs`, `stGlobals`→`globals`, `frLocals`→`locals`,
+  `frReturn`→`results`, `msMin`→`minPages`, `secTypes`→`types`, `moduleFuncs`→`funcs`,
+  `exportName`→`name`, and so on.
+- [ ] **[P2·test]** Move `Runtime.Examples` out of the library into `test/` (only the tests use it).
+- [ ] **[P2·ci]** Run CI on every branch (today only `main` and pull requests, so this branch has
+  never been through it).
+- [ ] **[P2·repo]** Remove the committed Agda interface file `Formalisation/WASM-IFC.agdai` (a
+  213 KB build artifact) and ignore `*.agdai`.
+- [ ] **[P2·style]** **[decision]** The constructor operators `:.`, `:#`, `:&` conflict with STYLE §4
+  "no custom operators": either bless them in §11 (cons-like, and the hand-written examples read
+  well with them) or rename them to prefix constructors.
+- [ ] **[P3·naming]** **[decision]** Remaining tag-style names: `Narrow8/16/32`, `ANil/ACons`,
+  `FHalt/FLabel/FLoop/FCall`, and the one-letter `m f l s` in the `Instr` constructor signatures.
+- [ ] **[P3·meta]** **[decision]** cabal `author`/`maintainer` (still Abhiroop), `synopsis`,
+  `CHANGELOG` date.
+
+### W — finish WASI (supersedes the H-list below; its open design questions are resolved here)
+
+W0 goes first because a hello world needs its string in memory; W1–W4 change the audited core and
+go in after P0 and the spec runner exist to guard them.
+
+- [ ] **[W0·decoder+runtime]** Active data segments: decode section 11 (`0x00 expr bytes`: memory
+  0, constant `i32.const` offset; `fail` on passive and other forms) into `RawModule.moduleData`;
+  elaboration checks that offset + length fit the memory's minimum; instantiation writes the bytes.
+- [ ] **[W1·decoder]** Import section: `Import {module, name, desc}` with `ImportDesc = ImportFunc
+  TypeIdx`; `fail` on imported tables/memories/globals. The function index space is imports ++
+  defined (calls and exports already index that space).
+- [ ] **[W2·types]** Host functions typed by construction: a `WasiFunc (ft :: FuncType)` GADT
+  (`FdWrite :: WasiFunc ('FuncType '[I32,I32,I32,I32] '[I32])`, `ProcExit :: WasiFunc ('FuncType
+  '[I32] '[])`), and `FuncInst` gains `HostFunc :: (ModuleMems mod ~ (m ': ms)) => WasiFunc ft ->
+  FuncInst mod ft` — a WASI import is unrepresentable in a module without a memory, and a host
+  function at the wrong type cannot be built. `runWasiCall :: WasiFunc ('FuncType ps rs) ->
+  ValueStack ps -> MemInst m -> IO (WasiOutcome rs m)`: the arguments arrive exact by construction
+  (no `[Word32]`), and `ProcExit`'s `rs ~ '[]` says it never resumes.
+- [ ] **[W3·machine]** The effect-request boundary, first-order: `StepResult` gains `HostCall ::
+  WasiFunc ('FuncType ps rs) -> ValueStack ps -> Store mod -> Suspended mod res rs -> StepResult mod
+  res`, where `Suspended` is the caller's continuation *as data* (locals, saved stack, remaining
+  code, control stack) and `resumeWith :: Store mod -> ValueStack rs -> Suspended mod res rs ->
+  Config mod res` rebuilds a configuration. `step` stays pure and total. The pure `run` returns
+  `Either Trap (Halt mod res)` with `Halt = Finished (ValueStack res) | AwaitingHost …`, so a test
+  can drive host calls with a fake `fd_write` purely; `runIO` performs `AwaitingHost` through
+  `Runtime.Wasi`, writes the memory back, resumes and loops; `proc_exit` ends in `Exited code`.
+- [ ] **[W4·elaborate]** Imports: resolve `(wasi_snapshot_preview1, name)` to a `SomeWasiFunc`;
+  `decideEquality` the declared type's singleton against the function's; require a memory; anything
+  else is `UnsupportedImport`. `FuncInsts` = host entries first, then the defined functions.
+- [ ] **[W5·entry]** `wasm-ifc run file.wasm`: validate and run the start function if present, then
+  the `_start` export through `runIO`; the process exit code is `proc_exit`'s. The existing
+  `wasm-ifc file.wasm fn args…` stays pure and reports "module needs WASI; use run" on
+  `AwaitingHost`.
+- [ ] **[W6·sample]** `samples/wasi/hello.wat` (imports `fd_write`/`proc_exit`, exports `memory`,
+  data segment `"Hello, world!\n"`); `check.sh` compares stdout and exit code; plus the pure
+  `AwaitingHost` test.
+- [ ] **[W7·later]** Widen the WASI surface only on demand: a wasi-sdk C hello world also imports
+  `args_sizes_get`, `args_get`, `fd_close`, `fd_seek`, `fd_fdstat_get`; a hand-written `.wat` needs
+  only the two we have.
+
 ---
 
 > **Tech-debt pass (2026-07, continued 2026-09):** §A, §B, §D and most of §C/§E are **done** —
@@ -33,6 +192,8 @@ when there is a choice. Recorded as the signed-off override in `STYLE.md` §11 (
 > Blocked by missing tooling: `wasmtime` oracle (B4).
 
 ## A. Correctness & robustness
+
+Open P0/P1 correctness items live in the plan above (section **P0**); the list below is history.
 
 - [x] **[P0·decoder]** Partial `!!` on a block's type index — now `nth` + `fail` on out-of-range.
   (`src/Codec/Wasm.hs` `getBlockType`/`nth`)
@@ -192,35 +353,10 @@ Preview 1 host layer (`wasi_snapshot_preview1`): `fd_write`/`proc_exit`, errno s
 parsing over `MemInst`, and `runWasiCall :: WasiFunc -> [Word32] -> MemInst m -> IO
 (WasiOutcome m)` (the driver's entry point). Builds under `-Werror`, hlint-clean.
 
-Remaining pieces (these edit the audited core):
-
-- [ ] **[H1·decoder]** Import section in `Codec.Wasm` (currently hard-`fail`s on any import).
-  Parse import entries (module name, field name, kind + type). MVP: imported **functions** only
-  (kind 0x00 → typeidx); `fail` on imported tables/memories/globals for now (a WASI module
-  provides and *exports* its own memory).
-- [ ] **[H2·types]** Function index space `= imports ++ defined` (imports first, per spec).
-  `ModuleFuncs shape` covers both; `FuncInst` becomes a sum — `HostFunc` (an opaque host id +
-  its `FuncType`) vs. `WasmFunc` (the typed body). Touches `Runtime.Interpreter`
-  (`FuncInst`/`FuncInsts`) and `Validation.Shape`/elaboration.
-- [ ] **[H3·machine]** Effect-request boundary in `Runtime.Interpreter`: a new `StepResult`
-  variant `HostCall`, carrying the host id, the popped `[Word32]` args, and a resume
-  continuation `(WasiOutcome → Config)`. `step` stays pure/total (it only *builds* the request).
-  Add `runIO :: … -> Config -> IO (Either Trap (ValueStack res))` alongside `run`, which on a
-  `HostCall` calls `Runtime.Wasi.runWasiCall` with the store's memory, applies the result
-  (store memory back, push the errno) and resumes; `WasiExit` short-circuits.
-- [ ] **[H4·elaborate]** `Validation.Elaborate`: build `ModuleShape` with imports first; resolve
-  each import `(module, field)` — for `wasi_snapshot_preview1`, check its declared `FuncType`
-  against `Runtime.Wasi.wasiSignature`; map it to a host id. `ICall` into a host slot is typed
-  exactly like any call.
-- [ ] **[H5·entry]** Run the `_start` export (the WASI entry) — overlaps the deferred
-  start-function item (**F2**); the module's own memory is what WASI reads/writes.
-- [ ] **[H6·sample]** A `hello world` `.wat`/`.wasm` (imported `fd_write` + `proc_exit`, exported
-  memory) end-to-end through `runIO`.
-
-**Open design questions:** whether host imports type-check against `wasiSignature` or stay
-generic typed slots; how the `HostCall` request threads the store's single memory (the driver
-holds the `Store`, so it can read/write directly); whether host funcs live in `FuncInsts` (as a
-sum) or a parallel host table.
+The remaining pieces (H1–H6) and the open design questions are superseded by the **W** package
+in the plan at the top of this file, which also resolves the questions: host imports are typed by
+construction against a `WasiFunc (ft :: FuncType)` GADT; the request carries the whole `Store`; host
+functions are a `HostFunc` case of `FuncInst` in the one function index space.
 
 ---
 
