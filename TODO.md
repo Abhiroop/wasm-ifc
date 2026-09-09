@@ -81,8 +81,9 @@ Suggested order: **P0 → R1 → W0…W6 → R2/R3 → R5** (R5 interleaved as f
   within our subset must be rejected (a script over `samples/` and the fixtures).
 - [x] **[P2·test]** Property tests over *generated* well-typed modules (hedgehog): elaboration
   accepts them; results agree with the oracle.
-- [ ] **[P2·test]** **[decision]** Install `wasmtime` for a differential oracle on the samples
-  (replaces the hand-written expected values; one installer script, Daniel's environment).
+- [x] **[P2·test]** `wasmtime` (48, in `~/.wasmtime/bin`) is a differential oracle for the samples:
+  `check.sh` runs every integer-valued check through `wasmtime run --invoke` and every trap check
+  must trap there too (floats and negative arguments are outside what its CLI takes).
 
 ### R2 — decoder audit against the binary format (spec §5)
 

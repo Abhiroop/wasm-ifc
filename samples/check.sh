@@ -2,20 +2,43 @@
 # Run each sample through the typed pipeline (decode -> elaborate -> typed interpreter) and
 # check it against the expected result.
 #
-# The expected values are independently known-correct (standard sequences and arithmetic),
-# so they are the oracle now that the untyped interpreter — which used to serve as a
-# differential reference — has been removed. If a CLI runtime that can invoke an export with
-# arguments is available (e.g. `wasmtime --invoke`), it would make a good external oracle to
-# layer on top; wabt's `wasm-interp` only runs exports with zero arguments.
+# The expected values are independently known-correct (standard sequences and arithmetic).
+# When wasmtime is installed it also serves as a differential oracle: every integer-valued
+# check with non-negative arguments is run through `wasmtime run --invoke` as well, and the
+# two runtimes must agree (modulo the sign of an i32, which wasmtime prints signed); every
+# trap check must trap there too.
 #
 #   ./samples/check.sh            # build samples + run all checks
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
 BIN=$(cabal list-bin wasm-ifc 2>/dev/null)
+WASMTIME=$(command -v wasmtime || command -v "$HOME/.wasmtime/bin/wasmtime" || true)
 ./samples/build.sh >/dev/null
 
-pass=0; fail=0
+pass=0; fail=0; oracle=0
+
+# oracle <wasm> <func> <our output> [args...]: compare against wasmtime where it applies.
+oracle () {
+    local file=$1 func=$2 ours=$3; shift 3
+    [ -n "$WASMTIME" ] || return 0
+    case "$ours $*" in *.*|*-*) return 0 ;; esac   # floats and negative arguments: not covered
+    local theirs; theirs=$("$WASMTIME" run --invoke "$func" "samples/wat/$file" "$@" 2>/dev/null)
+    if [ "$theirs" = "$ours" ] || { [[ "$theirs" =~ ^-?[0-9]+$ ]] && [ $(( (ours - theirs) % 4294967296 )) -eq 0 ]; }
+        then oracle=$((oracle+1))
+        else printf 'FAIL %-22s %-10s %s : wasmtime says %q, we say %q\n' "$file" "$func" "$*" "$theirs" "$ours"; fail=$((fail+1))
+    fi
+}
+
+# oracleTrap <wasm> <func> [args...]: wasmtime must trap (exit non-zero) as well.
+oracleTrap () {
+    local file=$1 func=$2; shift 2
+    [ -n "$WASMTIME" ] || return 0
+    if "$WASMTIME" run --invoke "$func" "samples/wat/$file" "$@" >/dev/null 2>&1
+        then printf 'FAIL %-22s %-10s %s : wasmtime does not trap\n' "$file" "$func" "$*"; fail=$((fail+1))
+        else oracle=$((oracle+1))
+    fi
+}
 
 # check <wasm> <func> <expected> [args...]
 check () {
@@ -23,7 +46,7 @@ check () {
     local out; out=$("$BIN" invoke "samples/wat/$file" "$func" "$@" 2>&1)
     local label; label=$(printf '%-22s %-10s %s' "$file" "$func" "$*")
     if [ "$out" = "$expected" ]
-        then printf 'ok   %s = %s\n' "$label" "$out"; pass=$((pass+1))
+        then printf 'ok   %s = %s\n' "$label" "$out"; pass=$((pass+1)); oracle "$file" "$func" "$out" "$@"
         else printf 'FAIL %s : got %q expected %q\n' "$label" "$out" "$expected"; fail=$((fail+1))
     fi
 }
@@ -36,7 +59,7 @@ checkTrap () {
     local out; out=$("$BIN" invoke "samples/wat/$file" "$func" "$@" 2>&1)
     local label; label=$(printf '%-22s %-10s %s' "$file" "$func" "$*")
     if [[ "$out" == *"$needle"* ]]
-        then printf 'ok   %s -> trap (%s)\n' "$label" "$needle"; pass=$((pass+1))
+        then printf 'ok   %s -> trap (%s)\n' "$label" "$needle"; pass=$((pass+1)); oracleTrap "$file" "$func" "$@"
         else printf 'FAIL %s : got %q (want trap %q)\n' "$label" "$out" "$needle"; fail=$((fail+1))
     fi
 }
@@ -93,5 +116,6 @@ checkRun exit.wasm  ""              7
 checkTrap oob.wasm  oob  OutOfBoundsMemoryAccess    1000000
 
 echo "-----"
+if [ -n "$WASMTIME" ]; then echo "wasmtime agreed on $oracle checks"; else echo "(wasmtime not installed: no differential oracle)"; fi
 echo "passed: $pass   failed: $fail"
 [ "$fail" -eq 0 ]
