@@ -260,7 +260,8 @@ step funcs (Config store locals stack code control) = case code of
         {- Stack management -}
         IDrop -> case stack of _ :# r -> stepped store locals r rest control
         ISelect _ -> case stack of
-            cond :# a :# b :# r -> stepped store locals ((if cond /= 0 then a else b) :# r) rest control
+            cond :# second :# first :# r ->
+                stepped store locals ((if cond /= 0 then first else second) :# r) rest control
         {- Locals & globals -}
         ILocalGet ix -> stepped store locals (getLocal ix locals :# stack) rest control
         ILocalSet ix -> case stack of v :# r -> stepped store (setLocal ix v locals) r rest control

@@ -250,7 +250,8 @@ data
         NarrowWidth t ->
         MemArg ->
         Instr m f l (t ': 'I32 ': s) s
-    {- Stack management. @drop@ works on any value type; @select@ (0x1B) on numeric operands. -}
+    {- Stack management. @drop@ works on any value type; @select@ (0x1B) on numeric operands and
+       keeps the first operand when the condition is non-zero, the second otherwise. -}
     IDrop :: Instr m f l (t ': s) s
     ISelect :: IsNum t -> Instr m f l ('I32 ': t ': t ': s) (t ': s)
     {- Locals (from the @frame@) & globals (from the @mod@) -}

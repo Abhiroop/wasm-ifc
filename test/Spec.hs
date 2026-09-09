@@ -68,6 +68,12 @@ spec = do
                 [LocalGet (LocalIdx 0), LocalGet (LocalIdx 1), Div SI32 Signed]
                 [7, 0]
                 `shouldSatisfy` trapContaining "IntegerDivideByZero"
+        it "select keeps the first operand when the condition is non-zero" $
+            elabRun [I32, I32, I32] [I32] [] [LocalGet (LocalIdx 0), LocalGet (LocalIdx 1), LocalGet (LocalIdx 2), Select] [1, 2, 1]
+                `shouldBe` Right ["1"]
+        it "select keeps the second operand when the condition is zero" $
+            elabRun [I32, I32, I32] [I32] [] [LocalGet (LocalIdx 0), LocalGet (LocalIdx 1), LocalGet (LocalIdx 2), Select] [1, 2, 0]
+                `shouldBe` Right ["2"]
         it "traps on unreachable" $
             elabRun [] [I32] [] [Unreachable] [] `shouldSatisfy` trapContaining "UnreachableExecuted"
         it "traps on an invalid float-to-int conversion (NaN)" $
