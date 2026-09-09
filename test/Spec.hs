@@ -8,10 +8,12 @@
 module Main (main) where
 
 import Control.Monad (void)
+import Data.Bits (xor, (.&.), (.|.))
 import Data.ByteString.Lazy qualified as BL
 import Data.Either (isLeft, isRight)
 import Data.List (isInfixOf)
 import Data.Word (Word32, Word8)
+import Hedgehog (Gen)
 import Hedgehog.Gen qualified as Gen
 import Hedgehog.Range qualified as Range
 import Test.Hspec
@@ -304,6 +306,14 @@ spec = do
             w <- forAll (Gen.word32 Range.linearBounded)
             (convertVal (I32TruncF64 Signed) =<< convertVal (F64ConvertI32 Signed) w) === Right w
 
+    describe "generated well-typed programs (i32 arithmetic with if/else over two parameters)" $ do
+        it "elaborate, run, and agree with a reference evaluator" $ hedgehog $ do
+            program <- forAll (genProgram 4)
+            a <- forAll (Gen.word32 Range.linearBounded)
+            b <- forAll (Gen.word32 Range.linearBounded)
+            elabRun [I32, I32] [I32] [] (compileProgram program) [toInteger a, toInteger b]
+                === Right [show (evalProgram a b program)]
+
     describe "conversion corner cases" $ do
         it "f32.demote_f64 keeps NaN a NaN" $
             fmap isNaN (convertVal F32DemoteF64 (0 / 0 :: Double)) `shouldBe` Right True
@@ -311,8 +321,14 @@ spec = do
             fmap isInfinite (convertVal F32DemoteF64 (1 / 0 :: Double)) `shouldBe` Right True
         it "i32.trunc_f32_u traps on NaN" $
             convertVal (I32TruncF32 Unsigned) (0 / 0 :: Float) `shouldBe` Left InvalidConversionToInteger
+        it "i32.trunc_f32_u traps on infinity with an integer overflow" $
+            convertVal (I32TruncF32 Unsigned) (1 / 0 :: Float) `shouldBe` Left IntegerOverflow
         it "i32.trunc_f32_u traps on 2^32" $
             convertVal (I32TruncF32 Unsigned) (4294967296 :: Float) `shouldBe` Left IntegerOverflow
+        it "i32.trunc_sat_f32_u saturates: NaN to 0, negative to 0, huge to the maximum" $
+            map (convertVal (I32TruncSatF32 Unsigned)) [0 / 0, -1, 1e10 :: Float] `shouldBe` [Right 0, Right 0, Right 4294967295]
+        it "i32.trunc_sat_f64_s saturates at the signed bounds" $
+            map (convertVal (I32TruncSatF64 Signed)) [-1e10, 1e10 :: Double] `shouldBe` [Right 2147483648, Right 2147483647]
         it "i32.trunc_f64_s truncates toward zero" $
             convertVal (I32TruncF64 Signed) (-3.9 :: Double) `shouldBe` Right (fromSigned32Test (-3))
 
@@ -465,6 +481,65 @@ codeSection bodies = section 10 (vec [entry body | body <- bodies])
 
 decodeErrorContaining :: String -> Either String Int -> Bool
 decodeErrorContaining needle = either (needle `isInfixOf`) (const False)
+
+{- *** Generated programs ***
+
+   A small expression language over two i32 parameters, compiled to WebAssembly and evaluated
+   by a reference in Haskell (with the same wrap-around arithmetic), so a property can check
+   that whatever the generator builds elaborates and computes the same value.
+-}
+
+data Program
+    = Literal Word32
+    | Param Word32
+    | Binary BinaryOp Program Program
+    | IfElse Program Program Program
+    deriving stock (Show)
+
+data BinaryOp = OpAdd | OpSub | OpMul | OpAnd | OpOr | OpXor
+    deriving stock (Show)
+
+genProgram :: Int -> Gen Program
+genProgram depth
+    | depth <= 0 = leaf
+    | otherwise =
+        Gen.choice
+            [ leaf
+            , Binary <$> Gen.element [OpAdd, OpSub, OpMul, OpAnd, OpOr, OpXor] <*> sub <*> sub
+            , IfElse <$> sub <*> sub <*> sub
+            ]
+  where
+    leaf = Gen.choice [Literal <$> Gen.word32 Range.linearBounded, Param <$> Gen.element [0, 1]]
+    sub = genProgram (depth - 1)
+
+compileProgram :: Program -> [RawInstr]
+compileProgram program = case program of
+    Literal n -> [Const SI32 n]
+    Param i -> [LocalGet (LocalIdx i)]
+    Binary op x y -> compileProgram x ++ compileProgram y ++ [binaryInstr op]
+    IfElse c t e -> compileProgram c ++ [If (FuncType [] [I32]) (compileProgram t) (compileProgram e)]
+  where
+    binaryInstr OpAdd = Add SI32
+    binaryInstr OpSub = Sub SI32
+    binaryInstr OpMul = Mul SI32
+    binaryInstr OpAnd = And SI32
+    binaryInstr OpOr = Or SI32
+    binaryInstr OpXor = Xor SI32
+
+evalProgram :: Word32 -> Word32 -> Program -> Word32
+evalProgram a b program = case program of
+    Literal n -> n
+    Param 0 -> a
+    Param _ -> b
+    Binary op x y -> binary op (evalProgram a b x) (evalProgram a b y)
+    IfElse c t e -> evalProgram a b (if evalProgram a b c /= 0 then t else e)
+  where
+    binary OpAdd = (+)
+    binary OpSub = (-)
+    binary OpMul = (*)
+    binary OpAnd = (.&.)
+    binary OpOr = (.|.)
+    binary OpXor = xor
 
 -- | An i32 written as a signed literal (the stack holds raw bits).
 fromSigned32Test :: Int -> Word32

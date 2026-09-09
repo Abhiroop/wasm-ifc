@@ -76,10 +76,10 @@ Suggested order: **P0 → R1 → W0…W6 → R2/R3 → R5** (R5 interleaved as f
   `0x…`), `f32`/`f64` as decimals, `nan`, `inf` and bit patterns (`nan:0x…`) — replacing
   `[Integer]`; render results the same way. `runModuleFunction` returns a `RunError` sum and typed
   values; `app/Main.hs` renders them.
-- [ ] **[P1·test]** `wasm-validate` (installed) as a second oracle for the *elaborator*: every
+- [x] **[P1·test]** `wasm-validate` (installed) as a second oracle for the *elaborator*: every
   sample and fixture our elaborator accepts must validate, and every module `wasm-validate` rejects
   within our subset must be rejected (a script over `samples/` and the fixtures).
-- [ ] **[P2·test]** Property tests over *generated* well-typed modules (hedgehog): elaboration
+- [x] **[P2·test]** Property tests over *generated* well-typed modules (hedgehog): elaboration
   accepts them; results agree with the oracle.
 - [ ] **[P2·test]** **[decision]** Install `wasmtime` for a differential oracle on the samples
   (replaces the hand-written expected values; one installer script, Daniel's environment).
@@ -139,8 +139,11 @@ Beyond P0, mostly *verification*; the spec-test runner (R1) is the instrument.
   213 KB build artifact) and ignore `*.agdai`.
 - [x] **[P2·style]** The constructor operators `:.`, `:#`, `:&` are blessed in STYLE §11 (cons-like
   constructors of list-shaped GADTs; the hand-written examples read as instruction sequences).
-- [ ] **[P3·naming]** **[decision]** Remaining tag-style names: `OneByte/16/32`, `ANil/ACons`,
-  `EntryBoundary/BlockLabel/LoopLabel/CallBoundary`, and the one-letter `m f l s` in the `Instr` constructor signatures.
+- [~] **[P3·naming]** Tag-style names: `Narrow8/16/32` are now `OneByte/TwoBytes/FourBytes` and the
+  control-stack entries `EntryBoundary/BlockLabel/LoopLabel/CallBoundary` (the `F` was a leftover
+  of the old `Frames` name). Left as is: `ANil/ACons` (the family's Nil/Cons convention) and the
+  one-letter `m f l s` in the `Instr` constructor signatures (spelling them out doubles every
+  line).
 - [ ] **[P3·meta]** **[decision]** cabal `author`/`maintainer` (still Abhiroop), `synopsis`,
   `CHANGELOG` date.
 

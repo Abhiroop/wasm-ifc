@@ -58,6 +58,7 @@ cabal run wasm-ifc -- run <file.wasm>                          # a WASI program:
 
 samples/build.sh    # compile every sample .wat to .wasm  (needs wabt's wat2wasm)
 samples/check.sh    # run every sample and check it against its expected result
+samples/validate.sh # every sample must be accepted by both wasm-validate and our own check
 cabal test          # run the typed-example smoke tests
 ```
 

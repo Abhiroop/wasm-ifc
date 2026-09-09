@@ -395,6 +395,19 @@ getInstr types opcode = case opcode of
     {- Stack management -}
     0x1A -> pure Drop
     0x1B -> pure Select
+    {- The 0xFC prefix: saturating truncations (0–7); the rest is bulk memory -}
+    0xFC -> do
+        sub <- getULEB128
+        case sub of
+            0 -> pure (Convert (I32TruncSatF32 Signed))
+            1 -> pure (Convert (I32TruncSatF32 Unsigned))
+            2 -> pure (Convert (I32TruncSatF64 Signed))
+            3 -> pure (Convert (I32TruncSatF64 Unsigned))
+            4 -> pure (Convert (I64TruncSatF32 Signed))
+            5 -> pure (Convert (I64TruncSatF32 Unsigned))
+            6 -> pure (Convert (I64TruncSatF64 Signed))
+            7 -> pure (Convert (I64TruncSatF64 Unsigned))
+            _ -> fail ("unsupported: 0xFC opcode " ++ show sub)
     _ -> fail ("unsupported opcode 0x" ++ showHex opcode "")
 
 -- | The memory-index byte of @memory.size@/@memory.grow@, which must be @0x00@.

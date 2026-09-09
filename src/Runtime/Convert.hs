@@ -37,6 +37,10 @@ convertVal op a = case op of
     I32TruncF64 sign -> truncToI32 sign a
     I64TruncF32 sign -> truncToI64 sign a
     I64TruncF64 sign -> truncToI64 sign a
+    I32TruncSatF32 sign -> Right (truncSatToI32 sign a)
+    I32TruncSatF64 sign -> Right (truncSatToI32 sign a)
+    I64TruncSatF32 sign -> Right (truncSatToI64 sign a)
+    I64TruncSatF64 sign -> Right (truncSatToI64 sign a)
     F32ConvertI32 Signed -> Right (fromIntegral (toSigned32 a))
     F32ConvertI32 Unsigned -> Right (fromIntegral a)
     F32ConvertI64 Signed -> Right (fromIntegral (toSigned64 a))
@@ -59,10 +63,30 @@ convertVal op a = case op of
     I64Extend16S -> Right (fromSigned64 (fromIntegral (fromIntegral a :: Int16)))
     I64Extend32S -> Right (fromSigned64 (fromIntegral (fromIntegral a :: Int32)))
 
--- WebAssembly traps when a truncation's argument is NaN/infinite or out of range.
+-- The saturating truncations never trap: NaN gives zero, anything out of range clamps.
+truncSatToI32 :: RealFloat a => Signedness -> a -> Word32
+truncSatToI32 sign x = case sign of
+    Signed -> fromIntegral (saturate (-(2 ^ (31 :: Int))) (2 ^ (31 :: Int) - 1) x)
+    Unsigned -> fromIntegral (saturate 0 (2 ^ (32 :: Int) - 1) x)
+
+truncSatToI64 :: RealFloat a => Signedness -> a -> Word64
+truncSatToI64 sign x = case sign of
+    Signed -> fromIntegral (saturate (-(2 ^ (63 :: Int))) (2 ^ (63 :: Int) - 1) x)
+    Unsigned -> fromIntegral (saturate 0 (2 ^ (64 :: Int) - 1) x)
+
+-- | Truncate toward zero into @[lo, hi]@; NaN is zero, the infinities are the bounds.
+saturate :: RealFloat a => Integer -> Integer -> a -> Integer
+saturate lo hi x
+    | isNaN x = 0
+    | isInfinite x = if x > 0 then hi else lo
+    | otherwise = max lo (min hi (truncate x))
+
+-- A truncation traps on NaN (an invalid conversion) and on an infinite or out-of-range
+-- argument (an integer overflow) — two different traps, as the spec distinguishes them.
 truncToI32 :: RealFloat a => Signedness -> a -> Either Trap Word32
 truncToI32 sign x
-    | isNaN x || isInfinite x = Left InvalidConversionToInteger
+    | isNaN x = Left InvalidConversionToInteger
+    | isInfinite x = Left IntegerOverflow
     | otherwise = case sign of
         Signed | t >= -(2 ^ (31 :: Int)) && t <= 2 ^ (31 :: Int) - 1 -> Right (fromIntegral t)
         Unsigned | t >= 0 && t <= 2 ^ (32 :: Int) - 1 -> Right (fromIntegral t)
@@ -72,7 +96,8 @@ truncToI32 sign x
 
 truncToI64 :: RealFloat a => Signedness -> a -> Either Trap Word64
 truncToI64 sign x
-    | isNaN x || isInfinite x = Left InvalidConversionToInteger
+    | isNaN x = Left InvalidConversionToInteger
+    | isInfinite x = Left IntegerOverflow
     | otherwise = case sign of
         Signed | t >= -(2 ^ (63 :: Int)) && t <= 2 ^ (63 :: Int) - 1 -> Right (fromIntegral t)
         Unsigned | t >= 0 && t <= 2 ^ (64 :: Int) - 1 -> Right (fromIntegral t)

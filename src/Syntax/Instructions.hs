@@ -145,6 +145,11 @@ data ConvertOp (from :: ValType) (to :: ValType) where
     I32TruncF64 :: Signedness -> ConvertOp 'F64 'I32
     I64TruncF32 :: Signedness -> ConvertOp 'F32 'I64
     I64TruncF64 :: Signedness -> ConvertOp 'F64 'I64
+    -- the saturating forms (0xFC prefix): out of range clamps, NaN gives zero, never a trap
+    I32TruncSatF32 :: Signedness -> ConvertOp 'F32 'I32
+    I32TruncSatF64 :: Signedness -> ConvertOp 'F64 'I32
+    I64TruncSatF32 :: Signedness -> ConvertOp 'F32 'I64
+    I64TruncSatF64 :: Signedness -> ConvertOp 'F64 'I64
     F32ConvertI32 :: Signedness -> ConvertOp 'I32 'F32
     F32ConvertI64 :: Signedness -> ConvertOp 'I64 'F32
     F64ConvertI32 :: Signedness -> ConvertOp 'I32 'F64
@@ -171,6 +176,10 @@ convertEnds (I32TruncF32 _) = (F32IsNum, I32IsNum)
 convertEnds (I32TruncF64 _) = (F64IsNum, I32IsNum)
 convertEnds (I64TruncF32 _) = (F32IsNum, I64IsNum)
 convertEnds (I64TruncF64 _) = (F64IsNum, I64IsNum)
+convertEnds (I32TruncSatF32 _) = (F32IsNum, I32IsNum)
+convertEnds (I32TruncSatF64 _) = (F64IsNum, I32IsNum)
+convertEnds (I64TruncSatF32 _) = (F32IsNum, I64IsNum)
+convertEnds (I64TruncSatF64 _) = (F64IsNum, I64IsNum)
 convertEnds (F32ConvertI32 _) = (I32IsNum, F32IsNum)
 convertEnds (F32ConvertI64 _) = (I64IsNum, F32IsNum)
 convertEnds (F64ConvertI32 _) = (I32IsNum, F64IsNum)
