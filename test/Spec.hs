@@ -83,6 +83,20 @@ spec = do
             elabRunWithMemory [I32] [I32] [] [LocalGet (LocalIdx 0), Load SI32 (MemArg 0 0)] [70000]
                 `shouldSatisfy` trapContaining "OutOfBoundsMemoryAccess"
 
+    describe "float rounding corner cases" $ do
+        it "ceil keeps NaN" $
+            elabRun [] [F32] [] [Const SF32 (0 / 0), Ceil SF32] [] `shouldBe` Right ["NaN"]
+        it "floor keeps infinity" $
+            elabRun [] [F64] [] [Const SF64 (1 / 0), Floor SF64] [] `shouldBe` Right ["Infinity"]
+        it "ceil of -0.5 is negative zero" $
+            elabRun [] [F32] [] [Const SF32 (-0.5), Ceil SF32] [] `shouldBe` Right ["-0.0"]
+        it "trunc of -0.3 is negative zero" $
+            elabRun [] [F64] [] [Const SF64 (-0.3), FloatTrunc SF64] [] `shouldBe` Right ["-0.0"]
+        it "nearest rounds ties to even" $
+            elabRun [] [F32] [] [Const SF32 2.5, Nearest SF32] [] `shouldBe` Right ["2.0"]
+        it "nearest of -0.5 is negative zero" $
+            elabRun [] [F32] [] [Const SF32 (-0.5), Nearest SF32] [] `shouldBe` Right ["-0.0"]
+
     describe "dead code after an unconditional transfer" $ do
         it "is typed under the polymorphic stack (an add with nothing pushed is fine)" $
             elabError [] [I32] [] [Const SI32 1, Return, Add SI32] `shouldSatisfy` isRight

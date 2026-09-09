@@ -585,10 +585,22 @@ floatUnOp op a = case op of
     FAbs -> abs a
     FNeg -> negate a
     FSqrt -> sqrt a
-    FCeil -> fromInteger (ceiling a)
-    FFloor -> fromInteger (floor a)
-    FTrunc -> fromInteger (truncate a)
-    FNearest -> fromInteger (round a)
+    FCeil -> roundWith ceiling a
+    FFloor -> roundWith floor a
+    FTrunc -> roundWith truncate a
+    FNearest -> roundWith round a -- Haskell's 'round' is ties-to-even, as the spec requires
+
+{- | Round to an integral value the WebAssembly way: NaN and the infinities pass through, and a
+  zero result keeps the sign of the input (@ceil -0.5 = -0@) — both of which a detour through
+  'Integer' would lose.
+-}
+roundWith :: RealFloat a => (a -> Integer) -> a -> a
+roundWith roundToInteger x
+    | isNaN x || isInfinite x = x
+    | rounded == 0 && (x < 0 || isNegativeZero x) = -0.0
+    | otherwise = rounded
+  where
+    rounded = fromInteger (roundToInteger x)
 
 floatBinT ::
     IsFloat t ->
