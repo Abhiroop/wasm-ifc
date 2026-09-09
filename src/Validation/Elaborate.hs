@@ -771,8 +771,8 @@ evalConstInit _ _ = Left (UnsupportedInstr "non-constant global initializer")
 -}
 buildMems :: Sing ms -> [RawMemory] -> Either ElabError (MemInsts ms)
 buildMems SNil [] = Right MNil
-buildMems (SCons _ rest) (RawMemory (MemType _ (Limits minPages _)) : rms) =
-    MCons (allocMemory minPages) <$> buildMems rest rms
+buildMems (SCons _ rest) (RawMemory (MemType _ declared) : rms) =
+    MCons (allocMemory declared) <$> buildMems rest rms
 buildMems _ _ = Left (Malformed "memory/type count mismatch")
 
 -- | Zero-initialise a locals frame of the given shape.

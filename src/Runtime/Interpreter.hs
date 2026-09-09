@@ -246,7 +246,9 @@ step funcs (Config store locals stack code control) = case code of
         IMemGrow -> case stack of
             delta :# r ->
                 let mem = currentMem store
-                 in stepped (storeMem (growMemory delta mem) store) locals (memoryPages mem :# r) rest control
+                 in case growMemory delta mem of
+                        Just grown -> stepped (storeMem grown store) locals (memoryPages mem :# r) rest control
+                        Nothing -> stepped store locals (growFailed :# r) rest control
         ILoadN nw sign memArg -> case stack of
             addr :# r ->
                 case readBytes (currentMem store) (effectiveAddr addr memArg) (narrowBytes nw) of
@@ -357,6 +359,10 @@ currentMem store = firstMem store.stMems
 
 storeMem :: (ModuleMems mod ~ (m ': ms)) => MemInst m -> Store mod -> Store mod
 storeMem mem store = store {stMems = setFirstMem mem store.stMems}
+
+-- | What @memory.grow@ pushes when it cannot grow: the spec's @-1@, as an unsigned i32.
+growFailed :: Word32
+growFailed = 0xFFFFFFFF
 
 {- | The effective byte address of a memory access: dynamic base + static @offset@, computed
   in 'Int' so it cannot wrap around 2^32. An over-large address then traps in

@@ -83,6 +83,16 @@ spec = do
             elabRunWithMemory [I32] [I32] [] [LocalGet (LocalIdx 0), Load SI32 (MemArg 0 0)] [70000]
                 `shouldSatisfy` trapContaining "OutOfBoundsMemoryAccess"
 
+    describe "memory.grow (the old size on success, -1 when it cannot grow)" $ do
+        it "grows within the declared maximum" $
+            elabRunIn [memoryWithMax 1 2] [] [I32] [] [Const SI32 1, MemoryGrow] [] `shouldBe` Right ["1"]
+        it "refuses to grow past the declared maximum" $
+            elabRunIn [memoryWithMax 1 2] [] [I32] [] [Const SI32 2, MemoryGrow] [] `shouldBe` Right ["4294967295"]
+        it "refuses to grow past 65536 pages" $
+            elabRunWithMemory [] [I32] [] [Const SI32 70000, MemoryGrow] [] `shouldBe` Right ["4294967295"]
+        it "memory.size reflects a successful grow" $
+            elabRunWithMemory [] [I32] [] [Const SI32 3, MemoryGrow, Drop, MemorySize] [] `shouldBe` Right ["4"]
+
     describe "float rounding corner cases" $ do
         it "ceil keeps NaN" $
             elabRun [] [F32] [] [Const SF32 (0 / 0), Ceil SF32] [] `shouldBe` Right ["NaN"]
@@ -242,6 +252,9 @@ singleFunctionModule memories params results locals body =
 
 onePageMemory :: RawMemory
 onePageMemory = RawMemory (MemType AddrI32 (Limits 1 Nothing))
+
+memoryWithMax :: Word32 -> Word32 -> RawMemory
+memoryWithMax lo hi = RawMemory (MemType AddrI32 (Limits lo (Just hi)))
 
 {- *** Hand-assembled binaries ***
 
