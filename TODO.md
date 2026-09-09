@@ -150,7 +150,7 @@ Beyond P0, mostly *verification*; the spec-test runner (R1) is the instrument.
 W0 goes first because a hello world needs its string in memory; W1–W4 change the audited core and
 go in after P0 and the spec runner exist to guard them.
 
-- [ ] **[W0·decoder+runtime]** Active data segments: decode section 11 (`0x00 expr bytes`: memory
+- [x] **[W0·decoder+runtime]** Active data segments: decode section 11 (`0x00 expr bytes`: memory
   0, constant `i32.const` offset; `fail` on passive and other forms) into `RawModule.moduleData`;
   elaboration checks that offset + length fit the memory's minimum; instantiation writes the bytes.
 - [ ] **[W1·decoder]** Import section: `Import {module, name, desc}` with `ImportDesc = ImportFunc

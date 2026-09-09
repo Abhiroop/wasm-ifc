@@ -6,6 +6,7 @@ module Syntax.Module (
 
 import Data.Text (Text)
 
+import Syntax.DataSegments (RawData)
 import Syntax.Functions (RawFunction)
 import Syntax.Globals (RawGlobal)
 import Syntax.Indices (FunctionIdx, GlobalIdx, MemoryIdx)
@@ -39,6 +40,8 @@ data RawModule = RawModule
     -- ^ function + code sections, merged by the decoder
     , moduleGlobals :: [RawGlobal]
     , moduleMemories :: [RawMemory]
+    , moduleData :: [RawData]
+    -- ^ active data segments, applied in order at instantiation
     , moduleExports :: [Export]
     , moduleStart :: Maybe FunctionIdx
     }

@@ -32,6 +32,7 @@ import Data.Word (Word32, Word8)
 import GHC.Float (castWord32ToFloat, castWord64ToDouble)
 import Numeric (showHex)
 
+import Syntax.DataSegments (RawData (RawData))
 import Syntax.Functions (RawFunction (RawFunction))
 import Syntax.Globals (RawGlobal (RawGlobal))
 import Syntax.Indices
@@ -378,10 +379,11 @@ data Sections = Sections
     , secMems :: [RawMemory]
     , secExports :: [Export]
     , secStart :: Maybe FunctionIdx
+    , secData :: [RawData]
     }
 
 emptySections :: Sections
-emptySections = Sections [] [] [] [] [] [] Nothing
+emptySections = Sections [] [] [] [] [] [] Nothing []
 
 getModule :: Get RawModule
 getModule = do
@@ -409,7 +411,7 @@ readSections acc = do
             readSections acc'
 
 isModelledSection :: Word8 -> Bool
-isModelledSection sectionId = sectionId `elem` [1, 2, 3, 5, 6, 7, 8, 10]
+isModelledSection sectionId = sectionId `elem` [1, 2, 3, 5, 6, 7, 8, 10, 11]
 
 parseSection :: Word8 -> Sections -> Get Sections
 parseSection sectionId acc = case sectionId of
@@ -424,7 +426,20 @@ parseSection sectionId acc = case sectionId of
     7 -> (\es -> acc {secExports = es}) <$> getVec getExport
     8 -> (\i -> acc {secStart = Just (FunctionIdx i)}) <$> getULEB128
     10 -> (\cs -> acc {secCodes = cs}) <$> getVec (getCode (acc.secTypes))
+    11 -> (\ds -> acc {secData = ds}) <$> getVec getData
     _ -> fail ("unexpected section id " ++ show sectionId)
+
+{- | A data segment. Only the active form for memory 0 (@0x00 offset-expr bytes@) is
+  supported; passive segments and explicit memory indices are bulk-memory features.
+-}
+getData :: Get RawData
+getData = do
+    mode <- getULEB128
+    case mode of
+        0 -> RawData <$> getExpr [] <*> (getULEB128 >>= getByteString . fromIntegral)
+        1 -> fail "unsupported: passive data segment"
+        2 -> fail "unsupported: data segment with an explicit memory index"
+        _ -> fail ("unknown data segment mode " ++ show mode)
 
 getMemory :: Get RawMemory
 getMemory = RawMemory . MemType AddrI32 <$> getLimits
@@ -451,10 +466,18 @@ getCode :: [FuncType] -> Get ([ValType], [RawInstr])
 getCode types = do
     _entrySize <- getULEB128
     localGroups <- getVec getLocalGroup
+    when (sum [toInteger count | (count, _) <- localGroups] > toInteger maxLocals) (fail "too many locals")
     body <- getExpr types
     pure (concatMap expand localGroups, body)
   where
     expand (count, valType) = replicate (fromIntegral count) valType
+
+{- | An implementation limit on the locals of one function. The spec only caps them at 2^32,
+  but locals are materialised as a list here, so a six-byte input must not be able to demand
+  four billion of them.
+-}
+maxLocals :: Int
+maxLocals = 50000
 
 getLocalGroup :: Get (Word32, ValType)
 getLocalGroup = (,) <$> getULEB128 <*> getValType
@@ -471,6 +494,7 @@ assemble secs = do
             , moduleFuncs = funcs
             , moduleGlobals = secs.secGlobals
             , moduleMemories = secs.secMems
+            , moduleData = secs.secData
             , moduleExports = secs.secExports
             , moduleStart = secs.secStart
             }

@@ -81,6 +81,7 @@ library
       , Syntax.Expressions
       , Syntax.Globals
       , Syntax.Memories
+      , Syntax.DataSegments
       , Syntax.Functions
       , Syntax.Module
       , Validation.Shape
@@ -131,3 +132,22 @@ test-suite wasm-ifc-test
       , hspec          ^>=2.11
       , hedgehog       ^>=1.5
       , hspec-hedgehog ^>=0.3
+
+-- The official spec testsuite, driven through wabt's wast2json (skips itself when the tool
+-- or the submodule is missing).
+test-suite wasm-ifc-spec
+    import:           warnings
+    type:             exitcode-stdio-1.0
+    main-is:          SpecSuite.hs
+    hs-source-dirs:   test
+    build-depends:
+        base
+      , wasm-ifc
+      , aeson          ^>=2.2
+      , bytestring
+      , containers
+      , directory
+      , filepath
+      , process
+      , text
+      , hspec          ^>=2.11

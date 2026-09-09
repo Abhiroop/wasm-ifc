@@ -24,13 +24,14 @@ import Runtime.Examples (runFactorial, runIncrement, runSquare)
 import Runtime.Module (SomeModule, Value (..), exportSignature, invokeExport, renderValue)
 import Runtime.Numeric (intDiv32)
 import Runtime.Trap (Trap (..))
+import Syntax.DataSegments (RawData (..))
 import Syntax.Functions (RawFunction (..))
 import Syntax.Indices
 import Syntax.Instructions
 import Syntax.Memories (RawMemory (..))
 import Syntax.Module
 import Syntax.Types
-import Validation.Elaborate (ElabError, elaborateModule)
+import Validation.Elaborate (ElabError (..), elaborateModule)
 
 main :: IO ()
 main = hspec spec
@@ -83,6 +84,17 @@ spec = do
         it "traps on an out-of-bounds load" $
             elabRunWithMemory [I32] [I32] [] [LocalGet (LocalIdx 0), Load SI32 (MemArg 0 0)] [70000]
                 `shouldSatisfy` trapContaining "OutOfBoundsMemoryAccess"
+
+    describe "data segments" $ do
+        it "are copied into memory at instantiation" $
+            elabRunModule (withData [RawData [Const SI32 8] "hi"] (singleFunctionModule [onePageMemory] [] [I32] [] [Const SI32 9, LoadN SI32 1 Unsigned (MemArg 0 0)])) []
+                `shouldBe` Right ["105"]
+        it "must fit in the memory" $
+            void (elaborateModule (withData [RawData [Const SI32 65535] "hi"] (singleFunctionModule [onePageMemory] [] [I32] [] [Const SI32 0])))
+                `shouldBe` Left (DataSegmentOutOfBounds 0)
+        it "need a memory to land in" $
+            void (elaborateModule (withData [RawData [Const SI32 0] "hi"] (singleFunctionModule [] [] [I32] [] [Const SI32 0])))
+                `shouldBe` Left (DataSegmentOutOfBounds 0)
 
     describe "memory.grow (the old size on success, -1 when it cannot grow)" $ do
         it "grows within the declared maximum" $
@@ -268,6 +280,7 @@ moduleOf memories funcs exported =
         , moduleFuncs = funcs
         , moduleGlobals = []
         , moduleMemories = memories
+        , moduleData = []
         , moduleExports = [Export "f" (ExportFunc exported)]
         , moduleStart = Nothing
         }
@@ -292,6 +305,9 @@ invokeWithIntegers sm args = do
 
 onePageMemory :: RawMemory
 onePageMemory = RawMemory (MemType AddrI32 (Limits 1 Nothing))
+
+withData :: [RawData] -> RawModule -> RawModule
+withData segments m = m {moduleData = segments}
 
 memoryWithMax :: Word32 -> Word32 -> RawMemory
 memoryWithMax lo hi = RawMemory (MemType AddrI32 (Limits lo (Just hi)))

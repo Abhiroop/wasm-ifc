@@ -19,6 +19,8 @@ module Validation.Elaborate (
     elaborateModule,
 ) where
 
+import Control.Monad (foldM)
+import Data.ByteString qualified as BS
 import Data.Type.Equality ((:~:) (Refl))
 import Data.Word (Word32)
 
@@ -26,9 +28,10 @@ import Data.List.Singletons ((%++))
 import Data.Singletons.Base.TH (SList (SCons, SNil), Sing, fromSing)
 import Data.Singletons.Decide (decideEquality)
 import Runtime.Interpreter (FuncInst (..), FuncInsts (..), ModuleInst (..))
-import Runtime.MemInst (allocMemory)
+import Runtime.MemInst (allocMemory, writeBytes)
 import Runtime.Module (SomeModule (..))
 import Runtime.Stack (GlobalInsts (..), LocalInsts (..), MemInsts (..))
+import Syntax.DataSegments (RawData (RawData))
 import Syntax.Functions (RawFunction (RawFunction))
 import Syntax.Globals (RawGlobal (RawGlobal))
 import Syntax.Immediates (HostType)
@@ -65,6 +68,8 @@ data ElabError
       DeadCodeError String
     | -- | structurally inconsistent module
       Malformed String
+    | -- | a data segment does not fit in memory 0 (or there is no memory)
+      DataSegmentOutOfBounds Int
     deriving stock (Eq, Show)
 
 -- *** Elaboration environment & results ***
@@ -705,7 +710,7 @@ elaborateModule m =
         SomeModuleShape ctxS@(SModuleShape ftsS gsS msS) -> do
             funcs <- elaborateFuncs ctxS ftsS (m.moduleFuncs)
             globals <- buildGlobals gsS (m.moduleGlobals)
-            mems <- buildMems msS (m.moduleMemories)
+            mems <- buildMems msS (m.moduleMemories) >>= initialiseData (m.moduleData)
             Right (SomeModule ctxS (ModuleInst funcs globals mems) (m.moduleExports))
   where
     funcSigs = map (\(RawFunction sig _ _) -> sig) (m.moduleFuncs)
@@ -763,6 +768,21 @@ buildMems SNil [] = Right MNil
 buildMems (SCons _ rest) (RawMemory (MemType _ declared) : rms) =
     MCons (allocMemory declared) <$> buildMems rest rms
 buildMems _ _ = Left (Malformed "memory/type count mismatch")
+
+{- | Copy the active data segments into memory 0, in order. A segment that does not fit is
+  the spec's instantiation failure; here that is an elaboration error, since instantiation
+  happens here.
+-}
+initialiseData :: [RawData] -> MemInsts ms -> Either ElabError (MemInsts ms)
+initialiseData [] mems = Right mems
+initialiseData segments (MCons mem rest) = do
+    mem' <- foldM copySegment mem (zip [0 ..] segments)
+    Right (MCons mem' rest)
+  where
+    copySegment current (index, RawData offsetExpr payload) = do
+        offset <- evalConstInit SI32 offsetExpr
+        note (DataSegmentOutOfBounds index) (writeBytes current (fromIntegral offset) (BS.unpack payload))
+initialiseData (_ : _) MNil = Left (DataSegmentOutOfBounds 0)
 
 -- | Zero-initialise a locals frame of the given shape.
 defaultLocals :: Sing ds -> LocalInsts ds

@@ -1,0 +1,326 @@
+{- | The official WebAssembly spec testsuite, run through wabt's @wast2json@: each @.wast@
+  script becomes binary modules plus a JSON list of assertions, which this harness executes
+  against the decoder, the elaborator and the interpreter.
+
+  A module that needs a feature we do not implement (tables, reference types, imports, …)
+  is skipped together with the assertions on it, and counted; every assertion on a module we
+  do accept must pass. The suite is a git submodule under @test/spec/testsuite@, pinned to a
+  commit @wast2json@ 1.0.27 can parse.
+-}
+module Main (main) where
+
+import Control.Monad (foldM)
+import Data.Aeson (FromJSON (..), withObject, (.:), (.:?))
+import Data.Aeson qualified as Aeson
+import Data.ByteString.Lazy qualified as BL
+import Data.List (isInfixOf)
+import Data.Map.Strict qualified as Map
+import Data.Maybe (fromMaybe)
+import Data.Text (Text)
+import Data.Text qualified as T
+import Data.Word (Word64)
+import GHC.Float (castDoubleToWord64, castFloatToWord32, castWord32ToFloat, castWord64ToDouble)
+import System.Directory (createDirectoryIfMissing, doesFileExist, findExecutable, getTemporaryDirectory)
+import System.Exit (ExitCode (..))
+import System.FilePath ((<.>), (</>))
+import System.Process (readProcessWithExitCode)
+import Test.Hspec
+import Text.Read (readMaybe)
+
+import Codec.Wasm (decodeModule)
+import Runtime.Module (RunError (..), SomeModule, Value (..), invokeExport, valueType)
+import Runtime.Trap (Trap (..))
+import Syntax.Types (ValType (..))
+import Validation.Elaborate (ElabError (..), elaborateModule)
+
+-- | The scripts we run: those exercising the instruction subset and the binary format.
+scripts :: [String]
+scripts =
+    [ "address"
+    , "align"
+    , "binary"
+    , "binary-leb128"
+    , "block"
+    , "br"
+    , "br_if"
+    , "br_table"
+    , "call"
+    , "comments"
+    , "const"
+    , "conversions"
+    , "custom"
+    , "data"
+    , "endianness"
+    , "exports"
+    , "f32"
+    , "f32_bitwise"
+    , "f32_cmp"
+    , "f64"
+    , "f64_bitwise"
+    , "f64_cmp"
+    , "fac"
+    , "float_exprs"
+    , "float_literals"
+    , "float_memory"
+    , "float_misc"
+    , "forward"
+    , "func"
+    , "global"
+    , "i32"
+    , "i64"
+    , "if"
+    , "imports"
+    , "int_exprs"
+    , "int_literals"
+    , "labels"
+    , "left-to-right"
+    , "load"
+    , "local_get"
+    , "local_set"
+    , "local_tee"
+    , "loop"
+    , "memory"
+    , "memory_grow"
+    , "memory_redundancy"
+    , "memory_size"
+    , "memory_trap"
+    , "names"
+    , "nop"
+    , "return"
+    , "select"
+    , "stack"
+    , "start"
+    , "store"
+    , "switch"
+    , "traps"
+    , "type"
+    , "unreachable"
+    , "unreached-invalid"
+    , "unwind"
+    ]
+
+suiteDir :: FilePath
+suiteDir = "test/spec/testsuite"
+
+main :: IO ()
+main = hspec $ do
+    wast2json <- runIO (findExecutable "wast2json")
+    checkedOut <- runIO (doesFileExist (suiteDir </> "i32.wast"))
+    describe "WebAssembly spec testsuite" $
+        mapM_ (scriptSpec wast2json checkedOut) scripts
+
+scriptSpec :: Maybe FilePath -> Bool -> String -> Spec
+scriptSpec wast2json checkedOut name = it name $ case wast2json of
+    Nothing -> pendingWith "wast2json (wabt) is not installed"
+    Just tool
+        | not checkedOut -> pendingWith "test/spec/testsuite is not checked out (git submodule update --init)"
+        | otherwise -> do
+            outDir <- (</> ("wasm-ifc-spec" </> name)) <$> getTemporaryDirectory
+            createDirectoryIfMissing True outDir
+            let jsonPath = outDir </> name <.> "json"
+            (code, _, err) <- readProcessWithExitCode tool [suiteDir </> name <.> "wast", "-o", jsonPath] ""
+            case code of
+                ExitFailure _ -> pendingWith ("wast2json cannot parse this script: " ++ take 200 err)
+                ExitSuccess -> do
+                    decoded <- Aeson.eitherDecode <$> BL.readFile jsonPath
+                    script <- either fail pure (decoded :: Either String Script)
+                    outcomes <- runScript outDir script.commands
+                    report name outcomes
+
+-- *** The script format (as wast2json writes it) ***
+
+newtype Script = Script {commands :: [Command]}
+
+instance FromJSON Script where
+    parseJSON = withObject "script" $ \o -> Script <$> o .: "commands"
+
+-- | One command; the optional fields are present depending on the kind.
+data Command = Command
+    { line :: Int
+    , kind :: Text
+    , filename :: Maybe FilePath
+    , name :: Maybe Text
+    , moduleType :: Maybe Text
+    , action :: Maybe Action
+    , expected :: [Literal]
+    , trapText :: Maybe Text
+    }
+
+instance FromJSON Command where
+    parseJSON = withObject "command" $ \o ->
+        Command
+            <$> o .: "line"
+            <*> o .: "type"
+            <*> o .:? "filename"
+            <*> o .:? "name"
+            <*> o .:? "module_type"
+            <*> o .:? "action"
+            <*> (fromMaybe [] <$> o .:? "expected")
+            <*> o .:? "text"
+
+data Action = Action
+    { actionKind :: Text
+    , actionModule :: Maybe Text
+    , field :: Text
+    , args :: [Literal]
+    }
+
+instance FromJSON Action where
+    parseJSON = withObject "action" $ \o ->
+        Action <$> o .: "type" <*> o .:? "module" <*> o .: "field" <*> (fromMaybe [] <$> o .:? "args")
+
+-- | A typed literal: the value is the bit pattern as a decimal string, or a NaN class.
+data Literal = Literal {litType :: Text, litValue :: Maybe Text}
+
+instance FromJSON Literal where
+    parseJSON = withObject "literal" $ \o -> Literal <$> o .: "type" <*> o .:? "value"
+
+-- *** Running ***
+
+data Outcome = Passed | Failed String | Skipped String
+
+-- | A module the script refers to: usable, or unavailable for a stated reason.
+data Loaded = Loaded SomeModule | Unavailable String
+
+data State = State {current :: Loaded, named :: Map.Map Text Loaded}
+
+runScript :: FilePath -> [Command] -> IO [(Int, Outcome)]
+runScript dir = fmap (reverse . snd) . foldM step (State (Unavailable "no module yet") Map.empty, [])
+  where
+    step (state, acc) cmd = do
+        (state', outcome) <- runCommand dir state cmd
+        pure (state', (cmd.line, outcome) : acc)
+
+runCommand :: FilePath -> State -> Command -> IO (State, Outcome)
+runCommand dir state cmd = case cmd.kind of
+    "module" -> do
+        loaded <- loadModule (dir </> fromMaybe "" cmd.filename)
+        let outcome = case loaded of
+                Loaded _ -> Passed
+                Unavailable reason
+                    | "unsupported" `isInfixOf` reason -> Skipped reason
+                    | otherwise -> Failed ("valid module rejected: " ++ reason)
+            named' = maybe state.named (\n -> Map.insert n loaded state.named) cmd.name
+        pure (State loaded named', outcome)
+    "assert_return" -> pure (state, withAction (\m act -> assertReturn m act cmd.expected))
+    "assert_trap" -> pure (state, withAction (\m act -> assertTrap m act cmd.trapText))
+    "action" -> pure (state, withAction (\m act -> either (Failed . show) (const Passed) (invoke m act)))
+    "assert_invalid" -> rejection
+    "assert_malformed" -> rejection
+    other -> pure (state, Skipped ("command " ++ T.unpack other))
+  where
+    withAction check = case cmd.action of
+        Nothing -> Failed "command without an action"
+        Just act -> case resolve act of
+            Unavailable reason -> Skipped reason
+            Loaded m -> check m act
+    resolve act = maybe state.current (\n -> Map.findWithDefault (Unavailable "unknown module") n state.named) act.actionModule
+    rejection
+        | cmd.moduleType /= Just "binary" = pure (state, Skipped "text-format module")
+        | otherwise = do
+            loaded <- loadModule (dir </> fromMaybe "" cmd.filename)
+            pure . (,) state $ case loaded of
+                Unavailable _ -> Passed
+                Loaded _ -> Failed ("accepted a module the spec rejects: " ++ maybe "" T.unpack cmd.trapText)
+
+loadModule :: FilePath -> IO Loaded
+loadModule path = do
+    bytes <- BL.readFile path
+    pure $ case decodeModule bytes of
+        Left err
+            | isFeatureGap err -> Unavailable ("unsupported by the decoder: " ++ err)
+            | otherwise -> Unavailable ("decode error: " ++ err)
+        Right raw -> case elaborateModule raw of
+            Left (UnsupportedInstr what) -> Unavailable ("unsupported by the elaborator: " ++ what)
+            Left err -> Unavailable ("elaboration error: " ++ show err)
+            Right m -> Loaded m
+  where
+    -- The decoder's messages for features outside the implemented subset.
+    isFeatureGap err = any (`isInfixOf` err) ["unsupported", "not supported", "unknown valtype", "unknown limits flag"]
+
+invoke :: SomeModule -> Action -> Either RunError [Value]
+invoke m act = case traverse literalValue act.args of
+    Nothing -> Left (NoSuchExport "(non-numeric argument)")
+    Just values -> invokeExport m act.field values
+
+assertReturn :: SomeModule -> Action -> [Literal] -> Outcome
+assertReturn m act expectations
+    | act.actionKind /= "invoke" = Skipped ("action " ++ T.unpack act.actionKind)
+    | any (\a -> a.litType `notElem` numericTypes) act.args = Skipped "non-numeric argument"
+    | otherwise = case invoke m act of
+        Left err -> Failed ("invoke " ++ T.unpack act.field ++ ": " ++ show err)
+        Right results
+            | length results /= length expectations -> Failed ("expected " ++ show (length expectations) ++ " result(s), got " ++ show results)
+            | and (zipWith matches expectations results) -> Passed
+            | otherwise -> Failed ("invoke " ++ T.unpack act.field ++ " " ++ show (map render act.args) ++ ": expected " ++ show (map render expectations) ++ ", got " ++ show results)
+  where
+    render l = T.unpack l.litType ++ ":" ++ maybe "?" T.unpack l.litValue
+
+assertTrap :: SomeModule -> Action -> Maybe Text -> Outcome
+assertTrap m act expectedText = case invoke m act of
+    Left (Trapped trap)
+        | Just (trapText trap) == expectedText -> Passed
+        | otherwise -> Failed ("trapped with " ++ show trap ++ ", expected " ++ maybe "?" T.unpack expectedText)
+    Left err -> Failed ("invoke " ++ T.unpack act.field ++ ": " ++ show err)
+    Right results -> Failed ("expected a trap (" ++ maybe "?" T.unpack expectedText ++ "), got " ++ show results)
+
+-- | The spec's wording for each trap, as the scripts assert it.
+trapText :: Trap -> Text
+trapText IntegerDivideByZero = "integer divide by zero"
+trapText IntegerOverflow = "integer overflow"
+trapText OutOfBoundsMemoryAccess = "out of bounds memory access"
+trapText InvalidConversionToInteger = "invalid conversion to integer"
+trapText UnreachableExecuted = "unreachable"
+
+numericTypes :: [Text]
+numericTypes = ["i32", "i64", "f32", "f64"]
+
+-- | A literal's value from its bit pattern.
+literalValue :: Literal -> Maybe Value
+literalValue lit = do
+    bits <- readMaybe . T.unpack =<< lit.litValue :: Maybe Integer
+    case lit.litType of
+        "i32" -> Just (I32Value (fromInteger bits))
+        "i64" -> Just (I64Value (fromInteger bits))
+        "f32" -> Just (F32Value (castWord32ToFloat (fromInteger bits)))
+        "f64" -> Just (F64Value (castWord64ToDouble (fromInteger bits)))
+        _ -> Nothing
+
+-- | Does a result match an expectation? Bit-exact, except that a NaN class matches any NaN.
+matches :: Literal -> Value -> Bool
+matches lit actual
+    | typeName (valueType actual) /= lit.litType = False
+    | otherwise = case lit.litValue of
+        Just "nan:canonical" -> isNaNValue actual
+        Just "nan:arithmetic" -> isNaNValue actual
+        Just v -> readMaybe (T.unpack v) == Just (valueBits actual)
+        Nothing -> False
+  where
+    typeName I32 = "i32"
+    typeName I64 = "i64"
+    typeName F32 = "f32"
+    typeName F64 = "f64"
+
+isNaNValue :: Value -> Bool
+isNaNValue (F32Value f) = isNaN f
+isNaNValue (F64Value d) = isNaN d
+isNaNValue _ = False
+
+valueBits :: Value -> Integer
+valueBits (I32Value w) = fromIntegral w
+valueBits (I64Value w) = fromIntegral w
+valueBits (F32Value f) = fromIntegral (castFloatToWord32 f)
+valueBits (F64Value d) = fromIntegral (castDoubleToWord64 d :: Word64)
+
+-- *** Reporting ***
+
+report :: String -> [(Int, Outcome)] -> Expectation
+report name outcomes = do
+    putStrLn ("    " ++ name ++ ": " ++ show passed ++ " passed, " ++ show (length failures) ++ " failed, " ++ show skipped ++ " skipped")
+    case failures of
+        [] -> pure ()
+        _ -> expectationFailure (unlines (take 12 [name ++ ".wast:" ++ show l ++ ": " ++ msg | (l, msg) <- failures]))
+  where
+    passed = length [() | (_, Passed) <- outcomes]
+    skipped = length [() | (_, Skipped _) <- outcomes]
+    failures = [(l, msg) | (l, Failed msg) <- outcomes]
