@@ -30,7 +30,7 @@ when there is a choice. Recorded as the signed-off override in `STYLE.md` §11 (
 
 Sequenced work packages. Each lands as separate commits gated on the `-Werror` build, `cabal test`,
 fourmolu, hlint and `samples/check.sh`. Items marked **[decision]** need Daniel's call first.
-**Status (2026-09-09):** P0, R1, R2, R4 and W0–W6 are done; R3 and R5 are done except the items
+**Status (2026-09-10):** P0, R1, R2, R4 and W0–W7 are done (WASI: 72/72 in the official wasi-testsuite; spec testsuite 21,510 assertions); R3 and R5 are done except the items
 marked **[decision]** and the ones that wait on a feature; open: `runFor` (G1), W7, and the decisions.
 
 ### P0 — spec violations found by audit probes (2026-09-09, each reproduced on a hand-written `.wat`)
@@ -188,9 +188,11 @@ go in after P0 and the spec runner exist to guard them.
 - [x] **[W6·sample]** `samples/wasi/hello.wat` (imports `fd_write`/`proc_exit`, exports `memory`,
   data segment `"Hello, world!\n"`); `check.sh` compares stdout and exit code; plus the pure
   `AwaitingHost` test.
-- [ ] **[W7·later]** Widen the WASI surface only on demand: a wasi-sdk C hello world also imports
-  `args_sizes_get`, `args_get`, `fd_close`, `fd_seek`, `fd_fdstat_get`; a hand-written `.wat` needs
-  only the two we have.
+- [x] **[W7]** The complete Preview 1 interface (all 45 functions, `Runtime.Host`/`Runtime.Wasi`),
+  a sandboxed file system on POSIX calls (`unix`), descriptor rights and flags, and the official
+  `wasi-testsuite` as a submodule (`test/wasi/testsuite`, runner `test/WasiSuite.hs`): **72 of 72
+  programs pass** (C, Rust, AssemblyScript). That is the evidence for the WASI-compliance claim.
+  Prerequisites landed on the way: tables + `call_indirect` + element segments, bulk memory.
 
 ---
 
@@ -330,7 +332,9 @@ Open P0/P1 correctness items live in the plan above (section **P0**); the list b
   **Done (2026-09):** validated (in range, `[] -> []`) and run as the last step of instantiation.
 - [ ] **[P2·feature]** Expose exported globals/memories to the CLI — only exported *functions* are
   runnable today (`ExportMem`/`ExportGlobal` are decoded but unused by `runModuleFunction`).
-- [ ] **[P3·feature]** Tables + `call_indirect` + element segments.
+- [x] **[P3·feature]** Tables + `call_indirect` + element segments (2026-09-10; a table entry is a
+  typed `SomeFuncRef`, the indirect call's type check is a `decideEquality`). Open: the `table.*`
+  instructions, `elem.drop`, passive/declarative element segments, table imports.
 - [ ] **[P3·feature]** `select` with an explicit result type (opcode `0x1C`); only untyped
   `select` (`0x1B`) is supported.
 - [x] **[P3·feature]** Float CLI arguments (`app/Main.hs` and `runModuleFunction` take
@@ -340,8 +344,8 @@ Open P0/P1 correctness items live in the plan above (section **P0**); the list b
   non-empty constraint).
 - [ ] **[P3·feature]** Reference types & SIMD (`V128`) value types. `ValType` is flat and ready to
   extend, but `HostType` and the value stack would need reference/vector representations.
-- [ ] **[P3·feature]** Bulk memory (`memory.fill`/`copy`/`init`) and passive data segments; imports of
-  tables, memories and globals. (Active data segments and function imports are done.)
+- [x] **[P3·feature]** Bulk memory (`memory.copy`/`fill`/`init`, `data.drop`, passive data segments;
+  2026-09-10). Open: imports of tables, memories and globals.
 - [ ] **[P3·perf]** Linear memory is now sparse, copy-on-write per 64 KiB page; byte marshalling still uses
   `[Word8]` lists (`Runtime.Bytes`). Move to a mutable / growable-vector representation when perf
   matters.

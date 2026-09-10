@@ -47,6 +47,7 @@ Naming: `Foo` is the static syntax (in `Syntax`); `FooShape` is its type-level a
 | `samples/wat/`    | example programs (`.wat`); `samples/build.sh` compiles them with `wat2wasm` |
 | `samples/wasi/`   | WASI programs run with `run`; checked by `samples/check.sh` |
 | `test/spec/`      | the official spec testsuite (a pinned submodule) driven by `test/SpecSuite.hs` |
+| `test/wasi/`      | the official wasi-testsuite (a pinned submodule) driven by `test/WasiSuite.hs` |
 
 ### Usage
 
@@ -54,38 +55,42 @@ Naming: `Foo` is the static syntax (in `Syntax`); `FooShape` is its type-level a
 cabal build
 cabal run wasm-ifc -- invoke <file.wasm> <export> [args...]   # decode → elaborate → run
 cabal run wasm-ifc -- check <file.wasm>                        # decode → elaborate only
-cabal run wasm-ifc -- run <file.wasm>                          # a WASI program: run its _start
+cabal run wasm-ifc -- run [--dir D[::G]]... [--env K=V]... <file.wasm> [args...]   # a WASI program
 
 samples/build.sh    # compile every sample .wat to .wasm  (needs wabt's wat2wasm)
 samples/check.sh    # run every sample and check it against its expected result (and against wasmtime, if installed)
 samples/validate.sh # every sample must be accepted by both wasm-validate and our own check
-cabal test          # the hspec/hedgehog suite, and the spec testsuite (needs wabt's wast2json
-                    # and `git submodule update --init` for test/spec/testsuite)
+cabal test          # the hspec/hedgehog suite, the spec testsuite (needs wabt's wast2json) and the
+                    # wasi-testsuite; both suites are submodules: `git submodule update --init`
 ```
 
 ### Status and limitations
 
-Runs today: the numeric, comparison and conversion instructions; memory loads and stores
-(including the narrow forms), `memory.size`/`memory.grow`; structured control, branches,
-calls and globals; whole-module validation; one linear memory per module; active data segments;
-the start function; exported functions invoked from the CLI with arguments typed by their
-signature. The official spec testsuite passes for everything in this subset (17,212 assertions;
-the rest are skipped for features we do not have), and `wasmtime` agrees on every sample it can run.
+Runs today: the numeric, comparison and conversion instructions (including the saturating
+truncations); memory loads and stores, `memory.size`/`memory.grow`, and bulk memory
+(`memory.copy`/`fill`/`init`, `data.drop`, passive segments); structured control, branches,
+calls, `call_indirect` through tables with element segments, and globals; whole-module
+validation; the start function; exported functions invoked from the CLI with arguments typed
+by their signature. The official spec testsuite passes for everything in this subset (21,510
+assertions; the rest are skipped for features we do not have), and `wasmtime` agrees on every
+sample it can run.
 
-WASI: a module may import `fd_write` (to the standard streams) and `proc_exit` from
-`wasi_snapshot_preview1`; `run` executes its `_start`. The interpreter stays pure: a call into
-the host is handed out as a request and a small IO driver (`Runtime.Wasi`) serves it and
-resumes the module.
+WASI: the complete Preview 1 interface (`wasi_snapshot_preview1`, all 45 functions) with a
+sandboxed file system over preopened directories, arguments, environment, clocks, random
+bytes and polling. `run [--dir HOST[::GUEST]]… [--env NAME=VALUE]… file.wasm [args…]`
+executes a program's `_start`. Every program in the official `wasi-testsuite` passes (72 of
+72, in C, Rust and AssemblyScript). The interpreter stays pure: a call into the host is handed
+out as a request and the IO driver (`Runtime.Wasi`) serves it and resumes the module.
 
-Not yet: information-flow control (the project's goal; `TODO.md` §F); other imports (tables,
-memories, globals, or host functions beyond the two above); tables and `call_indirect`;
-exported globals and memories (decoded, not reachable from the CLI); typed `select` (`0x1C`);
-multiple memories; bulk memory, passive data segments, reference and SIMD types. Linear
-memory is sparse and copy-on-write per 64 KiB page.
+Not yet: information-flow control (the project's goal; `TODO.md` §F); imports of tables,
+memories and globals; the `table.*` instructions and `elem.drop`; typed `select` (`0x1C`);
+multiple memories; reference and SIMD types; sockets (the `sock_*` calls answer ENOTSOCK).
+Linear memory is sparse and copy-on-write per 64 KiB page.
 
 ### Toolchain
 
 ```
-cabal 3.14.2.0, GHC 9.12.2; wabt (wat2wasm, wast2json, wasm-validate) for the samples and the
-spec testsuite; wasmtime (optional) as a differential oracle in samples/check.sh
+cabal 3.14.2.0, GHC 9.12.2 on a POSIX system (the WASI host uses the unix package); wabt
+(wat2wasm, wast2json, wasm-validate) for the samples and the spec testsuite; wasmtime
+(optional) as a differential oracle in samples/check.sh
 ```
