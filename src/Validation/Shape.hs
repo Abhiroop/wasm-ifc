@@ -29,7 +29,7 @@ import Data.List.Singletons (type (++))
 import Data.Singletons.Base.TH (SList (SCons, SNil), Sing, genSingletons)
 import Numeric.Natural (Natural)
 
-import Syntax.Types (AddrType, FuncType, GlobalType, ResultType, ValType)
+import Syntax.Types (AddrType, FuncType (..), GlobalType, ResultType, ValType)
 
 {- *** Stack order ***
 
@@ -86,6 +86,13 @@ type Elem :: k -> [k] -> Type
 data Elem x xs where
     Here :: Elem x (x ': xs)
     There :: Elem x xs -> Elem x (y ': xs)
+
+{- | @∃ps rs. (Sing ps, Sing rs, Elem ('FuncType ps rs) fts)@ — a function reference resolved
+  against the signature, carrying its parameter and result shapes: what a table entry, an
+  element segment and the runtime's export lookup hold.
+-}
+data SomeFuncRef (fts :: [FuncType]) where
+    SomeFuncRef :: Sing (ps :: [ValType]) -> Sing (rs :: [ValType]) -> Elem ('FuncType ps rs) fts -> SomeFuncRef fts
 
 {- | The compile-time shape of a module: the types of its function, global, memory, table and
   data-segment index spaces. Used as a single kind index on the instruction GADT so it stays compact. Memories

@@ -37,8 +37,7 @@ import Syntax.Globals (Globals, RawGlobal)
 import Syntax.Indices (FunctionIdx, GlobalIdx, MemoryIdx, TableIdx)
 import Syntax.Instructions (RawExpr)
 import Syntax.Types (FuncType (..), Limits, MemType)
-import Validation.Reflect (SomeFuncRef)
-import Validation.Shape (Elem, ModuleFuncs, ModuleGlobals, ModuleShape)
+import Validation.Shape (Elem, ModuleFuncs, ModuleGlobals, ModuleShape, SomeFuncRef)
 
 data RawModule = RawModule
     { types :: [FuncType]

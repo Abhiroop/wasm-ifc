@@ -30,7 +30,6 @@ module Validation.Reflect (
     matchPrefix,
     -- module-signature witnesses
     SomeModuleShape (..),
-    SomeFuncRef (..),
     SomeGlobalRef (..),
     NonEmptyMems (..),
     NonEmptyTables (..),
@@ -188,12 +187,6 @@ mkDataElem :: Sing (ds :: [DataShape]) -> Word32 -> Maybe (Elem 'DataShape ds)
 mkDataElem (SCons SDataShape _) 0 = Just Here
 mkDataElem (SCons _ rest) n = There <$> mkDataElem rest (n - 1)
 mkDataElem SNil _ = Nothing
-
-{- | @∃ps rs. (Sing ps, Sing rs, Elem ('FuncType ps rs) fts)@ — a function reference resolved
-  against the signature, carrying its parameter and result shapes.
--}
-data SomeFuncRef (fts :: [FuncType]) where
-    SomeFuncRef :: Sing (ps :: [ValType]) -> Sing (rs :: [ValType]) -> Elem ('FuncType ps rs) fts -> SomeFuncRef fts
 
 lookupFuncRef :: Sing (fts :: [FuncType]) -> Word32 -> Maybe (SomeFuncRef fts)
 lookupFuncRef (SCons (SFuncType ps rs) _) 0 = Just (SomeFuncRef ps rs Here)

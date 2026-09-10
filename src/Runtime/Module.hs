@@ -33,8 +33,8 @@ import Syntax.Immediates (HostType)
 import Syntax.Indices (FunctionIdx (..))
 import Syntax.Module (Export (..), ExportDesc (..))
 import Syntax.Types
-import Validation.Reflect (SomeFuncRef (..), declaredOrder, funcTypesSing, lookupFuncRef, stackOrder)
-import Validation.Shape (ModuleFuncs, ModuleShape)
+import Validation.Reflect (declaredOrder, funcTypesSing, lookupFuncRef, stackOrder)
+import Validation.Shape (ModuleFuncs, ModuleShape, SomeFuncRef (..))
 
 {- | An instantiated module with its shape hidden: the shape's singleton, the instance, and
 the exports (for resolving entry points).

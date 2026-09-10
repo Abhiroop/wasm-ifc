@@ -23,7 +23,7 @@ import Data.Word (Word32)
 
 import Runtime.Trap (Trap (..))
 import Syntax.Types (FuncType, Limits (..))
-import Validation.Reflect (SomeFuncRef)
+import Validation.Shape (SomeFuncRef)
 
 type TableInst :: [FuncType] -> Type
 data TableInst fts = TableInst

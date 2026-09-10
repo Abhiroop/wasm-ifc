@@ -91,8 +91,8 @@ import Syntax.Instructions (
     Instr (..),
  )
 import Syntax.Types
-import Validation.Reflect (SomeFuncRef (..), appendNil)
-import Validation.Shape (Append, DataShape (..), Elem (..), FrameShape (..), ModuleData, ModuleFuncs, ModuleGlobals, ModuleMems, ModuleShape, ModuleTables, appendFromSing)
+import Validation.Reflect (appendNil)
+import Validation.Shape (Append, DataShape (..), Elem (..), FrameShape (..), ModuleData, ModuleFuncs, ModuleGlobals, ModuleMems, ModuleShape, ModuleTables, SomeFuncRef (..), appendFromSing)
 
 -- *** Module and runtime state ***
 
