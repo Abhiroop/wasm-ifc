@@ -6,7 +6,7 @@ module Syntax.Functions (
     RawFunction (..),
 ) where
 
-import Syntax.Expressions
+import Syntax.Instructions (RawExpr)
 import Syntax.Types
 
 data RawFunction = RawFunction

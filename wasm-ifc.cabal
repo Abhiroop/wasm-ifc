@@ -78,13 +78,7 @@ library
       , Syntax.Indices
       , Syntax.Immediates
       , Syntax.Instructions
-      , Syntax.Expressions
       , Syntax.Globals
-      , Syntax.Memories
-      , Syntax.DataSegments
-      , Syntax.Imports
-      , Syntax.Tables
-      , Syntax.Elements
       , Syntax.Functions
       , Syntax.Module
       , Validation.Shape

@@ -80,7 +80,7 @@ import Runtime.Numeric (copysign32, copysign64, fromSigned32, fromSigned64, intD
 import Runtime.Stack
 import Runtime.TableInst (tableLookup)
 import Runtime.Trap (Trap (..))
-import Syntax.Immediates (HostType)
+import Syntax.Immediates
 import Syntax.Instructions (
     BitwiseOp (..),
     CountOp (..),

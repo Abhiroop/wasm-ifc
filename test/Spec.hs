@@ -31,16 +31,12 @@ import Runtime.Numeric (intDiv32)
 import Runtime.Stack (ValueStack (..))
 import Runtime.Trap (Trap (..))
 import Runtime.Wasi (Completion (..), WasiConfig (..), runWithWasi)
-import Syntax.DataSegments (DataMode (..), RawData (..))
-import Syntax.Elements (RawElem (..))
 import Syntax.Functions (RawFunction (..))
 import Syntax.Globals (RawGlobal (..))
-import Syntax.Imports (ImportDesc (..), RawImport (..))
+import Syntax.Immediates
 import Syntax.Indices
 import Syntax.Instructions
-import Syntax.Memories (RawMemory (..))
 import Syntax.Module
-import Syntax.Tables (RawTable (..))
 import Syntax.Types
 import Validation.Elaborate (ElabError (..), IndexSpace (..), elaborateModule)
 

@@ -20,9 +20,8 @@ import GHC.Float (
 
 import Runtime.Numeric (fromSigned32, fromSigned64, toSigned32, toSigned64)
 import Runtime.Trap (Trap (..))
-import Syntax.Immediates (HostType)
+import Syntax.Immediates (HostType, Signedness (..))
 import Syntax.Instructions (ConvertOp (..))
-import Syntax.Types (Signedness (..))
 
 {- | Apply a conversion. Matching the opcode refines @from@ and @to@, so within each case the
   operand and result are ordinary host types. Integers are raw bit patterns: a signed

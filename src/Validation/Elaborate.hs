@@ -39,12 +39,9 @@ import Runtime.Module (SomeModule (..))
 import Runtime.Stack (DataInsts (..), GlobalInsts (..), LocalInsts (..), MemInsts (..), TableInsts (..), ValueStack (..))
 import Runtime.TableInst (allocTable, setTableEntries)
 import Runtime.Trap (Trap)
-import Syntax.DataSegments (DataMode (..), RawData (RawData))
-import Syntax.Elements (RawElem (RawElem))
 import Syntax.Functions (RawFunction (RawFunction))
 import Syntax.Globals (RawGlobal (RawGlobal))
-import Syntax.Immediates (HostType)
-import Syntax.Imports (ImportDesc (..), RawImport (..))
+import Syntax.Immediates
 import Syntax.Indices (DataIdx (..), FunctionIdx (..), GlobalIdx (..), LabelIdx (..), LocalIdx (..), MemoryIdx (..), TableIdx (..), TypeIdx (..))
 import Syntax.Instructions (
     BitwiseOp (..),
@@ -57,9 +54,7 @@ import Syntax.Instructions (
     RawInstr (..),
     convertEnds,
  )
-import Syntax.Memories (RawMemory (RawMemory))
 import Syntax.Module
-import Syntax.Tables (RawTable (..))
 import Syntax.Types
 import Validation.Reflect
 import Validation.Shape

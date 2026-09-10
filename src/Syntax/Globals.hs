@@ -3,7 +3,7 @@ module Syntax.Globals (
     RawGlobal (..),
 ) where
 
-import Syntax.Expressions
+import Syntax.Instructions (RawExpr)
 import Syntax.Types
 
 data RawGlobal = RawGlobal

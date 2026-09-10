@@ -19,6 +19,7 @@ The @Raw@ prefix is the only thing distinguishing the two.
 module Syntax.Instructions (
     -- * Untyped (decoded) AST
     RawInstr (..),
+    RawExpr,
     ConvertOp (..),
     convertEnds,
     BitwiseOp (..),
@@ -139,6 +140,9 @@ data RawInstr where
     -- \*** Stack management ***
     Drop :: RawInstr
     Select :: RawInstr
+
+-- | An expression: a flat list of (tree-structured) instructions — a function body or an initializer.
+type RawExpr = [RawInstr]
 
 {- | The fixed-opcode numeric conversions, each indexed by its concrete source and target
   value types — so the op /is/ the evidence of what it converts, and a conversion cannot be

@@ -20,6 +20,7 @@ import Data.Word (Word32)
 
 import Runtime.Interpreter
 import Runtime.Stack
+import Syntax.Immediates (NumWithSign (..), Signedness (..))
 import Syntax.Instructions
 import Syntax.Types (
     FuncType (..),
@@ -27,8 +28,6 @@ import Syntax.Types (
     IsInt (..),
     IsNum (..),
     Mutability (..),
-    NumWithSign (..),
-    Signedness (..),
     ValType (..),
  )
 import Validation.Shape (Elem (..), ModuleShape (..))

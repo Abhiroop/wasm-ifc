@@ -9,10 +9,10 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-{- | The core WASM types — the value type, function/global/memory types, and the small
-  operand tags (signedness, memory immediates). Library singletons (from @singletons-base@)
-  are generated for these so the intrinsically-typed layer can reflect them between the term
-  and type levels.
+{- | The core WASM types — the value type with its sub-category witnesses, and the function,
+  global, memory and table types. Library singletons (from @singletons-base@) are generated for
+  these so the intrinsically-typed layer can reflect them between the term and type levels.
+  (What an instruction carries besides its operands lives in "Syntax.Immediates".)
 
   This module exports openly (no explicit list): for a single-constructor type the generated
   @Sing@ constructor and its type synonym share a name (e.g. @SFuncType@), so importers must
@@ -108,47 +108,6 @@ decideFloat SF64 = Just F64IsFloat
 decideFloat SI32 = Nothing
 decideFloat SI64 = Nothing
 
-{- | A numeric operand for the operations that are signed/unsigned on integers but have a
-  single form on floats — division and the ordered comparisons (@lt@/@gt@/@le@/@ge@). An
-  integer carries its 'Signedness'; a float carries none, so a signed float comparison or
-  division is unrepresentable.
--}
-data NumWithSign (t :: ValType) where
-    IntsHaveSign :: IsInt t -> Signedness -> NumWithSign t
-    FloatsHaveNoSign :: IsFloat t -> NumWithSign t
-
-decideNumWithSign :: Sing (t :: ValType) -> Signedness -> Maybe (NumWithSign t)
-decideNumWithSign st sign = case decideInt st of
-    Just isInt -> Just (IntsHaveSign isInt sign)
-    Nothing -> FloatsHaveNoSign <$> decideFloat st
-
-{- | The storage width of a narrow integer load/store: one or two bytes for any integer, plus
-  four bytes for @i64@ only (a narrow access must be strictly narrower than the value, so an
-  @i32@ has no four-byte narrow form). Makes an out-of-range width unrepresentable.
--}
-data NarrowWidth (t :: ValType) where
-    OneByte :: IsInt t -> NarrowWidth t
-    TwoBytes :: IsInt t -> NarrowWidth t
-    FourBytes :: NarrowWidth 'I64
-
--- | The width in bytes a 'NarrowWidth' stands for (1, 2 or 4).
-narrowBytes :: NarrowWidth t -> Int
-narrowBytes (OneByte _) = 1
-narrowBytes (TwoBytes _) = 2
-narrowBytes FourBytes = 4
-
--- | The integer type a narrow access is for; a four-byte narrow access is only ever an i64's.
-narrowInt :: NarrowWidth t -> IsInt t
-narrowInt (OneByte isInt) = isInt
-narrowInt (TwoBytes isInt) = isInt
-narrowInt FourBytes = I64IsInt
-
-decideNarrow :: Sing (t :: ValType) -> Int -> Maybe (NarrowWidth t)
-decideNarrow st 1 = OneByte <$> decideInt st
-decideNarrow st 2 = TwoBytes <$> decideInt st
-decideNarrow SI64 4 = Just FourBytes
-decideNarrow _ _ = Nothing
-
 {- | A result type — the stack shape a block, loop, if, or function yields (the spec's
   @resulttype@). It is exactly a list of value types; the synonym names the intent so
   indices like a label context read as @[ResultType]@ rather than a bare @[[ValType]]@.
@@ -177,17 +136,7 @@ data MemType = MemType
 data Mutability = Immutable | Mutable deriving stock (Eq, Show)
 data GlobalType = GlobalType Mutability ValType deriving stock (Eq, Show)
 
-{- | Signed vs. unsigned interpretation of an integer operation. Stored values are raw bit
-  patterns; signedness is chosen per operation, not per value.
--}
-data Signedness = Signed | Unsigned deriving stock (Eq, Show)
-
-{- | A memory immediate. Alignment is advisory (ignored at run time); @offset@ is added to
-  the dynamic address.
--}
-data MemArg = MemArg {alignment :: Word32, offset :: Word32} deriving stock (Eq, Show)
-
--- Singletons for the remaining promotable types. Split from the 'NumType'/'ValType' splice
--- above because Template Haskell needs each type defined before its splice, and
--- 'IsInt'/'decideInt' (which use the number-type singleton) sit in between.
+-- Singletons for the remaining promotable types. Split from the 'ValType' splice above because
+-- Template Haskell needs each type defined before its splice, and the witnesses (which use the
+-- value-type singleton) sit in between.
 $(genSingletons [''Mutability, ''AddrType, ''FuncType, ''GlobalType])

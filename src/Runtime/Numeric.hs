@@ -25,7 +25,7 @@ import Data.Word (Word32, Word64)
 import GHC.Float (castDoubleToWord64, castFloatToWord32, castWord32ToFloat, castWord64ToDouble)
 
 import Runtime.Trap (Trap (..))
-import Syntax.Types (Signedness (..))
+import Syntax.Immediates (Signedness (..))
 
 -- *** Signed views of the raw integer bits ***
 

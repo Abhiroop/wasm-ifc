@@ -35,16 +35,12 @@ import Data.Word (Word32, Word64, Word8)
 import GHC.Float (castWord32ToFloat, castWord64ToDouble)
 import Numeric (showHex)
 
-import Syntax.DataSegments (DataMode (..), RawData (RawData))
-import Syntax.Elements (RawElem (RawElem))
 import Syntax.Functions (RawFunction (RawFunction))
 import Syntax.Globals (RawGlobal (RawGlobal))
-import Syntax.Imports (ImportDesc (..), RawImport (RawImport))
+import Syntax.Immediates
 import Syntax.Indices
 import Syntax.Instructions
-import Syntax.Memories (RawMemory (RawMemory))
 import Syntax.Module
-import Syntax.Tables (RawTable (RawTable))
 import Syntax.Types
 
 -- | Decode a complete module from its binary representation.
