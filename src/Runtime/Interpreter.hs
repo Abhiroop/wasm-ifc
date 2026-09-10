@@ -66,12 +66,15 @@ import Data.Word (Word32, Word64, Word8)
 import GHC.Float (castDoubleToWord64, castFloatToWord32, castWord32ToFloat, castWord64ToDouble)
 
 import Data.List.Singletons (type (++))
+import Data.Singletons.Decide (decideEquality)
+import Data.Type.Equality ((:~:) (Refl))
 import Runtime.Bytes (bytesOfWord32, bytesOfWord64, word32OfBytes, word64OfBytes)
 import Runtime.Convert (convertVal)
 import Runtime.Host (WasiFunc, wasiFuncType)
 import Runtime.MemInst (MemInst, growMemory, memoryPages, readBytes, writeBytes)
 import Runtime.Numeric (copysign32, copysign64, fromSigned32, fromSigned64, intDiv32, intDiv64, intRem32, intRem64, toSigned32, toSigned64, wasmMax, wasmMin)
 import Runtime.Stack
+import Runtime.TableInst (tableLookup)
 import Runtime.Trap (Trap (..))
 import Syntax.Immediates (HostType)
 import Syntax.Instructions (
@@ -83,8 +86,8 @@ import Syntax.Instructions (
     Instr (..),
  )
 import Syntax.Types
-import Validation.Reflect (appendNil)
-import Validation.Shape (Append, Elem (..), FrameShape (..), ModuleFuncs, ModuleGlobals, ModuleMems, ModuleShape, ReverseOnto, appendFromSing)
+import Validation.Reflect (SomeFuncRef (..), appendNil)
+import Validation.Shape (Append, Elem (..), FrameShape (..), ModuleFuncs, ModuleGlobals, ModuleMems, ModuleShape, ModuleTables, ReverseOnto, appendFromSing)
 
 -- *** Module and runtime state ***
 
@@ -121,13 +124,13 @@ getFunc Here (FsCons f _) = f
 getFunc (There ix) (FsCons _ rest) = getFunc ix rest
 
 {- | The mutable part of the running state: the globals and memories that instructions update
-  in place. (The WASM spec's store also holds tables, element and data segments; this
-  implementation has none of those — no @call_indirect@ or bulk memory — and functions are
-  immutable, so they are passed to 'step' read-only rather than kept here.)
+  in place, and the tables @call_indirect@ reads. (Functions are immutable, so they are passed
+  to 'step' read-only rather than kept here.)
 -}
 data Store (mod :: ModuleShape) = Store
     { globals :: GlobalInsts (ModuleGlobals mod)
     , mems :: MemInsts (ModuleMems mod)
+    , tables :: TableInsts (ModuleFuncs mod) (ModuleTables mod)
     }
 
 {- | A fully instantiated module: its function instances plus the initial globals and
@@ -139,6 +142,7 @@ data ModuleInst (mod :: ModuleShape) = ModuleInst
     { funcs :: FuncInsts mod (ModuleFuncs mod)
     , globals :: GlobalInsts (ModuleGlobals mod)
     , mems :: MemInsts (ModuleMems mod)
+    , tables :: TableInsts (ModuleFuncs mod) (ModuleTables mod)
     }
 
 {- *** The control stack ***
@@ -319,7 +323,7 @@ step funcs (Config store locals stack code control) = case code of
         ILocalTee ix -> case stack of v :# _ -> stepped store (setLocal ix v locals) stack rest control
         IGlobalGet ix -> stepped store locals (getGlobal ix (store.globals) :# stack) rest control
         IGlobalSet ix -> case stack of
-            v :# r -> stepped (Store (setGlobal ix v store.globals) store.mems) locals r rest control
+            v :# r -> stepped (Store {globals = setGlobal ix v store.globals, mems = store.mems, tables = store.tables}) locals r rest control
         {- Memory -}
         ILoad nt memArg -> case stack of
             addr :# r ->
@@ -331,18 +335,16 @@ step funcs (Config store locals stack code control) = case code of
                 case writeBytes (currentMem store) (effectiveAddr addr memArg) (storeBytes nt value) of
                     Just mem' -> stepped (storeMem mem' store) locals r rest control
                     Nothing -> Left OutOfBoundsMemoryAccess
-        {- Calls: push a call frame and start the callee over an empty stack — or, for a host
-           function, hand the call out as a request with the caller suspended around it -}
-        ICall witness ix -> case getFunc ix funcs of
-            WasmFunc defaults body ->
-                let (args, below) = splitStack witness stack
-                    calleeLocals = reverseOnto args defaults
-                 in Right (Stepped (Config store calleeLocals VNil body (CallBoundary below locals rest control)))
-            HostFunc wasiFunc -> case wasiFuncType wasiFunc of
-                SFuncType _ resultsS ->
-                    let (args, below) = splitStack witness stack
-                        suspended = Suspended (appendFromSing resultsS) locals below rest control
-                     in Right (HostCall (HostRequest wasiFunc args store suspended))
+        {- Calls: enter the callee (see 'enterCall'); an indirect call first reads the table entry
+           and checks its type against the expected one, trapping if they differ -}
+        ICall witness ix -> enterCall funcs store locals witness ix stack rest control
+        ICallIndirect witness (SFuncType expectedParams expectedResults) -> case stack of
+            index :# below' -> case tableLookup (firstTable store.tables) index of
+                Left trap -> Left trap
+                Right (SomeFuncRef paramsS resultsS ix) ->
+                    case (decideEquality paramsS expectedParams, decideEquality resultsS expectedResults) of
+                        (Just Refl, Just Refl) -> enterCall funcs store locals witness ix below' rest control
+                        _ -> Left IndirectCallTypeMismatch
         {- Structured control: push the matching frame and run the body -}
         IBlock witness body ->
             let (params, below) = splitStack witness stack
@@ -373,6 +375,31 @@ step funcs (Config store locals stack code control) = case code of
         {- Inert -}
         INop -> stepped store locals stack rest control
         IUnreachable -> Left UnreachableExecuted
+
+{- | Enter a function: for a WebAssembly function, push a call boundary and start its body over
+  an empty stack; for a host function, hand the call out as a request with the caller suspended
+  around it. The 'Append' witness peels the arguments off the stack.
+-}
+enterCall ::
+    FuncInsts mod (ModuleFuncs mod) ->
+    Store mod ->
+    LocalInsts locals ->
+    Append ps s full ->
+    Elem ('FuncType ps rs) (ModuleFuncs mod) ->
+    ValueStack full ->
+    Expr mod ('FrameShape locals ret) labels (rs ++ s) out ->
+    Control mod res ret locals labels out ->
+    Either Trap (StepResult mod res)
+enterCall funcs store locals witness ix stack rest control = case getFunc ix funcs of
+    WasmFunc defaults body ->
+        let (args, below) = splitStack witness stack
+            calleeLocals = reverseOnto args defaults
+         in Right (Stepped (Config store calleeLocals VNil body (CallBoundary below locals rest control)))
+    HostFunc wasiFunc -> case wasiFuncType wasiFunc of
+        SFuncType _ resultsS ->
+            let (args, below) = splitStack witness stack
+                suspended = Suspended (appendFromSing resultsS) locals below rest control
+             in Right (HostCall (HostRequest wasiFunc args store suspended))
 
 -- | The "continue in the current frame" case: wrap a successor configuration.
 stepped ::
@@ -413,7 +440,7 @@ currentMem :: (ModuleMems mod ~ (m ': ms)) => Store mod -> MemInst m
 currentMem store = firstMem store.mems
 
 storeMem :: (ModuleMems mod ~ (m ': ms)) => MemInst m -> Store mod -> Store mod
-storeMem mem store = Store store.globals (setFirstMem mem store.mems)
+storeMem mem store = Store {globals = store.globals, mems = setFirstMem mem store.mems, tables = store.tables}
 
 -- | What @memory.grow@ pushes when it cannot grow: the spec's @-1@, as an unsigned i32.
 growFailed :: Word32
@@ -518,14 +545,16 @@ runFunction ::
 runFunction tm (WasmFunc defaults body) args = do
     halt <- run (tm.funcs) (Config store locals VNil body EntryBoundary)
     Right $ case halt of
-        Finished store' results -> Completed (ModuleInst tm.funcs store'.globals store'.mems) results
+        Finished store' results ->
+            Completed (ModuleInst {funcs = tm.funcs, globals = store'.globals, mems = store'.mems, tables = store'.tables}) results
         AwaitingHost request -> NeedsHost request
   where
-    store = Store (tm.globals) (tm.mems)
+    store = Store {globals = tm.globals, mems = tm.mems, tables = tm.tables}
     locals = reverseOnto args defaults
 runFunction tm (HostFunc wasiFunc) args = case wasiFuncType wasiFunc of
     SFuncType _ resultsS ->
-        Right (NeedsHost (HostRequest wasiFunc args (Store (tm.globals) (tm.mems)) (Suspended (appendNil resultsS) LNil VNil INil EntryBoundary)))
+        let store = Store {globals = tm.globals, mems = tm.mems, tables = tm.tables}
+         in Right (NeedsHost (HostRequest wasiFunc args store (Suspended (appendNil resultsS) LNil VNil INil EntryBoundary)))
 
 {- *** Numeric dispatch ***
 

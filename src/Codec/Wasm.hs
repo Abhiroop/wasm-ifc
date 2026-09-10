@@ -35,6 +35,7 @@ import GHC.Float (castWord32ToFloat, castWord64ToDouble)
 import Numeric (showHex)
 
 import Syntax.DataSegments (RawData (RawData))
+import Syntax.Elements (RawElem (RawElem))
 import Syntax.Functions (RawFunction (RawFunction))
 import Syntax.Globals (RawGlobal (RawGlobal))
 import Syntax.Imports (ImportDesc (..), RawImport (RawImport))
@@ -42,6 +43,7 @@ import Syntax.Indices
 import Syntax.Instructions
 import Syntax.Memories (RawMemory (RawMemory))
 import Syntax.Module
+import Syntax.Tables (RawTable (RawTable))
 import Syntax.Types
 
 -- | Decode a complete module from its binary representation.
@@ -219,6 +221,11 @@ getInstr types opcode = case opcode of
     0x0E -> BrTable <$> getVec (LabelIdx <$> getULEB128) <*> (LabelIdx <$> getULEB128)
     0x0F -> pure Return
     0x10 -> Call . FunctionIdx <$> getULEB128
+    0x11 -> do
+        typeIdx <- getULEB128
+        tableIdx <- getULEB128
+        when (tableIdx /= 0) (fail "unsupported: call_indirect through a table other than 0")
+        pure (CallIndirect (TypeIdx typeIdx))
     {- Locals & globals -}
     0x20 -> LocalGet . LocalIdx <$> getULEB128
     0x21 -> LocalSet . LocalIdx <$> getULEB128
@@ -430,6 +437,8 @@ data Sections = Sections
     -- ^ code section: locals and body per function
     , globalSection :: [RawGlobal]
     , memorySection :: [RawMemory]
+    , tableSection :: [RawTable]
+    , elementSection :: [RawElem]
     , exportSection :: [Export]
     , startSection :: Maybe FunctionIdx
     , dataSection :: [RawData]
@@ -438,7 +447,7 @@ data Sections = Sections
     }
 
 emptySections :: Sections
-emptySections = Sections [] [] [] [] [] [] [] Nothing [] Nothing
+emptySections = Sections [] [] [] [] [] [] [] [] [] Nothing [] Nothing
 
 getModule :: Get RawModule
 getModule = do
@@ -481,12 +490,12 @@ parseSection sectionId acc = case sectionId of
     1 -> (\ts -> acc {typeSection = ts}) <$> getVec getFuncType
     2 -> (\is -> acc {importSection = is}) <$> getVec (getImport (acc.typeSection))
     3 -> (\is -> acc {functionSection = is}) <$> getVec getULEB128
-    4 -> fail "unsupported: table section"
+    4 -> (\ts -> acc {tableSection = ts}) <$> getVec getTable
     5 -> (\ms -> acc {memorySection = ms}) <$> getVec getMemory
     6 -> (\gs -> acc {globalSection = gs}) <$> getVec getGlobal
     7 -> (\es -> acc {exportSection = es}) <$> getVec getExport
     8 -> (\i -> acc {startSection = Just (FunctionIdx i)}) <$> getULEB128
-    9 -> fail "unsupported: element section"
+    9 -> (\es -> acc {elementSection = es}) <$> getVec getElem
     10 -> (\cs -> acc {codeSection = cs}) <$> getVec (getCode (acc.typeSection))
     11 -> (\ds -> acc {dataSection = ds}) <$> getVec getData
     12 -> (\n -> acc {dataCountSection = Just n}) <$> getULEB128
@@ -522,6 +531,42 @@ getImport types = do
         _ -> fail ("unknown import kind 0x" ++ showHex kind "")
     pure (RawImport moduleName fieldName desc)
 
+-- | A table type: only @funcref@ (0x70) tables are supported.
+getTable :: Get RawTable
+getTable = do
+    refType <- getWord8
+    when (refType /= 0x70) (fail "unsupported: table of a reference type other than funcref")
+    RawTable <$> getLimits
+
+{- | An element segment. The active forms for table 0 are supported — flags 0 (function
+  indices), 2 (an explicit table index, which must be 0) and 4 (@ref.func@ expressions);
+  passive and declarative segments are not.
+-}
+getElem :: Get RawElem
+getElem = do
+    flags <- getULEB128
+    case flags of
+        0 -> RawElem <$> getExpr [] <*> getVec (FunctionIdx <$> getULEB128)
+        2 -> do
+            tableIdx <- getULEB128
+            when (tableIdx /= 0) (fail "unsupported: element segment for a table other than 0")
+            offset <- getExpr []
+            elemKind <- getWord8
+            when (elemKind /= 0) (fail ("unknown element kind " ++ show elemKind))
+            RawElem offset <$> getVec (FunctionIdx <$> getULEB128)
+        4 -> RawElem <$> getExpr [] <*> getVec getFuncRefExpr
+        _ -> fail ("unsupported: element segment with flags " ++ show flags)
+
+-- | A constant expression of the form @ref.func x end@.
+getFuncRefExpr :: Get FunctionIdx
+getFuncRefExpr = do
+    opcode <- getWord8
+    when (opcode /= 0xD2) (fail "unsupported: element expression other than ref.func")
+    idx <- getULEB128
+    end <- getWord8
+    when (end /= 0x0B) (fail "malformed element expression")
+    pure (FunctionIdx idx)
+
 getMemory :: Get RawMemory
 getMemory = RawMemory . MemType AddrI32 <$> getLimits
 
@@ -535,6 +580,7 @@ getExport = do
     idx <- getULEB128
     desc <- case kind of
         0x00 -> pure (ExportFunc (FunctionIdx idx))
+        0x01 -> pure (ExportTable (TableIdx idx))
         0x02 -> pure (ExportMem (MemoryIdx idx))
         0x03 -> pure (ExportGlobal (GlobalIdx idx))
         _ -> fail ("unsupported export kind 0x" ++ showHex kind "")
@@ -580,6 +626,8 @@ assemble secs = do
             , funcs = funcs
             , globals = secs.globalSection
             , memories = secs.memorySection
+            , tables = secs.tableSection
+            , elements = secs.elementSection
             , dataSegments = secs.dataSection
             , exports = secs.exportSection
             , start = secs.startSection

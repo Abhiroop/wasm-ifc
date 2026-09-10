@@ -7,11 +7,13 @@ module Syntax.Module (
 import Data.Text (Text)
 
 import Syntax.DataSegments (RawData)
+import Syntax.Elements (RawElem)
 import Syntax.Functions (RawFunction)
 import Syntax.Globals (RawGlobal)
 import Syntax.Imports (RawImport)
-import Syntax.Indices (FunctionIdx, GlobalIdx, MemoryIdx)
+import Syntax.Indices (FunctionIdx, GlobalIdx, MemoryIdx, TableIdx)
 import Syntax.Memories (RawMemory)
+import Syntax.Tables (RawTable)
 import Syntax.Types (FuncType)
 
 -- | What an export refers to.
@@ -19,6 +21,7 @@ data ExportDesc
     = ExportFunc FunctionIdx
     | ExportGlobal GlobalIdx
     | ExportMem MemoryIdx
+    | ExportTable TableIdx
     deriving stock (Eq, Show)
 
 -- | A named entry point exposed by the module.
@@ -43,6 +46,9 @@ data RawModule = RawModule
     -- ^ function + code sections, merged by the decoder
     , globals :: [RawGlobal]
     , memories :: [RawMemory]
+    , tables :: [RawTable]
+    , elements :: [RawElem]
+    -- ^ active element segments, applied in order at instantiation
     , dataSegments :: [RawData]
     -- ^ active data segments, applied in order at instantiation
     , exports :: [Export]

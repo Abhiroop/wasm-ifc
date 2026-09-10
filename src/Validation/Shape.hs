@@ -87,8 +87,8 @@ data Elem x xs where
     Here :: Elem x (x ': xs)
     There :: Elem x xs -> Elem x (y ': xs)
 
-{- | The compile-time shape of a module: the types of its function, global and memory index
-  spaces. Used as a single kind index on the instruction GADT so it stays compact. Memories
+{- | The compile-time shape of a module: the types of its function, global, memory and table
+  index spaces. Used as a single kind index on the instruction GADT so it stays compact. Memories
   are identified by their 'MemShape' (so a memory carries its declared type, like every other
   instance). A record only for the field names' documentation value — 'ModuleShape' is used
   promoted, and the projection type families below ('ModuleFuncs' etc.) are what read the
@@ -98,19 +98,24 @@ data ModuleShape = ModuleShape
     { funcTypes :: [FuncType]
     , globalTypes :: [GlobalType]
     , memShapes :: [MemShape]
+    , tableShapes :: [TableShape]
     }
 
 type ModuleFuncs :: ModuleShape -> [FuncType]
 type family ModuleFuncs s where
-    ModuleFuncs ('ModuleShape fs _ _) = fs
+    ModuleFuncs ('ModuleShape fs _ _ _) = fs
 
 type ModuleGlobals :: ModuleShape -> [GlobalType]
 type family ModuleGlobals s where
-    ModuleGlobals ('ModuleShape _ gs _) = gs
+    ModuleGlobals ('ModuleShape _ gs _ _) = gs
 
 type ModuleMems :: ModuleShape -> [MemShape]
 type family ModuleMems s where
-    ModuleMems ('ModuleShape _ _ ms) = ms
+    ModuleMems ('ModuleShape _ _ ms _) = ms
+
+type ModuleTables :: ModuleShape -> [TableShape]
+type family ModuleTables s where
+    ModuleTables ('ModuleShape _ _ _ ts) = ts
 
 {- | The per-activation (function-scoped) part of an instruction's context: the local
   variable types and the function's result type. These two always share a scope — both
@@ -144,6 +149,15 @@ data MemShape = MemShape
     }
     deriving stock (Eq, Show)
 
+{- | The type-level counterpart of a table's type: its size limits (as 'Natural's, like
+  'MemShape'). Only @funcref@ tables exist, so the element type needs no field.
+-}
+data TableShape = TableShape
+    { minEntries :: Natural
+    , maxEntries :: Maybe Natural
+    }
+    deriving stock (Eq, Show)
+
 -- Library singletons for the shape kinds. The list/'Maybe'/'Natural' fields draw their 'Sing'
 -- instances from @singletons-base@; the element types from "Syntax.Types".
-$(genSingletons [''MemShape, ''ModuleShape, ''FrameShape])
+$(genSingletons [''MemShape, ''TableShape, ''ModuleShape, ''FrameShape])

@@ -88,15 +88,15 @@ runFactorial :: Word32 -> Either String Word32
 runFactorial input =
     either (Left . show) completedI32 (runFunction emptyModule factorial (input :# VNil))
   where
-    emptyModule :: ModuleInst ('ModuleShape '[] '[] '[])
-    emptyModule = ModuleInst FsNil GNil MNil
+    emptyModule :: ModuleInst ('ModuleShape '[] '[] '[] '[])
+    emptyModule = ModuleInst FsNil GNil MNil TNil
 
 {- *** call *** -
 
    @square x = mul x x@, exercising a typed 'call' into another function in the module.
 -}
 
-type CallCtx = 'ModuleShape '[ 'FuncType '[ 'I32, 'I32] '[ 'I32]] '[] '[]
+type CallCtx = 'ModuleShape '[ 'FuncType '[ 'I32, 'I32] '[ 'I32]] '[] '[] '[]
 
 multiply :: FuncInst CallCtx ('FuncType '[ 'I32, 'I32] '[ 'I32])
 multiply = WasmFunc LNil (ILocalGet Here :. ILocalGet (There Here) :. IMul I32IsNum :. INil)
@@ -112,7 +112,7 @@ runSquare :: Word32 -> Either String Word32
 runSquare input = either (Left . show) completedI32 (runFunction callModule square (input :# VNil))
   where
     callModule :: ModuleInst CallCtx
-    callModule = ModuleInst (FsCons multiply FsNil) GNil MNil
+    callModule = ModuleInst (FsCons multiply FsNil) GNil MNil TNil
 
 {- *** global *** -
 
@@ -120,7 +120,7 @@ runSquare input = either (Left . show) completedI32 (runFunction callModule squa
    on the (only) global type-checks only because it is declared 'Mutable.
 -}
 
-type GlobalCtx = 'ModuleShape '[] '[ 'GlobalType 'Mutable 'I32] '[]
+type GlobalCtx = 'ModuleShape '[] '[ 'GlobalType 'Mutable 'I32] '[] '[]
 
 increment :: FuncInst GlobalCtx ('FuncType '[] '[ 'I32])
 increment =
@@ -138,7 +138,7 @@ runIncrement :: Word32 -> Either String Word32
 runIncrement initial = either (Left . show) completedI32 (runFunction globalModule increment VNil)
   where
     globalModule :: ModuleInst GlobalCtx
-    globalModule = ModuleInst FsNil (GCons initial GNil) MNil
+    globalModule = ModuleInst FsNil (GCons initial GNil) MNil TNil
 
 {- *** an ill-typed program (does NOT compile) ***
 

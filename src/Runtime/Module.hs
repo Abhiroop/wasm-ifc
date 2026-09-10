@@ -130,7 +130,7 @@ continueWith shapeS funcs exports rsS config = do
     halt <- first Trapped (run funcs config)
     pure $ case halt of
         Finished store results ->
-            Returned (SomeModule shapeS (ModuleInst funcs store.globals store.mems) exports) (declaredOrder (toValues rsS results))
+            Returned (SomeModule shapeS (ModuleInst {funcs = funcs, globals = store.globals, mems = store.mems, tables = store.tables}) exports) (declaredOrder (toValues rsS results))
         AwaitingHost request -> CalledHost (SomeHostRequest shapeS funcs exports rsS request)
 
 exportedFuncIndex :: Text -> [Export] -> Maybe FunctionIdx

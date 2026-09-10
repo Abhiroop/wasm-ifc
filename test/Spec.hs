@@ -31,6 +31,7 @@ import Runtime.Stack (ValueStack (..))
 import Runtime.Trap (Trap (..))
 import Runtime.Wasi (Completion (..), runWithWasi)
 import Syntax.DataSegments (RawData (..))
+import Syntax.Elements (RawElem (..))
 import Syntax.Functions (RawFunction (..))
 import Syntax.Globals (RawGlobal (..))
 import Syntax.Imports (ImportDesc (..), RawImport (..))
@@ -38,6 +39,7 @@ import Syntax.Indices
 import Syntax.Instructions
 import Syntax.Memories (RawMemory (..))
 import Syntax.Module
+import Syntax.Tables (RawTable (..))
 import Syntax.Types
 import Validation.Elaborate (ElabError (..), elaborateModule)
 
@@ -92,6 +94,22 @@ spec = do
         it "traps on an out-of-bounds load" $
             elabRunWithMemory [I32] [I32] [] [LocalGet (LocalIdx 0), Load SI32 (MemArg 0 0)] [70000]
                 `shouldSatisfy` trapContaining "OutOfBoundsMemoryAccess"
+
+    describe "indirect calls" $ do
+        it "go through the table entry, typed" $
+            elabRunModule (tableModule [Const SI32 0, CallIndirect (TypeIdx 0)]) [] `shouldBe` Right ["42"]
+        it "trap on an uninitialised entry" $
+            elabRunModule (tableModule [Const SI32 1, CallIndirect (TypeIdx 0)]) [] `shouldSatisfy` trapContaining "UninitializedElement"
+        it "trap on an index past the table" $
+            elabRunModule (tableModule [Const SI32 3, CallIndirect (TypeIdx 0)]) [] `shouldSatisfy` trapContaining "UndefinedElement"
+        it "trap when the entry's function has another type" $
+            elabRunModule (tableModule [Const SI32 2, CallIndirect (TypeIdx 0)]) [] `shouldSatisfy` trapContaining "IndirectCallTypeMismatch"
+        it "need a table in the module" $
+            void (elaborateModule (singleFunctionModule [] [] [I32] [] [Const SI32 0, CallIndirect (TypeIdx 0)]))
+                `shouldBe` Left (NoTable "call_indirect")
+        it "reject an element segment that does not fit" $
+            void (elaborateModule ((tableModule [Const SI32 0]) {elements = [RawElem [Const SI32 2] [FunctionIdx 0, FunctionIdx 0]]}))
+                `shouldBe` Left (ElementSegmentOutOfBounds 0)
 
     describe "WASI imports" $ do
         it "resolve to typed host functions; proc_exit ends the run with its code" $ do
@@ -376,6 +394,8 @@ moduleOf memories funcs exported =
         , funcs = funcs
         , globals = []
         , memories = memories
+        , tables = []
+        , elements = []
         , dataSegments = []
         , exports = [Export "f" (ExportFunc exported)]
         , start = Nothing
@@ -404,6 +424,17 @@ invokeWithIntegers sm args = do
 
 onePageMemory :: RawMemory
 onePageMemory = RawMemory (MemType AddrI32 (Limits 1 Nothing))
+
+{- | A three-entry table: entry 0 is function 0 (@() -> i32@, returning 42), entry 1 is left
+  uninitialised, entry 2 is function 1 (@i32 -> i32@). The export @f@ is function 2 with the given
+  body, of type @() -> i32@; type index 0 is @() -> i32@.
+-}
+tableModule :: [RawInstr] -> RawModule
+tableModule body =
+    (moduleOf [] [RawFunction (FuncType [] [I32]) [] [Const SI32 42], RawFunction (FuncType [I32] [I32]) [] [LocalGet (LocalIdx 0)], RawFunction (FuncType [] [I32]) [] body] (FunctionIdx 2))
+        { tables = [RawTable (Limits 3 Nothing)]
+        , elements = [RawElem [Const SI32 0] [FunctionIdx 0], RawElem [Const SI32 2] [FunctionIdx 1]]
+        }
 
 procExitImport, fdWriteImport :: RawImport
 procExitImport = RawImport "wasi_snapshot_preview1" "proc_exit" (ImportFunc (FuncType [I32] []))

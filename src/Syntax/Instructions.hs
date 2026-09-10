@@ -53,6 +53,7 @@ import Validation.Shape (
     ModuleGlobals,
     ModuleMems,
     ModuleShape,
+    ModuleTables,
     appendFromSing,
  )
 
@@ -72,8 +73,7 @@ data RawInstr where
     BrTable :: [LabelIdx] -> LabelIdx -> RawInstr
     Return :: RawInstr
     Call :: FunctionIdx -> RawInstr
-    {- CallIndirect :: TypeIdx -> RawInstr -}
-
+    CallIndirect :: TypeIdx -> RawInstr
     -- \*** Locals & globals ***
     LocalGet :: LocalIdx -> RawInstr
     LocalSet :: LocalIdx -> RawInstr
@@ -285,6 +285,13 @@ data
         Append ps s full ->
         Elem ('FuncType ps rs) (ModuleFuncs m) ->
         Instr m f l full (rs ++ s)
+    {- Indirect calls: the callee is an entry of the module's table, checked at run time against
+       the expected type (a trap if it differs); the module must declare a table. -}
+    ICallIndirect ::
+        (ModuleTables m ~ (table ': tables)) =>
+        Append ps s full ->
+        Sing ('FuncType ps rs) ->
+        Instr m f l ('I32 ': full) (rs ++ s)
     {- Structured control. Bodies are typed in isolation (@ps -> rs@) within the same frame,
        framed over a polymorphic @s@. A block/if label carries its results; a loop its params. -}
     IBlock ::

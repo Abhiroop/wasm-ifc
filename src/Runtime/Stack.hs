@@ -23,6 +23,8 @@ module Runtime.Stack (
     LocalInsts (..),
     GlobalInsts (..),
     MemInsts (..),
+    TableInsts (..),
+    firstTable,
     appendStack,
     appendWith,
     splitStack,
@@ -39,9 +41,10 @@ import Data.Kind (Type)
 
 import Data.List.Singletons (type (++))
 import Runtime.MemInst (MemInst)
+import Runtime.TableInst (TableInst)
 import Syntax.Immediates (HostType)
-import Syntax.Types (GlobalType (..), ValType)
-import Validation.Shape (Append (..), Elem (..), MemShape, ReverseOnto)
+import Syntax.Types (FuncType, GlobalType (..), ValType)
+import Validation.Shape (Append (..), Elem (..), MemShape, ReverseOnto, TableShape)
 
 -- | The operand stack (head = top of stack), indexed by the types it holds.
 type ValueStack :: [ValType] -> Type
@@ -124,3 +127,15 @@ firstMem (MCons mem _) = mem
 
 setFirstMem :: MemInst m -> MemInsts (m ': ms) -> MemInsts (m ': ms)
 setFirstMem mem (MCons _ rest) = MCons mem rest
+
+{- | A module's tables, indexed by their declared shapes and by the module's function types
+  (which every entry is a reference into). Non-emptiness is the runtime counterpart of the
+  @ModuleTables shape ~ (t ': ts)@ constraint @call_indirect@ carries, so 'firstTable' is total.
+-}
+type TableInsts :: [FuncType] -> [TableShape] -> Type
+data TableInsts fts ts where
+    TNil :: TableInsts fts '[]
+    TCons :: TableInst fts -> TableInsts fts ts -> TableInsts fts (t ': ts)
+
+firstTable :: TableInsts fts (t ': ts) -> TableInst fts
+firstTable (TCons table _) = table

@@ -22,6 +22,7 @@ module Validation.Reflect (
     reflectStack,
     stackOrder,
     declaredOrder,
+    stackOrderFuncType,
     sReverseOnto,
     appendNil,
     mkLocalElem,
@@ -32,10 +33,13 @@ module Validation.Reflect (
     SomeFuncRef (..),
     SomeGlobalRef (..),
     NonEmptyMems (..),
+    NonEmptyTables (..),
+    tablesNonEmpty,
     reflectCtx,
     funcTypesSing,
     globalTypesSing,
     memShapesSing,
+    tableShapesSing,
     lookupFuncRef,
     lookupGlobalRef,
     memsNonEmpty,
@@ -141,25 +145,32 @@ data SomeModuleShape where
 memShapeOf :: MemType -> MemShape
 memShapeOf (MemType at (Limits lo hi)) = MemShape at (fromIntegral lo) (fmap fromIntegral hi)
 
-{- | Reflect a module's signature (function types, global types, memory types) to a runtime
-  witness with the type-level signature hidden existentially. The function types are given in
-  declared order (as decoded) and stored in stack order.
+-- | The type-level mirror of a table's limits.
+tableShapeOf :: Limits -> TableShape
+tableShapeOf (Limits lo hi) = TableShape (fromIntegral lo) (fmap fromIntegral hi)
+
+{- | Reflect a module's signature (function types, global types, memory types, table limits)
+  to a runtime witness with the type-level signature hidden existentially. The function types
+  are given in declared order (as decoded) and stored in stack order.
 -}
-reflectCtx :: [FuncType] -> [GlobalType] -> [MemType] -> SomeModuleShape
-reflectCtx funcTypes globalTypes memTypes =
+reflectCtx :: [FuncType] -> [GlobalType] -> [MemType] -> [Limits] -> SomeModuleShape
+reflectCtx funcTypes globalTypes memTypes tableLimits =
     withSomeSing
-        (ModuleShape (map stackOrderFuncType funcTypes) globalTypes (map memShapeOf memTypes))
+        (ModuleShape (map stackOrderFuncType funcTypes) globalTypes (map memShapeOf memTypes) (map tableShapeOf tableLimits))
         SomeModuleShape
 
--- | The three index spaces of a module-shape singleton.
+-- | The four index spaces of a module-shape singleton.
 funcTypesSing :: SModuleShape shape -> Sing (ModuleFuncs shape)
-funcTypesSing (SModuleShape fts _ _) = fts
+funcTypesSing (SModuleShape fts _ _ _) = fts
 
 globalTypesSing :: SModuleShape shape -> Sing (ModuleGlobals shape)
-globalTypesSing (SModuleShape _ gs _) = gs
+globalTypesSing (SModuleShape _ gs _ _) = gs
 
 memShapesSing :: SModuleShape shape -> Sing (ModuleMems shape)
-memShapesSing (SModuleShape _ _ ms) = ms
+memShapesSing (SModuleShape _ _ ms _) = ms
+
+tableShapesSing :: SModuleShape shape -> Sing (ModuleTables shape)
+tableShapesSing (SModuleShape _ _ _ ts) = ts
 
 {- | @∃ps rs. (Sing ps, Sing rs, Elem ('FuncType ps rs) fts)@ — a function reference resolved
   against the signature, carrying its parameter and result shapes.
@@ -192,3 +203,11 @@ data NonEmptyMems (ms :: [MemShape]) where
 memsNonEmpty :: Sing (ms :: [MemShape]) -> Maybe (NonEmptyMems ms)
 memsNonEmpty (SCons _ _) = Just NonEmptyMems
 memsNonEmpty SNil = Nothing
+
+-- | Proof that a table index space is non-empty, licensing @call_indirect@.
+data NonEmptyTables (ts :: [TableShape]) where
+    NonEmptyTables :: NonEmptyTables (t ': ts)
+
+tablesNonEmpty :: Sing (ts :: [TableShape]) -> Maybe (NonEmptyTables ts)
+tablesNonEmpty (SCons _ _) = Just NonEmptyTables
+tablesNonEmpty SNil = Nothing

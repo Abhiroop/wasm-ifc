@@ -83,12 +83,15 @@ library
       , Syntax.Memories
       , Syntax.DataSegments
       , Syntax.Imports
+      , Syntax.Tables
+      , Syntax.Elements
       , Syntax.Functions
       , Syntax.Module
       , Validation.Shape
       , Validation.Reflect
       , Validation.Elaborate
       , Runtime.MemInst
+      , Runtime.TableInst
       , Runtime.Trap
       , Runtime.Bytes
       , Runtime.Numeric

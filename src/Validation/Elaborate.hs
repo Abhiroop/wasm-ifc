@@ -29,20 +29,23 @@ import Data.Type.Equality ((:~:) (Refl))
 import Data.Word (Word32)
 
 import Data.List.Singletons ((%++))
+import Data.Singletons (SomeSing (..), toSing)
 import Data.Singletons.Base.TH (SList (SCons, SNil), Sing, fromSing)
 import Data.Singletons.Decide (decideEquality)
 import Runtime.Host (SomeWasiFunc (..), resolveWasiImport, wasiFuncType, wasiModuleName)
 import Runtime.Interpreter (FuncInst (..), FuncInsts (..), ModuleInst (..), Outcome (..), getFunc, runFunction)
 import Runtime.MemInst (allocMemory, maxMemoryPages, writeBytes)
 import Runtime.Module (SomeModule (..))
-import Runtime.Stack (GlobalInsts (..), LocalInsts (..), MemInsts (..), ValueStack (..))
+import Runtime.Stack (GlobalInsts (..), LocalInsts (..), MemInsts (..), TableInsts (..), ValueStack (..))
+import Runtime.TableInst (allocTable, setTableEntries)
 import Runtime.Trap (Trap)
 import Syntax.DataSegments (RawData (RawData))
+import Syntax.Elements (RawElem (RawElem))
 import Syntax.Functions (RawFunction (RawFunction))
 import Syntax.Globals (RawGlobal (RawGlobal))
 import Syntax.Immediates (HostType)
 import Syntax.Imports (ImportDesc (..), RawImport (..))
-import Syntax.Indices (FunctionIdx (..), GlobalIdx (..), LabelIdx (..), LocalIdx (..), MemoryIdx (..))
+import Syntax.Indices (FunctionIdx (..), GlobalIdx (..), LabelIdx (..), LocalIdx (..), MemoryIdx (..), TableIdx (..), TypeIdx (..))
 import Syntax.Instructions (
     BitwiseOp (..),
     ConvertOp (..),
@@ -56,6 +59,7 @@ import Syntax.Instructions (
  )
 import Syntax.Memories (RawMemory (RawMemory))
 import Syntax.Module
+import Syntax.Tables (RawTable (..))
 import Syntax.Types
 import Validation.Reflect
 import Validation.Shape
@@ -97,6 +101,14 @@ data ElabError
       Malformed Text
     | -- | a data segment does not fit in memory 0 (or there is no memory)
       DataSegmentOutOfBounds Int
+    | -- | an element segment does not fit in table 0 (or there is no table)
+      ElementSegmentOutOfBounds Int
+    | -- | @call_indirect@ in a module that declares no table
+      NoTable Text
+    | -- | a table's limits are not well-formed
+      InvalidTableLimits Limits
+    | -- | more than one table (the spec allows at most one)
+      TooManyTables
     | -- | a memory's limits are not well-formed or exceed 65536 pages
       InvalidMemoryLimits Limits
     | -- | more than one memory (the spec allows at most one)
@@ -122,7 +134,7 @@ data OperandKind = Numeric | Integral | FloatingPoint
     deriving stock (Eq, Show)
 
 -- | The index spaces an instruction or export may refer into.
-data IndexSpace = Locals | Globals | Functions | Labels | Memories
+data IndexSpace = Locals | Globals | Functions | Labels | Memories | Types | Tables
     deriving stock (Eq, Show)
 
 -- *** Elaboration environment & results ***
@@ -132,6 +144,8 @@ data IndexSpace = Locals | Globals | Functions | Labels | Memories
 -}
 data ElabEnv (shape :: ModuleShape) (ret :: ResultType) (locals :: [ValType]) (labels :: [ResultType]) = ElabEnv
     { shape :: Sing shape
+    , types :: [FuncType]
+    -- ^ the module's type section, which @call_indirect@ refers into
     , results :: Sing ret
     , locals :: Sing locals
     , labels :: Sing labels
@@ -330,6 +344,16 @@ elabInstr env stackIn instr = case instr of
             Right (Produces (SCons SI32 rest) IMemGrow)
         _ -> Left (StackUnderflow "memory.grow")
     {- Calls -}
+    CallIndirect (TypeIdx t) -> case stackIn of
+        SCons sc rest -> do
+            NonEmptyTables <- requireTable env
+            Refl <- note (OperandMismatch "call_indirect" I32 (valTypeOf sc)) (decideEquality sc SI32)
+            expected <- note (IndexOutOfRange Types t) (nth (env.types) t)
+            case toSing (stackOrderFuncType expected) of
+                SomeSing (SFuncType psS rsS) -> case matchPrefix psS rest of
+                    Nothing -> Left (StackMismatch "call_indirect" (stackToList psS) (stackToList rest))
+                    Just (SomeSplit sS witness) -> Right (Produces (rsS %++ sS) (ICallIndirect witness (SFuncType psS rsS)))
+        _ -> Left (StackUnderflow "call_indirect")
     Call (FunctionIdx f) -> case lookupFuncRef (funcTypesSing (env.shape)) f of
         Nothing -> Left (IndexOutOfRange Functions f)
         Just (SomeFuncRef psS rsS fix) -> case matchPrefix psS stackIn of
@@ -524,6 +548,16 @@ requireNarrow :: Sing (t :: ValType) -> Int -> Either ElabError (NarrowWidth t)
 requireNarrow st width =
     note (InvalidNarrowWidth (valTypeOf st) width) (decideNarrow st width)
 
+-- | Require the module to declare a table, for @call_indirect@.
+requireTable :: ElabEnv shape ret locals labels -> Either ElabError (NonEmptyTables (ModuleTables shape))
+requireTable env = note (NoTable "call_indirect") (tablesNonEmpty (tableShapesSing (env.shape)))
+
+-- | Total list indexing by a decoded index.
+nth :: [a] -> Word32 -> Maybe a
+nth xs i = case drop (fromIntegral i) xs of
+    x : _ -> Just x
+    [] -> Nothing
+
 {- | Require the module to declare a memory. The proof licenses the
   @ModuleMems shape ~ (mem ': mems)@ constraint the typed memory instructions carry.
 -}
@@ -682,6 +716,10 @@ stepDead env s instr = case instr of
     Call (FunctionIdx f) -> case lookupFuncRef (funcTypesSing (env.shape)) f of
         Nothing -> Left (IndexOutOfRange Functions f)
         Just (SomeFuncRef psS rsS _) -> afterFrame (stackToList psS) (stackToList rsS) s
+    CallIndirect (TypeIdx t) -> do
+        s1 <- popKnown I32 s
+        FuncType ps rs <- note (IndexOutOfRange Types t) (nth (env.types) t)
+        afterFrame (stackOrder ps) (stackOrder rs) s1
     Nop -> Right s
     Block (FuncType psT rsT) body ->
         validateFrame env rsT psT rsT body >> afterFrame (stackOrder psT) (stackOrder rsT) s
@@ -802,14 +840,16 @@ unStack (PolyStack xs) = xs
 elaborateModule :: RawModule -> Either ElabError SomeModule
 elaborateModule m = do
     validateStructure m
-    case reflectCtx funcSigs globalTypes memTypes of
-        SomeModuleShape ctxS@(SModuleShape ftsS gsS msS) -> do
-            funcs <- elaborateFuncs ctxS ftsS (map Left m.imports ++ map Right m.funcs)
+    case reflectCtx funcSigs globalTypes memTypes tableLimits of
+        SomeModuleShape ctxS@(SModuleShape ftsS gsS msS tsS) -> do
+            funcs <- elaborateFuncs ctxS (m.types) ftsS (map Left m.imports ++ map Right m.funcs)
             globals <- buildGlobals gsS (m.globals)
             mems <- buildMems msS (m.memories) >>= initialiseData (m.dataSegments)
-            started <- runStart ctxS (ModuleInst funcs globals mems) (m.start)
+            tables <- buildTables tsS (m.tables) >>= initialiseElements ftsS (m.elements)
+            started <- runStart ctxS (ModuleInst {funcs, globals, mems, tables}) (m.start)
             Right (SomeModule ctxS started (m.exports))
   where
+    tableLimits = [t.limits | t <- m.tables]
     -- The function index space: imports first, then the module's own functions.
     funcSigs = [ft | RawImport _ _ (ImportFunc ft) <- m.imports] ++ map (\(RawFunction sig _ _) -> sig) (m.funcs)
     globalTypes = map (\(RawGlobal gt _) -> gt) (m.globals)
@@ -823,12 +863,17 @@ validateStructure :: RawModule -> Either ElabError ()
 validateStructure m = do
     mapM_ checkLimits [declared | RawMemory (MemType _ declared) <- m.memories]
     when (length m.memories > 1) (Left TooManyMemories)
+    mapM_ checkTableLimits [t.limits | t <- m.tables]
+    when (length m.tables > 1) (Left TooManyTables)
     checkDistinct [e.name | e <- m.exports]
     mapM_ checkExport m.exports
   where
     checkLimits declared
         | declared.min > maxMemoryPages = Left (InvalidMemoryLimits declared)
         | Just hi <- declared.max, hi > maxMemoryPages || declared.min > hi = Left (InvalidMemoryLimits declared)
+        | otherwise = Right ()
+    checkTableLimits declared
+        | Just hi <- declared.max, declared.min > hi = Left (InvalidTableLimits declared)
         | otherwise = Right ()
     checkDistinct names = case [n | (k, n) <- zip [0 :: Int ..] names, n `elem` take k names] of
         [] -> Right ()
@@ -837,6 +882,7 @@ validateStructure m = do
         ExportFunc (FunctionIdx i) -> inRange Functions i (length m.imports + length m.funcs)
         ExportGlobal (GlobalIdx i) -> inRange Globals i (length m.globals)
         ExportMem (MemoryIdx i) -> inRange Memories i (length m.memories)
+        ExportTable (TableIdx i) -> inRange Tables i (length m.tables)
     inRange space i count
         | fromIntegral i < count = Right ()
         | otherwise = Left (IndexOutOfRange space i)
@@ -859,15 +905,16 @@ functions, the module's own functions are elaborated.
 -}
 elaborateFuncs ::
     SModuleShape shape ->
+    [FuncType] ->
     Sing fts ->
     [Either RawImport RawFunction] ->
     Either ElabError (FuncInsts shape fts)
-elaborateFuncs _ SNil [] = Right FsNil
-elaborateFuncs ctxS (SCons ft fs) (entry : rest) = do
-    f <- either (resolveImport ctxS ft) (elaborateFunctionIn ctxS ft) entry
-    fs' <- elaborateFuncs ctxS fs rest
+elaborateFuncs _ _ SNil [] = Right FsNil
+elaborateFuncs ctxS types (SCons ft fs) (entry : rest) = do
+    f <- either (resolveImport ctxS ft) (elaborateFunctionIn ctxS types ft) entry
+    fs' <- elaborateFuncs ctxS types fs rest
     Right (FsCons f fs')
-elaborateFuncs _ _ _ = Left (Malformed "function/signature count mismatch")
+elaborateFuncs _ _ _ _ = Left (Malformed "function/signature count mismatch")
 
 {- | Resolve an import to a host function: it must come from the WASI module, be one we
   provide, be declared at exactly the host function's type, and the module must have a
@@ -887,13 +934,14 @@ resolveImport ctxS (SFuncType psS rsS) (RawImport moduleName fieldName (ImportFu
 
 elaborateFunctionIn ::
     SModuleShape shape ->
+    [FuncType] ->
     SFuncType ft ->
     RawFunction ->
     Either ElabError (FuncInst shape ft)
-elaborateFunctionIn ctxS (SFuncType psS rsS) (RawFunction _ declaredT body) =
+elaborateFunctionIn ctxS types (SFuncType psS rsS) (RawFunction _ declaredT body) =
     case reflectStack declaredT of
         SomeStack declS ->
-            let env = ElabEnv ctxS rsS (sReverseOnto psS declS) (SCons rsS SNil)
+            let env = ElabEnv ctxS types rsS (sReverseOnto psS declS) (SCons rsS SNil)
                 defaults = defaultLocals declS
              in do
                     elaborated <- elabSeq env SNil body
@@ -946,6 +994,27 @@ initialiseData segments (MCons mem rest) = do
         offset <- evalConstInit (DataSegmentOutOfBounds index) SI32 offsetExpr
         note (DataSegmentOutOfBounds index) (writeBytes current (fromIntegral offset) (BS.unpack payload))
 initialiseData (_ : _) MNil = Left (DataSegmentOutOfBounds 0)
+
+-- | The runtime tables matching the module's declared table shapes, every entry uninitialised.
+buildTables :: Sing ts -> [RawTable] -> Either ElabError (TableInsts fts ts)
+buildTables SNil [] = Right TNil
+buildTables (SCons _ rest) (RawTable declared : rts) = TCons (allocTable declared) <$> buildTables rest rts
+buildTables _ _ = Left (Malformed "table/type count mismatch")
+
+{- | Place the element segments' functions into table 0, in order. Each function index is
+  resolved to a typed reference ('SomeFuncRef'), so the table only ever holds real functions.
+-}
+initialiseElements :: Sing (fts :: [FuncType]) -> [RawElem] -> TableInsts fts ts -> Either ElabError (TableInsts fts ts)
+initialiseElements _ [] tables = Right tables
+initialiseElements ftsS segments (TCons table rest) = do
+    table' <- foldM placeSegment table (zip [0 ..] segments)
+    Right (TCons table' rest)
+  where
+    placeSegment current (index, RawElem offsetExpr functions) = do
+        offset <- evalConstInit (ElementSegmentOutOfBounds index) SI32 offsetExpr
+        refs <- traverse (\(FunctionIdx f) -> note (IndexOutOfRange Functions f) (lookupFuncRef ftsS f)) functions
+        note (ElementSegmentOutOfBounds index) (setTableEntries offset refs current)
+initialiseElements _ (_ : _) TNil = Left (ElementSegmentOutOfBounds 0)
 
 -- | Zero-initialise a locals frame of the given shape.
 defaultLocals :: Sing ds -> LocalInsts ds

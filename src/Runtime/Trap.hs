@@ -16,4 +16,10 @@ data Trap
     | OutOfBoundsMemoryAccess
     | InvalidConversionToInteger
     | UnreachableExecuted
+    | -- | @call_indirect@ with an index past the table
+      UndefinedElement
+    | -- | @call_indirect@ through an entry never initialised
+      UninitializedElement
+    | -- | @call_indirect@ through a function of another type than expected
+      IndirectCallTypeMismatch
     deriving stock (Eq, Show)
