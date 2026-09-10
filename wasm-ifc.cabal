@@ -115,6 +115,7 @@ library
       , directory     ^>=1.3
       , filepath      ^>=1.5
       , time          ^>=1.14
+      , unix          ^>=2.8
 
 executable wasm-ifc
     import:           warnings
@@ -152,6 +153,24 @@ test-suite wasm-ifc-spec
     build-depends:
         base
       , wasm-ifc
+      , aeson          ^>=2.2
+      , bytestring
+      , containers
+      , directory
+      , filepath
+      , process
+      , text
+      , hspec          ^>=2.11
+
+-- The official wasi-testsuite, run through the CLI (skips itself when the submodule is missing).
+test-suite wasm-ifc-wasi
+    import:           warnings
+    type:             exitcode-stdio-1.0
+    main-is:          WasiSuite.hs
+    hs-source-dirs:   test
+    build-tool-depends: wasm-ifc:wasm-ifc
+    build-depends:
+        base
       , aeson          ^>=2.2
       , bytestring
       , containers
