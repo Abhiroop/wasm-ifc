@@ -11,7 +11,7 @@ module Codec.Wasm (
     decodeModule,
 ) where
 
-import Control.Monad (replicateM, when)
+import Control.Monad (replicateM, unless, when)
 import Data.Binary.Get (
     Get,
     getByteString,
@@ -28,13 +28,14 @@ import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as BL
 import Data.Int (Int32, Int64)
 import Data.List (elemIndex)
+import Data.Maybe (isJust)
 import Data.Text (Text)
 import Data.Text.Encoding (decodeUtf8')
 import Data.Word (Word32, Word64, Word8)
 import GHC.Float (castWord32ToFloat, castWord64ToDouble)
 import Numeric (showHex)
 
-import Syntax.DataSegments (RawData (RawData))
+import Syntax.DataSegments (DataMode (..), RawData (RawData))
 import Syntax.Elements (RawElem (RawElem))
 import Syntax.Functions (RawFunction (RawFunction))
 import Syntax.Globals (RawGlobal (RawGlobal))
@@ -188,33 +189,33 @@ getMemArg = MemArg <$> getULEB128 <*> getULEB128
 {- | Read instructions up to (and consuming) a terminator byte — @end@ (0x0B) or
   @else@ (0x05) — returning the instructions and which terminator was seen.
 -}
-getBlockBody :: [FuncType] -> Get ([RawInstr], Word8)
-getBlockBody types = go []
+getBlockBody :: Bool -> [FuncType] -> Get ([RawInstr], Word8)
+getBlockBody hasDataCount types = go []
   where
     go acc = do
         opcode <- getWord8
         if opcode == 0x0B || opcode == 0x05
             then pure (reverse acc, opcode)
             else do
-                instr <- getInstr types opcode
+                instr <- getInstr hasDataCount types opcode
                 go (instr : acc)
 
 -- | An expression: instructions up to a terminating @end@.
-getExpr :: [FuncType] -> Get [RawInstr]
-getExpr types = fst <$> getBlockBody types
+getExpr :: Bool -> [FuncType] -> Get [RawInstr]
+getExpr hasDataCount types = fst <$> getBlockBody hasDataCount types
 
 -- | Decode one (non-terminator) instruction whose opcode byte has already been read.
-getInstr :: [FuncType] -> Word8 -> Get RawInstr
-getInstr types opcode = case opcode of
+getInstr :: Bool -> [FuncType] -> Word8 -> Get RawInstr
+getInstr hasDataCount types opcode = case opcode of
     {- Control -}
     0x00 -> pure Unreachable
     0x01 -> pure Nop
-    0x02 -> Block <$> getBlockType types <*> getExpr types
-    0x03 -> Loop <$> getBlockType types <*> getExpr types
+    0x02 -> Block <$> getBlockType types <*> getExpr hasDataCount types
+    0x03 -> Loop <$> getBlockType types <*> getExpr hasDataCount types
     0x04 -> do
         blockType <- getBlockType types
-        (thenArm, term) <- getBlockBody types
-        elseArm <- if term == 0x05 then getExpr types else pure []
+        (thenArm, term) <- getBlockBody hasDataCount types
+        elseArm <- if term == 0x05 then getExpr hasDataCount types else pure []
         pure (If blockType thenArm elseArm)
     0x0C -> Br . LabelIdx <$> getULEB128
     0x0D -> BrIf . LabelIdx <$> getULEB128
@@ -414,6 +415,16 @@ getInstr types opcode = case opcode of
             5 -> pure (Convert (I64TruncSatF32 Unsigned))
             6 -> pure (Convert (I64TruncSatF64 Signed))
             7 -> pure (Convert (I64TruncSatF64 Unsigned))
+            8 -> do
+                unless hasDataCount (fail "data count section required")
+                segment <- getULEB128
+                reservedZero
+                pure (MemoryInit (DataIdx segment))
+            9 -> do
+                unless hasDataCount (fail "data count section required")
+                DataDrop . DataIdx <$> getULEB128
+            10 -> reservedZero >> reservedZero >> pure MemoryCopy
+            11 -> reservedZero >> pure MemoryFill
             _ -> fail ("unsupported: 0xFC opcode " ++ show sub)
     _ -> fail ("unsupported opcode 0x" ++ showHex opcode "")
 
@@ -496,22 +507,25 @@ parseSection sectionId acc = case sectionId of
     7 -> (\es -> acc {exportSection = es}) <$> getVec getExport
     8 -> (\i -> acc {startSection = Just (FunctionIdx i)}) <$> getULEB128
     9 -> (\es -> acc {elementSection = es}) <$> getVec getElem
-    10 -> (\cs -> acc {codeSection = cs}) <$> getVec (getCode (acc.typeSection))
+    10 -> (\cs -> acc {codeSection = cs}) <$> getVec (getCode (isJust acc.dataCountSection) (acc.typeSection))
     11 -> (\ds -> acc {dataSection = ds}) <$> getVec getData
     12 -> (\n -> acc {dataCountSection = Just n}) <$> getULEB128
     _ -> fail ("malformed section id " ++ show sectionId)
 
-{- | A data segment. Only the active form for memory 0 (@0x00 offset-expr bytes@) is
-  supported; passive segments and explicit memory indices are bulk-memory features.
--}
+-- | A data segment: active for memory 0 (modes 0 and 2) or passive (mode 1).
 getData :: Get RawData
 getData = do
     mode <- getULEB128
     case mode of
-        0 -> RawData <$> getExpr [] <*> (getULEB128 >>= getByteString . fromIntegral)
-        1 -> fail "unsupported: passive data segment"
-        2 -> fail "unsupported: data segment with an explicit memory index"
+        0 -> RawData . Active <$> getExpr False [] <*> payload
+        1 -> RawData Passive <$> payload
+        2 -> do
+            memIdx <- getULEB128
+            when (memIdx /= 0) (fail "unsupported: data segment for a memory other than 0")
+            RawData . Active <$> getExpr False [] <*> payload
         _ -> fail ("unknown data segment mode " ++ show mode)
+  where
+    payload = getULEB128 >>= getByteString . fromIntegral
 
 -- | An import: module name, field name, and what it is. Only function imports are supported.
 getImport :: [FuncType] -> Get RawImport
@@ -546,15 +560,15 @@ getElem :: Get RawElem
 getElem = do
     flags <- getULEB128
     case flags of
-        0 -> RawElem <$> getExpr [] <*> getVec (FunctionIdx <$> getULEB128)
+        0 -> RawElem <$> getExpr False [] <*> getVec (FunctionIdx <$> getULEB128)
         2 -> do
             tableIdx <- getULEB128
             when (tableIdx /= 0) (fail "unsupported: element segment for a table other than 0")
-            offset <- getExpr []
+            offset <- getExpr False []
             elemKind <- getWord8
             when (elemKind /= 0) (fail ("unknown element kind " ++ show elemKind))
             RawElem offset <$> getVec (FunctionIdx <$> getULEB128)
-        4 -> RawElem <$> getExpr [] <*> getVec getFuncRefExpr
+        4 -> RawElem <$> getExpr False [] <*> getVec getFuncRefExpr
         _ -> fail ("unsupported: element segment with flags " ++ show flags)
 
 -- | A constant expression of the form @ref.func x end@.
@@ -571,7 +585,7 @@ getMemory :: Get RawMemory
 getMemory = RawMemory . MemType AddrI32 <$> getLimits
 
 getGlobal :: Get RawGlobal
-getGlobal = RawGlobal <$> getGlobalType <*> getExpr []
+getGlobal = RawGlobal <$> getGlobalType <*> getExpr False []
 
 getExport :: Get Export
 getExport = do
@@ -589,13 +603,13 @@ getExport = do
 {- | A code-section entry: a redundant byte size, the (run-length encoded) locals, and
   the body expression.
 -}
-getCode :: [FuncType] -> Get ([ValType], [RawInstr])
-getCode types = do
+getCode :: Bool -> [FuncType] -> Get ([ValType], [RawInstr])
+getCode hasDataCount types = do
     entrySize <- getULEB128
     isolate (fromIntegral entrySize) $ do
         localGroups <- getVec getLocalGroup
         when (sum [toInteger count | (count, _) <- localGroups] > toInteger maxLocals) (fail "too many locals")
-        body <- getExpr types
+        body <- getExpr hasDataCount types
         pure (concatMap expand localGroups, body)
   where
     expand (count, valType) = replicate (fromIntegral count) valType

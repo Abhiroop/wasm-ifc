@@ -45,10 +45,12 @@ import Syntax.Indices
 import Syntax.Types
 import Validation.Shape (
     Append (..),
+    DataShape (..),
     Elem,
     FrameLocals,
     FrameReturn,
     FrameShape,
+    ModuleData,
     ModuleFuncs,
     ModuleGlobals,
     ModuleMems,
@@ -89,6 +91,11 @@ data RawInstr where
     StoreN :: Sing (t :: ValType) -> Int -> MemArg -> RawInstr
     MemorySize :: RawInstr
     MemoryGrow :: RawInstr
+    -- bulk memory: @memory.copy@, @memory.fill@, @memory.init@ from a data segment, @data.drop@
+    MemoryCopy :: RawInstr
+    MemoryFill :: RawInstr
+    MemoryInit :: DataIdx -> RawInstr
+    DataDrop :: DataIdx -> RawInstr
     -- \*** Constants ***
     Const :: Sing (t :: ValType) -> HostType t -> RawInstr
     -- \*** Numeric ***
@@ -259,6 +266,13 @@ data
         NarrowWidth t ->
         MemArg ->
         Instr m f l (t ': 'I32 ': s) s
+    {- Bulk memory. Operands, top first: the byte count, then the source (an address, a fill
+       value, or an offset into the segment), then the destination address. A segment is named
+       by an 'Elem' into the module's data index space, so it exists. -}
+    IMemCopy :: (ModuleMems m ~ (mem ': mems)) => Instr m f l ('I32 ': 'I32 ': 'I32 ': s) s
+    IMemFill :: (ModuleMems m ~ (mem ': mems)) => Instr m f l ('I32 ': 'I32 ': 'I32 ': s) s
+    IMemInit :: (ModuleMems m ~ (mem ': mems)) => Elem 'DataShape (ModuleData m) -> Instr m f l ('I32 ': 'I32 ': 'I32 ': s) s
+    IDataDrop :: Elem 'DataShape (ModuleData m) -> Instr m f l s s
     {- Stack management. @drop@ works on any value type; @select@ (0x1B) on numeric operands and
        keeps the first operand when the condition is non-zero, the second otherwise. -}
     IDrop :: Instr m f l (t ': s) s

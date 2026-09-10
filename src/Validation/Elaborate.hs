@@ -36,16 +36,16 @@ import Runtime.Host (SomeWasiFunc (..), resolveWasiImport, wasiFuncType, wasiMod
 import Runtime.Interpreter (FuncInst (..), FuncInsts (..), ModuleInst (..), Outcome (..), getFunc, runFunction)
 import Runtime.MemInst (allocMemory, maxMemoryPages, writeBytes)
 import Runtime.Module (SomeModule (..))
-import Runtime.Stack (GlobalInsts (..), LocalInsts (..), MemInsts (..), TableInsts (..), ValueStack (..))
+import Runtime.Stack (DataInsts (..), GlobalInsts (..), LocalInsts (..), MemInsts (..), TableInsts (..), ValueStack (..))
 import Runtime.TableInst (allocTable, setTableEntries)
 import Runtime.Trap (Trap)
-import Syntax.DataSegments (RawData (RawData))
+import Syntax.DataSegments (DataMode (..), RawData (RawData))
 import Syntax.Elements (RawElem (RawElem))
 import Syntax.Functions (RawFunction (RawFunction))
 import Syntax.Globals (RawGlobal (RawGlobal))
 import Syntax.Immediates (HostType)
 import Syntax.Imports (ImportDesc (..), RawImport (..))
-import Syntax.Indices (FunctionIdx (..), GlobalIdx (..), LabelIdx (..), LocalIdx (..), MemoryIdx (..), TableIdx (..), TypeIdx (..))
+import Syntax.Indices (DataIdx (..), FunctionIdx (..), GlobalIdx (..), LabelIdx (..), LocalIdx (..), MemoryIdx (..), TableIdx (..), TypeIdx (..))
 import Syntax.Instructions (
     BitwiseOp (..),
     ConvertOp (..),
@@ -132,7 +132,7 @@ data OperandKind = Numeric | Integral | FloatingPoint
     deriving stock (Eq, Show)
 
 -- | The index spaces an instruction or export may refer into.
-data IndexSpace = Locals | Globals | Functions | Labels | Memories | Types | Tables
+data IndexSpace = Locals | Globals | Functions | Labels | Memories | Types | Tables | DataSegments
     deriving stock (Eq, Show)
 
 -- *** Elaboration environment & results ***
@@ -335,6 +335,19 @@ elabInstr env stackIn instr = case instr of
     MemorySize -> do
         NonEmptyMems <- requireMemory env "memory.size"
         Right (Produces (SCons SI32 stackIn) IMemSize)
+    MemoryCopy -> do
+        NonEmptyMems <- requireMemory env "memory.copy"
+        threeAddresses "memory.copy" stackIn IMemCopy
+    MemoryFill -> do
+        NonEmptyMems <- requireMemory env "memory.fill"
+        threeAddresses "memory.fill" stackIn IMemFill
+    MemoryInit (DataIdx d) -> do
+        NonEmptyMems <- requireMemory env "memory.init"
+        segmentIx <- note (IndexOutOfRange DataSegments d) (mkDataElem (dataShapesSing (env.shape)) d)
+        threeAddresses "memory.init" stackIn (IMemInit segmentIx)
+    DataDrop (DataIdx d) -> do
+        segmentIx <- note (IndexOutOfRange DataSegments d) (mkDataElem (dataShapesSing (env.shape)) d)
+        Right (Produces stackIn (IDataDrop segmentIx))
     MemoryGrow -> case stackIn of
         SCons sc rest -> do
             NonEmptyMems <- requireMemory env "memory.grow"
@@ -546,6 +559,22 @@ requireNarrow :: Sing (t :: ValType) -> Int -> Either ElabError (NarrowWidth t)
 requireNarrow st width =
     note (InvalidNarrowWidth (valTypeOf st) width) (decideNarrow st width)
 
+{- | The bulk-memory instructions consume three i32 operands; the typed instruction is
+  polymorphic in what lies beneath.
+-}
+threeAddresses ::
+    Text ->
+    Sing stackIn ->
+    (forall s. Instr shape ('FrameShape locals ret) labels ('I32 ': 'I32 ': 'I32 ': s) s) ->
+    Either ElabError (ElaboratedInstr shape ret locals labels stackIn)
+threeAddresses name stackIn typed = case stackIn of
+    SCons a (SCons b (SCons c rest)) -> do
+        Refl <- note (OperandMismatch name I32 (valTypeOf a)) (decideEquality a SI32)
+        Refl <- note (OperandMismatch name I32 (valTypeOf b)) (decideEquality b SI32)
+        Refl <- note (OperandMismatch name I32 (valTypeOf c)) (decideEquality c SI32)
+        Right (Produces rest typed)
+    _ -> Left (StackUnderflow name)
+
 -- | Require the module to declare a table, for @call_indirect@.
 requireTable :: ElabEnv shape ret locals labels -> Either ElabError (NonEmptyTables (ModuleTables shape))
 requireTable env = note (NoTable "call_indirect") (tablesNonEmpty (tableShapesSing (env.shape)))
@@ -690,6 +719,10 @@ stepDead env s instr = case instr of
     StoreN t _ _ -> popKnown (valTypeOf t) s >>= popKnown I32
     MemorySize -> Right (pushKnown I32 s)
     MemoryGrow -> pushKnown I32 <$> popKnown I32 s
+    MemoryCopy -> popTypes [I32, I32, I32] s
+    MemoryFill -> popTypes [I32, I32, I32] s
+    MemoryInit _ -> popTypes [I32, I32, I32] s
+    DataDrop _ -> Right s
     And t -> arith t
     Or t -> arith t
     Xor t -> arith t
@@ -838,13 +871,14 @@ unStack (PolyStack xs) = xs
 elaborateModule :: RawModule -> Either ElabError SomeModule
 elaborateModule m = do
     validateStructure m
-    case reflectCtx funcSigs globalTypes memTypes tableLimits of
-        SomeModuleShape ctxS@(SModuleShape ftsS gsS msS tsS) -> do
+    case reflectCtx funcSigs globalTypes memTypes tableLimits (length m.dataSegments) of
+        SomeModuleShape ctxS@(SModuleShape ftsS gsS msS tsS dsS) -> do
             funcs <- elaborateFuncs ctxS (m.types) ftsS (map Left m.imports ++ map Right m.funcs)
             globals <- buildGlobals gsS (m.globals)
             mems <- buildMems msS (m.memories) >>= initialiseData (m.dataSegments)
             tables <- buildTables tsS (m.tables) >>= initialiseElements ftsS (m.elements)
-            started <- runStart ctxS (ModuleInst {funcs, globals, mems, tables}) (m.start)
+            dataSegments <- buildData dsS (m.dataSegments)
+            started <- runStart ctxS (ModuleInst {funcs, globals, mems, tables, dataSegments}) (m.start)
             Right (SomeModule ctxS started (m.exports))
   where
     tableLimits = [t.limits | t <- m.tables]
@@ -977,20 +1011,33 @@ buildMems (SCons _ rest) (RawMemory (MemType _ declared) : rms) =
     MCons (allocMemory declared) <$> buildMems rest rms
 buildMems _ _ = Left (Malformed "memory/type count mismatch")
 
-{- | Copy the active data segments into memory 0, in order. A segment that does not fit is
-  the spec's instantiation failure; here that is an elaboration error, since instantiation
-  happens here.
+{- | Copy the active data segments into memory 0, in order (passive ones wait for
+  @memory.init@). A segment that does not fit is the spec's instantiation failure; here that is
+  an elaboration error, since instantiation happens here.
 -}
 initialiseData :: [RawData] -> MemInsts ms -> Either ElabError (MemInsts ms)
-initialiseData [] mems = Right mems
-initialiseData segments (MCons mem rest) = do
-    mem' <- foldM copySegment mem (zip [0 ..] segments)
-    Right (MCons mem' rest)
+initialiseData segments mems = case (mems, [(i, e, bytes) | (i, RawData (Active e) bytes) <- zip [0 ..] segments]) of
+    (_, []) -> Right mems
+    (MCons mem rest, active) -> do
+        mem' <- foldM copySegment mem active
+        Right (MCons mem' rest)
+    (MNil, (index, _, _) : _) -> Left (DataSegmentOutOfBounds index)
   where
-    copySegment current (index, RawData offsetExpr payload) = do
+    copySegment current (index, offsetExpr, payload) = do
         offset <- evalConstInit (DataSegmentOutOfBounds index) SI32 offsetExpr
         note (DataSegmentOutOfBounds index) (writeBytes current (fromIntegral offset) (BS.unpack payload))
-initialiseData (_ : _) MNil = Left (DataSegmentOutOfBounds 0)
+
+{- | The data segments as @memory.init@ will find them: passive ones keep their bytes, active
+  ones are already dropped (instantiation copied them).
+-}
+buildData :: Sing ds -> [RawData] -> Either ElabError (DataInsts ds)
+buildData SNil [] = Right DNil
+buildData (SCons SDataShape rest) (RawData mode bytes : rds) = DCons available <$> buildData rest rds
+  where
+    available = case mode of
+        Passive -> Just bytes
+        Active _ -> Nothing
+buildData _ _ = Left (Malformed "data segment count mismatch")
 
 -- | The runtime tables matching the module's declared table shapes, every entry uninitialised.
 buildTables :: Sing ts -> [RawTable] -> Either ElabError (TableInsts fts ts)

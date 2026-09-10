@@ -32,6 +32,8 @@ module Runtime.Interpreter (
     getFunc,
     ModuleInst (..),
     Store (..),
+    moduleToStore,
+    storeToModule,
     currentMem,
     storeMem,
     Config (..),
@@ -65,13 +67,15 @@ import Data.Bits (
 import Data.Word (Word32, Word64, Word8)
 import GHC.Float (castDoubleToWord64, castFloatToWord32, castWord32ToFloat, castWord64ToDouble)
 
+import Data.ByteString qualified as BS
 import Data.List.Singletons (type (++))
+import Data.Maybe (fromMaybe)
 import Data.Singletons.Decide (decideEquality)
 import Data.Type.Equality ((:~:) (Refl))
 import Runtime.Bytes (bytesOfWord32, bytesOfWord64, word32OfBytes, word64OfBytes)
 import Runtime.Convert (convertVal)
 import Runtime.Host (WasiFunc, wasiFuncType)
-import Runtime.MemInst (MemInst, growMemory, memoryPages, readBytes, writeBytes)
+import Runtime.MemInst (MemInst, copyWithin, fillBytes, growMemory, memoryPages, readBytes, writeBytes)
 import Runtime.Numeric (copysign32, copysign64, fromSigned32, fromSigned64, intDiv32, intDiv64, intRem32, intRem64, toSigned32, toSigned64, wasmMax, wasmMin)
 import Runtime.Stack
 import Runtime.TableInst (tableLookup)
@@ -87,7 +91,7 @@ import Syntax.Instructions (
  )
 import Syntax.Types
 import Validation.Reflect (SomeFuncRef (..), appendNil)
-import Validation.Shape (Append, Elem (..), FrameShape (..), ModuleFuncs, ModuleGlobals, ModuleMems, ModuleShape, ModuleTables, ReverseOnto, appendFromSing)
+import Validation.Shape (Append, DataShape (..), Elem (..), FrameShape (..), ModuleData, ModuleFuncs, ModuleGlobals, ModuleMems, ModuleShape, ModuleTables, ReverseOnto, appendFromSing)
 
 -- *** Module and runtime state ***
 
@@ -131,6 +135,7 @@ data Store (mod :: ModuleShape) = Store
     { globals :: GlobalInsts (ModuleGlobals mod)
     , mems :: MemInsts (ModuleMems mod)
     , tables :: TableInsts (ModuleFuncs mod) (ModuleTables mod)
+    , dataSegments :: DataInsts (ModuleData mod)
     }
 
 {- | A fully instantiated module: its function instances plus the initial globals and
@@ -143,6 +148,7 @@ data ModuleInst (mod :: ModuleShape) = ModuleInst
     , globals :: GlobalInsts (ModuleGlobals mod)
     , mems :: MemInsts (ModuleMems mod)
     , tables :: TableInsts (ModuleFuncs mod) (ModuleTables mod)
+    , dataSegments :: DataInsts (ModuleData mod)
     }
 
 {- *** The control stack ***
@@ -312,6 +318,28 @@ step funcs (Config store locals stack code control) = case code of
                 case writeBytes (currentMem store) (effectiveAddr addr memArg) (narrowStoreT nw value) of
                     Just mem' -> stepped (storeMem mem' store) locals r rest control
                     Nothing -> Left OutOfBoundsMemoryAccess
+        {- Bulk memory: each checks both ranges before writing anything -}
+        IMemCopy -> case stack of
+            count :# src :# dst :# r ->
+                case copyWithin (fromIntegral dst) (fromIntegral src) (fromIntegral count) (currentMem store) of
+                    Just mem' -> stepped (storeMem mem' store) locals r rest control
+                    Nothing -> Left OutOfBoundsMemoryAccess
+        IMemFill -> case stack of
+            count :# value :# dst :# r ->
+                case fillBytes (fromIntegral dst) (fromIntegral value) (fromIntegral count) (currentMem store) of
+                    Just mem' -> stepped (storeMem mem' store) locals r rest control
+                    Nothing -> Left OutOfBoundsMemoryAccess
+        IMemInit segmentIx -> case stack of
+            count :# srcOffset :# dst :# r ->
+                let segment = fromMaybe BS.empty (getSegment segmentIx store.dataSegments)
+                    n = fromIntegral count
+                    src = fromIntegral srcOffset
+                    inSegment = src + n <= BS.length segment
+                    written = writeBytes (currentMem store) (fromIntegral dst) (BS.unpack (BS.take n (BS.drop src segment)))
+                 in case (inSegment, written) of
+                        (True, Just mem') -> stepped (storeMem mem' store) locals r rest control
+                        _ -> Left OutOfBoundsMemoryAccess
+        IDataDrop segmentIx -> stepped (storeDropSegment segmentIx store) locals stack rest control
         {- Stack management -}
         IDrop -> case stack of _ :# r -> stepped store locals r rest control
         ISelect _ -> case stack of
@@ -323,7 +351,7 @@ step funcs (Config store locals stack code control) = case code of
         ILocalTee ix -> case stack of v :# _ -> stepped store (setLocal ix v locals) stack rest control
         IGlobalGet ix -> stepped store locals (getGlobal ix (store.globals) :# stack) rest control
         IGlobalSet ix -> case stack of
-            v :# r -> stepped (Store {globals = setGlobal ix v store.globals, mems = store.mems, tables = store.tables}) locals r rest control
+            v :# r -> stepped (storeSetGlobal ix v store) locals r rest control
         {- Memory -}
         ILoad nt memArg -> case stack of
             addr :# r ->
@@ -440,7 +468,18 @@ currentMem :: (ModuleMems mod ~ (m ': ms)) => Store mod -> MemInst m
 currentMem store = firstMem store.mems
 
 storeMem :: (ModuleMems mod ~ (m ': ms)) => MemInst m -> Store mod -> Store mod
-storeMem mem store = Store {globals = store.globals, mems = setFirstMem mem store.mems, tables = store.tables}
+storeMem mem store =
+    Store {globals = store.globals, mems = setFirstMem mem store.mems, tables = store.tables, dataSegments = store.dataSegments}
+
+-- The store's other updates. (Its field names are shared with 'ModuleInst', so the records are
+-- rebuilt rather than updated: GHC no longer disambiguates such updates by type.)
+storeSetGlobal :: Elem ('GlobalType mut t) (ModuleGlobals mod) -> HostType t -> Store mod -> Store mod
+storeSetGlobal ix v store =
+    Store {globals = setGlobal ix v store.globals, mems = store.mems, tables = store.tables, dataSegments = store.dataSegments}
+
+storeDropSegment :: Elem 'DataShape (ModuleData mod) -> Store mod -> Store mod
+storeDropSegment ix store =
+    Store {globals = store.globals, mems = store.mems, tables = store.tables, dataSegments = dropSegment ix store.dataSegments}
 
 -- | What @memory.grow@ pushes when it cannot grow: the spec's @-1@, as an unsigned i32.
 growFailed :: Word32
@@ -511,6 +550,14 @@ returnUnwind store _ vs (CallBoundary below cl cont cf) = resume store cl vs bel
 returnUnwind store locals vs (BlockLabel _ _ rest) = returnUnwind store locals vs rest
 returnUnwind store locals vs (LoopLabel _ _ _ rest) = returnUnwind store locals vs rest
 
+-- | The mutable state of an instantiated module, and the module with that state put back.
+moduleToStore :: ModuleInst mod -> Store mod
+moduleToStore tm = Store {globals = tm.globals, mems = tm.mems, tables = tm.tables, dataSegments = tm.dataSegments}
+
+storeToModule :: FuncInsts mod (ModuleFuncs mod) -> Store mod -> ModuleInst mod
+storeToModule funcs store =
+    ModuleInst {funcs = funcs, globals = store.globals, mems = store.mems, tables = store.tables, dataSegments = store.dataSegments}
+
 -- | Where a run stops: with its results and final store, or waiting for the host.
 data Halt (mod :: ModuleShape) (res :: ResultType) where
     Finished :: Store mod -> ValueStack res -> Halt mod res
@@ -546,14 +593,14 @@ runFunction tm (WasmFunc defaults body) args = do
     halt <- run (tm.funcs) (Config store locals VNil body EntryBoundary)
     Right $ case halt of
         Finished store' results ->
-            Completed (ModuleInst {funcs = tm.funcs, globals = store'.globals, mems = store'.mems, tables = store'.tables}) results
+            Completed (storeToModule tm.funcs store') results
         AwaitingHost request -> NeedsHost request
   where
-    store = Store {globals = tm.globals, mems = tm.mems, tables = tm.tables}
+    store = moduleToStore tm
     locals = reverseOnto args defaults
 runFunction tm (HostFunc wasiFunc) args = case wasiFuncType wasiFunc of
     SFuncType _ resultsS ->
-        let store = Store {globals = tm.globals, mems = tm.mems, tables = tm.tables}
+        let store = moduleToStore tm
          in Right (NeedsHost (HostRequest wasiFunc args store (Suspended (appendNil resultsS) LNil VNil INil EntryBoundary)))
 
 {- *** Numeric dispatch ***

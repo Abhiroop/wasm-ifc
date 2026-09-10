@@ -25,6 +25,9 @@ module Runtime.Stack (
     MemInsts (..),
     TableInsts (..),
     firstTable,
+    DataInsts (..),
+    getSegment,
+    dropSegment,
     appendStack,
     appendWith,
     splitStack,
@@ -37,6 +40,7 @@ module Runtime.Stack (
     setFirstMem,
 ) where
 
+import Data.ByteString (ByteString)
 import Data.Kind (Type)
 
 import Data.List.Singletons (type (++))
@@ -44,7 +48,7 @@ import Runtime.MemInst (MemInst)
 import Runtime.TableInst (TableInst)
 import Syntax.Immediates (HostType)
 import Syntax.Types (FuncType, GlobalType (..), ValType)
-import Validation.Shape (Append (..), Elem (..), MemShape, ReverseOnto, TableShape)
+import Validation.Shape (Append (..), DataShape (..), Elem (..), MemShape, ReverseOnto, TableShape)
 
 -- | The operand stack (head = top of stack), indexed by the types it holds.
 type ValueStack :: [ValType] -> Type
@@ -139,3 +143,20 @@ data TableInsts fts ts where
 
 firstTable :: TableInsts fts (t ': ts) -> TableInst fts
 firstTable (TCons table _) = table
+
+{- | A module's data segments as they stand at run time, one slot per segment of the data index
+  space: the bytes still available to @memory.init@, or nothing once dropped (active segments
+  are dropped as soon as instantiation has copied them, as the spec prescribes).
+-}
+type DataInsts :: [DataShape] -> Type
+data DataInsts ds where
+    DNil :: DataInsts '[]
+    DCons :: Maybe ByteString -> DataInsts ds -> DataInsts ('DataShape ': ds)
+
+getSegment :: Elem 'DataShape ds -> DataInsts ds -> Maybe ByteString
+getSegment Here (DCons segment _) = segment
+getSegment (There ix) (DCons _ rest) = getSegment ix rest
+
+dropSegment :: Elem 'DataShape ds -> DataInsts ds -> DataInsts ds
+dropSegment Here (DCons _ rest) = DCons Nothing rest
+dropSegment (There ix) (DCons segment rest) = DCons segment (dropSegment ix rest)

@@ -24,6 +24,8 @@ module Runtime.MemInst (
     maxMemoryPages,
     readBytes,
     writeBytes,
+    copyWithin,
+    fillBytes,
 ) where
 
 import Data.IntMap.Strict (IntMap)
@@ -114,3 +116,16 @@ runsByPage addr payload =
     let (page, offset) = addr `divMod` pageSize
         (chunk, rest) = splitAt (pageSize - offset) payload
      in (page, offset, chunk) : runsByPage (addr + length chunk) rest
+
+{- | @memory.copy@: move @count@ bytes from @src@ to @dst@ within the memory, overlap-safe (the
+  bytes are read before any is written). 'Nothing' if either range falls outside the memory —
+  and then nothing is written.
+-}
+copyWithin :: Int -> Int -> Int -> MemInst m -> Maybe (MemInst m)
+copyWithin dst src count mem = do
+    payload <- readBytes mem src count
+    writeBytes mem dst payload
+
+-- | @memory.fill@: write @count@ copies of a byte from @dst@. 'Nothing' if the range is outside.
+fillBytes :: Int -> Word8 -> Int -> MemInst m -> Maybe (MemInst m)
+fillBytes dst value count mem = writeBytes mem dst (replicate count value)

@@ -26,7 +26,7 @@ import Data.Singletons.Base.TH (SList (SCons, SNil))
 import Data.Text (Text)
 import Data.Word (Word32, Word64)
 
-import Runtime.Interpreter (Config, FuncInsts, Halt (..), HostRequest, ModuleInst (..), Outcome (..), Store (..), getFunc, run, runFunction)
+import Runtime.Interpreter (Config, FuncInsts, Halt (..), HostRequest, ModuleInst (..), Outcome (..), getFunc, run, runFunction, storeToModule)
 import Runtime.Stack (ValueStack (..))
 import Runtime.Trap (Trap)
 import Syntax.Immediates (HostType)
@@ -130,7 +130,7 @@ continueWith shapeS funcs exports rsS config = do
     halt <- first Trapped (run funcs config)
     pure $ case halt of
         Finished store results ->
-            Returned (SomeModule shapeS (ModuleInst {funcs = funcs, globals = store.globals, mems = store.mems, tables = store.tables}) exports) (declaredOrder (toValues rsS results))
+            Returned (SomeModule shapeS (storeToModule funcs store) exports) (declaredOrder (toValues rsS results))
         AwaitingHost request -> CalledHost (SomeHostRequest shapeS funcs exports rsS request)
 
 exportedFuncIndex :: Text -> [Export] -> Maybe FunctionIdx

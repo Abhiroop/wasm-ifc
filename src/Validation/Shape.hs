@@ -87,8 +87,8 @@ data Elem x xs where
     Here :: Elem x (x ': xs)
     There :: Elem x xs -> Elem x (y ': xs)
 
-{- | The compile-time shape of a module: the types of its function, global, memory and table
-  index spaces. Used as a single kind index on the instruction GADT so it stays compact. Memories
+{- | The compile-time shape of a module: the types of its function, global, memory, table and
+  data-segment index spaces. Used as a single kind index on the instruction GADT so it stays compact. Memories
   are identified by their 'MemShape' (so a memory carries its declared type, like every other
   instance). A record only for the field names' documentation value — 'ModuleShape' is used
   promoted, and the projection type families below ('ModuleFuncs' etc.) are what read the
@@ -99,23 +99,29 @@ data ModuleShape = ModuleShape
     , globalTypes :: [GlobalType]
     , memShapes :: [MemShape]
     , tableShapes :: [TableShape]
+    , dataShapes :: [DataShape]
+    -- ^ one entry per data segment: the data index space, which only has a size
     }
 
 type ModuleFuncs :: ModuleShape -> [FuncType]
 type family ModuleFuncs s where
-    ModuleFuncs ('ModuleShape fs _ _ _) = fs
+    ModuleFuncs ('ModuleShape fs _ _ _ _) = fs
 
 type ModuleGlobals :: ModuleShape -> [GlobalType]
 type family ModuleGlobals s where
-    ModuleGlobals ('ModuleShape _ gs _ _) = gs
+    ModuleGlobals ('ModuleShape _ gs _ _ _) = gs
 
 type ModuleMems :: ModuleShape -> [MemShape]
 type family ModuleMems s where
-    ModuleMems ('ModuleShape _ _ ms _) = ms
+    ModuleMems ('ModuleShape _ _ ms _ _) = ms
 
 type ModuleTables :: ModuleShape -> [TableShape]
 type family ModuleTables s where
-    ModuleTables ('ModuleShape _ _ _ ts) = ts
+    ModuleTables ('ModuleShape _ _ _ ts _) = ts
+
+type ModuleData :: ModuleShape -> [DataShape]
+type family ModuleData s where
+    ModuleData ('ModuleShape _ _ _ _ ds) = ds
 
 {- | The per-activation (function-scoped) part of an instruction's context: the local
   variable types and the function's result type. These two always share a scope — both
@@ -158,6 +164,12 @@ data TableShape = TableShape
     }
     deriving stock (Eq, Show)
 
+{- | A data segment has no type beyond existing: the data index space is a list of these, so
+  @memory.init@ and @data.drop@ can name a segment with an 'Elem' proof like every other index.
+-}
+data DataShape = DataShape
+    deriving stock (Eq, Show)
+
 -- Library singletons for the shape kinds. The list/'Maybe'/'Natural' fields draw their 'Sing'
 -- instances from @singletons-base@; the element types from "Syntax.Types".
-$(genSingletons [''MemShape, ''TableShape, ''ModuleShape, ''FrameShape])
+$(genSingletons [''MemShape, ''TableShape, ''DataShape, ''ModuleShape, ''FrameShape])

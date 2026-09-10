@@ -30,7 +30,7 @@ import Runtime.Numeric (intDiv32)
 import Runtime.Stack (ValueStack (..))
 import Runtime.Trap (Trap (..))
 import Runtime.Wasi (Completion (..), runWithWasi)
-import Syntax.DataSegments (RawData (..))
+import Syntax.DataSegments (DataMode (..), RawData (..))
 import Syntax.Elements (RawElem (..))
 import Syntax.Functions (RawFunction (..))
 import Syntax.Globals (RawGlobal (..))
@@ -41,7 +41,7 @@ import Syntax.Memories (RawMemory (..))
 import Syntax.Module
 import Syntax.Tables (RawTable (..))
 import Syntax.Types
-import Validation.Elaborate (ElabError (..), elaborateModule)
+import Validation.Elaborate (ElabError (..), IndexSpace (..), elaborateModule)
 
 main :: IO ()
 main = hspec spec
@@ -164,14 +164,31 @@ spec = do
 
     describe "data segments" $ do
         it "are copied into memory at instantiation" $
-            elabRunModule (withData [RawData [Const SI32 8] "hi"] (singleFunctionModule [onePageMemory] [] [I32] [] [Const SI32 9, LoadN SI32 1 Unsigned (MemArg 0 0)])) []
+            elabRunModule (withData [RawData (Active [Const SI32 8]) "hi"] (singleFunctionModule [onePageMemory] [] [I32] [] [Const SI32 9, LoadN SI32 1 Unsigned (MemArg 0 0)])) []
                 `shouldBe` Right ["105"]
         it "must fit in the memory" $
-            void (elaborateModule (withData [RawData [Const SI32 65535] "hi"] (singleFunctionModule [onePageMemory] [] [I32] [] [Const SI32 0])))
+            void (elaborateModule (withData [RawData (Active [Const SI32 65535]) "hi"] (singleFunctionModule [onePageMemory] [] [I32] [] [Const SI32 0])))
                 `shouldBe` Left (DataSegmentOutOfBounds 0)
         it "need a memory to land in" $
-            void (elaborateModule (withData [RawData [Const SI32 0] "hi"] (singleFunctionModule [] [] [I32] [] [Const SI32 0])))
+            void (elaborateModule (withData [RawData (Active [Const SI32 0]) "hi"] (singleFunctionModule [] [] [I32] [] [Const SI32 0])))
                 `shouldBe` Left (DataSegmentOutOfBounds 0)
+
+    describe "bulk memory" $ do
+        it "memory.fill then memory.copy" $
+            elabRunWithMemory [] [I32] [] [Const SI32 0, Const SI32 7, Const SI32 4, MemoryFill, Const SI32 100, Const SI32 0, Const SI32 4, MemoryCopy, Const SI32 103, LoadN SI32 1 Unsigned (MemArg 0 0)] []
+                `shouldBe` Right ["7"]
+        it "memory.copy traps when a range is out of bounds, writing nothing" $
+            elabRunWithMemory [] [I32] [] [Const SI32 65530, Const SI32 0, Const SI32 10, MemoryCopy, Const SI32 0] []
+                `shouldSatisfy` trapContaining "OutOfBoundsMemoryAccess"
+        it "memory.init copies from a passive segment" $
+            elabRunModule (withData [RawData Passive "xyz"] (singleFunctionModule [onePageMemory] [] [I32] [] [Const SI32 10, Const SI32 1, Const SI32 2, MemoryInit (DataIdx 0), Const SI32 10, LoadN SI32 1 Unsigned (MemArg 0 0)])) []
+                `shouldBe` Right ["121"]
+        it "memory.init traps after data.drop (except for zero bytes)" $
+            elabRunModule (withData [RawData Passive "xyz"] (singleFunctionModule [onePageMemory] [] [I32] [] [DataDrop (DataIdx 0), Const SI32 0, Const SI32 0, Const SI32 0, MemoryInit (DataIdx 0), Const SI32 10, Const SI32 0, Const SI32 1, MemoryInit (DataIdx 0), Const SI32 0])) []
+                `shouldSatisfy` trapContaining "OutOfBoundsMemoryAccess"
+        it "memory.init must name an existing segment" $
+            void (elaborateModule (singleFunctionModule [onePageMemory] [] [] [] [Const SI32 0, Const SI32 0, Const SI32 0, MemoryInit (DataIdx 3)]))
+                `shouldBe` Left (IndexOutOfRange DataSegments 3)
 
     describe "memory.grow (the old size on success, -1 when it cannot grow)" $ do
         it "grows within the declared maximum" $

@@ -9,6 +9,7 @@ module Syntax.Indices (
     MemoryIdx (..),
     TypeIdx (..),
     TableIdx (..),
+    DataIdx (..),
 ) where
 
 import Data.Word (Word32)
@@ -23,6 +24,7 @@ newtype MemoryIdx = MemoryIdx Word32 deriving stock (Eq, Ord, Show)
 
 newtype TypeIdx = TypeIdx Word32 deriving stock (Eq, Ord, Show)
 newtype TableIdx = TableIdx Word32 deriving stock (Eq, Ord, Show)
+newtype DataIdx = DataIdx Word32 deriving stock (Eq, Ord, Show)
 
 {- newtype TagIdx    = TagIdx    Word32 deriving stock (Eq, Ord, Show) -}
 {- newtype DataIdx   = DataIdx   Word32 deriving stock (Eq, Ord, Show) -}

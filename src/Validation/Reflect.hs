@@ -40,6 +40,8 @@ module Validation.Reflect (
     globalTypesSing,
     memShapesSing,
     tableShapesSing,
+    dataShapesSing,
+    mkDataElem,
     lookupFuncRef,
     lookupGlobalRef,
     memsNonEmpty,
@@ -153,24 +155,39 @@ tableShapeOf (Limits lo hi) = TableShape (fromIntegral lo) (fmap fromIntegral hi
   to a runtime witness with the type-level signature hidden existentially. The function types
   are given in declared order (as decoded) and stored in stack order.
 -}
-reflectCtx :: [FuncType] -> [GlobalType] -> [MemType] -> [Limits] -> SomeModuleShape
-reflectCtx funcTypes globalTypes memTypes tableLimits =
+reflectCtx :: [FuncType] -> [GlobalType] -> [MemType] -> [Limits] -> Int -> SomeModuleShape
+reflectCtx funcTypes globalTypes memTypes tableLimits dataCount =
     withSomeSing
-        (ModuleShape (map stackOrderFuncType funcTypes) globalTypes (map memShapeOf memTypes) (map tableShapeOf tableLimits))
+        ( ModuleShape
+            (map stackOrderFuncType funcTypes)
+            globalTypes
+            (map memShapeOf memTypes)
+            (map tableShapeOf tableLimits)
+            (replicate dataCount DataShape)
+        )
         SomeModuleShape
 
--- | The four index spaces of a module-shape singleton.
+-- | The five index spaces of a module-shape singleton.
 funcTypesSing :: SModuleShape shape -> Sing (ModuleFuncs shape)
-funcTypesSing (SModuleShape fts _ _ _) = fts
+funcTypesSing (SModuleShape fts _ _ _ _) = fts
 
 globalTypesSing :: SModuleShape shape -> Sing (ModuleGlobals shape)
-globalTypesSing (SModuleShape _ gs _ _) = gs
+globalTypesSing (SModuleShape _ gs _ _ _) = gs
 
 memShapesSing :: SModuleShape shape -> Sing (ModuleMems shape)
-memShapesSing (SModuleShape _ _ ms _) = ms
+memShapesSing (SModuleShape _ _ ms _ _) = ms
 
 tableShapesSing :: SModuleShape shape -> Sing (ModuleTables shape)
-tableShapesSing (SModuleShape _ _ _ ts) = ts
+tableShapesSing (SModuleShape _ _ _ ts _) = ts
+
+dataShapesSing :: SModuleShape shape -> Sing (ModuleData shape)
+dataShapesSing (SModuleShape _ _ _ _ ds) = ds
+
+-- | A bounds-checked index into the data index space.
+mkDataElem :: Sing (ds :: [DataShape]) -> Word32 -> Maybe (Elem 'DataShape ds)
+mkDataElem (SCons SDataShape _) 0 = Just Here
+mkDataElem (SCons _ rest) n = There <$> mkDataElem rest (n - 1)
+mkDataElem SNil _ = Nothing
 
 {- | @∃ps rs. (Sing ps, Sing rs, Elem ('FuncType ps rs) fts)@ — a function reference resolved
   against the signature, carrying its parameter and result shapes.
