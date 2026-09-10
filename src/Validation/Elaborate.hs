@@ -107,8 +107,6 @@ data ElabError
       NoTable Text
     | -- | a table's limits are not well-formed
       InvalidTableLimits Limits
-    | -- | more than one table (the spec allows at most one)
-      TooManyTables
     | -- | a memory's limits are not well-formed or exceed 65536 pages
       InvalidMemoryLimits Limits
     | -- | more than one memory (the spec allows at most one)
@@ -864,7 +862,6 @@ validateStructure m = do
     mapM_ checkLimits [declared | RawMemory (MemType _ declared) <- m.memories]
     when (length m.memories > 1) (Left TooManyMemories)
     mapM_ checkTableLimits [t.limits | t <- m.tables]
-    when (length m.tables > 1) (Left TooManyTables)
     checkDistinct [e.name | e <- m.exports]
     mapM_ checkExport m.exports
   where
