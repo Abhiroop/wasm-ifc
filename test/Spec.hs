@@ -12,6 +12,7 @@ import Data.Bits (xor, (.&.), (.|.))
 import Data.ByteString.Lazy qualified as BL
 import Data.Either (isLeft, isRight)
 import Data.List (isInfixOf)
+import Data.Text (Text)
 import Data.Word (Word32, Word8)
 import Hedgehog (Gen)
 import Hedgehog.Gen qualified as Gen
@@ -29,7 +30,7 @@ import Runtime.Module (Invocation (..), SomeHostRequest (..), SomeModule, Value 
 import Runtime.Numeric (intDiv32)
 import Runtime.Stack (ValueStack (..))
 import Runtime.Trap (Trap (..))
-import Runtime.Wasi (Completion (..), runWithWasi)
+import Runtime.Wasi (Completion (..), WasiConfig (..), runWithWasi)
 import Syntax.DataSegments (DataMode (..), RawData (..))
 import Syntax.Elements (RawElem (..))
 import Syntax.Functions (RawFunction (..))
@@ -113,10 +114,10 @@ spec = do
 
     describe "WASI imports" $ do
         it "resolve to typed host functions; proc_exit ends the run with its code" $ do
-            completion <- runWithWasi (either (error . show) id (elaborateModule (wasiModule procExitImport [Const SI32 3, Call (FunctionIdx 0)] []))) "f" []
+            completion <- runWithWasi noHost (either (error . show) id (elaborateModule (wasiModule procExitImport [Const SI32 3, Call (FunctionIdx 0)] []))) "f" []
             fmap describeCompletion completion `shouldBe` Right "exited 3"
         it "fd_write on an unknown descriptor reports errno 8 (badf) and the module continues" $ do
-            completion <- runWithWasi (either (error . show) id (elaborateModule (wasiModule fdWriteImport [Const SI32 7, Const SI32 0, Const SI32 0, Const SI32 8, Call (FunctionIdx 0)] [I32]))) "f" []
+            completion <- runWithWasi noHost (either (error . show) id (elaborateModule (wasiModule fdWriteImport [Const SI32 7, Const SI32 0, Const SI32 0, Const SI32 8, Call (FunctionIdx 0)] [I32]))) "f" []
             fmap describeCompletion completion `shouldBe` Right "returned [I32Value 8]"
         it "suspend the pure invocation, which a pure driver can answer itself" $
             case elaborateModule (wasiModule fdWriteImport [Const SI32 1, Const SI32 0, Const SI32 0, Const SI32 8, Call (FunctionIdx 0)] [I32]) of
@@ -127,6 +128,11 @@ spec = do
                             Right (Returned _ results) -> results `shouldBe` [I32Value 99]
                             _ -> expectationFailure "expected the module to return the fake errno"
                     _ -> expectationFailure "expected a suspended fd_write call"
+        it "args_sizes_get reports the argument count and buffer size" $ do
+            let cfg = WasiConfig ["prog", "xy"] [] []
+                body = [Const SI32 0, Const SI32 4, Call (FunctionIdx 0), Drop, Const SI32 0, Load SI32 (MemArg 0 0), Const SI32 4, Load SI32 (MemArg 0 0), Add SI32]
+            completion <- runWithWasi cfg (either (error . show) id (elaborateModule (wasiModule (wasiImport "args_sizes_get" (FuncType [I32, I32] [I32])) body [I32]))) "f" []
+            fmap describeCompletion completion `shouldBe` Right "returned [I32Value 10]"
         it "must be declared at the host function's type" $
             void (elaborateModule (wasiModule (RawImport "wasi_snapshot_preview1" "proc_exit" (ImportFunc (FuncType [I64] []))) [] []))
                 `shouldBe` Left (ImportTypeMismatch "proc_exit")
@@ -454,8 +460,11 @@ tableModule body =
         }
 
 procExitImport, fdWriteImport :: RawImport
-procExitImport = RawImport "wasi_snapshot_preview1" "proc_exit" (ImportFunc (FuncType [I32] []))
-fdWriteImport = RawImport "wasi_snapshot_preview1" "fd_write" (ImportFunc (FuncType [I32, I32, I32, I32] [I32]))
+procExitImport = wasiImport "proc_exit" (FuncType [I32] [])
+fdWriteImport = wasiImport "fd_write" (FuncType [I32, I32, I32, I32] [I32])
+
+wasiImport :: Text -> FuncType -> RawImport
+wasiImport name ft = RawImport "wasi_snapshot_preview1" name (ImportFunc ft)
 
 {- | One import (function 0), one page of memory, and the export @f@ (function 1) with the
   given body and result type.
@@ -468,6 +477,9 @@ wasiModule imported body results =
         }
   where
     importType (RawImport _ _ (ImportFunc ft)) = ft
+
+noHost :: WasiConfig
+noHost = WasiConfig [] [] []
 
 describeCompletion :: Completion -> String
 describeCompletion (Ran _ results) = "returned " ++ show results

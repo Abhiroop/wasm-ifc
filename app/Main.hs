@@ -14,8 +14,9 @@ import Text.Read (readMaybe)
 
 import Codec.Wasm (decodeModule)
 import Runtime.Module (RunError (..), SomeModule, Value (..), exportSignature, renderValue)
-import Runtime.Wasi (Completion (..), runWithWasi)
+import Runtime.Wasi (Completion (..), Preopen (..), WasiConfig (..), runWithWasi)
 import Syntax.Types (FuncType (..), ValType (..))
+import System.FilePath (takeFileName)
 import Validation.Elaborate (elaborateModule)
 
 main :: IO ()
@@ -23,35 +24,69 @@ main = do
     args <- getArgs
     case args of
         ["check", path] -> withModule path (\_ -> putStrLn "ok")
-        ("invoke" : path : name : rawArgs) ->
-            withModule path $ \wasmModule ->
-                case parseArguments wasmModule (T.pack name) (map T.pack rawArgs) of
-                    Left err -> die err
-                    Right values -> runUnderWasi wasmModule (T.pack name) values (mapM_ (putStrLn . renderValue))
-        ["run", path] ->
-            withModule path $ \wasmModule -> case exportSignature wasmModule "_start" of
-                Nothing -> die "the module has no _start export"
-                Just (FuncType [] []) -> runUnderWasi wasmModule "_start" [] (\_ -> pure ())
-                Just _ -> die "_start must take no parameters and return nothing"
+        ("invoke" : rest) -> case parseOptions rest of
+            Right (options, path : name : rawArgs) ->
+                withModule path $ \wasmModule ->
+                    case parseArguments wasmModule (T.pack name) (map T.pack rawArgs) of
+                        Left err -> die err
+                        Right values -> runUnderWasi (configFor options path []) wasmModule (T.pack name) values (mapM_ (putStrLn . renderValue))
+            _ -> die usage
+        ("run" : rest) -> case parseOptions rest of
+            Right (options, path : programArgs) ->
+                withModule path $ \wasmModule -> case exportSignature wasmModule "_start" of
+                    Nothing -> die "the module has no _start export"
+                    Just (FuncType [] []) -> runUnderWasi (configFor options path programArgs) wasmModule "_start" [] (\_ -> pure ())
+                    Just _ -> die "_start must take no parameters and return nothing"
+            _ -> die usage
         _ -> die usage
 
 usage :: String
 usage =
     unlines
         [ "Usage:"
-        , "  wasm-ifc check  <file.wasm>                    decode and validate"
-        , "  wasm-ifc invoke <file.wasm> <export> [args...] run an exported function"
-        , "  wasm-ifc run    <file.wasm>                    run a WASI program (its _start export)"
+        , "  wasm-ifc check  <file.wasm>                              decode and validate"
+        , "  wasm-ifc invoke [options] <file.wasm> <export> [args...] run an exported function"
+        , "  wasm-ifc run    [options] <file.wasm> [program args...]  run a WASI program (its _start export)"
         , ""
-        , "Arguments are typed by the export: integers (decimal or 0x…) for i32/i64; decimals,"
-        , "inf, -inf, nan, -nan or a bit pattern nan:0x… for f32/f64. Host calls (fd_write to"
-        , "the standard streams, proc_exit) are served; proc_exit's code becomes the exit code."
+        , "Options:  --dir HOST[::GUEST]   preopen a host directory under the guest name (default: the same)"
+        , "          --env NAME=VALUE      an environment variable for the program"
+        , ""
+        , "Arguments to invoke are typed by the export: integers (decimal or 0x…) for i32/i64;"
+        , "decimals, inf, -inf, nan, -nan or a bit pattern nan:0x… for f32/f64. WASI Preview 1"
+        , "host calls are served; proc_exit's code becomes the exit code."
         ]
 
+-- | The @--dir@ and @--env@ options before the module path.
+data Options = Options
+    { dirs :: [Preopen]
+    , vars :: [(Text, Text)]
+    }
+
+parseOptions :: [String] -> Either String (Options, [String])
+parseOptions = go (Options [] [])
+  where
+    go options ("--dir" : spec : rest) =
+        let (host, guest) = case T.splitOn "::" (T.pack spec) of
+                [h, g] -> (T.unpack h, g)
+                _ -> (spec, T.pack spec)
+         in go options {dirs = options.dirs ++ [Preopen guest host]} rest
+    go options ("--env" : spec : rest) = case T.breakOn "=" (T.pack spec) of
+        (name, value) | not (T.null value) -> go options {vars = options.vars ++ [(name, T.drop 1 value)]} rest
+        _ -> Left ("--env expects NAME=VALUE, got " ++ spec)
+    go options rest = Right (options, rest)
+
+configFor :: Options -> FilePath -> [String] -> WasiConfig
+configFor options path programArgs =
+    WasiConfig
+        { arguments = map T.pack (takeFileName path : programArgs)
+        , environment = options.vars
+        , preopens = options.dirs
+        }
+
 -- | Invoke an export with the WASI host serving its calls; hand the results to the printer.
-runUnderWasi :: SomeModule -> Text -> [Value] -> ([Value] -> IO ()) -> IO ()
-runUnderWasi wasmModule name args printResults = do
-    completion <- runWithWasi wasmModule name args
+runUnderWasi :: WasiConfig -> SomeModule -> Text -> [Value] -> ([Value] -> IO ()) -> IO ()
+runUnderWasi cfg wasmModule name args printResults = do
+    completion <- runWithWasi cfg wasmModule name args
     case completion of
         Left err -> die (describeRunError err)
         Right (Ran _ results) -> printResults results
