@@ -126,6 +126,10 @@ copyWithin dst src count mem = do
     payload <- readBytes mem src count
     writeBytes mem dst payload
 
--- | @memory.fill@: write @count@ copies of a byte from @dst@. 'Nothing' if the range is outside.
+{- | @memory.fill@: write @count@ copies of a byte from @dst@. 'Nothing' if the range is outside —
+  decided before the bytes are materialised, since a count may be in the billions.
+-}
 fillBytes :: Int -> Word8 -> Int -> MemInst m -> Maybe (MemInst m)
-fillBytes dst value count mem = writeBytes mem dst (replicate count value)
+fillBytes dst value count mem
+    | inBounds mem dst count = writeBytes mem dst (replicate count value)
+    | otherwise = Nothing

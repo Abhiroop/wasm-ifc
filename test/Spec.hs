@@ -186,6 +186,9 @@ spec = do
         it "memory.copy traps when a range is out of bounds, writing nothing" $
             elabRunWithMemory [] [I32] [] [Const SI32 65530, Const SI32 0, Const SI32 10, MemoryCopy, Const SI32 0] []
                 `shouldSatisfy` trapContaining "OutOfBoundsMemoryAccess"
+        it "memory.fill with a huge count traps without allocating" $
+            elabRunWithMemory [] [I32] [] [Const SI32 1, Const SI32 0xAA, Const SI32 0xFFFFFFFF, MemoryFill, Const SI32 0] []
+                `shouldSatisfy` trapContaining "OutOfBoundsMemoryAccess"
         it "memory.init copies from a passive segment" $
             elabRunModule (withData [RawData Passive "xyz"] (singleFunctionModule [onePageMemory] [] [I32] [] [Const SI32 10, Const SI32 1, Const SI32 2, MemoryInit (DataIdx 0), Const SI32 10, LoadN SI32 1 Unsigned (MemArg 0 0)])) []
                 `shouldBe` Right ["121"]
