@@ -29,7 +29,7 @@ module Runtime.Wasi (
 
 import Control.Concurrent (threadDelay, yield)
 import Control.Exception (IOException, try)
-import Control.Monad (foldM, forM, unless, void, when)
+import Control.Monad (foldM, forM, void, when)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Trans.Except (ExceptT (..), except, runExceptT, throwE)
 import Data.Bits (complement, shiftL, testBit, (.&.), (.|.))
@@ -373,6 +373,12 @@ closeResource :: Resource -> IO ()
 closeResource (RegularFile _ fd) = closeFd fd
 closeResource _ = pure ()
 
+-- | The operation needs this right on the descriptor (the interface's capability check).
+requireRight :: Int -> Descriptor -> Host Descriptor
+requireRight bit descriptor
+    | testBit descriptor.rightsBase bit = pure descriptor
+    | otherwise = throwE Notcapable
+
 directoryOf :: Descriptor -> Host FilePath
 directoryOf descriptor = case descriptor.resource of
     Directory path _ -> pure path
@@ -412,10 +418,10 @@ resolvePath base guest
             _ : up -> walk up rest
         | otherwise = walk (p : acc) rest
 
--- | Resolve a guest path against a directory descriptor.
-resolveIn :: WasiHost -> Word32 -> MemInst m -> Word32 -> Word32 -> Host GuestPath
-resolveIn host fd mem ptr len = do
-    base <- lookupFd host fd >>= directoryOf
+-- | Resolve a guest path against a directory descriptor that must hold the given right.
+resolveIn :: WasiHost -> Word32 -> Int -> MemInst m -> Word32 -> Word32 -> Host GuestPath
+resolveIn host fd right mem ptr len = do
+    base <- lookupFd host fd >>= requireRight right >>= directoryOf
     guest <- peekString mem ptr len
     resolvePath base guest
 
@@ -594,20 +600,20 @@ runWasiCall host func args mem = case (func, args) of
         pokeWord64 mem outPtr resolution
     (ClockTimeGet, outPtr :# _precision :# clockId :# VNil) -> completing mem (clockNow clockId >>= pokeWord64 mem outPtr)
     (FdAdvise, advice :# _len :# _offset :# fd :# VNil) -> completing mem $ do
-        descriptor <- lookupFd host fd
+        descriptor <- lookupFd host fd >>= requireRight 7
         _ <- fileOf descriptor
         when (advice > 5) (throwE Inval)
         pure mem
     (FdAllocate, _len :# _offset :# fd :# VNil) -> completing mem $ do
-        descriptor <- lookupFd host fd
+        descriptor <- lookupFd host fd >>= requireRight 8
         _ <- fileOf descriptor
         throwE Notsup
     (FdClose, fd :# VNil) -> completing mem $ do
         descriptor <- lookupFd host fd
         liftIO (closeResource descriptor.resource >> removeFd host fd)
         pure mem
-    (FdDatasync, fd :# VNil) -> completing mem (lookupFd host fd >>= syncDescriptor >> pure mem)
-    (FdSync, fd :# VNil) -> completing mem (lookupFd host fd >>= syncDescriptor >> pure mem)
+    (FdDatasync, fd :# VNil) -> completing mem (lookupFd host fd >>= requireRight 0 >>= syncDescriptor >> pure mem)
+    (FdSync, fd :# VNil) -> completing mem (lookupFd host fd >>= requireRight 4 >>= syncDescriptor >> pure mem)
     (FdFdstatGet, outPtr :# fd :# VNil) -> completing mem $ do
         descriptor <- lookupFd host fd
         let filetype = case descriptor.resource of
@@ -616,7 +622,7 @@ runWasiCall host func args mem = case (func, args) of
                 RegularFile _ _ -> 4
         pokeFdstat mem outPtr filetype descriptor
     (FdFdstatSetFlags, flags :# fd :# VNil) -> completing mem $ do
-        descriptor <- lookupFd host fd
+        descriptor <- lookupFd host fd >>= requireRight 3
         liftIO (replaceFd host fd descriptor {fdflags = fromIntegral flags})
         pure mem
     (FdFdstatSetRights, inheriting :# base :# fd :# VNil) -> completing mem $ do
@@ -624,15 +630,14 @@ runWasiCall host func args mem = case (func, args) of
         when (base .&. complement descriptor.rightsBase /= 0 || inheriting .&. complement descriptor.rightsInheriting /= 0) (throwE Notcapable)
         liftIO (replaceFd host fd descriptor {rightsBase = base, rightsInheriting = inheriting})
         pure mem
-    (FdFilestatGet, outPtr :# fd :# VNil) -> completing mem (lookupFd host fd >>= descriptorStatus >>= pokeStat mem outPtr)
+    (FdFilestatGet, outPtr :# fd :# VNil) -> completing mem (lookupFd host fd >>= requireRight 21 >>= descriptorStatus >>= pokeStat mem outPtr)
     (FdFilestatSetSize, newSize :# fd :# VNil) -> completing mem $ do
-        descriptor <- lookupFd host fd
-        unless (testBit descriptor.rightsBase 22) (throwE Notcapable)
+        descriptor <- lookupFd host fd >>= requireRight 22
         fd' <- fileOf descriptor
         hostIO (setFdSize fd' (fromIntegral newSize))
         pure mem
     (FdFilestatSetTimes, flags :# mtim :# atim :# fd :# VNil) -> completing mem $ do
-        descriptor <- lookupFd host fd
+        descriptor <- lookupFd host fd >>= requireRight 23
         (access, modification) <- timesToSet atim mtim flags
         case descriptor.resource of
             RegularFile _ fd' -> do
@@ -642,7 +647,7 @@ runWasiCall host func args mem = case (func, args) of
             StandardStream _ -> throwE Badf
         pure mem
     (FdPread, nreadPtr :# offset :# iovsLen :# iovsPtr :# fd :# VNil) -> completing mem $ do
-        descriptor <- lookupFd host fd
+        descriptor <- lookupFd host fd >>= requireRight rightFdRead >>= requireRight rightFdSeek
         fd' <- fileOf descriptor
         iovecs <- peekIovecs mem iovsPtr iovsLen
         (mem', count) <- atOffset fd' offset (readInto mem descriptor.resource iovecs)
@@ -656,23 +661,21 @@ runWasiCall host func args mem = case (func, args) of
         when (length bytes > fromIntegral pathLen) (throwE Nametoolong)
         pokeBytes mem pathPtr bytes
     (FdPwrite, nwrittenPtr :# offset :# iovsLen :# iovsPtr :# fd :# VNil) -> completing mem $ do
-        descriptor <- lookupFd host fd
+        descriptor <- lookupFd host fd >>= requireRight rightFdWrite >>= requireRight rightFdSeek
         fd' <- fileOf descriptor
         iovecs <- peekIovecs mem iovsPtr iovsLen
         payload <- gather mem iovecs
-        -- With the append flag the offset is ignored and the data goes to the end, as POSIX says.
-        written <-
-            if testBit descriptor.fdflags 0
-                then writeAll descriptor payload
-                else atOffset fd' offset (hostIO (fdWriteAll fd' payload))
+        -- The position is left where it was. With the append flag the offset is ignored and
+        -- the data goes to the end, as Linux does.
+        written <- atOffset fd' offset (writeAll descriptor payload)
         pokeWord32 mem nwrittenPtr (fromIntegral written)
     (FdRead, nreadPtr :# iovsLen :# iovsPtr :# fd :# VNil) -> completing mem $ do
-        descriptor <- lookupFd host fd
+        descriptor <- lookupFd host fd >>= requireRight rightFdRead
         iovecs <- peekIovecs mem iovsPtr iovsLen
         (mem', count) <- readInto mem descriptor.resource iovecs
         pokeWord32 mem' nreadPtr count
     (FdReaddir, bufusedPtr :# cookie :# bufLen :# bufPtr :# fd :# VNil) -> completing mem $ do
-        path <- lookupFd host fd >>= directoryOf
+        path <- lookupFd host fd >>= requireRight 14 >>= directoryOf
         names <- hostIO (sort <$> listDirectory path)
         entries <- forM (zip [1 ..] ("." : ".." : names)) $ \(next, name) -> do
             st <- statPath False (path </> name)
@@ -686,7 +689,7 @@ runWasiCall host func args mem = case (func, args) of
         when (fd /= to) $ liftIO (closeResource previous.resource >> replaceFd host to descriptor >> removeFd host fd)
         pure mem
     (FdSeek, newPtr :# whence :# offset :# fd :# VNil) -> completing mem $ do
-        descriptor <- lookupFd host fd
+        descriptor <- lookupFd host fd >>= requireRight rightFdSeek
         fd' <- seekableFile descriptor
         mode <- case whence of
             0 -> pure AbsoluteSeek
@@ -696,34 +699,36 @@ runWasiCall host func args mem = case (func, args) of
         position <- hostIO (fdSeek fd' mode (fromIntegral (toSigned64 offset)))
         pokeWord64 mem newPtr (fromIntegral position)
     (FdTell, outPtr :# fd :# VNil) -> completing mem $ do
-        descriptor <- lookupFd host fd
+        descriptor <- lookupFd host fd >>= requireRight rightFdTell
         fd' <- seekableFile descriptor
         position <- hostIO (fdSeek fd' RelativeSeek 0)
         pokeWord64 mem outPtr (fromIntegral position)
     (FdWrite, nwrittenPtr :# iovsLen :# iovsPtr :# fd :# VNil) -> completing mem $ do
-        descriptor <- lookupFd host fd
+        descriptor <- lookupFd host fd >>= requireRight rightFdWrite
         iovecs <- peekIovecs mem iovsPtr iovsLen
         payload <- gather mem iovecs
         written <- writeAll descriptor payload
         pokeWord32 mem nwrittenPtr (fromIntegral written)
     (PathCreateDirectory, pathLen :# pathPtr :# fd :# VNil) -> completing mem $ do
-        target <- resolveIn host fd mem pathPtr pathLen
+        target <- resolveIn host fd 9 mem pathPtr pathLen
         hostIO (createDirectory target.host 0o755)
         pure mem
     (PathFilestatGet, outPtr :# pathLen :# pathPtr :# flags :# fd :# VNil) -> completing mem $ do
-        target <- resolveIn host fd mem pathPtr pathLen
+        target <- resolveIn host fd 18 mem pathPtr pathLen
         st <- statPath (testBit flags 0) target.host
         when (target.mustBeDirectory && not (isDirectory st)) (throwE Notdir)
         pokeStat mem outPtr st
     (PathFilestatSetTimes, fstFlags :# mtim :# atim :# pathLen :# pathPtr :# flags :# fd :# VNil) -> completing mem $ do
-        target <- resolveIn host fd mem pathPtr pathLen
+        target <- resolveIn host fd 20 mem pathPtr pathLen
         times <- timesToSet atim mtim fstFlags
         applyTimes (testBit flags 0) target.host times
         pure mem
     (PathLink, newLen :# newPtr :# newFd :# oldLen :# oldPtr :# oldFlags :# oldFd :# VNil) -> completing mem $ do
-        source <- resolveIn host oldFd mem oldPtr oldLen
-        link <- resolveIn host newFd mem newPtr newLen
+        source <- resolveIn host oldFd 11 mem oldPtr oldLen
+        link <- resolveIn host newFd 12 mem newPtr newLen
         st <- statPath False source.host
+        when (isDirectory st) (throwE Perm)
+        when (source.mustBeDirectory || link.mustBeDirectory) (throwE Noent)
         origin <-
             if isSymbolicLink st && testBit oldFlags 0
                 then hostIO (relativeTo (takeDirectory source.host) <$> readSymbolicLink source.host)
@@ -732,35 +737,38 @@ runWasiCall host func args mem = case (func, args) of
         pure mem
     (PathOpen, outPtr :# fdflags :# inheriting :# rightsBase :# oflags :# pathLen :# pathPtr :# dirflags :# fd :# VNil) ->
         completing mem $ do
-            parent <- lookupFd host fd
+            parent <- lookupFd host fd >>= requireRight 13
+            when (testBit oflags 0) (void (requireRight 10 parent))
+            when (testBit oflags 3) (void (requireRight 19 parent))
             base <- directoryOf parent
             guest <- peekString mem pathPtr pathLen
             target <- resolvePath base guest
             opened <- openPath host parent target (testBit dirflags 0) oflags rightsBase inheriting (fromIntegral fdflags)
             pokeWord32 mem outPtr opened
     (PathReadlink, usedPtr :# bufLen :# bufPtr :# pathLen :# pathPtr :# fd :# VNil) -> completing mem $ do
-        target <- resolveIn host fd mem pathPtr pathLen
+        target <- resolveIn host fd 15 mem pathPtr pathLen
         destination <- hostIO (readSymbolicLink target.host)
         let payload = take (fromIntegral bufLen) (BS.unpack (encodeUtf8 (T.pack destination)))
         mem' <- pokeBytes mem bufPtr payload
         pokeWord32 mem' usedPtr (fromIntegral (length payload))
     (PathRemoveDirectory, pathLen :# pathPtr :# fd :# VNil) -> completing mem $ do
-        target <- resolveIn host fd mem pathPtr pathLen
+        target <- resolveIn host fd 25 mem pathPtr pathLen
         hostIO (removeDirectory target.host)
         pure mem
     (PathRename, newLen :# newPtr :# newFd :# oldLen :# oldPtr :# fd :# VNil) -> completing mem $ do
-        source <- resolveIn host fd mem oldPtr oldLen
-        destination <- resolveIn host newFd mem newPtr newLen
+        source <- resolveIn host fd 16 mem oldPtr oldLen
+        destination <- resolveIn host newFd 17 mem newPtr newLen
         hostIO (rename source.host destination.host)
         pure mem
     (PathSymlink, newLen :# newPtr :# fd :# oldLen :# oldPtr :# VNil) -> completing mem $ do
         contents <- peekString mem oldPtr oldLen
-        link <- resolveIn host fd mem newPtr newLen
+        link <- resolveIn host fd 24 mem newPtr newLen
         when (link.mustBeDirectory || T.null contents) (throwE Noent)
+        when ("/" `T.isPrefixOf` contents) (throwE Perm)
         hostIO (createSymbolicLink (T.unpack contents) link.host)
         pure mem
     (PathUnlinkFile, pathLen :# pathPtr :# fd :# VNil) -> completing mem $ do
-        target <- resolveIn host fd mem pathPtr pathLen
+        target <- resolveIn host fd 26 mem pathPtr pathLen
         st <- statPath False target.host
         when (isDirectory st) (throwE Isdir)
         when target.mustBeDirectory (throwE Notdir)
@@ -865,7 +873,6 @@ openPath host parent target follow oflags requestedBase requestedInheriting flag
                         { creat = if creat then Just 0o644 else Nothing
                         , exclusive = excl
                         , trunc = trunc
-                        , append = append
                         , nofollow = not follow
                         , sync = testBit flags 4
                         }
