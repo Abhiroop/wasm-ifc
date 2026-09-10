@@ -8,7 +8,7 @@
   argument on top (see "Validation.Shape" on stack order).
 -}
 module Runtime.Module (
-    SomeModule (..),
+    SomeModuleInst (..),
     Value (..),
     valueType,
     renderValue,
@@ -36,11 +36,11 @@ import Syntax.Types
 import Validation.Reflect (SomeFuncRef (..), declaredOrder, funcTypesSing, lookupFuncRef, stackOrder)
 import Validation.Shape (ModuleFuncs, ModuleShape)
 
-{- | A fully elaborated, well-typed module: its shape witness, its instances, and its exports
-  (for resolving entry points).
+{- | An instantiated module with its shape hidden: the shape's singleton, the instance, and
+the exports (for resolving entry points).
 -}
-data SomeModule where
-    SomeModule :: Sing (shape :: ModuleShape) -> ModuleInst shape -> [Export] -> SomeModule
+data SomeModuleInst where
+    SomeModuleInst :: Sing (shape :: ModuleShape) -> ModuleInst shape -> [Export] -> SomeModuleInst
 
 -- | A WebAssembly value with its type as a tag, for crossing the invocation boundary.
 data Value
@@ -79,7 +79,7 @@ data RunError
   "Runtime.Wasi") performs the call and continues with 'continueWith'.
 -}
 data Invocation
-    = Returned SomeModule [Value]
+    = Returned SomeModuleInst [Value]
     | CalledHost SomeHostRequest
 
 {- | A pending host call together with everything needed to resume the module afterwards:
@@ -95,8 +95,8 @@ data SomeHostRequest where
         SomeHostRequest
 
 -- | The type of an exported function, parameters and results in declared order.
-exportSignature :: SomeModule -> Text -> Maybe FuncType
-exportSignature (SomeModule shapeS _ exports) name = do
+exportSignature :: SomeModuleInst -> Text -> Maybe FuncType
+exportSignature (SomeModuleInst shapeS _ exports) name = do
     FunctionIdx idx <- exportedFuncIndex name exports
     SomeFuncRef psS rsS _ <- lookupFuncRef (funcTypesSing shapeS) idx
     pure (FuncType (declaredOrder (fromSing psS)) (declaredOrder (fromSing rsS)))
@@ -105,15 +105,15 @@ exportSignature (SomeModule shapeS _ exports) name = do
   module comes back with the globals and memories the call left behind, so a sequence of
   invocations shares state as the spec's instance does.
 -}
-invokeExport :: SomeModule -> Text -> [Value] -> Either RunError Invocation
-invokeExport (SomeModule shapeS inst exports) name args = do
+invokeExport :: SomeModuleInst -> Text -> [Value] -> Either RunError Invocation
+invokeExport (SomeModuleInst shapeS inst exports) name args = do
     FunctionIdx idx <- note (NoSuchExport name) (exportedFuncIndex name exports)
     SomeFuncRef psS rsS funcIx <- note (NoSuchExport name) (lookupFuncRef (funcTypesSing shapeS) idx)
     checkArguments (declaredOrder (fromSing psS)) args
     argStack <- note (ArgumentCount 0 0) (buildStack psS (stackOrder args))
     outcome <- first Trapped (runFunction inst (getFunc funcIx inst.funcs) argStack)
     pure $ case outcome of
-        Completed inst' results -> Returned (SomeModule shapeS inst' exports) (declaredOrder (toValues rsS results))
+        Completed inst' results -> Returned (SomeModuleInst shapeS inst' exports) (declaredOrder (toValues rsS results))
         NeedsHost request -> CalledHost (SomeHostRequest shapeS inst.funcs exports rsS request)
 
 {- | Continue a suspended invocation from the configuration the host's answer produced (see
@@ -130,7 +130,7 @@ continueWith shapeS funcs exports rsS config = do
     halt <- first Trapped (run funcs config)
     pure $ case halt of
         Finished store results ->
-            Returned (SomeModule shapeS (storeToModule funcs store) exports) (declaredOrder (toValues rsS results))
+            Returned (SomeModuleInst shapeS (storeToModule funcs store) exports) (declaredOrder (toValues rsS results))
         AwaitingHost request -> CalledHost (SomeHostRequest shapeS funcs exports rsS request)
 
 exportedFuncIndex :: Text -> [Export] -> Maybe FunctionIdx

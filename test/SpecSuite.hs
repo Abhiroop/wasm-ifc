@@ -12,6 +12,7 @@ module Main (main) where
 import Control.Monad (foldM)
 import Data.Aeson (FromJSON (..), withObject, (.:), (.:?))
 import Data.Aeson qualified as Aeson
+import Data.Bifunctor (first)
 import Data.ByteString.Lazy qualified as BL
 import Data.List (isInfixOf)
 import Data.Map.Strict qualified as Map
@@ -28,10 +29,11 @@ import Test.Hspec
 import Text.Read (readMaybe)
 
 import Codec.Wasm (decodeModule)
-import Runtime.Module (Invocation (..), RunError (..), SomeModule, Value (..), invokeExport, valueType)
+import Runtime.Instantiate (InstantiationError (..), instantiate)
+import Runtime.Module (Invocation (..), RunError (..), SomeModuleInst, Value (..), invokeExport, valueType)
 import Runtime.Trap (Trap (..))
 import Syntax.Types (ValType (..))
-import Validation.Elaborate (ElabError (..), elaborateModule)
+import Validation.Elaborate (elaborateModule)
 
 {- | Assertions we know we cannot meet, by script and line, with the reason. They are reported
   as skipped, not failed, so a regression elsewhere still shows.
@@ -198,7 +200,32 @@ instance FromJSON Literal where
 data Outcome = Passed | Failed String | Skipped String
 
 -- | A module the script refers to: usable, or unavailable for a stated reason.
-data Loaded = Loaded SomeModule | Unavailable String
+data Loaded = Loaded SomeModuleInst | Unavailable String
+
+-- | Which stage rejected a module, and why.
+data Rejection
+    = AtDecode String
+    | AtValidation String
+    | AtInstantiation InstantiationError
+
+-- | A rejection for a feature outside the implemented subset, which the suite skips.
+isUnsupported :: Rejection -> Bool
+isUnsupported rejection = case rejection of
+    AtDecode err -> any (`isInfixOf` err) ["unsupported", "not supported", "unknown valtype", "unknown limits flag"]
+    AtValidation _ -> False
+    AtInstantiation (UnsupportedImport _ _) -> True
+    AtInstantiation _ -> False
+
+describeRejection :: Rejection -> String
+describeRejection rejection = case rejection of
+    AtDecode err -> "decode error: " ++ err
+    AtValidation err -> "validation error: " ++ err
+    AtInstantiation (UnsupportedImport modName field) -> "unsupported import: " ++ T.unpack modName ++ "." ++ T.unpack field
+    AtInstantiation err -> "instantiation error: " ++ show err
+
+-- | The instance a @module@ command yields, unavailable if any stage rejected it.
+toLoaded :: Either Rejection SomeModuleInst -> Loaded
+toLoaded = either (Unavailable . describeRejection) Loaded
 
 {- | The script's instances: the named ones, the anonymous latest one, and which of them the
   last @module@ command made current. Invocations update the instance they ran on, since
@@ -224,12 +251,13 @@ runScript name dir = fmap (reverse . snd) . foldM step (State (Unavailable "no m
 runCommand :: FilePath -> State -> Command -> IO (State, Outcome)
 runCommand dir state cmd = case cmd.kind of
     "module" -> do
-        loaded <- loadModule (dir </> fromMaybe "" cmd.filename)
-        let outcome = case loaded of
-                Loaded _ -> Passed
-                Unavailable reason
-                    | "unsupported" `isInfixOf` reason -> Skipped reason
-                    | otherwise -> Failed ("valid module rejected: " ++ reason)
+        result <- loadModule (dir </> fromMaybe "" cmd.filename)
+        let loaded = toLoaded result
+            outcome = case result of
+                Right _ -> Passed
+                Left rejection
+                    | isUnsupported rejection -> Skipped (describeRejection rejection)
+                    | otherwise -> Failed ("valid module rejected: " ++ describeRejection rejection)
             state' = case cmd.name of
                 Just n -> state {named = Map.insert n loaded state.named, current = Just n}
                 Nothing -> state {anonymous = loaded, current = Nothing}
@@ -237,8 +265,10 @@ runCommand dir state cmd = case cmd.kind of
     "assert_return" -> pure (withAction (\m act -> assertReturn m act cmd.expected))
     "assert_trap" -> pure (withAction (\m act -> assertTrap m act cmd.trapText))
     "action" -> pure (withAction (\m act -> either (\e -> (m, Failed (show e))) (\(m', _) -> (m', Passed)) (invoke m act)))
-    "assert_invalid" -> rejection
-    "assert_malformed" -> rejection
+    "assert_malformed" -> rejectedBy malformed
+    "assert_invalid" -> rejectedBy invalid
+    "assert_unlinkable" -> rejectedBy unlinkable
+    "assert_uninstantiable" -> rejectedBy uninstantiable
     other -> pure (state, Skipped ("command " ++ T.unpack other))
   where
     -- Run a check on the instance an action names, and store the instance it hands back.
@@ -256,30 +286,44 @@ runCommand dir state cmd = case cmd.kind of
         Nothing -> case state.current of
             Just n -> state {named = Map.insert n loaded state.named}
             Nothing -> state {anonymous = loaded}
-    rejection
+    -- What each assertion expects of the rejection: the stage, and for instantiation the kind.
+    malformed rejection = case rejection of
+        AtDecode _ -> True
+        _ -> False
+    invalid rejection = case rejection of
+        AtInstantiation _ -> False
+        _ -> True
+    unlinkable rejection = case rejection of
+        AtInstantiation (UnsupportedImport _ _) -> True
+        AtInstantiation (ImportTypeMismatch _) -> True
+        _ -> False
+    uninstantiable rejection = case rejection of
+        AtInstantiation (StartFunctionTrapped _) -> True
+        AtInstantiation (DataSegmentOutOfBounds _) -> True
+        AtInstantiation (ElementSegmentOutOfBounds _) -> True
+        _ -> False
+    -- The module must be rejected, and by the stage the assertion names: a module the
+    -- decoder cannot handle at all is a gap, not a verdict, unless decoding is the stage.
+    rejectedBy expected
         | cmd.moduleType /= Just "binary" = pure (state, Skipped "text-format module")
         | otherwise = do
-            loaded <- loadModule (dir </> fromMaybe "" cmd.filename)
-            pure . (,) state $ case loaded of
-                Unavailable _ -> Passed
-                Loaded _ -> Failed ("accepted a module the spec rejects: " ++ maybe "" T.unpack cmd.trapText)
+            result <- loadModule (dir </> fromMaybe "" cmd.filename)
+            pure . (,) state $ case result of
+                Left rejection
+                    | expected rejection -> Passed
+                    | isUnsupported rejection -> Skipped (describeRejection rejection)
+                    | otherwise -> Failed ("rejected at the wrong stage: " ++ describeRejection rejection)
+                Right _ -> Failed ("accepted a module the spec rejects: " ++ maybe "" T.unpack cmd.trapText)
 
-loadModule :: FilePath -> IO Loaded
+loadModule :: FilePath -> IO (Either Rejection SomeModuleInst)
 loadModule path = do
     bytes <- BL.readFile path
-    pure $ case decodeModule bytes of
-        Left err
-            | isFeatureGap err -> Unavailable ("unsupported by the decoder: " ++ err)
-            | otherwise -> Unavailable ("decode error: " ++ err)
-        Right raw -> case elaborateModule raw of
-            Left (UnsupportedImport modName field) -> Unavailable ("unsupported import: " ++ T.unpack modName ++ "." ++ T.unpack field)
-            Left err -> Unavailable ("elaboration error: " ++ show err)
-            Right m -> Loaded m
-  where
-    -- The decoder's messages for features outside the implemented subset.
-    isFeatureGap err = any (`isInfixOf` err) ["unsupported", "not supported", "unknown valtype", "unknown limits flag"]
+    pure $ do
+        raw <- first AtDecode (decodeModule bytes)
+        validated <- first (AtValidation . show) (elaborateModule raw)
+        first AtInstantiation (instantiate validated)
 
-invoke :: SomeModule -> Action -> Either RunError (SomeModule, [Value])
+invoke :: SomeModuleInst -> Action -> Either RunError (SomeModuleInst, [Value])
 invoke m act = case traverse literalValue act.args of
     Nothing -> Left (NoSuchExport "(non-numeric argument)")
     Just values -> case invokeExport m act.field values of
@@ -288,7 +332,7 @@ invoke m act = case traverse literalValue act.args of
         Right (CalledHost _) -> Left HostCallNotServed
 
 -- | Each check hands back the instance to continue with (unchanged when the call failed).
-assertReturn :: SomeModule -> Action -> [Literal] -> (SomeModule, Outcome)
+assertReturn :: SomeModuleInst -> Action -> [Literal] -> (SomeModuleInst, Outcome)
 assertReturn m act expectations
     | act.actionKind /= "invoke" = (m, Skipped ("action " ++ T.unpack act.actionKind))
     | any (\a -> a.litType `notElem` numericTypes) act.args = (m, Skipped "non-numeric argument")
@@ -301,7 +345,7 @@ assertReturn m act expectations
   where
     render l = T.unpack l.litType ++ ":" ++ maybe "?" T.unpack l.litValue
 
-assertTrap :: SomeModule -> Action -> Maybe Text -> (SomeModule, Outcome)
+assertTrap :: SomeModuleInst -> Action -> Maybe Text -> (SomeModuleInst, Outcome)
 assertTrap m act expectedText = case invoke m act of
     Left (Trapped trap)
         | Just (trapText trap) == expectedText -> (m, Passed)

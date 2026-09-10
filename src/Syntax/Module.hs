@@ -1,9 +1,14 @@
-{- | A decoded module and its components, before any validation: what the binary format's
-  sections say, as plain records. Component vectors are lists — an index is a position — because
-  the typed phase reflects them as type-level lists. (Functions and globals, which also have a
-  typed form, are in "Syntax.Functions" and "Syntax.Globals".)
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE KindSignatures #-}
+
+{- | A module, in its two forms: 'RawModule' as decoded — what the binary format's sections
+  say, as plain records, with lists for the index spaces — and 'Module' as validated, typed by
+  its 'ModuleShape': every function body type-checked, every index resolved to a proof, every
+  constant evaluated. A 'Module' is what instantiation turns into a running instance.
 -}
 module Syntax.Module (
+    -- * As decoded
     RawModule (..),
     RawImport (..),
     ImportDesc (..),
@@ -14,16 +19,26 @@ module Syntax.Module (
     RawElem (..),
     Export (..),
     ExportDesc (..),
+
+    -- * As validated
+    Module (..),
+    DataSegment (..),
+    ElementSegment (..),
+    SomeModule (..),
 ) where
 
 import Data.ByteString (ByteString)
+import Data.Singletons (Sing)
 import Data.Text (Text)
+import Data.Word (Word32)
 
-import Syntax.Functions (RawFunction)
-import Syntax.Globals (RawGlobal)
+import Syntax.Functions (Functions, RawFunction)
+import Syntax.Globals (Globals, RawGlobal)
 import Syntax.Indices (FunctionIdx, GlobalIdx, MemoryIdx, TableIdx)
 import Syntax.Instructions (RawExpr)
-import Syntax.Types (FuncType, Limits, MemType)
+import Syntax.Types (FuncType (..), Limits, MemType)
+import Validation.Reflect (SomeFuncRef)
+import Validation.Shape (Elem, ModuleFuncs, ModuleGlobals, ModuleShape)
 
 data RawModule = RawModule
     { types :: [FuncType]
@@ -98,3 +113,34 @@ data ExportDesc
     | ExportMem MemoryIdx
     | ExportTable TableIdx
     deriving stock (Eq, Show)
+
+-- *** As validated ***
+
+{- | A validated module. Its memories, tables and data-segment count need no fields: the shape
+  index says exactly what they are, and instantiation allocates them from it.
+-}
+data Module (shape :: ModuleShape) = Module
+    { functions :: Functions shape (ModuleFuncs shape)
+    , globals :: Globals (ModuleGlobals shape)
+    , dataSegments :: [DataSegment]
+    , elements :: [ElementSegment (ModuleFuncs shape)]
+    , exports :: [Export]
+    , start :: Maybe (Elem ('FuncType '[] '[]) (ModuleFuncs shape))
+    -- ^ the start function, known to take and return nothing
+    }
+
+-- | A data segment as validated: an active segment's constant offset, and the bytes.
+data DataSegment = DataSegment
+    { placement :: Maybe Word32
+    , bytes :: ByteString
+    }
+
+-- | An element segment as validated: its constant offset, and its functions, each resolved.
+data ElementSegment (fts :: [FuncType]) = ElementSegment
+    { offset :: Word32
+    , functions :: [SomeFuncRef fts]
+    }
+
+-- | A validated module with its shape hidden, together with the shape's singleton.
+data SomeModule where
+    SomeModule :: Sing (shape :: ModuleShape) -> Module shape -> SomeModule

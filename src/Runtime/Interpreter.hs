@@ -80,6 +80,7 @@ import Runtime.Numeric (copysign32, copysign64, fromSigned32, fromSigned64, intD
 import Runtime.Stack
 import Runtime.TableInst (tableLookup)
 import Runtime.Trap (Trap (..))
+import Syntax.Functions (Function (..))
 import Syntax.Immediates
 import Syntax.Instructions (
     BitwiseOp (..),
@@ -91,31 +92,16 @@ import Syntax.Instructions (
  )
 import Syntax.Types
 import Validation.Reflect (SomeFuncRef (..), appendNil)
-import Validation.Shape (Append, DataShape (..), Elem (..), FrameShape (..), ModuleData, ModuleFuncs, ModuleGlobals, ModuleMems, ModuleShape, ModuleTables, ReverseOnto, appendFromSing)
+import Validation.Shape (Append, DataShape (..), Elem (..), FrameShape (..), ModuleData, ModuleFuncs, ModuleGlobals, ModuleMems, ModuleShape, ModuleTables, appendFromSing)
 
 -- *** Module and runtime state ***
 
-{- | The type an 'Expr' must have to be a function body: from the empty operand stack it
-  produces the function's results @rs@; its frame binds @locals@ and return type @rs@; and
-  it runs under exactly one enclosing label — the function's own result — which is what
-  @return@ and falling off the end both target.
--}
-type FunctionBody mod locals rs = Expr mod ('FrameShape locals rs) '[rs] '[] rs
-
-{- | A function instance: either a WebAssembly function — the zero-initialised values of the
-  locals it declares, together with its body — or an imported host function. A body's locals
-  are the parameters (local 0 is the first parameter, so the argument segment — last argument
-  on top — is reversed onto them) followed by the declared locals. A host function can only
-  live in a module that has a memory, which WASI requires; the constraint is packed here so
-  the driver can reach that memory without asking.
+{- | A function instance: a validated WebAssembly 'Function', or the host function an import
+  was linked to. A host function can only live in a module that has a memory, which WASI
+  requires; the constraint is packed here so the driver can reach that memory without asking.
 -}
 data FuncInst (mod :: ModuleShape) (ft :: FuncType) where
-    WasmFunc ::
-        -- | zero-inits for the declared (non-parameter) locals
-        LocalInsts declared ->
-        -- | the body, typed @'[] -> rs@
-        FunctionBody mod (ReverseOnto ps declared) rs ->
-        FuncInst mod ('FuncType ps rs)
+    WasmFunc :: Function mod ft -> FuncInst mod ft
     HostFunc :: (ModuleMems mod ~ (mem ': mems)) => WasiFunc ft -> FuncInst mod ft
 
 -- | The functions of a module, one typed body per signature in 'ModuleFuncs'.
@@ -419,9 +405,9 @@ enterCall ::
     Control mod res ret locals labels out ->
     Either Trap (StepResult mod res)
 enterCall funcs store locals witness ix stack rest control = case getFunc ix funcs of
-    WasmFunc defaults body ->
+    WasmFunc (Function declared body) ->
         let (args, below) = splitStack witness stack
-            calleeLocals = reverseOnto args defaults
+            calleeLocals = reverseOnto args (defaultLocals declared)
          in Right (Stepped (Config store calleeLocals VNil body (CallBoundary below locals rest control)))
     HostFunc wasiFunc -> case wasiFuncType wasiFunc of
         SFuncType _ resultsS ->
@@ -589,7 +575,7 @@ runFunction ::
     FuncInst mod ('FuncType ps rs) ->
     ValueStack ps ->
     Either Trap (Outcome mod rs)
-runFunction tm (WasmFunc defaults body) args = do
+runFunction tm (WasmFunc (Function declared body)) args = do
     halt <- run (tm.funcs) (Config store locals VNil body EntryBoundary)
     Right $ case halt of
         Finished store' results ->
@@ -597,7 +583,7 @@ runFunction tm (WasmFunc defaults body) args = do
         AwaitingHost request -> NeedsHost request
   where
     store = moduleToStore tm
-    locals = reverseOnto args defaults
+    locals = reverseOnto args (defaultLocals declared)
 runFunction tm (HostFunc wasiFunc) args = case wasiFuncType wasiFunc of
     SFuncType _ resultsS ->
         let store = moduleToStore tm

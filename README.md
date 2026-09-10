@@ -3,28 +3,36 @@
 Experiments with WebAssembly and information-flow control, in Haskell.
 
 The pipeline is a single path: decode the binary into an untyped AST, *elaborate* it
-(validation = type-checking, recovering the type indices), and run the resulting
-intrinsically-typed AST on a small-step machine.
+(validation = type-checking, recovering the type indices) into an intrinsically-typed module,
+*instantiate* that (link imports, allocate memories and tables, place segments, run the start
+function), and run exports on a small-step machine.
 
 ```
-  bytes ──decode──▶ RawModule ──elaborate──▶ ModuleInst ──step machine──▶ result
-   Codec.Wasm      Syntax.*    Validation.*   Runtime.*      Runtime.Interpreter
-                  (untyped)    (validate +    (instances)    (total `step`)
+  bytes ──decode──▶ RawModule ──elaborate──▶ Module ──instantiate──▶ ModuleInst ──step──▶ result
+   Codec.Wasm      Syntax.*    Validation.*  Syntax.*   Runtime.*    Runtime.*   Runtime.Interpreter
+                  (untyped)    (validate +   (typed)   (Instantiate) (instances) (total `step`)
                                recover indices)
 ```
+
+Each syntactic thing lives in one module in both its forms: `Syntax.Module` holds `RawModule`
+(as decoded) and `Module shape` (as validated), `Syntax.Functions` holds `RawFunction` and
+`Function`, `Syntax.Globals` holds `RawGlobal` and `Global`. Immediates (`MemArg`, signedness,
+narrow widths) are in `Syntax.Immediates`; `Syntax.Types` holds only types.
 
 The three layers follow one naming convention (with `Raw` for the decoder's untyped output):
 
 * **Syntax** (`Syntax.*`): the program as written. Both the raw, unvalidated AST (`RawInstr`,
-  `RawModule`, …) and the *intrinsically-typed* `Instr`/`Expr` — indexed by the value-stack
-  shape, locals, labels and module shape they run within, so ill-typed programs are not
-  representable.
+  `RawModule`, …) and the *intrinsically-typed* `Instr`/`Expr`/`Function`/`Module` — indexed
+  by the value-stack shape, locals, labels and module shape they run within, so ill-typed
+  programs are not representable.
 * **Validation** (`Validation.*`): the type-level *shapes* the syntax is indexed by
   (`Validation.Shape`: `ModuleShape`, `MemShape`, `Append`, `Elem`), the singleton witnesses
   and decidable equality (`Validation.Reflect`), and the elaborator (`Validation.Elaborate`),
-  which checks a whole decoded module and recovers its hidden type indices.
-* **Runtime** (`Runtime.*`): the *instances* (`ModuleInst`, `FuncInst`, `MemInst`, the value
-  containers) and the interpreter. `Runtime.Interpreter` is a total small-step abstract
+  which checks a whole decoded module and recovers its hidden type indices. It validates only;
+  it never allocates or runs anything.
+* **Runtime** (`Runtime.*`): instantiation (`Runtime.Instantiate`: a validated `Module` to a
+  `ModuleInst`, with its own `InstantiationError`), the *instances* (`ModuleInst`, `FuncInst`,
+  `MemInst`, the value containers) and the interpreter. `Runtime.Interpreter` is a total small-step abstract
   machine: a `Config` steps to the next `Config` (or finishes, or traps). Because only
   well-typed configurations are representable and `step` is total (enforced by
   `-Werror=incomplete-patterns`, no `error`/`unsafeCoerce`), the machine *is* the
@@ -37,10 +45,10 @@ Naming: `Foo` is the static syntax (in `Syntax`); `FooShape` is its type-level a
 
 | Path | Contents |
 |------|----------|
-| `src/Syntax/`     | the program syntax: raw AST + intrinsically-typed `Instr`/`Expr`, base types |
+| `src/Syntax/`     | the program syntax, raw and typed side by side: types, immediates, indices, instructions, functions, globals, the module |
 | `src/Codec/`      | the binary decoder |
 | `src/Validation/` | type-level shapes (`Shape`), singletons + decidable equality (`Reflect`), the elaborator (`Elaborate`) |
-| `src/Runtime/`    | the small-step interpreter, the runtime instances, value/memory machinery, shared numerics, the WASI host |
+| `src/Runtime/`    | instantiation, the small-step interpreter, the runtime instances, value/memory machinery, shared numerics, the WASI host |
 | `test/`           | the hspec/hedgehog suite, the hand-written typed examples, the spec-testsuite runner |
 | `app.old/`        | the original prototype, kept for reference (not built) |
 | `app/Main.hs`     | the CLI |
@@ -53,8 +61,8 @@ Naming: `Foo` is the static syntax (in `Syntax`); `FooShape` is its type-level a
 
 ```sh
 cabal build
-cabal run wasm-ifc -- invoke <file.wasm> <export> [args...]   # decode → elaborate → run
-cabal run wasm-ifc -- check <file.wasm>                        # decode → elaborate only
+cabal run wasm-ifc -- invoke <file.wasm> <export> [args...]   # decode → validate → instantiate → run
+cabal run wasm-ifc -- check <file.wasm>                        # decode → validate only
 cabal run wasm-ifc -- run [--dir D[::G]]... [--env K=V]... <file.wasm> [args...]   # a WASI program
 
 samples/build.sh    # compile every sample .wat to .wasm  (needs wabt's wat2wasm)

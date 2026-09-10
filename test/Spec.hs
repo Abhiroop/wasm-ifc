@@ -8,6 +8,7 @@
 module Main (main) where
 
 import Control.Monad (void)
+import Data.Bifunctor (first)
 import Data.Bits (xor, (.&.), (.|.))
 import Data.ByteString.Lazy qualified as BL
 import Data.Either (isLeft, isRight)
@@ -25,8 +26,9 @@ import Examples (runFactorial, runIncrement, runSquare)
 import Runtime.Bytes (bytesOfWord32, bytesOfWord64, word32OfBytes, word64OfBytes)
 import Runtime.Convert (convertVal)
 import Runtime.Host (WasiFunc (..))
+import Runtime.Instantiate (InstantiationError (..), instantiate)
 import Runtime.Interpreter (HostRequest (..), resumeWith)
-import Runtime.Module (Invocation (..), SomeHostRequest (..), SomeModule, Value (..), continueWith, exportSignature, invokeExport, renderValue)
+import Runtime.Module (Invocation (..), SomeHostRequest (..), SomeModuleInst, Value (..), continueWith, exportSignature, invokeExport, renderValue)
 import Runtime.Numeric (intDiv32)
 import Runtime.Stack (ValueStack (..))
 import Runtime.Trap (Trap (..))
@@ -36,7 +38,7 @@ import Syntax.Globals (RawGlobal (..))
 import Syntax.Immediates
 import Syntax.Indices
 import Syntax.Instructions
-import Syntax.Module
+import Syntax.Module (DataMode (..), Export (..), ExportDesc (..), ImportDesc (..), RawData (..), RawElem (..), RawImport (..), RawMemory (..), RawModule (..), RawTable (..))
 import Syntax.Types
 import Validation.Elaborate (ElabError (..), IndexSpace (..), elaborateModule)
 
@@ -105,18 +107,21 @@ spec = do
             void (elaborateModule (singleFunctionModule [] [] [I32] [] [Const SI32 0, CallIndirect (TypeIdx 0)]))
                 `shouldBe` Left (NoTable "call_indirect")
         it "reject an element segment that does not fit" $
-            void (elaborateModule ((tableModule [Const SI32 0]) {elements = [RawElem [Const SI32 2] [FunctionIdx 0, FunctionIdx 0]]}))
-                `shouldBe` Left (ElementSegmentOutOfBounds 0)
+            void (load ((tableModule [Const SI32 0]) {elements = [RawElem [Const SI32 2] [FunctionIdx 0, FunctionIdx 0]]}))
+                `shouldBe` Left (Uninstantiable (ElementSegmentOutOfBounds 0))
+        it "reject an element segment in a module without a table at validation" $
+            void (elaborateModule ((singleFunctionModule [] [] [] [] []) {elements = [RawElem [Const SI32 0] [FunctionIdx 0]]}))
+                `shouldBe` Left (NoTable "elem")
 
     describe "WASI imports" $ do
         it "resolve to typed host functions; proc_exit ends the run with its code" $ do
-            completion <- runWithWasi noHost (either (error . show) id (elaborateModule (wasiModule procExitImport [Const SI32 3, Call (FunctionIdx 0)] []))) "f" []
+            completion <- runWithWasi noHost (either (error . show) id (load (wasiModule procExitImport [Const SI32 3, Call (FunctionIdx 0)] []))) "f" []
             fmap describeCompletion completion `shouldBe` Right "exited 3"
         it "fd_write on an unknown descriptor reports errno 8 (badf) and the module continues" $ do
-            completion <- runWithWasi noHost (either (error . show) id (elaborateModule (wasiModule fdWriteImport [Const SI32 7, Const SI32 0, Const SI32 0, Const SI32 8, Call (FunctionIdx 0)] [I32]))) "f" []
+            completion <- runWithWasi noHost (either (error . show) id (load (wasiModule fdWriteImport [Const SI32 7, Const SI32 0, Const SI32 0, Const SI32 8, Call (FunctionIdx 0)] [I32]))) "f" []
             fmap describeCompletion completion `shouldBe` Right "returned [I32Value 8]"
         it "suspend the pure invocation, which a pure driver can answer itself" $
-            case elaborateModule (wasiModule fdWriteImport [Const SI32 1, Const SI32 0, Const SI32 0, Const SI32 8, Call (FunctionIdx 0)] [I32]) of
+            case load (wasiModule fdWriteImport [Const SI32 1, Const SI32 0, Const SI32 0, Const SI32 8, Call (FunctionIdx 0)] [I32]) of
                 Left err -> expectationFailure (show err)
                 Right sm -> case invokeExport sm "f" [] of
                     Right (CalledHost (SomeHostRequest shapeS funcs exports rsS (HostRequest FdWrite _ store suspended))) ->
@@ -127,17 +132,20 @@ spec = do
         it "args_sizes_get reports the argument count and buffer size" $ do
             let cfg = WasiConfig ["prog", "xy"] [] []
                 body = [Const SI32 0, Const SI32 4, Call (FunctionIdx 0), Drop, Const SI32 0, Load SI32 (MemArg 0 0), Const SI32 4, Load SI32 (MemArg 0 0), Add SI32]
-            completion <- runWithWasi cfg (either (error . show) id (elaborateModule (wasiModule (wasiImport "args_sizes_get" (FuncType [I32, I32] [I32])) body [I32]))) "f" []
+            completion <- runWithWasi cfg (either (error . show) id (load (wasiModule (wasiImport "args_sizes_get" (FuncType [I32, I32] [I32])) body [I32]))) "f" []
             fmap describeCompletion completion `shouldBe` Right "returned [I32Value 10]"
         it "must be declared at the host function's type" $
-            void (elaborateModule (wasiModule (RawImport "wasi_snapshot_preview1" "proc_exit" (ImportFunc (FuncType [I64] []))) [] []))
-                `shouldBe` Left (ImportTypeMismatch "proc_exit")
+            void (load (wasiModule (RawImport "wasi_snapshot_preview1" "proc_exit" (ImportFunc (FuncType [I64] []))) [] []))
+                `shouldBe` Left (Uninstantiable (ImportTypeMismatch "proc_exit"))
         it "must be provided by this host" $
-            void (elaborateModule (wasiModule (RawImport "spectest" "print" (ImportFunc (FuncType [] []))) [] []))
-                `shouldBe` Left (UnsupportedImport "spectest" "print")
+            void (load (wasiModule (RawImport "spectest" "print" (ImportFunc (FuncType [] []))) [] []))
+                `shouldBe` Left (Uninstantiable (UnsupportedImport "spectest" "print"))
         it "need a memory in the module" $
-            void (elaborateModule ((wasiModule procExitImport [] []) {memories = []}))
-                `shouldBe` Left WasiNeedsMemory
+            void (load ((wasiModule procExitImport [] []) {memories = []}))
+                `shouldBe` Left (Uninstantiable WasiNeedsMemory)
+        it "are valid whether or not this host provides them: linking is instantiation's job" $
+            void (elaborateModule (wasiModule (RawImport "spectest" "print" (ImportFunc (FuncType [] []))) [] []))
+                `shouldBe` Right ()
 
     describe "module-level validation" $ do
         it "rejects a memory whose minimum exceeds its maximum" $
@@ -161,19 +169,24 @@ spec = do
             void (elaborateModule (twoFunctions (FuncType [I32] []) [] (FuncType [] [I32]) [Const SI32 0]) {start = Just (FunctionIdx 0)})
                 `shouldBe` Left InvalidStartFunction
         it "fails instantiation when the start function traps" $
-            void (elaborateModule (startModule [Unreachable]))
-                `shouldBe` Left (StartFunctionTrapped UnreachableExecuted)
+            void (load (startModule [Unreachable]))
+                `shouldBe` Left (Uninstantiable (StartFunctionTrapped UnreachableExecuted))
+        it "validates a start function that would trap: only instantiation runs it" $
+            void (elaborateModule (startModule [Unreachable])) `shouldBe` Right ()
 
     describe "data segments" $ do
         it "are copied into memory at instantiation" $
             elabRunModule (withData [RawData (Active [Const SI32 8]) "hi"] (singleFunctionModule [onePageMemory] [] [I32] [] [Const SI32 9, LoadN SI32 1 Unsigned (MemArg 0 0)])) []
                 `shouldBe` Right ["105"]
         it "must fit in the memory" $
-            void (elaborateModule (withData [RawData (Active [Const SI32 65535]) "hi"] (singleFunctionModule [onePageMemory] [] [I32] [] [Const SI32 0])))
-                `shouldBe` Left (DataSegmentOutOfBounds 0)
-        it "need a memory to land in" $
+            void (load (withData [RawData (Active [Const SI32 65535]) "hi"] (singleFunctionModule [onePageMemory] [] [I32] [] [Const SI32 0])))
+                `shouldBe` Left (Uninstantiable (DataSegmentOutOfBounds 0))
+        it "need a memory to land in, which validation checks" $
             void (elaborateModule (withData [RawData (Active [Const SI32 0]) "hi"] (singleFunctionModule [] [] [I32] [] [Const SI32 0])))
-                `shouldBe` Left (DataSegmentOutOfBounds 0)
+                `shouldBe` Left (NoMemory "data")
+        it "need a constant offset, which validation checks" $
+            void (elaborateModule (withData [RawData (Active [Const SI32 0, Const SI32 0]) "hi"] (singleFunctionModule [onePageMemory] [] [I32] [] [Const SI32 0])))
+                `shouldBe` Left (InvalidDataSegmentOffset 0)
 
     describe "bulk memory" $ do
         it "memory.fill then memory.copy" $
@@ -382,7 +395,7 @@ elabRunWithMemory = elabRunIn [onePageMemory]
 
 elabRunIn :: [RawMemory] -> [ValType] -> [ValType] -> [ValType] -> [RawInstr] -> [Integer] -> Either String [String]
 elabRunIn memories params results locals body args =
-    case elaborateModule (singleFunctionModule memories params results locals body) of
+    case load (singleFunctionModule memories params results locals body) of
         Left err -> Left (show err)
         Right sm -> invokeWithIntegers sm args
 
@@ -423,14 +436,24 @@ moduleOf memories funcs exported =
         , start = Nothing
         }
 
--- | Elaborate a module and run its export @f@ on integer arguments.
+-- | Validate and instantiate a module and run its export @f@ on integer arguments.
 elabRunModule :: RawModule -> [Integer] -> Either String [String]
-elabRunModule m args = case elaborateModule m of
+elabRunModule m args = case load m of
     Left err -> Left (show err)
     Right sm -> invokeWithIntegers sm args
 
+-- | Why a module could not be loaded: which stage rejected it, and why.
+data LoadError = Invalid ElabError | Uninstantiable InstantiationError
+    deriving stock (Eq, Show)
+
+-- | Validate, then instantiate.
+load :: RawModule -> Either LoadError SomeModuleInst
+load m = do
+    validated <- first Invalid (elaborateModule m)
+    first Uninstantiable (instantiate validated)
+
 -- | Invoke export @f@ on integer literals, typed by its parameters; render the results.
-invokeWithIntegers :: SomeModule -> [Integer] -> Either String [String]
+invokeWithIntegers :: SomeModuleInst -> [Integer] -> Either String [String]
 invokeWithIntegers sm args = do
     FuncType params _ <- maybe (Left "no export f") Right (exportSignature sm "f")
     let values = zipWith integerValue params args

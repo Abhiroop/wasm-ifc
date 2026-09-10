@@ -30,8 +30,27 @@ when there is a choice. Recorded as the signed-off override in `STYLE.md` §11 (
 
 Sequenced work packages. Each lands as separate commits gated on the `-Werror` build, `cabal test`,
 fourmolu, hlint and `samples/check.sh`. Items marked **[decision]** need Daniel's call first.
-**Status (2026-09-10):** P0, R1, R2, R4 and W0–W7 are done (WASI: 72/72 in the official wasi-testsuite; spec testsuite 21,510 assertions); R3 and R5 are done except the items
+**Status (2026-09-10):** O1–O4, P0, R1, R2, R4 and W0–W7 are done (WASI: 72/72 in the official wasi-testsuite; spec testsuite 23,298 assertions pass, 0 fail); R3 and R5 are done except the items
 marked **[decision]** and the ones that wait on a feature; open: `runFor` (G1), W7, and the decisions.
+
+### O — code organisation (2026-09-10, Daniel's top priority)
+
+- [x] **[O1·syntax]** `MemArg` is an immediate, not a type: moved with `Signedness`, `NumWithSign`
+  and `NarrowWidth` to `Syntax.Immediates`; `Syntax.Types` holds only types.
+- [x] **[O2·syntax]** One module per syntactic thing, raw and typed side by side: `Syntax.Module`
+  (`RawModule` + `Module shape`, with `RawImport`, `RawMemory`, `RawTable`, `RawData`, `RawElem`,
+  `Export`, and the typed `DataSegment`/`ElementSegment`), `Syntax.Functions` (`RawFunction` +
+  `Function`/`Functions`, with `FunctionBody`), `Syntax.Globals` (`RawGlobal` + `Global`/`Globals`).
+  The one-record modules `Expressions`, `Memories`, `Tables`, `Imports`, `DataSegments`,
+  `Elements` are gone. `RawExpr` lives with `RawInstr`.
+- [x] **[O3·syntax]** `Syntax.Indices` carries no commented-out code.
+- [x] **[O4·pipeline]** Validation and instantiation are separate stages with separate error types:
+  `Validation.Elaborate.elaborateModule :: RawModule -> Either ElabError SomeModule` only checks
+  (bodies, constants, segment offsets, indices, the start function's type);
+  `Runtime.Instantiate.instantiate :: SomeModule -> Either InstantiationError SomeModuleInst`
+  links imports, allocates from the shape, places segments and runs the start function. The
+  spec-suite runner now decides `assert_unlinkable` and `assert_uninstantiable`, and checks that
+  `assert_invalid`/`assert_malformed` modules are rejected by the stage the assertion names.
 
 ### P0 — spec violations found by audit probes (2026-09-09, each reproduced on a hand-written `.wat`)
 
@@ -160,6 +179,7 @@ go in after P0 and the spec runner exist to guard them.
 - [x] **[W0·decoder+runtime]** Active data segments: decode section 11 (`0x00 expr bytes`: memory
   0, constant `i32.const` offset; `fail` on passive and other forms) into `RawModule.dataSegments`;
   elaboration checks that offset + length fit the memory's minimum; instantiation writes the bytes.
+  (Since O4: validation checks the offset is a constant and a memory exists; fitting is instantiation's.)
 - [x] **[W1·decoder]** Import section: `Import {module, name, desc}` with `ImportDesc = ImportFunc
   TypeIdx`; `fail` on imported tables/memories/globals. The function index space is imports ++
   defined (calls and exports already index that space).
@@ -181,6 +201,7 @@ go in after P0 and the spec runner exist to guard them.
 - [x] **[W4·elaborate]** Imports: resolve `(wasi_snapshot_preview1, name)` to a `SomeWasiFunc`;
   `decideEquality` the declared type's singleton against the function's; require a memory; anything
   else is `UnsupportedImport`. `FuncInsts` = host entries first, then the defined functions.
+  (Since O4 this linking is `Runtime.Instantiate`'s; validation keeps an import as `Imported`.)
 - [x] **[W5·entry]** `wasm-ifc run file.wasm`: validate and run the start function if present, then
   the `_start` export through `runIO`; the process exit code is `proc_exit`'s. The existing
   `wasm-ifc file.wasm fn args…` stays pure and reports "module needs WASI; use run" on

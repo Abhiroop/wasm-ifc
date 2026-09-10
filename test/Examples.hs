@@ -18,8 +18,10 @@ module Examples (
 
 import Data.Word (Word32)
 
+import Data.Singletons.Base.TH (SList (SCons, SNil))
 import Runtime.Interpreter
 import Runtime.Stack
+import Syntax.Functions (Function (..))
 import Syntax.Immediates (NumWithSign (..), Signedness (..))
 import Syntax.Instructions
 import Syntax.Types (
@@ -28,6 +30,7 @@ import Syntax.Types (
     IsInt (..),
     IsNum (..),
     Mutability (..),
+    SValType (..),
     ValType (..),
  )
 import Validation.Shape (Elem (..), ModuleShape (..))
@@ -48,8 +51,7 @@ completedI32 (NeedsHost _) = Left "the example called into the host"
 
 factorial :: FuncInst shape ('FuncType '[ 'I32] '[ 'I32])
 factorial =
-    WasmFunc
-        (0 :& LNil)
+    WasmFunc . Function (SCons SI32 SNil) $
         ( IConst I32IsNum 1
             :. ILocalSet acc
             :. block_
@@ -98,10 +100,10 @@ runFactorial input =
 type CallCtx = 'ModuleShape '[ 'FuncType '[ 'I32, 'I32] '[ 'I32]] '[] '[] '[] '[]
 
 multiply :: FuncInst CallCtx ('FuncType '[ 'I32, 'I32] '[ 'I32])
-multiply = WasmFunc LNil (ILocalGet Here :. ILocalGet (There Here) :. IMul I32IsNum :. INil)
+multiply = WasmFunc . Function SNil $ (ILocalGet Here :. ILocalGet (There Here) :. IMul I32IsNum :. INil)
 
 square :: FuncInst CallCtx ('FuncType '[ 'I32] '[ 'I32])
-square = WasmFunc LNil (ILocalGet Here :. ILocalGet Here :. call toMultiply :. INil)
+square = WasmFunc . Function SNil $ (ILocalGet Here :. ILocalGet Here :. call toMultiply :. INil)
   where
     -- function index 0 in the module signature
     toMultiply :: Elem ('FuncType '[ 'I32, 'I32] '[ 'I32]) '[ 'FuncType '[ 'I32, 'I32] '[ 'I32]]
@@ -123,8 +125,7 @@ type GlobalCtx = 'ModuleShape '[] '[ 'GlobalType 'Mutable 'I32] '[] '[] '[]
 
 increment :: FuncInst GlobalCtx ('FuncType '[] '[ 'I32])
 increment =
-    WasmFunc
-        LNil
+    WasmFunc . Function SNil $
         ( IGlobalGet Here
             :. IConst I32IsNum 1
             :. IAdd I32IsNum
@@ -151,5 +152,5 @@ runIncrement initial = either (Left . show) completedI32 (runFunction globalModu
          In the first argument of ‘(:.)’, namely ‘IAdd I32IsNum’
 
    broken :: FuncInst shape ('FuncType '[ 'I32 ] '[ 'I32 ])
-   broken = WasmFunc LNil (ILocalGet Here :. IAdd I32IsNum :. INil)
+   broken = WasmFunc . Function SNil $ (ILocalGet Here :. IAdd I32IsNum :. INil)
 -}

@@ -93,6 +93,7 @@ library
       , Runtime.Stack
       , Runtime.Interpreter
       , Runtime.Module
+      , Runtime.Instantiate
       , Runtime.Host
       , Runtime.Wasi
       , Codec.Wasm
@@ -136,6 +137,7 @@ test-suite wasm-ifc-test
       , hspec          ^>=2.11
       , hedgehog       ^>=1.5
       , hspec-hedgehog ^>=0.3
+      , singletons-base ^>=3.5
 
 -- The official spec testsuite, driven through wabt's wast2json (skips itself when the tool
 -- or the submodule is missing).

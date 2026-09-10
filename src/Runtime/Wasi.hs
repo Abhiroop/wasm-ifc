@@ -102,7 +102,7 @@ import Runtime.Bytes (bytesOfWord32, bytesOfWord64, word32OfBytes, word64OfBytes
 import Runtime.Host (WasiFunc (..))
 import Runtime.Interpreter (HostRequest (..), currentMem, resumeWith, storeMem)
 import Runtime.MemInst (MemInst, readBytes, writeBytes)
-import Runtime.Module (Invocation (..), RunError, SomeHostRequest (..), SomeModule, Value, continueWith, invokeExport)
+import Runtime.Module (Invocation (..), RunError, SomeHostRequest (..), SomeModuleInst, Value, continueWith, invokeExport)
 import Runtime.Numeric (toSigned64)
 import Runtime.Stack (ValueStack (..))
 import Syntax.Types (FuncType (..), ValType (..))
@@ -941,14 +941,14 @@ data Subscription = ClockSubscription Clock | FdSubscription Word32 Word8
 
 -- | How a run under the WASI host ends: normally, with results, or through @proc_exit@.
 data Completion
-    = Ran SomeModule [Value]
+    = Ran SomeModuleInst [Value]
     | Exited Int
 
 {- | Invoke an export and serve every host call it makes until it returns or exits. Each
   request is performed against the module's memory, the memory is stored back, and the
   module resumes where it left off.
 -}
-runWithWasi :: WasiConfig -> SomeModule -> Text -> [Value] -> IO (Either RunError Completion)
+runWithWasi :: WasiConfig -> SomeModuleInst -> Text -> [Value] -> IO (Either RunError Completion)
 runWithWasi cfg wasmModule name args = do
     host <- newHost cfg
     let serve :: Either RunError Invocation -> IO (Either RunError Completion)

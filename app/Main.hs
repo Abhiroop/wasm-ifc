@@ -13,8 +13,10 @@ import System.Exit (ExitCode (..), die, exitSuccess, exitWith)
 import Text.Read (readMaybe)
 
 import Codec.Wasm (decodeModule)
-import Runtime.Module (RunError (..), SomeModule, Value (..), exportSignature, renderValue)
+import Runtime.Instantiate (instantiate)
+import Runtime.Module (RunError (..), SomeModuleInst, Value (..), exportSignature, renderValue)
 import Runtime.Wasi (Completion (..), Preopen (..), WasiConfig (..), runWithWasi)
+import Syntax.Module (SomeModule)
 import Syntax.Types (FuncType (..), ValType (..))
 import System.FilePath (takeFileName)
 import Validation.Elaborate (elaborateModule)
@@ -23,7 +25,7 @@ main :: IO ()
 main = do
     args <- getArgs
     case args of
-        ["check", path] -> withModule path (\_ -> putStrLn "ok")
+        ["check", path] -> withValidated path (\_ -> putStrLn "ok")
         ("invoke" : rest) -> case parseOptions rest of
             Right (options, path : name : rawArgs) ->
                 withModule path $ \wasmModule ->
@@ -44,7 +46,7 @@ usage :: String
 usage =
     unlines
         [ "Usage:"
-        , "  wasm-ifc check  <file.wasm>                              decode and validate"
+        , "  wasm-ifc check  <file.wasm>                              decode and validate (no instantiation)"
         , "  wasm-ifc invoke [options] <file.wasm> <export> [args...] run an exported function"
         , "  wasm-ifc run    [options] <file.wasm> [program args...]  run a WASI program (its _start export)"
         , ""
@@ -84,7 +86,7 @@ configFor options path programArgs =
         }
 
 -- | Invoke an export with the WASI host serving its calls; hand the results to the printer.
-runUnderWasi :: WasiConfig -> SomeModule -> Text -> [Value] -> ([Value] -> IO ()) -> IO ()
+runUnderWasi :: WasiConfig -> SomeModuleInst -> Text -> [Value] -> ([Value] -> IO ()) -> IO ()
 runUnderWasi cfg wasmModule name args printResults = do
     completion <- runWithWasi cfg wasmModule name args
     case completion of
@@ -93,25 +95,32 @@ runUnderWasi cfg wasmModule name args printResults = do
         Right (Exited 0) -> exitSuccess
         Right (Exited code) -> exitWith (ExitFailure code)
 
-{- | Decode and elaborate a module from disk, then hand it to the action. All the fallible
+{- | Decode and validate a module from disk, then hand it to the action. All the fallible
   work is a pure @Either String@; IO is only reading the file and printing. Any failure is
   reported and exits non-zero (via 'die').
 -}
-withModule :: FilePath -> (SomeModule -> IO ()) -> IO ()
-withModule path action = do
+withValidated :: FilePath -> (SomeModule -> IO ()) -> IO ()
+withValidated path action = do
     readResult <- try (BL.readFile path) :: IO (Either IOException BL.ByteString)
     case readResult of
         Left ioErr -> die ("Cannot read " ++ path ++ ": " ++ show ioErr)
         Right bytes -> case pipeline bytes of
             Left err -> die err
-            Right wasmModule -> action wasmModule
+            Right validated -> action validated
   where
     pipeline bytes = do
         raw <- first ("Decode error: " ++) (decodeModule bytes)
-        first (\e -> "Elaboration error: " ++ show e) (elaborateModule raw)
+        first (\e -> "Validation error: " ++ show e) (elaborateModule raw)
+
+-- | 'withValidated', then instantiate: the module ready to have an export invoked.
+withModule :: FilePath -> (SomeModuleInst -> IO ()) -> IO ()
+withModule path action = withValidated path $ \validated ->
+    case instantiate validated of
+        Left err -> die ("Instantiation error: " ++ show err)
+        Right wasmModule -> action wasmModule
 
 -- | Parse the textual arguments at the export's parameter types.
-parseArguments :: SomeModule -> Text -> [Text] -> Either String [Value]
+parseArguments :: SomeModuleInst -> Text -> [Text] -> Either String [Value]
 parseArguments wasmModule name rawArgs = do
     FuncType params _ <- maybe (Left ("no exported function named " ++ T.unpack name)) Right (exportSignature wasmModule name)
     unless (length params == length rawArgs) $

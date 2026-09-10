@@ -22,6 +22,7 @@ module Runtime.Stack (
     ValueStack (..),
     LocalInsts (..),
     GlobalInsts (..),
+    initialGlobals,
     MemInsts (..),
     TableInsts (..),
     firstTable,
@@ -32,6 +33,7 @@ module Runtime.Stack (
     appendWith,
     splitStack,
     reverseOnto,
+    defaultLocals,
     getLocal,
     setLocal,
     getGlobal,
@@ -44,10 +46,12 @@ import Data.ByteString (ByteString)
 import Data.Kind (Type)
 
 import Data.List.Singletons (type (++))
+import Data.Singletons.Base.TH (SList (SCons, SNil), Sing)
 import Runtime.MemInst (MemInst)
 import Runtime.TableInst (TableInst)
+import Syntax.Globals (Global (..), Globals (..))
 import Syntax.Immediates (HostType)
-import Syntax.Types (FuncType, GlobalType (..), ValType)
+import Syntax.Types
 import Validation.Shape (Append (..), DataShape (..), Elem (..), MemShape, ReverseOnto, TableShape)
 
 -- | The operand stack (head = top of stack), indexed by the types it holds.
@@ -100,6 +104,17 @@ reverseOnto VNil acc = acc
 -- recovered from the value @x@ alone when it is pushed onto the locals.
 reverseOnto ((:#) @t x xs) acc = reverseOnto xs ((:&) @t x acc)
 
+-- | A locals frame of the given shape, every slot zero (how declared locals start a call).
+defaultLocals :: Sing (ls :: [ValType]) -> LocalInsts ls
+defaultLocals SNil = LNil
+defaultLocals (SCons st rest) = zeroOf st :& defaultLocals rest
+  where
+    zeroOf :: Sing (t :: ValType) -> HostType t
+    zeroOf SI32 = 0
+    zeroOf SI64 = 0
+    zeroOf SF32 = 0
+    zeroOf SF64 = 0
+
 getLocal :: Elem t ls -> LocalInsts ls -> HostType t
 getLocal Here (x :& _) = x
 getLocal (There ix) (_ :& rest) = getLocal ix rest
@@ -107,6 +122,11 @@ getLocal (There ix) (_ :& rest) = getLocal ix rest
 setLocal :: Elem t ls -> HostType t -> LocalInsts ls -> LocalInsts ls
 setLocal Here v (_ :& rest) = v :& rest
 setLocal (There ix) v (x :& rest) = x :& setLocal ix v rest
+
+-- | The globals as a module starts: each at its validated initial value.
+initialGlobals :: Globals gs -> GlobalInsts gs
+initialGlobals GlobalsNil = GNil
+initialGlobals (GlobalsCons (Global value) rest) = GCons value (initialGlobals rest)
 
 getGlobal :: Elem ('GlobalType mut t) gs -> GlobalInsts gs -> HostType t
 getGlobal Here (GCons x _) = x

@@ -22,8 +22,6 @@ module Validation.Elaborate (
 ) where
 
 import Control.Monad (foldM, when)
-import Data.Bifunctor (first)
-import Data.ByteString qualified as BS
 import Data.Text (Text)
 import Data.Type.Equality ((:~:) (Refl))
 import Data.Word (Word32)
@@ -32,15 +30,9 @@ import Data.List.Singletons ((%++))
 import Data.Singletons (SomeSing (..), toSing)
 import Data.Singletons.Base.TH (SList (SCons, SNil), Sing, fromSing)
 import Data.Singletons.Decide (decideEquality)
-import Runtime.Host (SomeWasiFunc (..), resolveWasiImport, wasiFuncType, wasiModuleName)
-import Runtime.Interpreter (FuncInst (..), FuncInsts (..), ModuleInst (..), Outcome (..), getFunc, runFunction)
-import Runtime.MemInst (allocMemory, maxMemoryPages, writeBytes)
-import Runtime.Module (SomeModule (..))
-import Runtime.Stack (DataInsts (..), GlobalInsts (..), LocalInsts (..), MemInsts (..), TableInsts (..), ValueStack (..))
-import Runtime.TableInst (allocTable, setTableEntries)
-import Runtime.Trap (Trap)
-import Syntax.Functions (RawFunction (RawFunction))
-import Syntax.Globals (RawGlobal (RawGlobal))
+import Runtime.MemInst (maxMemoryPages)
+import Syntax.Functions (Function (..), Functions (..), RawFunction (RawFunction))
+import Syntax.Globals (Global (..), Globals (..), RawGlobal (RawGlobal))
 import Syntax.Immediates
 import Syntax.Indices (DataIdx (..), FunctionIdx (..), GlobalIdx (..), LabelIdx (..), LocalIdx (..), MemoryIdx (..), TableIdx (..), TypeIdx (..))
 import Syntax.Instructions (
@@ -72,7 +64,7 @@ data ElabError
       StackMismatch Text [ValType] [ValType]
     | -- | the instruction's operand type is not of the kind it requires
       WrongOperandKind OperandKind ValType
-    | -- | a memory instruction in a module that declares no memory
+    | -- | a memory instruction, or an active data segment, in a module without a memory
       NoMemory Text
     | -- | a memory access whose alignment exponent exceeds its width in bytes
       Misaligned Word32 Int
@@ -94,11 +86,11 @@ data ElabError
       InvalidGlobalInitializer Word32
     | -- | sections whose lengths disagree
       Malformed Text
-    | -- | a data segment does not fit in memory 0 (or there is no memory)
-      DataSegmentOutOfBounds Int
-    | -- | an element segment does not fit in table 0 (or there is no table)
-      ElementSegmentOutOfBounds Int
-    | -- | @call_indirect@ in a module that declares no table
+    | -- | an active data segment's offset is not a single @i32.const@
+      InvalidDataSegmentOffset Int
+    | -- | an element segment's offset is not a single @i32.const@
+      InvalidElementSegmentOffset Int
+    | -- | @call_indirect@, or an element segment, in a module without a table
       NoTable Text
     | -- | a table's limits are not well-formed
       InvalidTableLimits Limits
@@ -110,16 +102,6 @@ data ElabError
       DuplicateExport Text
     | -- | the start function is not of type @[] -> []@
       InvalidStartFunction
-    | -- | the start function trapped, so instantiation failed
-      StartFunctionTrapped Trap
-    | -- | the start function called into the host, which instantiation cannot serve
-      StartFunctionNeedsHost
-    | -- | an import (module, name) this host does not provide
-      UnsupportedImport Text Text
-    | -- | the import's declared type is not the host function's
-      ImportTypeMismatch Text
-    | -- | a WASI import requires the module to have a memory
-      WasiNeedsMemory
     deriving stock (Eq, Show)
 
 -- | The sub-category an instruction requires its operand type to belong to.
@@ -859,22 +841,22 @@ unStack (PolyStack xs) = xs
 
 -- *** Whole-module elaboration ***
 
-{- | Type-check and instantiate an entire decoded module: check its structure, build its
-  signature, elaborate every function against it, assemble the typed functions, initial
-  globals and memories, copy the data segments in, and run the start function.
+{- | Type-check an entire decoded module: check its structure, build its shape, elaborate
+  every function against it, evaluate the global initializers and segment offsets, resolve
+  the element segments' and start function's indices. The result is a validated 'Module';
+  "Runtime.Instantiate" turns it into a running instance.
 -}
 elaborateModule :: RawModule -> Either ElabError SomeModule
 elaborateModule m = do
     validateStructure m
     case reflectCtx funcSigs globalTypes memTypes tableLimits (length m.dataSegments) of
-        SomeModuleShape ctxS@(SModuleShape ftsS gsS msS tsS dsS) -> do
-            funcs <- elaborateFuncs ctxS (m.types) ftsS (map Left m.imports ++ map Right m.funcs)
-            globals <- buildGlobals gsS (m.globals)
-            mems <- buildMems msS (m.memories) >>= initialiseData (m.dataSegments)
-            tables <- buildTables tsS (m.tables) >>= initialiseElements ftsS (m.elements)
-            dataSegments <- buildData dsS (m.dataSegments)
-            started <- runStart ctxS (ModuleInst {funcs, globals, mems, tables, dataSegments}) (m.start)
-            Right (SomeModule ctxS started (m.exports))
+        SomeModuleShape ctxS@(SModuleShape ftsS gsS msS tsS _) -> do
+            functions <- elaborateFuncs ctxS (m.types) ftsS (map Left m.imports ++ map Right m.funcs)
+            globals <- elaborateGlobals gsS (m.globals)
+            dataSegments <- traverse (elaborateData (memsNonEmpty msS)) (zip [0 ..] m.dataSegments)
+            elements <- traverse (elaborateElements ftsS (tablesNonEmpty tsS)) (zip [0 ..] m.elements)
+            start <- traverse (resolveStart ftsS) (m.start)
+            Right (SomeModule ctxS (Module {functions, globals, dataSegments, elements, exports = m.exports, start}))
   where
     tableLimits = [t.limits | t <- m.tables]
     -- The function index space: imports first, then the module's own functions.
@@ -913,81 +895,60 @@ validateStructure m = do
         | fromIntegral i < count = Right ()
         | otherwise = Left (IndexOutOfRange space i)
 
--- | Run the start function, if there is one, as the last step of instantiation.
-runStart :: SModuleShape shape -> ModuleInst shape -> Maybe FunctionIdx -> Either ElabError (ModuleInst shape)
-runStart _ inst Nothing = Right inst
-runStart ctxS inst (Just (FunctionIdx idx)) = case lookupFuncRef (funcTypesSing ctxS) idx of
-    Nothing -> Left (IndexOutOfRange Functions idx)
-    Just (SomeFuncRef psS rsS funcIx) -> do
-        Refl <- note InvalidStartFunction (decideEquality psS SNil)
-        Refl <- note InvalidStartFunction (decideEquality rsS SNil)
-        outcome <- first StartFunctionTrapped (runFunction inst (getFunc funcIx inst.funcs) VNil)
-        case outcome of
-            Completed started _ -> Right started
-            NeedsHost _ -> Left StartFunctionNeedsHost
+-- | The start function must exist and take and return nothing.
+resolveStart :: Sing (fts :: [FuncType]) -> FunctionIdx -> Either ElabError (Elem ('FuncType '[] '[]) fts)
+resolveStart ftsS (FunctionIdx idx) = do
+    SomeFuncRef psS rsS funcIx <- note (IndexOutOfRange Functions idx) (lookupFuncRef ftsS idx)
+    Refl <- note InvalidStartFunction (decideEquality psS SNil)
+    Refl <- note InvalidStartFunction (decideEquality rsS SNil)
+    Right funcIx
 
-{- | The function instances, one per entry of the index space: imports resolve to host
-functions, the module's own functions are elaborated.
+{- | The functions, one per entry of the index space: an import is kept by name (linking is
+  instantiation's job), a defined function is elaborated.
 -}
 elaborateFuncs ::
     SModuleShape shape ->
     [FuncType] ->
     Sing fts ->
     [Either RawImport RawFunction] ->
-    Either ElabError (FuncInsts shape fts)
-elaborateFuncs _ _ SNil [] = Right FsNil
+    Either ElabError (Functions shape fts)
+elaborateFuncs _ _ SNil [] = Right FunctionsNil
 elaborateFuncs ctxS types (SCons ft fs) (entry : rest) = do
-    f <- either (resolveImport ctxS ft) (elaborateFunctionIn ctxS types ft) entry
     fs' <- elaborateFuncs ctxS types fs rest
-    Right (FsCons f fs')
+    case entry of
+        Left (RawImport moduleName fieldName (ImportFunc _)) -> Right (Imported moduleName fieldName fs')
+        Right f -> (`Defined` fs') <$> elaborateFunctionIn ctxS types ft f
 elaborateFuncs _ _ _ _ = Left (Malformed "function/signature count mismatch")
-
-{- | Resolve an import to a host function: it must come from the WASI module, be one we
-  provide, be declared at exactly the host function's type, and the module must have a
-  memory (WASI requires one, and 'HostFunc' cannot be built without it).
--}
-resolveImport :: SModuleShape shape -> SFuncType ft -> RawImport -> Either ElabError (FuncInst shape ft)
-resolveImport ctxS (SFuncType psS rsS) (RawImport moduleName fieldName (ImportFunc _))
-    | moduleName /= wasiModuleName = Left (UnsupportedImport moduleName fieldName)
-    | otherwise = case resolveWasiImport fieldName of
-        Nothing -> Left (UnsupportedImport moduleName fieldName)
-        Just (SomeWasiFunc wasiFunc) -> case wasiFuncType wasiFunc of
-            SFuncType hostPsS hostRsS -> do
-                Refl <- note (ImportTypeMismatch fieldName) (decideEquality psS hostPsS)
-                Refl <- note (ImportTypeMismatch fieldName) (decideEquality rsS hostRsS)
-                NonEmptyMems <- note WasiNeedsMemory (memsNonEmpty (memShapesSing ctxS))
-                Right (HostFunc wasiFunc)
 
 elaborateFunctionIn ::
     SModuleShape shape ->
     [FuncType] ->
     SFuncType ft ->
     RawFunction ->
-    Either ElabError (FuncInst shape ft)
+    Either ElabError (Function shape ft)
 elaborateFunctionIn ctxS types (SFuncType psS rsS) (RawFunction _ declaredT body) =
     case reflectStack declaredT of
         SomeStack declS ->
             let env = ElabEnv ctxS types rsS (sReverseOnto psS declS) (SCons rsS SNil)
-                defaults = defaultLocals declS
              in do
                     elaborated <- elabSeq env SNil body
                     case elaborated of
                         Reachable soS bodySeq -> do
                             Refl <- note (ResultMismatch (stackToList rsS) (stackToList soS)) (decideEquality soS rsS)
-                            Right (WasmFunc defaults bodySeq)
+                            Right (Function declS bodySeq)
                         Diverged final poly -> do
                             checkDeadResult final rsS
-                            Right (WasmFunc defaults poly)
+                            Right (Function declS poly)
 
-buildGlobals :: Sing gs -> [RawGlobal] -> Either ElabError (GlobalInsts gs)
-buildGlobals = go 0
+elaborateGlobals :: Sing gs -> [RawGlobal] -> Either ElabError (Globals gs)
+elaborateGlobals = go 0
   where
-    go :: Word32 -> Sing gs -> [RawGlobal] -> Either ElabError (GlobalInsts gs)
-    go _ SNil [] = Right GNil
+    go :: Word32 -> Sing gs -> [RawGlobal] -> Either ElabError (Globals gs)
+    go _ SNil [] = Right GlobalsNil
     go index (SCons (SGlobalType _ sn) gs) (RawGlobal _ initExpr : rest) = do
         value <- evalConstInit (InvalidGlobalInitializer index) sn initExpr
         rest' <- go (index + 1) gs rest
-        Right (GCons value rest')
+        Right (GlobalsCons (Global value) rest')
     go _ _ _ = Left (Malformed "global/type count mismatch")
 
 -- | A constant expression of the given type: exactly one constant instruction.
@@ -997,71 +958,22 @@ evalConstInit invalid sn [Const st literal] = case decideEquality st sn of
     Nothing -> Left invalid
 evalConstInit invalid _ _ = Left invalid
 
-{- | Build the runtime memories matching the module's declared memory shapes, each allocated
-  at its minimum page count.
+-- | An active data segment needs a memory to land in and a constant @i32@ offset.
+elaborateData :: Maybe (NonEmptyMems ms) -> (Int, RawData) -> Either ElabError DataSegment
+elaborateData mems (index, RawData mode bytes) = case mode of
+    Passive -> Right (DataSegment Nothing bytes)
+    Active offsetExpr -> do
+        NonEmptyMems <- note (NoMemory "data") mems
+        offset <- evalConstInit (InvalidDataSegmentOffset index) SI32 offsetExpr
+        Right (DataSegment (Just offset) bytes)
+
+{- | An element segment needs a table to land in, a constant @i32@ offset, and functions that
+  exist: each index is resolved to a typed reference ('SomeFuncRef'), so a table only ever
+  holds real functions.
 -}
-buildMems :: Sing ms -> [RawMemory] -> Either ElabError (MemInsts ms)
-buildMems SNil [] = Right MNil
-buildMems (SCons _ rest) (RawMemory (MemType _ declared) : rms) =
-    MCons (allocMemory declared) <$> buildMems rest rms
-buildMems _ _ = Left (Malformed "memory/type count mismatch")
-
-{- | Copy the active data segments into memory 0, in order (passive ones wait for
-  @memory.init@). A segment that does not fit is the spec's instantiation failure; here that is
-  an elaboration error, since instantiation happens here.
--}
-initialiseData :: [RawData] -> MemInsts ms -> Either ElabError (MemInsts ms)
-initialiseData segments mems = case (mems, [(i, e, bytes) | (i, RawData (Active e) bytes) <- zip [0 ..] segments]) of
-    (_, []) -> Right mems
-    (MCons mem rest, active) -> do
-        mem' <- foldM copySegment mem active
-        Right (MCons mem' rest)
-    (MNil, (index, _, _) : _) -> Left (DataSegmentOutOfBounds index)
-  where
-    copySegment current (index, offsetExpr, payload) = do
-        offset <- evalConstInit (DataSegmentOutOfBounds index) SI32 offsetExpr
-        note (DataSegmentOutOfBounds index) (writeBytes current (fromIntegral offset) (BS.unpack payload))
-
-{- | The data segments as @memory.init@ will find them: passive ones keep their bytes, active
-  ones are already dropped (instantiation copied them).
--}
-buildData :: Sing ds -> [RawData] -> Either ElabError (DataInsts ds)
-buildData SNil [] = Right DNil
-buildData (SCons SDataShape rest) (RawData mode bytes : rds) = DCons available <$> buildData rest rds
-  where
-    available = case mode of
-        Passive -> Just bytes
-        Active _ -> Nothing
-buildData _ _ = Left (Malformed "data segment count mismatch")
-
--- | The runtime tables matching the module's declared table shapes, every entry uninitialised.
-buildTables :: Sing ts -> [RawTable] -> Either ElabError (TableInsts fts ts)
-buildTables SNil [] = Right TNil
-buildTables (SCons _ rest) (RawTable declared : rts) = TCons (allocTable declared) <$> buildTables rest rts
-buildTables _ _ = Left (Malformed "table/type count mismatch")
-
-{- | Place the element segments' functions into table 0, in order. Each function index is
-  resolved to a typed reference ('SomeFuncRef'), so the table only ever holds real functions.
--}
-initialiseElements :: Sing (fts :: [FuncType]) -> [RawElem] -> TableInsts fts ts -> Either ElabError (TableInsts fts ts)
-initialiseElements _ [] tables = Right tables
-initialiseElements ftsS segments (TCons table rest) = do
-    table' <- foldM placeSegment table (zip [0 ..] segments)
-    Right (TCons table' rest)
-  where
-    placeSegment current (index, RawElem offsetExpr functions) = do
-        offset <- evalConstInit (ElementSegmentOutOfBounds index) SI32 offsetExpr
-        refs <- traverse (\(FunctionIdx f) -> note (IndexOutOfRange Functions f) (lookupFuncRef ftsS f)) functions
-        note (ElementSegmentOutOfBounds index) (setTableEntries offset refs current)
-initialiseElements _ (_ : _) TNil = Left (ElementSegmentOutOfBounds 0)
-
--- | Zero-initialise a locals frame of the given shape.
-defaultLocals :: Sing ds -> LocalInsts ds
-defaultLocals SNil = LNil
-defaultLocals (SCons sn ds) = zeroOf sn :& defaultLocals ds
-
-zeroOf :: Sing (n :: ValType) -> HostType n
-zeroOf SI32 = 0
-zeroOf SI64 = 0
-zeroOf SF32 = 0
-zeroOf SF64 = 0
+elaborateElements :: Sing (fts :: [FuncType]) -> Maybe (NonEmptyTables ts) -> (Int, RawElem) -> Either ElabError (ElementSegment fts)
+elaborateElements ftsS tables (index, RawElem offsetExpr functions) = do
+    NonEmptyTables <- note (NoTable "elem") tables
+    offset <- evalConstInit (InvalidElementSegmentOffset index) SI32 offsetExpr
+    refs <- traverse (\(FunctionIdx f) -> note (IndexOutOfRange Functions f) (lookupFuncRef ftsS f)) functions
+    Right (ElementSegment offset refs)
