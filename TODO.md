@@ -51,6 +51,17 @@ marked **[decision]** and the ones that wait on a feature; open: `runFor` (G1), 
   links imports, allocates from the shape, places segments and runs the start function. The
   spec-suite runner now decides `assert_unlinkable` and `assert_uninstantiable`, and checks that
   `assert_invalid`/`assert_malformed` modules are rejected by the stage the assertion names.
+- [x] **[O5·naming]** Distinct words for distinct concepts (Daniel: `Function` vs `Functions` are
+  one letter apart; `RawData` does not match `DataSegment`). "One entry per member of an index
+  space" is now a *space*: `FunctionSpace` (`NoFunctions`/`Defined`/`Imported`), `GlobalSpace`
+  (`NoGlobals`/`Declared`) in Syntax; `FuncSpaceInst`, `GlobalSpaceInst`, `MemSpaceInst`,
+  `TableSpaceInst`, `DataSpaceInst`, `LocalSpaceInst` in Runtime (each the instance of one index
+  space, next to the singular `FuncInst`/`MemInst`/`TableInst`). Raw segments are named after their
+  typed forms: `RawDataSegment`/`DataSegment`, `RawElementSegment`/`ElementSegment`. The module
+  records agree on field names: `functions`, `globals`, `memories`, `tables`, `dataSegments`,
+  `elementSegments` in `RawModule`, `Module` and `ModuleInst`/`Store`. Left as they are, being the
+  spec's own nonterminals: `FuncType`, `FuncInst`, `MemType`, `MemShape`, `MemInst`, `MemArg`,
+  `ModuleFuncs`/`ModuleMems`.
 
 ### P0 — spec violations found by audit probes (2026-09-09, each reproduced on a hand-written `.wat`)
 

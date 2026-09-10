@@ -31,8 +31,8 @@ import Data.Singletons (SomeSing (..), toSing)
 import Data.Singletons.Base.TH (SList (SCons, SNil), Sing, fromSing)
 import Data.Singletons.Decide (decideEquality)
 import Runtime.MemInst (maxMemoryPages)
-import Syntax.Functions (Function (..), Functions (..), RawFunction (RawFunction))
-import Syntax.Globals (Global (..), Globals (..), RawGlobal (RawGlobal))
+import Syntax.Functions (Function (..), FunctionSpace (..), RawFunction (RawFunction))
+import Syntax.Globals (Global (..), GlobalSpace (..), RawGlobal (RawGlobal))
 import Syntax.Immediates
 import Syntax.Indices (DataIdx (..), FunctionIdx (..), GlobalIdx (..), LabelIdx (..), LocalIdx (..), MemoryIdx (..), TableIdx (..), TypeIdx (..))
 import Syntax.Instructions (
@@ -851,16 +851,16 @@ elaborateModule m = do
     validateStructure m
     case reflectCtx funcSigs globalTypes memTypes tableLimits (length m.dataSegments) of
         SomeModuleShape ctxS@(SModuleShape ftsS gsS msS tsS _) -> do
-            functions <- elaborateFuncs ctxS (m.types) ftsS (map Left m.imports ++ map Right m.funcs)
+            functions <- elaborateFuncs ctxS (m.types) ftsS (map Left m.imports ++ map Right m.functions)
             globals <- elaborateGlobals gsS (m.globals)
             dataSegments <- traverse (elaborateData (memsNonEmpty msS)) (zip [0 ..] m.dataSegments)
-            elements <- traverse (elaborateElements ftsS (tablesNonEmpty tsS)) (zip [0 ..] m.elements)
+            elementSegments <- traverse (elaborateElements ftsS (tablesNonEmpty tsS)) (zip [0 ..] m.elementSegments)
             start <- traverse (resolveStart ftsS) (m.start)
-            Right (SomeModule ctxS (Module {functions, globals, dataSegments, elements, exports = m.exports, start}))
+            Right (SomeModule ctxS (Module {functions, globals, dataSegments, elementSegments, exports = m.exports, start}))
   where
     tableLimits = [t.limits | t <- m.tables]
     -- The function index space: imports first, then the module's own functions.
-    funcSigs = [ft | RawImport _ _ (ImportFunc ft) <- m.imports] ++ map (\(RawFunction sig _ _) -> sig) (m.funcs)
+    funcSigs = [ft | RawImport _ _ (ImportFunc ft) <- m.imports] ++ map (\(RawFunction sig _ _) -> sig) (m.functions)
     globalTypes = map (\(RawGlobal gt _) -> gt) (m.globals)
     memTypes = map (\(RawMemory mt) -> mt) (m.memories)
 
@@ -887,7 +887,7 @@ validateStructure m = do
         [] -> Right ()
         n : _ -> Left (DuplicateExport n)
     checkExport (Export _ desc) = case desc of
-        ExportFunc (FunctionIdx i) -> inRange Functions i (length m.imports + length m.funcs)
+        ExportFunc (FunctionIdx i) -> inRange Functions i (length m.imports + length m.functions)
         ExportGlobal (GlobalIdx i) -> inRange Globals i (length m.globals)
         ExportMem (MemoryIdx i) -> inRange Memories i (length m.memories)
         ExportTable (TableIdx i) -> inRange Tables i (length m.tables)
@@ -911,8 +911,8 @@ elaborateFuncs ::
     [FuncType] ->
     Sing fts ->
     [Either RawImport RawFunction] ->
-    Either ElabError (Functions shape fts)
-elaborateFuncs _ _ SNil [] = Right FunctionsNil
+    Either ElabError (FunctionSpace shape fts)
+elaborateFuncs _ _ SNil [] = Right NoFunctions
 elaborateFuncs ctxS types (SCons ft fs) (entry : rest) = do
     fs' <- elaborateFuncs ctxS types fs rest
     case entry of
@@ -940,15 +940,15 @@ elaborateFunctionIn ctxS types (SFuncType psS rsS) (RawFunction _ declaredT body
                             checkDeadResult final rsS
                             Right (Function declS poly)
 
-elaborateGlobals :: Sing gs -> [RawGlobal] -> Either ElabError (Globals gs)
+elaborateGlobals :: Sing gs -> [RawGlobal] -> Either ElabError (GlobalSpace gs)
 elaborateGlobals = go 0
   where
-    go :: Word32 -> Sing gs -> [RawGlobal] -> Either ElabError (Globals gs)
-    go _ SNil [] = Right GlobalsNil
+    go :: Word32 -> Sing gs -> [RawGlobal] -> Either ElabError (GlobalSpace gs)
+    go _ SNil [] = Right NoGlobals
     go index (SCons (SGlobalType _ sn) gs) (RawGlobal _ initExpr : rest) = do
         value <- evalConstInit (InvalidGlobalInitializer index) sn initExpr
         rest' <- go (index + 1) gs rest
-        Right (GlobalsCons (Global value) rest')
+        Right (Declared (Global value) rest')
     go _ _ _ = Left (Malformed "global/type count mismatch")
 
 -- | A constant expression of the given type: exactly one constant instruction.
@@ -959,8 +959,8 @@ evalConstInit invalid sn [Const st literal] = case decideEquality st sn of
 evalConstInit invalid _ _ = Left invalid
 
 -- | An active data segment needs a memory to land in and a constant @i32@ offset.
-elaborateData :: Maybe (NonEmptyMems ms) -> (Int, RawData) -> Either ElabError DataSegment
-elaborateData mems (index, RawData mode bytes) = case mode of
+elaborateData :: Maybe (NonEmptyMems ms) -> (Int, RawDataSegment) -> Either ElabError DataSegment
+elaborateData mems (index, RawDataSegment mode bytes) = case mode of
     Passive -> Right (DataSegment Nothing bytes)
     Active offsetExpr -> do
         NonEmptyMems <- note (NoMemory "data") mems
@@ -971,8 +971,8 @@ elaborateData mems (index, RawData mode bytes) = case mode of
   exist: each index is resolved to a typed reference ('SomeFuncRef'), so a table only ever
   holds real functions.
 -}
-elaborateElements :: Sing (fts :: [FuncType]) -> Maybe (NonEmptyTables ts) -> (Int, RawElem) -> Either ElabError (ElementSegment fts)
-elaborateElements ftsS tables (index, RawElem offsetExpr functions) = do
+elaborateElements :: Sing (fts :: [FuncType]) -> Maybe (NonEmptyTables ts) -> (Int, RawElementSegment) -> Either ElabError (ElementSegment fts)
+elaborateElements ftsS tables (index, RawElementSegment offsetExpr functions) = do
     NonEmptyTables <- note (NoTable "elem") tables
     offset <- evalConstInit (InvalidElementSegmentOffset index) SI32 offsetExpr
     refs <- traverse (\(FunctionIdx f) -> note (IndexOutOfRange Functions f) (lookupFuncRef ftsS f)) functions

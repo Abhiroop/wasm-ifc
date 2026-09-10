@@ -5,15 +5,15 @@
 
 {- | Functions, in their two forms: 'RawFunction' as decoded (the binary's function and code
   sections merged), and 'Function' as validated — its body an intrinsically-typed 'Expr'
-  against its signature. 'Functions' lists a module's functions in index order, imported ones
-  included: an import has a type and a name, and is linked to a host function only when the
-  module is instantiated.
+  against its signature. A module's 'FunctionSpace' is its function index space: every
+  function in index order, imported ones included (an import has a type and a name, and is
+  linked to a host function only when the module is instantiated).
 -}
 module Syntax.Functions (
     RawFunction (..),
     FunctionBody,
     Function (..),
-    Functions (..),
+    FunctionSpace (..),
 ) where
 
 import Data.Singletons (Sing)
@@ -50,9 +50,9 @@ data Function (mod :: ModuleShape) (ft :: FuncType) where
         FunctionBody mod (ReverseOnto ps declared) rs ->
         Function mod ('FuncType ps rs)
 
--- | A module's functions, one per entry of its function index space.
-data Functions (mod :: ModuleShape) (fts :: [FuncType]) where
-    FunctionsNil :: Functions mod '[]
-    Defined :: Function mod ft -> Functions mod fts -> Functions mod (ft ': fts)
+-- | A module's function index space: one entry per function type in the shape.
+data FunctionSpace (mod :: ModuleShape) (fts :: [FuncType]) where
+    NoFunctions :: FunctionSpace mod '[]
+    Defined :: Function mod ft -> FunctionSpace mod fts -> FunctionSpace mod (ft ': fts)
     -- | an import: the module and name it comes from; its type is the entry's
-    Imported :: Text -> Text -> Functions mod fts -> Functions mod (ft ': fts)
+    Imported :: Text -> Text -> FunctionSpace mod fts -> FunctionSpace mod (ft ': fts)

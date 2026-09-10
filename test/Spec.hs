@@ -38,7 +38,7 @@ import Syntax.Globals (RawGlobal (..))
 import Syntax.Immediates
 import Syntax.Indices
 import Syntax.Instructions
-import Syntax.Module (DataMode (..), Export (..), ExportDesc (..), ImportDesc (..), RawData (..), RawElem (..), RawImport (..), RawMemory (..), RawModule (..), RawTable (..))
+import Syntax.Module (DataMode (..), Export (..), ExportDesc (..), ImportDesc (..), RawDataSegment (..), RawElementSegment (..), RawImport (..), RawMemory (..), RawModule (..), RawTable (..))
 import Syntax.Types
 import Validation.Elaborate (ElabError (..), IndexSpace (..), elaborateModule)
 
@@ -107,10 +107,10 @@ spec = do
             void (elaborateModule (singleFunctionModule [] [] [I32] [] [Const SI32 0, CallIndirect (TypeIdx 0)]))
                 `shouldBe` Left (NoTable "call_indirect")
         it "reject an element segment that does not fit" $
-            void (load ((tableModule [Const SI32 0]) {elements = [RawElem [Const SI32 2] [FunctionIdx 0, FunctionIdx 0]]}))
+            void (load ((tableModule [Const SI32 0]) {elementSegments = [RawElementSegment [Const SI32 2] [FunctionIdx 0, FunctionIdx 0]]}))
                 `shouldBe` Left (Uninstantiable (ElementSegmentOutOfBounds 0))
         it "reject an element segment in a module without a table at validation" $
-            void (elaborateModule ((singleFunctionModule [] [] [] [] []) {elements = [RawElem [Const SI32 0] [FunctionIdx 0]]}))
+            void (elaborateModule ((singleFunctionModule [] [] [] [] []) {elementSegments = [RawElementSegment [Const SI32 0] [FunctionIdx 0]]}))
                 `shouldBe` Left (NoTable "elem")
 
     describe "WASI imports" $ do
@@ -176,16 +176,16 @@ spec = do
 
     describe "data segments" $ do
         it "are copied into memory at instantiation" $
-            elabRunModule (withData [RawData (Active [Const SI32 8]) "hi"] (singleFunctionModule [onePageMemory] [] [I32] [] [Const SI32 9, LoadN SI32 1 Unsigned (MemArg 0 0)])) []
+            elabRunModule (withData [RawDataSegment (Active [Const SI32 8]) "hi"] (singleFunctionModule [onePageMemory] [] [I32] [] [Const SI32 9, LoadN SI32 1 Unsigned (MemArg 0 0)])) []
                 `shouldBe` Right ["105"]
         it "must fit in the memory" $
-            void (load (withData [RawData (Active [Const SI32 65535]) "hi"] (singleFunctionModule [onePageMemory] [] [I32] [] [Const SI32 0])))
+            void (load (withData [RawDataSegment (Active [Const SI32 65535]) "hi"] (singleFunctionModule [onePageMemory] [] [I32] [] [Const SI32 0])))
                 `shouldBe` Left (Uninstantiable (DataSegmentOutOfBounds 0))
         it "need a memory to land in, which validation checks" $
-            void (elaborateModule (withData [RawData (Active [Const SI32 0]) "hi"] (singleFunctionModule [] [] [I32] [] [Const SI32 0])))
+            void (elaborateModule (withData [RawDataSegment (Active [Const SI32 0]) "hi"] (singleFunctionModule [] [] [I32] [] [Const SI32 0])))
                 `shouldBe` Left (NoMemory "data")
         it "need a constant offset, which validation checks" $
-            void (elaborateModule (withData [RawData (Active [Const SI32 0, Const SI32 0]) "hi"] (singleFunctionModule [onePageMemory] [] [I32] [] [Const SI32 0])))
+            void (elaborateModule (withData [RawDataSegment (Active [Const SI32 0, Const SI32 0]) "hi"] (singleFunctionModule [onePageMemory] [] [I32] [] [Const SI32 0])))
                 `shouldBe` Left (InvalidDataSegmentOffset 0)
 
     describe "bulk memory" $ do
@@ -199,10 +199,10 @@ spec = do
             elabRunWithMemory [] [I32] [] [Const SI32 1, Const SI32 0xAA, Const SI32 0xFFFFFFFF, MemoryFill, Const SI32 0] []
                 `shouldSatisfy` trapContaining "OutOfBoundsMemoryAccess"
         it "memory.init copies from a passive segment" $
-            elabRunModule (withData [RawData Passive "xyz"] (singleFunctionModule [onePageMemory] [] [I32] [] [Const SI32 10, Const SI32 1, Const SI32 2, MemoryInit (DataIdx 0), Const SI32 10, LoadN SI32 1 Unsigned (MemArg 0 0)])) []
+            elabRunModule (withData [RawDataSegment Passive "xyz"] (singleFunctionModule [onePageMemory] [] [I32] [] [Const SI32 10, Const SI32 1, Const SI32 2, MemoryInit (DataIdx 0), Const SI32 10, LoadN SI32 1 Unsigned (MemArg 0 0)])) []
                 `shouldBe` Right ["121"]
         it "memory.init traps after data.drop (except for zero bytes)" $
-            elabRunModule (withData [RawData Passive "xyz"] (singleFunctionModule [onePageMemory] [] [I32] [] [DataDrop (DataIdx 0), Const SI32 0, Const SI32 0, Const SI32 0, MemoryInit (DataIdx 0), Const SI32 10, Const SI32 0, Const SI32 1, MemoryInit (DataIdx 0), Const SI32 0])) []
+            elabRunModule (withData [RawDataSegment Passive "xyz"] (singleFunctionModule [onePageMemory] [] [I32] [] [DataDrop (DataIdx 0), Const SI32 0, Const SI32 0, Const SI32 0, MemoryInit (DataIdx 0), Const SI32 10, Const SI32 0, Const SI32 1, MemoryInit (DataIdx 0), Const SI32 0])) []
                 `shouldSatisfy` trapContaining "OutOfBoundsMemoryAccess"
         it "memory.init must name an existing segment" $
             void (elaborateModule (singleFunctionModule [onePageMemory] [] [] [] [Const SI32 0, Const SI32 0, Const SI32 0, MemoryInit (DataIdx 3)]))
@@ -426,11 +426,11 @@ moduleOf memories funcs exported =
     RawModule
         { types = [f.signature | f <- funcs]
         , imports = []
-        , funcs = funcs
+        , functions = funcs
         , globals = []
         , memories = memories
         , tables = []
-        , elements = []
+        , elementSegments = []
         , dataSegments = []
         , exports = [Export "f" (ExportFunc exported)]
         , start = Nothing
@@ -478,7 +478,7 @@ tableModule :: [RawInstr] -> RawModule
 tableModule body =
     (moduleOf [] [RawFunction (FuncType [] [I32]) [] [Const SI32 42], RawFunction (FuncType [I32] [I32]) [] [LocalGet (LocalIdx 0)], RawFunction (FuncType [] [I32]) [] body] (FunctionIdx 2))
         { tables = [RawTable (Limits 3 Nothing)]
-        , elements = [RawElem [Const SI32 0] [FunctionIdx 0], RawElem [Const SI32 2] [FunctionIdx 1]]
+        , elementSegments = [RawElementSegment [Const SI32 0] [FunctionIdx 0], RawElementSegment [Const SI32 2] [FunctionIdx 1]]
         }
 
 procExitImport, fdWriteImport :: RawImport
@@ -517,7 +517,7 @@ startModule startBody =
         , start = Just (FunctionIdx 0)
         }
 
-withData :: [RawData] -> RawModule -> RawModule
+withData :: [RawDataSegment] -> RawModule -> RawModule
 withData segments m = m {dataSegments = segments}
 
 memoryWithMax :: Word32 -> Word32 -> RawMemory
@@ -531,7 +531,7 @@ memoryWithMax lo hi = RawMemory (MemType AddrI32 (Limits lo (Just hi)))
 
 -- | Decode raw bytes, reduced to the number of functions ('RawModule' has no 'Show').
 decodeBytes :: [Word8] -> Either String Int
-decodeBytes bytes = fmap (length . (.funcs)) (decodeModule (BL.pack bytes))
+decodeBytes bytes = fmap (length . (.functions)) (decodeModule (BL.pack bytes))
 
 decodeSections :: [[Word8]] -> Either String Int
 decodeSections sections = decodeBytes (wasmHeader ++ concat sections)

@@ -3,8 +3,8 @@
 {-# LANGUAGE StandaloneKindSignatures #-}
 
 {- | Linear memory: the one piece of mutable runtime state the interpreter still keeps
-  outside the type-indexed value stack and locals. (GlobalInsts are tracked by the typed
-  'Runtime.Stack.GlobalInsts'; functions by 'Runtime.Interpreter.FuncInsts'.)
+  outside the type-indexed value stack and locals. (GlobalSpaceInst are tracked by the typed
+  'Runtime.Stack.GlobalSpaceInst'; functions by 'Runtime.Interpreter.FuncSpaceInst'.)
 
   A 'MemInst' is indexed by its declared 'MemShape', so — like every other instance — it
   carries its type. The index is a phantom (the contents do not depend on it); the operations

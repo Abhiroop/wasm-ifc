@@ -20,13 +20,13 @@
 -}
 module Runtime.Stack (
     ValueStack (..),
-    LocalInsts (..),
-    GlobalInsts (..),
+    LocalSpaceInst (..),
+    GlobalSpaceInst (..),
     initialGlobals,
-    MemInsts (..),
-    TableInsts (..),
+    MemSpaceInst (..),
+    TableSpaceInst (..),
     firstTable,
-    DataInsts (..),
+    DataSpaceInst (..),
     getSegment,
     dropSegment,
     appendStack,
@@ -49,7 +49,7 @@ import Data.List.Singletons (type (++))
 import Data.Singletons.Base.TH (SList (SCons, SNil), Sing)
 import Runtime.MemInst (MemInst)
 import Runtime.TableInst (TableInst)
-import Syntax.Globals (Global (..), Globals (..))
+import Syntax.Globals (Global (..), GlobalSpace (..))
 import Syntax.Immediates (HostType)
 import Syntax.Types
 import Validation.Shape (Append (..), DataShape (..), Elem (..), MemShape, ReverseOnto, TableShape)
@@ -62,21 +62,22 @@ data ValueStack s where
 
 infixr 5 :#
 
-{- | A function activation's local variable instances, indexed by their types. (The @Inst@
-  suffix marks the runtime values; the static description is just the type index.)
+{- | The instance of a function activation's local index space: its locals' current values,
+  indexed by their types. (As for every @…SpaceInst@, the static description is the type
+  index itself; the name says which index space the vector instantiates.)
 -}
-type LocalInsts :: [ValType] -> Type
-data LocalInsts ls where
-    LNil :: LocalInsts '[]
-    (:&) :: HostType t -> LocalInsts ls -> LocalInsts (t ': ls)
+type LocalSpaceInst :: [ValType] -> Type
+data LocalSpaceInst ls where
+    LNil :: LocalSpaceInst '[]
+    (:&) :: HostType t -> LocalSpaceInst ls -> LocalSpaceInst (t ': ls)
 
 infixr 5 :&
 
--- | A module's global variable instances, indexed by their declared global types.
-type GlobalInsts :: [GlobalType] -> Type
-data GlobalInsts gs where
-    GNil :: GlobalInsts '[]
-    GCons :: HostType t -> GlobalInsts gs -> GlobalInsts ('GlobalType mut t ': gs)
+-- | The instance of a module's global index space: the globals' current values, by type.
+type GlobalSpaceInst :: [GlobalType] -> Type
+data GlobalSpaceInst gs where
+    GNil :: GlobalSpaceInst '[]
+    GCons :: HostType t -> GlobalSpaceInst gs -> GlobalSpaceInst ('GlobalType mut t ': gs)
 
 -- | Concatenate two stacks; the upper one ends up on top. Purely structural.
 appendStack :: ValueStack a -> ValueStack b -> ValueStack (a ++ b)
@@ -98,14 +99,14 @@ splitStack (ACons w) (x :# vs) = let (upper, lower) = splitStack w vs in (x :# u
   argument first (top of stack) while local 0 is the first parameter. Structural, mirroring
   'ReverseOnto'.
 -}
-reverseOnto :: ValueStack xs -> LocalInsts acc -> LocalInsts (ReverseOnto xs acc)
+reverseOnto :: ValueStack xs -> LocalSpaceInst acc -> LocalSpaceInst (ReverseOnto xs acc)
 reverseOnto VNil acc = acc
 -- The slot's type @t@ is bound explicitly: 'HostType' is not injective, so it cannot be
 -- recovered from the value @x@ alone when it is pushed onto the locals.
 reverseOnto ((:#) @t x xs) acc = reverseOnto xs ((:&) @t x acc)
 
 -- | A locals frame of the given shape, every slot zero (how declared locals start a call).
-defaultLocals :: Sing (ls :: [ValType]) -> LocalInsts ls
+defaultLocals :: Sing (ls :: [ValType]) -> LocalSpaceInst ls
 defaultLocals SNil = LNil
 defaultLocals (SCons st rest) = zeroOf st :& defaultLocals rest
   where
@@ -115,68 +116,68 @@ defaultLocals (SCons st rest) = zeroOf st :& defaultLocals rest
     zeroOf SF32 = 0
     zeroOf SF64 = 0
 
-getLocal :: Elem t ls -> LocalInsts ls -> HostType t
+getLocal :: Elem t ls -> LocalSpaceInst ls -> HostType t
 getLocal Here (x :& _) = x
 getLocal (There ix) (_ :& rest) = getLocal ix rest
 
-setLocal :: Elem t ls -> HostType t -> LocalInsts ls -> LocalInsts ls
+setLocal :: Elem t ls -> HostType t -> LocalSpaceInst ls -> LocalSpaceInst ls
 setLocal Here v (_ :& rest) = v :& rest
 setLocal (There ix) v (x :& rest) = x :& setLocal ix v rest
 
 -- | The globals as a module starts: each at its validated initial value.
-initialGlobals :: Globals gs -> GlobalInsts gs
-initialGlobals GlobalsNil = GNil
-initialGlobals (GlobalsCons (Global value) rest) = GCons value (initialGlobals rest)
+initialGlobals :: GlobalSpace gs -> GlobalSpaceInst gs
+initialGlobals NoGlobals = GNil
+initialGlobals (Declared (Global value) rest) = GCons value (initialGlobals rest)
 
-getGlobal :: Elem ('GlobalType mut t) gs -> GlobalInsts gs -> HostType t
+getGlobal :: Elem ('GlobalType mut t) gs -> GlobalSpaceInst gs -> HostType t
 getGlobal Here (GCons x _) = x
 getGlobal (There ix) (GCons _ rest) = getGlobal ix rest
 
-setGlobal :: Elem ('GlobalType mut t) gs -> HostType t -> GlobalInsts gs -> GlobalInsts gs
+setGlobal :: Elem ('GlobalType mut t) gs -> HostType t -> GlobalSpaceInst gs -> GlobalSpaceInst gs
 setGlobal Here v (GCons _ rest) = GCons v rest
 setGlobal (There ix) v (GCons x rest) = GCons x (setGlobal ix v rest)
 
-{- | A module's linear memories, indexed by their declared shapes. Being a non-empty 'MemInsts'
+{- | A module's linear memories, indexed by their declared shapes. Being a non-empty 'MemSpaceInst'
   (@m ': ms@) is the runtime counterpart of the @ModuleMems shape ~ (m ': ms)@ constraint the
   memory instructions carry, so 'firstMem' is total — the interpreter never has to ask
   whether a memory it is already typed to use actually exists.
 -}
-type MemInsts :: [MemShape] -> Type
-data MemInsts ms where
-    MNil :: MemInsts '[]
-    MCons :: MemInst m -> MemInsts ms -> MemInsts (m ': ms)
+type MemSpaceInst :: [MemShape] -> Type
+data MemSpaceInst ms where
+    MNil :: MemSpaceInst '[]
+    MCons :: MemInst m -> MemSpaceInst ms -> MemSpaceInst (m ': ms)
 
-firstMem :: MemInsts (m ': ms) -> MemInst m
+firstMem :: MemSpaceInst (m ': ms) -> MemInst m
 firstMem (MCons mem _) = mem
 
-setFirstMem :: MemInst m -> MemInsts (m ': ms) -> MemInsts (m ': ms)
+setFirstMem :: MemInst m -> MemSpaceInst (m ': ms) -> MemSpaceInst (m ': ms)
 setFirstMem mem (MCons _ rest) = MCons mem rest
 
 {- | A module's tables, indexed by their declared shapes and by the module's function types
   (which every entry is a reference into). Non-emptiness is the runtime counterpart of the
   @ModuleTables shape ~ (t ': ts)@ constraint @call_indirect@ carries, so 'firstTable' is total.
 -}
-type TableInsts :: [FuncType] -> [TableShape] -> Type
-data TableInsts fts ts where
-    TNil :: TableInsts fts '[]
-    TCons :: TableInst fts -> TableInsts fts ts -> TableInsts fts (t ': ts)
+type TableSpaceInst :: [FuncType] -> [TableShape] -> Type
+data TableSpaceInst fts ts where
+    TNil :: TableSpaceInst fts '[]
+    TCons :: TableInst fts -> TableSpaceInst fts ts -> TableSpaceInst fts (t ': ts)
 
-firstTable :: TableInsts fts (t ': ts) -> TableInst fts
+firstTable :: TableSpaceInst fts (t ': ts) -> TableInst fts
 firstTable (TCons table _) = table
 
 {- | A module's data segments as they stand at run time, one slot per segment of the data index
   space: the bytes still available to @memory.init@, or nothing once dropped (active segments
   are dropped as soon as instantiation has copied them, as the spec prescribes).
 -}
-type DataInsts :: [DataShape] -> Type
-data DataInsts ds where
-    DNil :: DataInsts '[]
-    DCons :: Maybe ByteString -> DataInsts ds -> DataInsts ('DataShape ': ds)
+type DataSpaceInst :: [DataShape] -> Type
+data DataSpaceInst ds where
+    DNil :: DataSpaceInst '[]
+    DCons :: Maybe ByteString -> DataSpaceInst ds -> DataSpaceInst ('DataShape ': ds)
 
-getSegment :: Elem 'DataShape ds -> DataInsts ds -> Maybe ByteString
+getSegment :: Elem 'DataShape ds -> DataSpaceInst ds -> Maybe ByteString
 getSegment Here (DCons segment _) = segment
 getSegment (There ix) (DCons _ rest) = getSegment ix rest
 
-dropSegment :: Elem 'DataShape ds -> DataInsts ds -> DataInsts ds
+dropSegment :: Elem 'DataShape ds -> DataSpaceInst ds -> DataSpaceInst ds
 dropSegment Here (DCons _ rest) = DCons Nothing rest
 dropSegment (There ix) (DCons segment rest) = DCons segment (dropSegment ix rest)

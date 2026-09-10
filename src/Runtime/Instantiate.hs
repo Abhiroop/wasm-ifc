@@ -21,13 +21,13 @@ import Data.Text (Text)
 import Data.Type.Equality ((:~:) (Refl))
 
 import Runtime.Host (SomeWasiFunc (..), resolveWasiImport, wasiFuncType, wasiModuleName)
-import Runtime.Interpreter (FuncInst (..), FuncInsts (..), ModuleInst (..), Outcome (..), getFunc, runFunction)
+import Runtime.Interpreter (FuncInst (..), FuncSpaceInst (..), ModuleInst (..), Outcome (..), getFunc, runFunction)
 import Runtime.MemInst (allocMemory, writeBytes)
 import Runtime.Module (SomeModuleInst (..))
-import Runtime.Stack (DataInsts (..), MemInsts (..), TableInsts (..), ValueStack (..), initialGlobals)
+import Runtime.Stack (DataSpaceInst (..), MemSpaceInst (..), TableSpaceInst (..), ValueStack (..), initialGlobals)
 import Runtime.TableInst (allocTable, setTableEntries)
 import Runtime.Trap (Trap)
-import Syntax.Functions (Functions (..))
+import Syntax.Functions (FunctionSpace (..))
 import Syntax.Module (DataSegment (..), ElementSegment (..), Module (..), SomeModule (..))
 import Syntax.Types
 import Validation.Reflect (NonEmptyMems (..), memsNonEmpty)
@@ -55,8 +55,8 @@ instantiate (SomeModule shapeS m) = case shapeS of
     SModuleShape ftsS _ msS tsS dsS -> do
         funcs <- link (memsNonEmpty msS) ftsS m.functions
         mems <- placeData m.dataSegments (allocateMemories msS)
-        tables <- placeElements m.elements (allocateTables tsS)
-        let inst = ModuleInst {funcs, globals = initialGlobals m.globals, mems, tables, dataSegments = remainingData dsS m.dataSegments}
+        tables <- placeElements m.elementSegments (allocateTables tsS)
+        let inst = ModuleInst {functions = funcs, globals = initialGlobals m.globals, memories = mems, tables, dataSegments = remainingData dsS m.dataSegments}
         started <- runStart inst m.start
         Right (SomeModuleInst shapeS started m.exports)
 
@@ -64,8 +64,8 @@ instantiate (SomeModule shapeS m) = case shapeS of
   module, name a function the host provides, be declared at exactly that function's type, and
   the module must have a memory (WASI requires one, and 'HostFunc' cannot be built without it).
 -}
-link :: Maybe (NonEmptyMems (ModuleMems shape)) -> Sing fts -> Functions shape fts -> Either InstantiationError (FuncInsts shape fts)
-link _ SNil FunctionsNil = Right FsNil
+link :: Maybe (NonEmptyMems (ModuleMems shape)) -> Sing fts -> FunctionSpace shape fts -> Either InstantiationError (FuncSpaceInst shape fts)
+link _ SNil NoFunctions = Right FsNil
 link mems (SCons _ rest) (Defined f more) = FsCons (WasmFunc f) <$> link mems rest more
 link mems (SCons (SFuncType psS rsS) rest) (Imported moduleName fieldName more)
     | moduleName /= wasiModuleName = Left (UnsupportedImport moduleName fieldName)
@@ -79,21 +79,21 @@ link mems (SCons (SFuncType psS rsS) rest) (Imported moduleName fieldName more)
                 FsCons (HostFunc wasiFunc) <$> link mems rest more
 
 -- | Every memory at its declared minimum size, from the shape.
-allocateMemories :: Sing (ms :: [MemShape]) -> MemInsts ms
+allocateMemories :: Sing (ms :: [MemShape]) -> MemSpaceInst ms
 allocateMemories SNil = MNil
 allocateMemories (SCons shape rest) = MCons (allocMemory (limitsOf (fromSing shape))) (allocateMemories rest)
   where
     limitsOf (MemShape _ lo hi) = Limits (fromIntegral lo) (fmap fromIntegral hi)
 
 -- | Every table at its declared minimum size, uninitialised, from the shape.
-allocateTables :: Sing (ts :: [TableShape]) -> TableInsts fts ts
+allocateTables :: Sing (ts :: [TableShape]) -> TableSpaceInst fts ts
 allocateTables SNil = TNil
 allocateTables (SCons shape rest) = TCons (allocTable (limitsOf (fromSing shape))) (allocateTables rest)
   where
     limitsOf (TableShape lo hi) = Limits (fromIntegral lo) (fmap fromIntegral hi)
 
 -- | Copy the active data segments into memory 0, in order.
-placeData :: [DataSegment] -> MemInsts ms -> Either InstantiationError (MemInsts ms)
+placeData :: [DataSegment] -> MemSpaceInst ms -> Either InstantiationError (MemSpaceInst ms)
 placeData segments mems = case (mems, [(i, off, s.bytes) | (i, s) <- zip [0 ..] segments, Just off <- [s.placement]]) of
     (_, []) -> Right mems
     (MCons mem rest, active) -> do
@@ -102,7 +102,7 @@ placeData segments mems = case (mems, [(i, off, s.bytes) | (i, s) <- zip [0 ..] 
     (MNil, (i, _, _) : _) -> Left (DataSegmentOutOfBounds i)
 
 -- | Place the element segments' functions into table 0, in order.
-placeElements :: [ElementSegment fts] -> TableInsts fts ts -> Either InstantiationError (TableInsts fts ts)
+placeElements :: [ElementSegment fts] -> TableSpaceInst fts ts -> Either InstantiationError (TableSpaceInst fts ts)
 placeElements [] tables = Right tables
 placeElements segments (TCons table rest) = do
     table' <- foldl (\acc (i, segment) -> acc >>= \current -> note (ElementSegmentOutOfBounds i) (setTableEntries segment.offset segment.functions current)) (Right table) (zip [0 ..] segments)
@@ -112,7 +112,7 @@ placeElements (_ : _) TNil = Left (ElementSegmentOutOfBounds 0)
 {- | The data segments as @memory.init@ will find them: passive ones keep their bytes, active
 ones are already dropped (instantiation copied them).
 -}
-remainingData :: Sing (ds :: [DataShape]) -> [DataSegment] -> DataInsts ds
+remainingData :: Sing (ds :: [DataShape]) -> [DataSegment] -> DataSpaceInst ds
 remainingData SNil _ = DNil
 remainingData (SCons SDataShape rest) (segment : more) = DCons (maybe (Just segment.bytes) (const Nothing) segment.placement) (remainingData rest more)
 remainingData (SCons SDataShape rest) [] = DCons Nothing (remainingData rest [])
@@ -121,7 +121,7 @@ remainingData (SCons SDataShape rest) [] = DCons Nothing (remainingData rest [])
 runStart :: ModuleInst shape -> Maybe (Elem ('FuncType '[] '[]) (ModuleFuncs shape)) -> Either InstantiationError (ModuleInst shape)
 runStart inst Nothing = Right inst
 runStart inst (Just funcIx) = do
-    outcome <- first StartFunctionTrapped (runFunction inst (getFunc funcIx inst.funcs) VNil)
+    outcome <- first StartFunctionTrapped (runFunction inst (getFunc funcIx inst.functions) VNil)
     case outcome of
         Completed started _ -> Right started
         NeedsHost _ -> Left StartFunctionNeedsHost

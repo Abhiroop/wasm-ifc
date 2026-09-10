@@ -3,7 +3,8 @@
 {- | A decoder from the WebAssembly binary format into the raw AST.
 
 Only the instruction subset declared in "Syntax.Instructions" is recognised; any other
-opcode, and any feature outside the subset (imports, tables, elements), fails the decode
+opcode, and any feature outside the subset (imported tables, memories and globals;
+reference and vector types; element segments in the forms that need them), fails the decode
 with a message starting @unsupported@. Everything the format itself requires is checked:
 integer encodings, section order and uniqueness, section and code-entry sizes, UTF-8 names.
 -}
@@ -445,10 +446,10 @@ data Sections = Sections
     , globalSection :: [RawGlobal]
     , memorySection :: [RawMemory]
     , tableSection :: [RawTable]
-    , elementSection :: [RawElem]
+    , elementSection :: [RawElementSegment]
     , exportSection :: [Export]
     , startSection :: Maybe FunctionIdx
-    , dataSection :: [RawData]
+    , dataSection :: [RawDataSegment]
     , dataCountSection :: Maybe Word32
     -- ^ the data count section, which must agree with the data section
     }
@@ -509,16 +510,16 @@ parseSection sectionId acc = case sectionId of
     _ -> fail ("malformed section id " ++ show sectionId)
 
 -- | A data segment: active for memory 0 (modes 0 and 2) or passive (mode 1).
-getData :: Get RawData
+getData :: Get RawDataSegment
 getData = do
     mode <- getULEB128
     case mode of
-        0 -> RawData . Active <$> getExpr False [] <*> payload
-        1 -> RawData Passive <$> payload
+        0 -> RawDataSegment . Active <$> getExpr False [] <*> payload
+        1 -> RawDataSegment Passive <$> payload
         2 -> do
             memIdx <- getULEB128
             when (memIdx /= 0) (fail "unsupported: data segment for a memory other than 0")
-            RawData . Active <$> getExpr False [] <*> payload
+            RawDataSegment . Active <$> getExpr False [] <*> payload
         _ -> fail ("unknown data segment mode " ++ show mode)
   where
     payload = getULEB128 >>= getByteString . fromIntegral
@@ -552,19 +553,19 @@ getTable = do
   indices), 2 (an explicit table index, which must be 0) and 4 (@ref.func@ expressions);
   passive and declarative segments are not.
 -}
-getElem :: Get RawElem
+getElem :: Get RawElementSegment
 getElem = do
     flags <- getULEB128
     case flags of
-        0 -> RawElem <$> getExpr False [] <*> getVec (FunctionIdx <$> getULEB128)
+        0 -> RawElementSegment <$> getExpr False [] <*> getVec (FunctionIdx <$> getULEB128)
         2 -> do
             tableIdx <- getULEB128
             when (tableIdx /= 0) (fail "unsupported: element segment for a table other than 0")
             offset <- getExpr False []
             elemKind <- getWord8
             when (elemKind /= 0) (fail ("unknown element kind " ++ show elemKind))
-            RawElem offset <$> getVec (FunctionIdx <$> getULEB128)
-        4 -> RawElem <$> getExpr False [] <*> getVec getFuncRefExpr
+            RawElementSegment offset <$> getVec (FunctionIdx <$> getULEB128)
+        4 -> RawElementSegment <$> getExpr False [] <*> getVec getFuncRefExpr
         _ -> fail ("unsupported: element segment with flags " ++ show flags)
 
 -- | A constant expression of the form @ref.func x end@.
@@ -633,11 +634,11 @@ assemble secs = do
         RawModule
             { types = secs.typeSection
             , imports = secs.importSection
-            , funcs = funcs
+            , functions = funcs
             , globals = secs.globalSection
             , memories = secs.memorySection
             , tables = secs.tableSection
-            , elements = secs.elementSection
+            , elementSegments = secs.elementSection
             , dataSegments = secs.dataSection
             , exports = secs.exportSection
             , start = secs.startSection

@@ -26,7 +26,7 @@ import Data.Singletons.Base.TH (SList (SCons, SNil))
 import Data.Text (Text)
 import Data.Word (Word32, Word64)
 
-import Runtime.Interpreter (Config, FuncInsts, Halt (..), HostRequest, ModuleInst (..), Outcome (..), getFunc, run, runFunction, storeToModule)
+import Runtime.Interpreter (Config, FuncSpaceInst, Halt (..), HostRequest, ModuleInst (..), Outcome (..), getFunc, run, runFunction, storeToModule)
 import Runtime.Stack (ValueStack (..))
 import Runtime.Trap (Trap)
 import Syntax.Immediates (HostType)
@@ -88,7 +88,7 @@ data Invocation
 data SomeHostRequest where
     SomeHostRequest ::
         Sing (shape :: ModuleShape) ->
-        FuncInsts shape (ModuleFuncs shape) ->
+        FuncSpaceInst shape (ModuleFuncs shape) ->
         [Export] ->
         Sing (rs :: [ValType]) ->
         HostRequest shape rs ->
@@ -111,17 +111,17 @@ invokeExport (SomeModuleInst shapeS inst exports) name args = do
     SomeFuncRef psS rsS funcIx <- note (NoSuchExport name) (lookupFuncRef (funcTypesSing shapeS) idx)
     checkArguments (declaredOrder (fromSing psS)) args
     argStack <- note (ArgumentCount 0 0) (buildStack psS (stackOrder args))
-    outcome <- first Trapped (runFunction inst (getFunc funcIx inst.funcs) argStack)
+    outcome <- first Trapped (runFunction inst (getFunc funcIx inst.functions) argStack)
     pure $ case outcome of
         Completed inst' results -> Returned (SomeModuleInst shapeS inst' exports) (declaredOrder (toValues rsS results))
-        NeedsHost request -> CalledHost (SomeHostRequest shapeS inst.funcs exports rsS request)
+        NeedsHost request -> CalledHost (SomeHostRequest shapeS inst.functions exports rsS request)
 
 {- | Continue a suspended invocation from the configuration the host's answer produced (see
   'Runtime.Interpreter.resumeWith'); it may finish, or call the host again.
 -}
 continueWith ::
     Sing (shape :: ModuleShape) ->
-    FuncInsts shape (ModuleFuncs shape) ->
+    FuncSpaceInst shape (ModuleFuncs shape) ->
     [Export] ->
     Sing (rs :: [ValType]) ->
     Config shape rs ->

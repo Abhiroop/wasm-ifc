@@ -9,7 +9,7 @@
 module Syntax.Globals (
     RawGlobal (..),
     Global (..),
-    Globals (..),
+    GlobalSpace (..),
 ) where
 
 import Syntax.Immediates (HostType)
@@ -29,7 +29,7 @@ data RawGlobal = RawGlobal
 data Global (gt :: GlobalType) where
     Global :: HostType t -> Global ('GlobalType mut t)
 
--- | A module's globals, one per entry of its global index space.
-data Globals (gs :: [GlobalType]) where
-    GlobalsNil :: Globals '[]
-    GlobalsCons :: Global gt -> Globals gs -> Globals (gt ': gs)
+-- | A module's global index space: one entry per global type in the shape.
+data GlobalSpace (gs :: [GlobalType]) where
+    NoGlobals :: GlobalSpace '[]
+    Declared :: Global gt -> GlobalSpace gs -> GlobalSpace (gt ': gs)

@@ -28,7 +28,7 @@ So progress reads: every well-typed configuration either steps, finishes, or tra
 -}
 module Runtime.Interpreter (
     FuncInst (..),
-    FuncInsts (..),
+    FuncSpaceInst (..),
     getFunc,
     ModuleInst (..),
     Store (..),
@@ -104,12 +104,12 @@ data FuncInst (mod :: ModuleShape) (ft :: FuncType) where
     WasmFunc :: Function mod ft -> FuncInst mod ft
     HostFunc :: (ModuleMems mod ~ (mem ': mems)) => WasiFunc ft -> FuncInst mod ft
 
--- | The functions of a module, one typed body per signature in 'ModuleFuncs'.
-data FuncInsts (mod :: ModuleShape) (fts :: [FuncType]) where
-    FsNil :: FuncInsts mod '[]
-    FsCons :: FuncInst mod ft -> FuncInsts mod fts -> FuncInsts mod (ft ': fts)
+-- | The instance of a module's function index space: one 'FuncInst' per type in 'ModuleFuncs'.
+data FuncSpaceInst (mod :: ModuleShape) (fts :: [FuncType]) where
+    FsNil :: FuncSpaceInst mod '[]
+    FsCons :: FuncInst mod ft -> FuncSpaceInst mod fts -> FuncSpaceInst mod (ft ': fts)
 
-getFunc :: Elem ft fts -> FuncInsts mod fts -> FuncInst mod ft
+getFunc :: Elem ft fts -> FuncSpaceInst mod fts -> FuncInst mod ft
 getFunc Here (FsCons f _) = f
 getFunc (There ix) (FsCons _ rest) = getFunc ix rest
 
@@ -118,23 +118,22 @@ getFunc (There ix) (FsCons _ rest) = getFunc ix rest
   to 'step' read-only rather than kept here.)
 -}
 data Store (mod :: ModuleShape) = Store
-    { globals :: GlobalInsts (ModuleGlobals mod)
-    , mems :: MemInsts (ModuleMems mod)
-    , tables :: TableInsts (ModuleFuncs mod) (ModuleTables mod)
-    , dataSegments :: DataInsts (ModuleData mod)
+    { globals :: GlobalSpaceInst (ModuleGlobals mod)
+    , memories :: MemSpaceInst (ModuleMems mod)
+    , tables :: TableSpaceInst (ModuleFuncs mod) (ModuleTables mod)
+    , dataSegments :: DataSpaceInst (ModuleData mod)
     }
 
-{- | A fully instantiated module: its function instances plus the initial globals and
-  memories. (The runtime counterpart of a 'Syntax.Module.RawModule', per the
-  description/shape/instance naming: @RawModule@ → 'Validation.Shape.ModuleShape' →
-  'ModuleInst'.)
+{- | A fully instantiated module: the instances of its function, global, memory, table and
+  data index spaces. (The runtime counterpart of a validated 'Syntax.Module.Module', per the
+  syntax/shape/instance naming: @Module@ → 'Validation.Shape.ModuleShape' → 'ModuleInst'.)
 -}
 data ModuleInst (mod :: ModuleShape) = ModuleInst
-    { funcs :: FuncInsts mod (ModuleFuncs mod)
-    , globals :: GlobalInsts (ModuleGlobals mod)
-    , mems :: MemInsts (ModuleMems mod)
-    , tables :: TableInsts (ModuleFuncs mod) (ModuleTables mod)
-    , dataSegments :: DataInsts (ModuleData mod)
+    { functions :: FuncSpaceInst mod (ModuleFuncs mod)
+    , globals :: GlobalSpaceInst (ModuleGlobals mod)
+    , memories :: MemSpaceInst (ModuleMems mod)
+    , tables :: TableSpaceInst (ModuleFuncs mod) (ModuleTables mod)
+    , dataSegments :: DataSpaceInst (ModuleData mod)
     }
 
 {- *** The control stack ***
@@ -188,7 +187,7 @@ data
     -}
     CallBoundary ::
         ValueStack below ->
-        LocalInsts callerLocals ->
+        LocalSpaceInst callerLocals ->
         Expr mod ('FrameShape callerLocals callerRet) callerLabels (rs ++ below) contOut ->
         Control mod res callerRet callerLocals callerLabels contOut ->
         Control mod res rs calleeLocals '[rs] rs
@@ -200,7 +199,7 @@ data
 data Config (mod :: ModuleShape) (res :: ResultType) where
     Config ::
         Store mod ->
-        LocalInsts locals ->
+        LocalSpaceInst locals ->
         ValueStack cur ->
         Expr mod ('FrameShape locals ret) labels cur out ->
         Control mod res ret locals labels out ->
@@ -235,7 +234,7 @@ data HostRequest (mod :: ModuleShape) (res :: ResultType) where
 data Suspended (mod :: ModuleShape) (res :: ResultType) (rs :: ResultType) where
     Suspended ::
         Append rs below full ->
-        LocalInsts locals ->
+        LocalSpaceInst locals ->
         ValueStack below ->
         Expr mod ('FrameShape locals ret) labels full contOut ->
         Control mod res ret locals labels contOut ->
@@ -251,7 +250,7 @@ resumeWith store results (Suspended witness locals below cont control) =
 {- | Advance one configuration. Total over every well-typed configuration: see the module
   header for how this constitutes the progress half of type soundness.
 -}
-step :: FuncInsts mod (ModuleFuncs mod) -> Config mod res -> Either Trap (StepResult mod res)
+step :: FuncSpaceInst mod (ModuleFuncs mod) -> Config mod res -> Either Trap (StepResult mod res)
 step funcs (Config store locals stack code control) = case code of
     INil -> Right (popControl store locals stack control)
     instr :. rest -> case instr of
@@ -395,9 +394,9 @@ step funcs (Config store locals stack code control) = case code of
   around it. The 'Append' witness peels the arguments off the stack.
 -}
 enterCall ::
-    FuncInsts mod (ModuleFuncs mod) ->
+    FuncSpaceInst mod (ModuleFuncs mod) ->
     Store mod ->
-    LocalInsts locals ->
+    LocalSpaceInst locals ->
     Append ps s full ->
     Elem ('FuncType ps rs) (ModuleFuncs mod) ->
     ValueStack full ->
@@ -418,7 +417,7 @@ enterCall funcs store locals witness ix stack rest control = case getFunc ix fun
 -- | The "continue in the current frame" case: wrap a successor configuration.
 stepped ::
     Store mod ->
-    LocalInsts locals ->
+    LocalSpaceInst locals ->
     ValueStack si ->
     Expr mod ('FrameShape locals ret) labels si out ->
     Control mod res ret locals labels out ->
@@ -428,7 +427,7 @@ stepped store locals stack code control = Right (Stepped (Config store locals st
 -- | Pop two same-typed operands (@a@ below, @b@ on top), push @op a b@, and continue.
 stepBin ::
     Store mod ->
-    LocalInsts locals ->
+    LocalSpaceInst locals ->
     ValueStack (x ': x ': s) ->
     (HostType x -> HostType x -> HostType z) ->
     Expr mod ('FrameShape locals ret) labels (z ': s) out ->
@@ -439,7 +438,7 @@ stepBin store locals (b :# a :# r) op = stepped store locals (op a b :# r)
 -- | Pop one operand, push @op a@, and continue.
 stepUn ::
     Store mod ->
-    LocalInsts locals ->
+    LocalSpaceInst locals ->
     ValueStack (x ': s) ->
     (HostType x -> HostType z) ->
     Expr mod ('FrameShape locals ret) labels (z ': s) out ->
@@ -451,21 +450,21 @@ stepUn store locals (a :# r) op = stepped store locals (op a :# r)
   constraint every memory instruction carries makes both total.
 -}
 currentMem :: (ModuleMems mod ~ (m ': ms)) => Store mod -> MemInst m
-currentMem store = firstMem store.mems
+currentMem store = firstMem store.memories
 
 storeMem :: (ModuleMems mod ~ (m ': ms)) => MemInst m -> Store mod -> Store mod
 storeMem mem store =
-    Store {globals = store.globals, mems = setFirstMem mem store.mems, tables = store.tables, dataSegments = store.dataSegments}
+    Store {globals = store.globals, memories = setFirstMem mem store.memories, tables = store.tables, dataSegments = store.dataSegments}
 
 -- The store's other updates. (Its field names are shared with 'ModuleInst', so the records are
 -- rebuilt rather than updated: GHC no longer disambiguates such updates by type.)
 storeSetGlobal :: Elem ('GlobalType mut t) (ModuleGlobals mod) -> HostType t -> Store mod -> Store mod
 storeSetGlobal ix v store =
-    Store {globals = setGlobal ix v store.globals, mems = store.mems, tables = store.tables, dataSegments = store.dataSegments}
+    Store {globals = setGlobal ix v store.globals, memories = store.memories, tables = store.tables, dataSegments = store.dataSegments}
 
 storeDropSegment :: Elem 'DataShape (ModuleData mod) -> Store mod -> Store mod
 storeDropSegment ix store =
-    Store {globals = store.globals, mems = store.mems, tables = store.tables, dataSegments = dropSegment ix store.dataSegments}
+    Store {globals = store.globals, memories = store.memories, tables = store.tables, dataSegments = dropSegment ix store.dataSegments}
 
 -- | What @memory.grow@ pushes when it cannot grow: the spec's @-1@, as an unsigned i32.
 growFailed :: Word32
@@ -483,7 +482,7 @@ effectiveAddr base memArg = fromIntegral base + fromIntegral memArg.offset
 -}
 resume ::
     Store mod ->
-    LocalInsts locals ->
+    LocalSpaceInst locals ->
     ValueStack rs ->
     ValueStack below ->
     Expr mod ('FrameShape locals ret) labels (rs ++ below) contOut ->
@@ -494,7 +493,7 @@ resume store locals vs below cont rest = Stepped (Config store locals (appendSta
 -- | The current sequence reached its end (left @cur@): hand control to the top frame.
 popControl ::
     Store mod ->
-    LocalInsts locals ->
+    LocalSpaceInst locals ->
     ValueStack cur ->
     Control mod res ret locals labels cur ->
     StepResult mod res
@@ -509,7 +508,7 @@ popControl store _ vs (CallBoundary below cl cont cf) = resume store cl vs below
 -}
 unwind ::
     Store mod ->
-    LocalInsts locals ->
+    LocalSpaceInst locals ->
     Elem rs labels ->
     ValueStack rs ->
     Control mod res ret locals labels cur ->
@@ -527,7 +526,7 @@ unwind _ _ (There ix') _ EntryBoundary = case ix' of {}
 -- | @return@: unwind past every label frame in the current activation to the call boundary.
 returnUnwind ::
     Store mod ->
-    LocalInsts locals ->
+    LocalSpaceInst locals ->
     ValueStack ret ->
     Control mod res ret locals labels cur ->
     StepResult mod res
@@ -538,11 +537,11 @@ returnUnwind store locals vs (LoopLabel _ _ _ rest) = returnUnwind store locals 
 
 -- | The mutable state of an instantiated module, and the module with that state put back.
 moduleToStore :: ModuleInst mod -> Store mod
-moduleToStore tm = Store {globals = tm.globals, mems = tm.mems, tables = tm.tables, dataSegments = tm.dataSegments}
+moduleToStore tm = Store {globals = tm.globals, memories = tm.memories, tables = tm.tables, dataSegments = tm.dataSegments}
 
-storeToModule :: FuncInsts mod (ModuleFuncs mod) -> Store mod -> ModuleInst mod
+storeToModule :: FuncSpaceInst mod (ModuleFuncs mod) -> Store mod -> ModuleInst mod
 storeToModule funcs store =
-    ModuleInst {funcs = funcs, globals = store.globals, mems = store.mems, tables = store.tables, dataSegments = store.dataSegments}
+    ModuleInst {functions = funcs, globals = store.globals, memories = store.memories, tables = store.tables, dataSegments = store.dataSegments}
 
 -- | Where a run stops: with its results and final store, or waiting for the host.
 data Halt (mod :: ModuleShape) (res :: ResultType) where
@@ -553,7 +552,7 @@ data Halt (mod :: ModuleShape) (res :: ResultType) where
   function here — it loops, which is termination, a property orthogonal to the progress and
   preservation that 'step' carries.)
 -}
-run :: FuncInsts mod (ModuleFuncs mod) -> Config mod res -> Either Trap (Halt mod res)
+run :: FuncSpaceInst mod (ModuleFuncs mod) -> Config mod res -> Either Trap (Halt mod res)
 run funcs config = case step funcs config of
     Left t -> Left t
     Right (Done store vs) -> Right (Finished store vs)
@@ -576,10 +575,10 @@ runFunction ::
     ValueStack ps ->
     Either Trap (Outcome mod rs)
 runFunction tm (WasmFunc (Function declared body)) args = do
-    halt <- run (tm.funcs) (Config store locals VNil body EntryBoundary)
+    halt <- run (tm.functions) (Config store locals VNil body EntryBoundary)
     Right $ case halt of
         Finished store' results ->
-            Completed (storeToModule tm.funcs store') results
+            Completed (storeToModule tm.functions store') results
         AwaitingHost request -> NeedsHost request
   where
     store = moduleToStore tm

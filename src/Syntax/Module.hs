@@ -14,9 +14,9 @@ module Syntax.Module (
     ImportDesc (..),
     RawMemory (..),
     RawTable (..),
-    RawData (..),
+    RawDataSegment (..),
     DataMode (..),
-    RawElem (..),
+    RawElementSegment (..),
     Export (..),
     ExportDesc (..),
 
@@ -32,8 +32,8 @@ import Data.Singletons (Sing)
 import Data.Text (Text)
 import Data.Word (Word32)
 
-import Syntax.Functions (Functions, RawFunction)
-import Syntax.Globals (Globals, RawGlobal)
+import Syntax.Functions (FunctionSpace, RawFunction)
+import Syntax.Globals (GlobalSpace, RawGlobal)
 import Syntax.Indices (FunctionIdx, GlobalIdx, MemoryIdx, TableIdx)
 import Syntax.Instructions (RawExpr)
 import Syntax.Types (FuncType (..), Limits, MemType)
@@ -44,14 +44,14 @@ data RawModule = RawModule
     -- ^ the type section
     , imports :: [RawImport]
     -- ^ imported functions; they come first in the function index space
-    , funcs :: [RawFunction]
+    , functions :: [RawFunction]
     -- ^ function + code sections, merged by the decoder
     , globals :: [RawGlobal]
     , memories :: [RawMemory]
     , tables :: [RawTable]
-    , elements :: [RawElem]
+    , elementSegments :: [RawElementSegment]
     -- ^ active element segments, applied in order at instantiation
-    , dataSegments :: [RawData]
+    , dataSegments :: [RawDataSegment]
     , exports :: [Export]
     , start :: Maybe FunctionIdx
     }
@@ -83,7 +83,7 @@ newtype RawTable = RawTable
 {- | A data segment: bytes that are either copied into memory 0 at a constant offset when the
   module is instantiated (active), or kept for @memory.init@ to copy later (passive).
 -}
-data RawData = RawData
+data RawDataSegment = RawDataSegment
     { mode :: DataMode
     , bytes :: ByteString
     }
@@ -93,7 +93,7 @@ data DataMode
     | Passive
 
 -- | An active element segment: functions to place in table 0 from a constant offset.
-data RawElem = RawElem
+data RawElementSegment = RawElementSegment
     { offset :: RawExpr
     , functions :: [FunctionIdx]
     }
@@ -119,10 +119,10 @@ data ExportDesc
   index says exactly what they are, and instantiation allocates them from it.
 -}
 data Module (shape :: ModuleShape) = Module
-    { functions :: Functions shape (ModuleFuncs shape)
-    , globals :: Globals (ModuleGlobals shape)
+    { functions :: FunctionSpace shape (ModuleFuncs shape)
+    , globals :: GlobalSpace (ModuleGlobals shape)
     , dataSegments :: [DataSegment]
-    , elements :: [ElementSegment (ModuleFuncs shape)]
+    , elementSegments :: [ElementSegment (ModuleFuncs shape)]
     , exports :: [Export]
     , start :: Maybe (Elem ('FuncType '[] '[]) (ModuleFuncs shape))
     -- ^ the start function, known to take and return nothing
