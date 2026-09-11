@@ -159,7 +159,9 @@ Beyond P0, mostly *verification*; the spec-test runner (R1) is the instrument.
 - [x] **[P2·runtime]** Document the spec-permitted choices: NaN handling in `min`/`max` (we keep the
   operand), `nearest` ties-to-even (Haskell's `round` agrees).
   **Done** in the code: `wasmMin`/`wasmMax` (NaN handling) and `roundWith` (ties-to-even).
-- [ ] **[P3]** `runFor :: Int -> …`, a fuel-bounded runner for tests (G1).
+- [x] **[P3]** `runFor :: Int -> …`, a fuel-bounded runner for tests (G1). Done 2026-09-11: `runFor`
+  in `Runtime.Interpreter` returns `Fuelled = Halted | OutOfFuel`; `test/Examples.hs` runs an
+  endless `loop (br 0)` under a budget, the one test that states termination directly.
 
 ### R5 — style and hygiene (no behaviour change; interleave when touching a file)
 
@@ -362,13 +364,16 @@ Open P0/P1 correctness items live in the plan above (section **P0**); the list b
 - [x] **[P2·feature]** Run the start function after instantiation — it is decoded (`start`)
   but never invoked.
   **Done (2026-09):** validated (in range, `[] -> []`) and run as the last step of instantiation.
-- [ ] **[P2·feature]** Expose exported globals/memories to the CLI — only exported *functions* are
-  runnable today (`ExportMem`/`ExportGlobal` are decoded but unused by `runModuleFunction`).
+- [x] **[P2·feature]** Expose exported globals to the CLI and the spec runner. Done 2026-09-11:
+  `readGlobalExport` in `Runtime.Module`, CLI `get <file> <global>`, and the spec runner now serves
+  the `get` action (+3 assertions). Still open: exported memories (no scalar rendering yet).
 - [x] **[P3·feature]** Tables + `call_indirect` + element segments (2026-09-10; a table entry is a
   typed `SomeFuncRef`, the indirect call's type check is a `decideEquality`). Open: the `table.*`
   instructions, `elem.drop`, passive/declarative element segments, table imports.
-- [ ] **[P3·feature]** `select` with an explicit result type (opcode `0x1C`); only untyped
-  `select` (`0x1B`) is supported.
+- [x] **[P3·feature]** `select` with an explicit result type (opcode `0x1C`). Done 2026-09-11:
+  decoded as `SelectTyped [ValType]`, validated to one numeric type the operands must match
+  (`InvalidSelectArity` otherwise). The reference-typed cases in `select.wast` still skip, since
+  they need reference value types.
 - [x] **[P3·feature]** Float CLI arguments (`app/Main.hs` and `runModuleFunction` take
   `[Integer]`).
   **Done (2026-09):** arguments are parsed at the export's parameter types (`invoke`).

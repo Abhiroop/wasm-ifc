@@ -22,13 +22,13 @@ import Test.Hspec
 import Test.Hspec.Hedgehog (forAll, hedgehog, (===))
 
 import Codec.Wasm (decodeModule)
-import Examples (runFactorial, runIncrement, runSquare)
+import Examples (runFactorial, runIncrement, runSpinFor, runSquare)
 import Runtime.Bytes (bytesOfWord32, bytesOfWord64, word32OfBytes, word64OfBytes)
 import Runtime.Convert (convertVal)
 import Runtime.Host (WasiFunc (..))
 import Runtime.Instantiate (InstantiationError (..), instantiate)
 import Runtime.Interpreter (HostRequest (..), resumeWith)
-import Runtime.Module (Invocation (..), SomeHostRequest (..), SomeModuleInst, Value (..), continueWith, exportSignature, invokeExport, renderValue)
+import Runtime.Module (Invocation (..), RunError (..), SomeHostRequest (..), SomeModuleInst, Value (..), continueWith, exportSignature, invokeExport, readGlobalExport, renderValue)
 import Runtime.Numeric (intDiv32)
 import Runtime.Stack (ValueStack (..))
 import Runtime.Trap (Trap (..))
@@ -52,6 +52,7 @@ spec = do
         it "factorial 10 = 3628800" $ runFactorial 10 `shouldBe` Right 3628800
         it "factorial 0  = 1" $ runFactorial 0 `shouldBe` Right 1
         it "square 9     = 81" $ runSquare 9 `shouldBe` Right 81
+        it "an endless loop is still running when the step budget is spent" $ runSpinFor 1000 `shouldBe` Right True
         it "increment 41 = 42" $ runIncrement 41 `shouldBe` Right 42
 
     describe "elaborate + run (built from RawModule)" $ do
@@ -85,6 +86,15 @@ spec = do
         it "select keeps the second operand when the condition is zero" $
             elabRun [I32, I32, I32] [I32] [] [LocalGet (LocalIdx 0), LocalGet (LocalIdx 1), LocalGet (LocalIdx 2), Select] [1, 2, 0]
                 `shouldBe` Right ["2"]
+        it "typed select names the operand type" $
+            elabRun [I32, I32, I32] [I32] [] [LocalGet (LocalIdx 0), LocalGet (LocalIdx 1), LocalGet (LocalIdx 2), SelectTyped [I32]] [1, 2, 1]
+                `shouldBe` Right ["1"]
+        it "typed select rejects an annotation the operands do not have" $
+            elabError [] [I32] [] [Const SI32 1, Const SI32 2, Const SI32 0, SelectTyped [I64]]
+                `shouldBe` Left (OperandMismatch "select" I64 I32)
+        it "typed select needs exactly one type" $
+            elabError [] [I32] [] [Const SI32 1, Const SI32 2, Const SI32 0, SelectTyped []]
+                `shouldBe` Left (InvalidSelectArity 0)
         it "traps on unreachable" $
             elabRun [] [I32] [] [Unreachable] [] `shouldSatisfy` trapContaining "UnreachableExecuted"
         it "traps on an invalid float-to-int conversion (NaN)" $
@@ -157,6 +167,11 @@ spec = do
         it "rejects two memories" $
             void (elaborateModule (singleFunctionModule [onePageMemory, onePageMemory] [] [] [] []))
                 `shouldBe` Left TooManyMemories
+        it "exposes an exported global's current value (the spec's get action)" $
+            readExportedGlobal ((startModule [Const SI32 5, GlobalSet (GlobalIdx 0)]) {exports = [Export "g" (ExportGlobal (GlobalIdx 0))]}) "g"
+                `shouldBe` Right "5"
+        it "reading a function export as a global is NoSuchExport" $
+            readExportedGlobal (startModule []) "f" `shouldBe` Left (show (NoSuchExport "f"))
         it "rejects duplicate export names" $
             void (elaborateModule ((singleFunctionModule [] [] [] [] []) {exports = [Export "f" (ExportFunc (FunctionIdx 0)), Export "f" (ExportFunc (FunctionIdx 0))]}))
                 `shouldBe` Left (DuplicateExport "f")
@@ -436,7 +451,14 @@ moduleOf memories funcs exported =
         , start = Nothing
         }
 
--- | Validate and instantiate a module and run its export @f@ on integer arguments.
+{- | Validate and instantiate a module and run its export @f@ on integer arguments.
+| Load a module and read one of its exported globals, collapsing any error to text.
+-}
+readExportedGlobal :: RawModule -> Text -> Either String String
+readExportedGlobal m name = case load m of
+    Left err -> Left (show err)
+    Right inst -> either (Left . show) (Right . renderValue) (readGlobalExport inst name)
+
 elabRunModule :: RawModule -> [Integer] -> Either String [String]
 elabRunModule m args = case load m of
     Left err -> Left (show err)

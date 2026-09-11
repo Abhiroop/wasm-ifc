@@ -14,7 +14,7 @@ import Data.Aeson (FromJSON (..), withObject, (.:), (.:?))
 import Data.Aeson qualified as Aeson
 import Data.Bifunctor (first)
 import Data.ByteString.Lazy qualified as BL
-import Data.List (isInfixOf)
+import Data.List (isInfixOf, sortOn)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
@@ -30,7 +30,7 @@ import Text.Read (readMaybe)
 
 import Codec.Wasm (decodeModule)
 import Runtime.Instantiate (InstantiationError (..), instantiate)
-import Runtime.Module (Invocation (..), RunError (..), SomeModuleInst, Value (..), invokeExport, valueType)
+import Runtime.Module (Invocation (..), RunError (..), SomeModuleInst, Value (..), invokeExport, readGlobalExport, valueType)
 import Runtime.Trap (Trap (..))
 import Syntax.Types (ValType (..))
 import Validation.Elaborate (elaborateModule)
@@ -323,18 +323,25 @@ loadModule path = do
         validated <- first (AtValidation . show) (elaborateModule raw)
         first AtInstantiation (instantiate validated)
 
+-- | Perform an action: @invoke@ an exported function, or @get@ an exported global.
 invoke :: SomeModuleInst -> Action -> Either RunError (SomeModuleInst, [Value])
-invoke m act = case traverse literalValue act.args of
-    Nothing -> Left (NoSuchExport "(non-numeric argument)")
-    Just values -> case invokeExport m act.field values of
-        Left err -> Left err
-        Right (Returned m' results) -> Right (m', results)
-        Right (CalledHost _) -> Left HostCallNotServed
+invoke m act
+    | act.actionKind == "get" = (\value -> (m, [value])) <$> readGlobalExport m act.field
+    | otherwise = case traverse literalValue act.args of
+        Nothing -> Left (NoSuchExport "(non-numeric argument)")
+        Just values -> case invokeExport m act.field values of
+            Left err -> Left err
+            Right (Returned m' results) -> Right (m', results)
+            Right (CalledHost _) -> Left HostCallNotServed
+
+-- | The actions the harness performs; anything else is skipped, not failed.
+knownAction :: Action -> Bool
+knownAction act = act.actionKind `elem` ["invoke", "get"]
 
 -- | Each check hands back the instance to continue with (unchanged when the call failed).
 assertReturn :: SomeModuleInst -> Action -> [Literal] -> (SomeModuleInst, Outcome)
 assertReturn m act expectations
-    | act.actionKind /= "invoke" = (m, Skipped ("action " ++ T.unpack act.actionKind))
+    | not (knownAction act) = (m, Skipped ("action " ++ T.unpack act.actionKind))
     | any (\a -> a.litType `notElem` numericTypes) act.args = (m, Skipped "non-numeric argument")
     | otherwise = case invoke m act of
         Left err -> (m, Failed ("invoke " ++ T.unpack act.field ++ ": " ++ show err))
@@ -346,12 +353,14 @@ assertReturn m act expectations
     render l = T.unpack l.litType ++ ":" ++ maybe "?" T.unpack l.litValue
 
 assertTrap :: SomeModuleInst -> Action -> Maybe Text -> (SomeModuleInst, Outcome)
-assertTrap m act expectedText = case invoke m act of
-    Left (Trapped trap)
-        | Just (trapText trap) == expectedText -> (m, Passed)
-        | otherwise -> (m, Failed ("trapped with " ++ show trap ++ ", expected " ++ maybe "?" T.unpack expectedText))
-    Left err -> (m, Failed ("invoke " ++ T.unpack act.field ++ ": " ++ show err))
-    Right (m', results) -> (m', Failed ("expected a trap (" ++ maybe "?" T.unpack expectedText ++ "), got " ++ show results))
+assertTrap m act expectedText
+    | not (knownAction act) = (m, Skipped ("action " ++ T.unpack act.actionKind))
+    | otherwise = case invoke m act of
+        Left (Trapped trap)
+            | Just (trapText trap) == expectedText -> (m, Passed)
+            | otherwise -> (m, Failed ("trapped with " ++ show trap ++ ", expected " ++ maybe "?" T.unpack expectedText))
+        Left err -> (m, Failed ("invoke " ++ T.unpack act.field ++ ": " ++ show err))
+        Right (m', results) -> (m', Failed ("expected a trap (" ++ maybe "?" T.unpack expectedText ++ "), got " ++ show results))
 
 -- | The spec's wording for each trap, as the scripts assert it.
 trapText :: Trap -> Text
@@ -406,13 +415,16 @@ valueBits (F64Value d) = fromIntegral (castDoubleToWord64 d :: Word64)
 
 -- *** Reporting ***
 
+-- | One line per script, and the commonest reasons for skipping, so a gap shows up as a count.
 report :: String -> [(Int, Outcome)] -> Expectation
 report name outcomes = do
-    putStrLn ("    " ++ name ++ ": " ++ show passed ++ " passed, " ++ show (length failures) ++ " failed, " ++ show skipped ++ " skipped")
+    putStrLn ("    " ++ name ++ ": " ++ show passed ++ " passed, " ++ show (length failures) ++ " failed, " ++ show (length skipped) ++ " skipped")
+    mapM_ (\(reason, n) -> putStrLn ("        " ++ show n ++ "x " ++ reason)) (take 4 skipReasons)
     case failures of
         [] -> pure ()
         _ -> expectationFailure (unlines (take 12 [name ++ ".wast:" ++ show l ++ ": " ++ msg | (l, msg) <- failures]))
   where
     passed = length [() | (_, Passed) <- outcomes]
-    skipped = length [() | (_, Skipped _) <- outcomes]
+    skipped = [reason | (_, Skipped reason) <- outcomes]
     failures = [(l, msg) | (l, Failed msg) <- outcomes]
+    skipReasons = sortOn (negate . snd) (Map.toList (Map.fromListWith (+) [(reason, 1 :: Int) | reason <- skipped]))

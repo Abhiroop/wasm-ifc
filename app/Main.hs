@@ -14,7 +14,7 @@ import Text.Read (readMaybe)
 
 import Codec.Wasm (decodeModule)
 import Runtime.Instantiate (instantiate)
-import Runtime.Module (RunError (..), SomeModuleInst, Value (..), exportSignature, renderValue)
+import Runtime.Module (RunError (..), SomeModuleInst, Value (..), exportSignature, readGlobalExport, renderValue)
 import Runtime.Wasi (Completion (..), Preopen (..), WasiConfig (..), runWithWasi)
 import Syntax.Module (SomeModule)
 import Syntax.Types (FuncType (..), ValType (..))
@@ -26,6 +26,8 @@ main = do
     args <- getArgs
     case args of
         ["check", path] -> withValidated path (\_ -> putStrLn "ok")
+        ["get", path, name] -> withModule path $ \wasmModule ->
+            either (die . describeRunError) (putStrLn . renderValue) (readGlobalExport wasmModule (T.pack name))
         ("invoke" : rest) -> case parseOptions rest of
             Right (options, path : name : rawArgs) ->
                 withModule path $ \wasmModule ->
@@ -48,6 +50,7 @@ usage =
         [ "Usage:"
         , "  wasm-ifc check  <file.wasm>                              decode and validate (no instantiation)"
         , "  wasm-ifc invoke [options] <file.wasm> <export> [args...] run an exported function"
+        , "  wasm-ifc get    <file.wasm> <global>                     print an exported global"
         , "  wasm-ifc run    [options] <file.wasm> [program args...]  run a WASI program (its _start export)"
         , ""
         , "Options:  --dir HOST[::GUEST]   preopen a host directory under the guest name (default: the same)"

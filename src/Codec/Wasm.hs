@@ -400,6 +400,7 @@ getInstr hasDataCount types opcode = case opcode of
     {- Stack management -}
     0x1A -> pure Drop
     0x1B -> pure Select
+    0x1C -> SelectTyped <$> getVec getValType
     {- The 0xFC prefix: saturating truncations (0–7); the rest is bulk memory -}
     0xFC -> do
         sub <- getULEB128

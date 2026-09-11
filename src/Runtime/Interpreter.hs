@@ -43,6 +43,8 @@ module Runtime.Interpreter (
     Suspended (..),
     resumeWith,
     Halt (..),
+    Fuelled (..),
+    runFor,
     Outcome (..),
     step,
     run,
@@ -558,6 +560,23 @@ run funcs config = case step funcs config of
     Right (Done store vs) -> Right (Finished store vs)
     Right (HostCall request) -> Right (AwaitingHost request)
     Right (Stepped next) -> run funcs next
+
+-- | How a fuel-bounded run ends: halted like 'run', or stopped with the budget spent.
+data Fuelled (mod :: ModuleShape) (res :: ResultType) where
+    Halted :: Halt mod res -> Fuelled mod res
+    OutOfFuel :: Config mod res -> Fuelled mod res
+
+{- | 'run' with a budget of steps, so a test can state that a program terminates (or does
+  not) within it; unlike 'run' this is total.
+-}
+runFor :: Int -> FuncSpaceInst mod (ModuleFuncs mod) -> Config mod res -> Either Trap (Fuelled mod res)
+runFor fuel funcs config
+    | fuel <= 0 = Right (OutOfFuel config)
+    | otherwise = case step funcs config of
+        Left t -> Left t
+        Right (Done store vs) -> Right (Halted (Finished store vs))
+        Right (HostCall request) -> Right (Halted (AwaitingHost request))
+        Right (Stepped next) -> runFor (fuel - 1) funcs next
 
 -- | How a function invocation ends: with the module as the call left it, or needing the host.
 data Outcome (mod :: ModuleShape) (rs :: ResultType) where

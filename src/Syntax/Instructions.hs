@@ -140,6 +140,8 @@ data RawInstr where
     -- \*** Stack management ***
     Drop :: RawInstr
     Select :: RawInstr
+    -- | @select t*@ as encoded: the annotation is a vector, which validation requires to hold one type
+    SelectTyped :: [ValType] -> RawInstr
 
 -- | An expression: a flat list of (tree-structured) instructions — a function body or an initializer.
 type RawExpr = [RawInstr]

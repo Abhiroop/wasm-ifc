@@ -14,6 +14,7 @@ module Examples (
     runFactorial,
     runSquare,
     runIncrement,
+    runSpinFor,
 ) where
 
 import Data.Word (Word32)
@@ -21,7 +22,7 @@ import Data.Word (Word32)
 import Data.Singletons.Base.TH (SList (SCons, SNil))
 import Runtime.Interpreter
 import Runtime.Stack
-import Syntax.Functions (Function (..))
+import Syntax.Functions (Function (..), FunctionBody)
 import Syntax.Immediates (NumWithSign (..), Signedness (..))
 import Syntax.Instructions
 import Syntax.Types (
@@ -84,6 +85,25 @@ factorial =
     toContinue, toDone :: Elem '[] '[ '[], '[], '[ 'I32]]
     toContinue = Here -- branch to the loop header (restarts it)
     toDone = There Here -- branch out of the block (exits the loop)
+
+{- *** a loop that never ends *** -
+
+   @loop (br 0)@: the branch re-enters the loop forever. 'run' would not return; 'runFor'
+   reports the spent budget, which is how termination becomes a testable property.
+-}
+
+spinForever :: FunctionBody shape '[] '[]
+spinForever = loop_ (br_ Here :. INil) :. INil
+
+-- | Whether the loop is still running after the given number of steps (it always is).
+runSpinFor :: Int -> Either String Bool
+runSpinFor fuel = case runFor fuel FsNil (Config (moduleToStore emptyMod) LNil VNil spinForever EntryBoundary) of
+    Left trap -> Left (show trap)
+    Right (OutOfFuel _) -> Right True
+    Right (Halted _) -> Right False
+  where
+    emptyMod :: ModuleInst ('ModuleShape '[] '[] '[] '[] '[])
+    emptyMod = ModuleInst FsNil GNil MNil TNil DNil
 
 runFactorial :: Word32 -> Either String Word32
 runFactorial input =

@@ -17,6 +17,7 @@ module Runtime.Module (
     SomeHostRequest (..),
     exportSignature,
     invokeExport,
+    readGlobalExport,
     continueWith,
 ) where
 
@@ -27,13 +28,13 @@ import Data.Text (Text)
 import Data.Word (Word32, Word64)
 
 import Runtime.Interpreter (Config, FuncSpaceInst, Halt (..), HostRequest, ModuleInst (..), Outcome (..), getFunc, run, runFunction, storeToModule)
-import Runtime.Stack (ValueStack (..))
+import Runtime.Stack (ValueStack (..), getGlobal)
 import Runtime.Trap (Trap)
 import Syntax.Immediates (HostType)
-import Syntax.Indices (FunctionIdx (..))
+import Syntax.Indices (FunctionIdx (..), GlobalIdx (..))
 import Syntax.Module (Export (..), ExportDesc (..))
 import Syntax.Types
-import Validation.Reflect (declaredOrder, funcTypesSing, lookupFuncRef, stackOrder)
+import Validation.Reflect (SomeGlobalRef (..), declaredOrder, funcTypesSing, globalTypesSing, lookupFuncRef, lookupGlobalRef, stackOrder)
 import Validation.Shape (ModuleFuncs, ModuleShape, SomeFuncRef (..))
 
 {- | An instantiated module with its shape hidden: the shape's singleton, the instance, and
@@ -64,7 +65,8 @@ renderValue (F32Value f) = show f
 renderValue (F64Value d) = show d
 
 data RunError
-    = NoSuchExport Text
+    = -- | no export of that name and kind (a function to invoke, a global to read)
+      NoSuchExport Text
     | -- | expected and actual number of arguments
       ArgumentCount Int Int
     | -- | the argument at this (zero-based) position should have the first type, has the second
@@ -133,9 +135,22 @@ continueWith shapeS funcs exports rsS config = do
             Returned (SomeModuleInst shapeS (storeToModule funcs store) exports) (declaredOrder (toValues rsS results))
         AwaitingHost request -> CalledHost (SomeHostRequest shapeS funcs exports rsS request)
 
+-- | The current value of an exported global (the spec's @get@ action).
+readGlobalExport :: SomeModuleInst -> Text -> Either RunError Value
+readGlobalExport (SomeModuleInst shapeS inst exports) name = do
+    GlobalIdx idx <- note (NoSuchExport name) (exportedGlobalIndex name exports)
+    SomeGlobalRef _ st globalIx <- note (NoSuchExport name) (lookupGlobalRef (globalTypesSing shapeS) idx)
+    Right (toValue st (getGlobal globalIx inst.globals))
+
 exportedFuncIndex :: Text -> [Export] -> Maybe FunctionIdx
 exportedFuncIndex name exports =
     case [idx | Export n (ExportFunc idx) <- exports, n == name] of
+        (idx : _) -> Just idx
+        [] -> Nothing
+
+exportedGlobalIndex :: Text -> [Export] -> Maybe GlobalIdx
+exportedGlobalIndex name exports =
+    case [idx | Export n (ExportGlobal idx) <- exports, n == name] of
         (idx : _) -> Just idx
         [] -> Nothing
 

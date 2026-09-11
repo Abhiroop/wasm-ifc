@@ -82,6 +82,8 @@ data ElabError
       DeadCodeLeftovers
     | -- | @br_table@ targets that do not agree with the default
       BrTableTargetsDiffer
+    | -- | a typed @select@ whose annotation does not hold exactly one type
+      InvalidSelectArity Int
     | -- | a global whose initializer is not a single constant of its type
       InvalidGlobalInitializer Word32
     | -- | sections whose lengths disagree
@@ -236,13 +238,9 @@ elabInstr env stackIn instr = case instr of
     Drop -> case stackIn of
         SCons _ rest -> Right (Produces rest IDrop)
         _ -> Left (StackUnderflow "drop")
-    Select -> case stackIn of
-        SCons sc (SCons va (SCons vb rest)) -> do
-            Refl <- note (OperandMismatch "select" I32 (valTypeOf sc)) (decideEquality sc SI32)
-            Refl <- note (OperandMismatch "select" (valTypeOf va) (valTypeOf vb)) (decideEquality va vb)
-            isNum <- requireNum va
-            Right (Produces (SCons va rest) (ISelect isNum))
-        _ -> Left (StackUnderflow "select")
+    Select -> elabSelect Nothing stackIn
+    SelectTyped [t] -> elabSelect (Just t) stackIn
+    SelectTyped ts -> Left (InvalidSelectArity (length ts))
     {- Locals -}
     LocalGet (LocalIdx i) -> case mkLocalElem (env.locals) i of
         Just (SomeElem sv ix) -> Right (Produces (SCons sv stackIn) (ILocalGet ix))
@@ -477,6 +475,20 @@ elabInstr env stackIn instr = case instr of
     Unreachable -> Right (Transfers IUnreachable)
 
 -- | Push a label's result type onto the elaboration environment's label context.
+
+{- | @select@ takes a condition over two operands of one numeric type; the typed form also
+  names that type, which the operands must have.
+-}
+elabSelect :: Maybe ValType -> Sing stackIn -> Either ElabError (ElaboratedInstr shape ret locals labels stackIn)
+elabSelect annotation stackIn = case stackIn of
+    SCons sc (SCons va (SCons vb rest)) -> do
+        Refl <- note (OperandMismatch "select" I32 (valTypeOf sc)) (decideEquality sc SI32)
+        Refl <- note (OperandMismatch "select" (valTypeOf va) (valTypeOf vb)) (decideEquality va vb)
+        mapM_ (\t -> if t == valTypeOf va then Right () else Left (OperandMismatch "select" t (valTypeOf va))) annotation
+        isNum <- requireNum va
+        Right (Produces (SCons va rest) (ISelect isNum))
+    _ -> Left (StackUnderflow "select")
+
 pushLabel :: Sing rs -> ElabEnv shape ret locals labels -> ElabEnv shape ret locals (rs ': labels)
 pushLabel rsS env = env {labels = SCons rsS (env.labels)}
 
@@ -681,6 +693,8 @@ stepDead env s instr = case instr of
         case (a, b) of
             (Just x, Just y) | x /= y -> Left (DeadCodeMismatch x y)
             _ -> Right (PolyStack (orElse a b : unStack s3))
+    SelectTyped [t] -> popKnown I32 s >>= popKnown t >>= popKnown t >>= Right . pushKnown t
+    SelectTyped ts -> Left (InvalidSelectArity (length ts))
     LocalGet (LocalIdx i) -> withLocal env i (\v -> Right (pushKnown v s))
     LocalSet (LocalIdx i) -> withLocal env i (\v -> popKnown v s)
     LocalTee (LocalIdx i) -> withLocal env i (\v -> pushKnown v <$> popKnown v s)
