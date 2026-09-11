@@ -104,12 +104,15 @@ data SomeFuncRef (fts :: [FuncType]) where
   fields at the type level.
 
   TODO(ifc P1): this shape is over unlabelled types, which is why "Syntax.InstructionsIFC"
-  attaches free labels to global reads and cannot type calls. A labelled module shape needs
-  labelled function types (parameters, results, a pc bound), labelled global types, and a
-  label per memory ('MemShape'). Either a second shape with its own projections, or this one
-  made polymorphic in its value-type kind so the plain layer is the instance at 'ValType' and
-  the IFC layer the one at 'Syntax.TypesIFC.LValType'. Same fork as the P0 TODO on
-  'Syntax.InstructionsIFC.Instr'; decide them together. The singletons below regenerate either way.
+  attaches free labels to global reads and cannot type calls. The labelled shape follows
+  SecWasm's Fig. 8: function types @τ* →ℓ τ*@ (labelled parameters and results plus the pc
+  bound @ℓ@, with "results @⊒ ℓ@" as a well-formedness condition), global types @mut? τ@, and
+  memories unchanged (SecWasm labels bytes at run time and instructions with immediates, not
+  the memory as a whole; see the memory TODO in "Syntax.InstructionsIFC"). Either a second
+  shape with its own projections, or this one made polymorphic in its value-type kind so the
+  plain layer is the instance at 'ValType' and the IFC layer the one at
+  'Syntax.TypesIFC.LValType'. Same fork as the P0 TODO on 'Syntax.InstructionsIFC.Instr';
+  decide them together. The singletons below regenerate either way.
 -}
 data ModuleShape = ModuleShape
     { funcTypes :: [FuncType]
@@ -146,8 +149,10 @@ type family ModuleData s where
   together as one index on the typed AST.
 
   TODO(ifc P2): the IFC 'Syntax.InstructionsIFC.Instr' spells @ret@ and @locals@ out because
-  this is over 'ValType'; labelled locals are the point (a local's label is fixed for the
-  function). Follows the 'ModuleShape' TODO.
+  this is over 'ValType'; labelled locals are the point (a local's label is declared once and
+  fixed, SecWasm's flow-insensitive locals), and the labelled frame also carries the function's
+  pc bound, which @return@ and every effect in the body are checked against. Follows the
+  'ModuleShape' TODO.
 -}
 data FrameShape = FrameShape
     { locals :: [ValType]
@@ -169,9 +174,10 @@ type family FrameReturn f where
   not used for static checking — WebAssembly bounds are runtime traps. (Used only
   promoted; the term-level selectors document the fields.)
 
-  TODO(ifc P1): add the memory's security level here, one label per memory (see the memory
-  TODO in "Syntax.InstructionsIFC"). It is static policy exactly like the limits, and the
-  runtime 'Runtime.MemInst.MemInst' needs nothing for it.
+  IFC note: nothing to add here. SecWasm labels every /byte/ at run time, flow-sensitively, and
+  puts the static labels on the load and store instructions as immediates (its §3.2 rejects a
+  single label per memory as too rigid); so the memory's shape stays as it is and the labels
+  live in 'Runtime.MemInst.MemInst'. See the memory TODO in "Syntax.InstructionsIFC".
 -}
 data MemShape = MemShape
     { addrType :: AddrType

@@ -41,10 +41,17 @@ import Validation.Shape (MemShape)
 -- *** Linear memory ***
 
 {- | A linear memory: its declared limits, its current size in pages, and the written pages.
-  TODO(ifc P2): nothing to do here if the memory gets one static label
-  ('Validation.Shape.MemShape'); only a dynamic or hybrid design would keep a label per page
-  next to 'pages' (the sparse page map makes that cheap). Decide at the memory TODO in
-  "Syntax.InstructionsIFC" first.
+  TODO(ifc P1): SecWasm's memory is labelled per byte, flow-sensitively, at run time (§3.2:
+  each location is a pair @(byte, ℓ)@), so this record grows a label store. Recommended shape:
+  a second sparse page map next to 'pages', @labels :: IntMap (UV.Vector Word8)@ (or a bit
+  vector while the lattice has two points), where an absent page is all-'Low exactly as an
+  absent page is all-zero; @memory.grow@ then labels new pages 'Low for free (E-MEMORY-GROW),
+  and only pages that ever held a secret are materialised. Operations: a load returns the bytes
+  and the join of their labels (the caller compares it with the instruction's @ℓ@ and traps,
+  E-LOAD); a store writes bytes and sets their labels to its @ℓ@ (E-STORE, no check); the bulk
+  operations compute labels per byte (see the bulk TODO in "Syntax.InstructionsIFC"); a WASI
+  read writes the descriptor's label, a WASI write joins the labels it reads (see
+  "Runtime.Host"). Copy-on-write per page carries over unchanged.
 -}
 type MemInst :: MemShape -> Type
 data MemInst m = MemInst

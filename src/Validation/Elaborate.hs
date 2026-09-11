@@ -861,19 +861,30 @@ unStack (PolyStack xs) = xs
   "Runtime.Instantiate" turns it into a running instance.
 
   TODO(ifc P0): where do labels come from? A decoded 'RawModule' carries none and the binary
-  format has no place for them. Two pieces. (1) A /policy/ for the module's interface: the
-  labels (and pc bounds) of imported and exported function parameters and results, of the
-  mutable globals, of the memory, and of the host functions (sources such as @fd_read@ from a
-  secret file, sinks such as @fd_write@ to a public descriptor; see "Runtime.Host"), supplied
-  beside the module as a small file or custom section or CLI flags: decide the format, it is
-  small. (2) Everything inside a function body is then determined: explicit flows are joins
-  and the pc is fixed by the block structure, so IFC validation is a deterministic forward
-  propagation over the typed program, with no annotations and no search, that can only fail
-  at a flow check (a set, store, branch, call or host call into a lower label). Intuition for
-  the implementation: a second elaboration pass over the /typed/ 'Instr' (labels never change
-  what is on the stack, only how it is typed), or folded into this pass once the P0 structure
-  decision makes 'Instr' labelled. 'ElabError' gains one constructor: which instruction, and
-  which flow (from which label into which).
+  format has no place for them. SecWasm's answer (§6, Usability): "the developer would have to
+  manually annotate the function types and the load and store operations with security labels";
+  everything else is derived. So the /policy/ is exactly: (1) per function type, the labels of
+  parameters and results and the pc bound (@τ* →ℓ τ*@); (2) per global, its label; (3) per
+  @load@/@store@ site, the immediate @ℓ@; and, our extension, (4) per host function, its
+  labelled type (see "Runtime.Host"). Recommended carrier: a WebAssembly /custom section/
+  (say @"ifc"@), which travels with the module, keeps it valid for every other tool (wabt and
+  wasmtime preserve custom sections; the decoder already skips them, @custom.wast@ passes), and
+  is keyed by function index, global index and code offset. Recommended defaults so unannotated
+  modules still elaborate: a store's immediate is /inferred/ as @pc ⊔ ℓa ⊔ ℓv@, the least label
+  that satisfies T-STORE and the most precise labelling of memory (no annotation ever needed for
+  stores); a load's immediate defaults to 'Low ("I expect public bytes"), which is precise and
+  traps at run time exactly where a secret is read unannotated (SecWasm's Example 1), so the
+  trap tells you where an annotation belongs; function types and globals default to 'Low with
+  pc bound 'Low, i.e. today's behaviour. Everything inside a function body is then determined:
+  explicit flows are joins, the block pcs come from the pre-pass described at
+  'Syntax.InstructionsIFC.IBlock' (a joint fixpoint of label propagation and pc assignment,
+  cheap over two points; re-elaborating a block body at a higher pc is just calling the body
+  elaborator again with another pc argument), and the elaborator inserts an @IRelabel@ wherever
+  SecWasm's subtyping would apply (call arguments, block results, sets). Elaboration can only
+  fail at a flow check, and 'ElabError' gains one constructor for it: which instruction, which
+  flow (from which label into which). Intuition for staging: a second elaboration pass over the
+  /typed/ 'Instr' (labels never change what is on the stack, only how it is typed), or folded
+  into this pass once the P0 structure decision makes 'Instr' labelled.
 -}
 elaborateModule :: RawModule -> Either ElabError SomeModule
 elaborateModule m = do
