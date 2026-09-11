@@ -264,6 +264,7 @@ runCommand dir state cmd = case cmd.kind of
         pure (state', outcome)
     "assert_return" -> pure (withAction (\m act -> assertReturn m act cmd.expected))
     "assert_trap" -> pure (withAction (\m act -> assertTrap m act cmd.trapText))
+    "assert_exhaustion" -> pure (withAction (\m act -> assertTrap m act cmd.trapText))
     "action" -> pure (withAction (\m act -> either (\e -> (m, Failed (show e))) (\(m', _) -> (m', Passed)) (invoke m act)))
     "assert_malformed" -> rejectedBy malformed
     "assert_invalid" -> rejectedBy invalid
@@ -372,6 +373,7 @@ trapText UnreachableExecuted = "unreachable"
 trapText UndefinedElement = "undefined element"
 trapText UninitializedElement = "uninitialized element"
 trapText IndirectCallTypeMismatch = "indirect call type mismatch"
+trapText CallStackExhausted = "call stack exhausted"
 
 numericTypes :: [Text]
 numericTypes = ["i32", "i64", "f32", "f64"]

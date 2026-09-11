@@ -22,4 +22,8 @@ data Trap
       UninitializedElement
     | -- | @call_indirect@ through a function of another type than expected
       IndirectCallTypeMismatch
+    | {- | a @call@ or @call_indirect@ that would nest activations past the interpreter's bound
+      ('callDepthBound' in "Runtime.Interpreter")
+      -}
+      CallStackExhausted
     deriving stock (Eq, Show)

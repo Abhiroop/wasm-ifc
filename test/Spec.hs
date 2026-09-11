@@ -27,7 +27,7 @@ import Runtime.Bytes (bytesOfWord32, bytesOfWord64, word32OfBytes, word64OfBytes
 import Runtime.Convert (convertVal)
 import Runtime.Host (WasiFunc (..))
 import Runtime.Instantiate (InstantiationError (..), instantiate)
-import Runtime.Interpreter (HostRequest (..), resumeWith)
+import Runtime.Interpreter (HostRequest (..), callDepthBound, resumeWith)
 import Runtime.Module (Invocation (..), RunError (..), SomeHostRequest (..), SomeModuleInst, Value (..), continueWith, exportSignature, invokeExport, readGlobalExport, renderValue)
 import Runtime.Numeric (intDiv32)
 import Runtime.Stack (ValueStack (..))
@@ -103,6 +103,14 @@ spec = do
         it "traps on an out-of-bounds load" $
             elabRunWithMemory [I32] [I32] [] [LocalGet (LocalIdx 0), Load SI32 (MemArg 0 0)] [70000]
                 `shouldSatisfy` trapContaining "OutOfBoundsMemoryAccess"
+        it "traps when a runaway recursion exhausts the call stack" $
+            elabRun [] [] [] [Call (FunctionIdx 0)] [] `shouldSatisfy` trapContaining "CallStackExhausted"
+        it "allows recursion exactly up to the call-depth bound" $ do
+            -- @f n@ recurses to @f 0@ and counts back up, so a call with @n@ nests @n + 1@ activations.
+            let countdown = [LocalGet (LocalIdx 0), LocalGet (LocalIdx 0), Eqz SI32, BrIf (LabelIdx 0), Const SI32 1, Sub SI32, Call (FunctionIdx 0), Const SI32 1, Add SI32]
+                deepest = fromIntegral callDepthBound - 1
+            elabRun [I32] [I32] [] countdown [deepest] `shouldBe` Right [show deepest]
+            elabRun [I32] [I32] [] countdown [deepest + 1] `shouldSatisfy` trapContaining "CallStackExhausted"
 
     describe "indirect calls" $ do
         it "go through the table entry, typed" $

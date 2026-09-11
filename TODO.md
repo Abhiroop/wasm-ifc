@@ -30,8 +30,8 @@ when there is a choice. Recorded as the signed-off override in `STYLE.md` §11 (
 
 Sequenced work packages. Each lands as separate commits gated on the `-Werror` build, `cabal test`,
 fourmolu, hlint and `samples/check.sh`. Items marked **[decision]** need Daniel's call first.
-**Status (2026-09-10):** O1–O4, P0, R1, R2, R4 and W0–W7 are done (WASI: 72/72 in the official wasi-testsuite; spec testsuite 23,298 assertions pass, 0 fail); R3 and R5 are done except the items
-marked **[decision]** and the ones that wait on a feature; open: `runFor` (G1), W7, and the decisions.
+**Status (2026-09-11):** O1–O5, P0, R1, R2, R4, G1 and W0–W7 are done (WASI: 72/72 in the official wasi-testsuite; spec testsuite 23,306 assertions pass, 0 fail, 960 skipped as feature gaps); R3 and R5 are done except the items
+marked **[decision]** and the ones that wait on a feature; open: the decisions, including the pre-IFC slice proposal under §F.
 
 ### O — code organisation (2026-09-10, Daniel's top priority)
 
@@ -162,6 +162,12 @@ Beyond P0, mostly *verification*; the spec-test runner (R1) is the instrument.
 - [x] **[P3]** `runFor :: Int -> …`, a fuel-bounded runner for tests (G1). Done 2026-09-11: `runFor`
   in `Runtime.Interpreter` returns `Fuelled = Halted | OutOfFuel`; `test/Examples.hs` runs an
   endless `loop (br 0)` under a budget, the one test that states termination directly.
+- [x] **[P1·runtime]** Call-stack exhaustion is a trap, not a crash (spec §4.4.8: an implementation
+  may bound the stack, but exhaustion must trap). A runaway recursion used to grow the heap-allocated
+  `Control` stack until memory ran out. Done 2026-09-11: each `CallBoundary` caches its activation
+  depth; a call past `callDepthBound` (10 000 activations) traps with `CallStackExhausted`; the spec
+  runner serves `assert_exhaustion` (the 5 skipped cases in `call`, `call_indirect`, `fac` now pass);
+  a unit test pins the bound exactly (depth 10 000 runs, 10 001 traps).
 
 ### R5 — style and hygiene (no behaviour change; interleave when touching a file)
 
@@ -361,6 +367,22 @@ Open P0/P1 correctness items live in the plan above (section **P0**); the list b
   - WANILLA (CCS '25) — noninterference via SMT: <https://arxiv.org/pdf/2509.08758>
   - HLIO — hybrid IFC: <https://www.cse.chalmers.se/~russo/publications_files/hybrid-icfp2015.pdf>
   - In-place interpreter for WASM (perf, later): <https://dl.acm.org/doi/pdf/10.1145/3563311>
+  - [ ] **[decision]** **Pre-IFC base — proposed slice (2026-09-11).** The spec suite passes every
+    assertion it runs (0 failing); all 960 skips are feature gaps, not defects, and 72/72 WASI
+    programs from real compilers exercise `br_table`/`call_indirect`/memory in anger — strong
+    evidence against "silly" bugs of the reversed-arguments kind. Proposal: **merge IFC on this
+    base now**; only the exhaustion trap above was worth doing first. Known coverage holes, for the
+    record, none of them worth closing before IFC:
+    - `br_table` (150), `select` (119) and `global` (59) assertions skip because one
+      reference-typed function rejects the script's single module; their numeric semantics are
+      still covered by `switch`/`br`/`labels`, the assertions that do run, and the WASI programs.
+      Closing them needs reference value types — a `ValType` change that collides head-on with
+      IFC's own changes to values — so after the merge, if ever.
+    - Imports of globals/memories/tables and cross-module linking (`imports` 151, `linking`
+      excluded, `data`/`elem` partial): orthogonal to the IFC model (SecWasm is single-module);
+      host calls are already the labelled I/O boundary. The `global.get`-in-initialiser item above
+      waits on this.
+    - Reference types, SIMD, multi-memory, text-format `assert_malformed`: irrelevant to IFC.
 - [x] **[P2·feature]** Run the start function after instantiation — it is decoded (`start`)
   but never invoked.
   **Done (2026-09):** validated (in range, `[] -> []`) and run as the last step of instantiation.

@@ -22,7 +22,8 @@ type-soundness argument:
     with no @error@ and no incomplete pattern (the index of each instruction guarantees
     the operands it needs are present, and the GADTs make every dispatch exhaustive).
   * A 'Trap' is a defined result, not a stuck state: 'step' may return @Left trap@ for the
-    spec-defined runtime errors (division by zero, out-of-bounds access, @unreachable@).
+    spec-defined runtime errors (division by zero, out-of-bounds access, @unreachable@,
+    call-stack exhaustion).
 
 So progress reads: every well-typed configuration either steps, finishes, or traps.
 -}
@@ -49,6 +50,7 @@ module Runtime.Interpreter (
     step,
     run,
     runFunction,
+    callDepthBound,
 ) where
 
 import Data.Bits (
@@ -185,9 +187,12 @@ data
         Control mod res ret locals labels contOut ->
         Control mod res ret locals (ps ': labels) rs
     {- | A call boundary: the callee's bottom frame. When the callee finishes (or returns),
-    put its @rs@ results on the caller's saved stack and resume the caller.
+    put its @rs@ results on the caller's saved stack and resume the caller. The 'Word' is the
+    callee's activation depth (see 'activationDepth'), cached here so a call reads the current
+    depth off the nearest boundary instead of walking the whole stack.
     -}
     CallBoundary ::
+        Word ->
         ValueStack below ->
         LocalSpaceInst callerLocals ->
         Expr mod ('FrameShape callerLocals callerRet) callerLabels (rs ++ below) contOut ->
@@ -406,15 +411,38 @@ enterCall ::
     Control mod res ret locals labels out ->
     Either Trap (StepResult mod res)
 enterCall funcs store locals witness ix stack rest control = case getFunc ix funcs of
-    WasmFunc (Function declared body) ->
-        let (args, below) = splitStack witness stack
-            calleeLocals = reverseOnto args (defaultLocals declared)
-         in Right (Stepped (Config store calleeLocals VNil body (CallBoundary below locals rest control)))
+    WasmFunc (Function declared body)
+        | depth > callDepthBound -> Left CallStackExhausted
+        | otherwise ->
+            let (args, below) = splitStack witness stack
+                calleeLocals = reverseOnto args (defaultLocals declared)
+             in Right (Stepped (Config store calleeLocals VNil body (CallBoundary depth below locals rest control)))
     HostFunc wasiFunc -> case wasiFuncType wasiFunc of
         SFuncType _ resultsS ->
             let (args, below) = splitStack witness stack
                 suspended = Suspended (appendFromSing resultsS) locals below rest control
              in Right (HostCall (HostRequest wasiFunc args store suspended))
+  where
+    depth = activationDepth control + 1
+
+{- | The most activations the machine allows on the control stack at once; a call that would
+  open one more traps with 'CallStackExhausted'. The spec leaves the bound to the implementation
+  and only requires exhaustion to be a trap rather than a crash; without one, a runaway recursion
+  grows the heap-allocated control stack until memory runs out.
+-}
+callDepthBound :: Word
+callDepthBound = 10000
+
+{- | The depth of the running activation: the entry activation is 1, and each 'CallBoundary'
+  caches the depth of the activation it opened, so the walk only crosses the current
+  activation's labels.
+-}
+activationDepth :: Control mod res ret locals labels cur -> Word
+activationDepth control = case control of
+    EntryBoundary -> 1
+    CallBoundary depth _ _ _ _ -> depth
+    BlockLabel _ _ rest -> activationDepth rest
+    LoopLabel _ _ _ rest -> activationDepth rest
 
 -- | The "continue in the current frame" case: wrap a successor configuration.
 stepped ::
@@ -502,7 +530,7 @@ popControl ::
 popControl store _ vs EntryBoundary = Done store vs
 popControl store locals vs (BlockLabel below cont rest) = resume store locals vs below cont rest
 popControl store locals vs (LoopLabel below _ cont rest) = resume store locals vs below cont rest
-popControl store _ vs (CallBoundary below cl cont cf) = resume store cl vs below cont cf
+popControl store _ vs (CallBoundary _ below cl cont cf) = resume store cl vs below cont cf
 
 {- | Unwind to the @ix@-th enclosing label, carrying that label's values. A block/if label
   resumes after the construct; a loop label restarts the body; the function's own label
@@ -519,7 +547,7 @@ unwind store _ Here vs EntryBoundary = Done store vs
 unwind store locals Here vs (BlockLabel below cont rest) = resume store locals vs below cont rest
 unwind store locals Here vs (LoopLabel below body cont rest) =
     Stepped (Config store locals vs body (LoopLabel below body cont rest))
-unwind store _ Here vs (CallBoundary below cl cont cf) = resume store cl vs below cont cf
+unwind store _ Here vs (CallBoundary _ below cl cont cf) = resume store cl vs below cont cf
 unwind store locals (There ix') vs (BlockLabel _ _ rest) = unwind store locals ix' vs rest
 unwind store locals (There ix') vs (LoopLabel _ _ _ rest) = unwind store locals ix' vs rest
 unwind _ _ (There ix') _ (CallBoundary {}) = case ix' of {}
@@ -533,7 +561,7 @@ returnUnwind ::
     Control mod res ret locals labels cur ->
     StepResult mod res
 returnUnwind store _ vs EntryBoundary = Done store vs
-returnUnwind store _ vs (CallBoundary below cl cont cf) = resume store cl vs below cont cf
+returnUnwind store _ vs (CallBoundary _ below cl cont cf) = resume store cl vs below cont cf
 returnUnwind store locals vs (BlockLabel _ _ rest) = returnUnwind store locals vs rest
 returnUnwind store locals vs (LoopLabel _ _ _ rest) = returnUnwind store locals vs rest
 
