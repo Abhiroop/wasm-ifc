@@ -122,10 +122,10 @@ getFunc (There ix) (FsCons _ rest) = getFunc ix rest
   to 'step' read-only rather than kept here.)
 -}
 data Store (mod :: ModuleShape) = Store
-    { globals :: GlobalSpaceInst (ModuleGlobals mod)
-    , memories :: MemSpaceInst (ModuleMems mod)
-    , tables :: TableSpaceInst (ModuleFuncs mod) (ModuleTables mod)
-    , dataSegments :: DataSpaceInst (ModuleData mod)
+    { globals :: !(GlobalSpaceInst (ModuleGlobals mod))
+    , memories :: !(MemSpaceInst (ModuleMems mod))
+    , tables :: !(TableSpaceInst (ModuleFuncs mod) (ModuleTables mod))
+    , dataSegments :: !(DataSpaceInst (ModuleData mod))
     }
 
 {- | A fully instantiated module: the instances of its function, global, memory, table and
@@ -133,11 +133,11 @@ data Store (mod :: ModuleShape) = Store
   syntax/shape/instance naming: @Module@ → 'Validation.Shape.ModuleShape' → 'ModuleInst'.)
 -}
 data ModuleInst (mod :: ModuleShape) = ModuleInst
-    { functions :: FuncSpaceInst mod (ModuleFuncs mod)
-    , globals :: GlobalSpaceInst (ModuleGlobals mod)
-    , memories :: MemSpaceInst (ModuleMems mod)
-    , tables :: TableSpaceInst (ModuleFuncs mod) (ModuleTables mod)
-    , dataSegments :: DataSpaceInst (ModuleData mod)
+    { functions :: !(FuncSpaceInst mod (ModuleFuncs mod))
+    , globals :: !(GlobalSpaceInst (ModuleGlobals mod))
+    , memories :: !(MemSpaceInst (ModuleMems mod))
+    , tables :: !(TableSpaceInst (ModuleFuncs mod) (ModuleTables mod))
+    , dataSegments :: !(DataSpaceInst (ModuleData mod))
     }
 
 {- *** The control stack ***
@@ -189,7 +189,7 @@ data
     on top of the saved @below@ and run the continuation in the enclosing environment.
     -}
     BlockLabel ::
-        ValueStack below ->
+        !(ValueStack below) ->
         Expr mod ('FrameShape locals ret) labels (rs ++ below) contOut ->
         Control mod res ret locals labels contOut ->
         Control mod res ret locals (rs ': labels) rs
@@ -197,7 +197,7 @@ data
     normal completion runs the continuation, exactly like 'BlockLabel'.
     -}
     LoopLabel ::
-        ValueStack below ->
+        !(ValueStack below) ->
         Expr mod ('FrameShape locals ret) (ps ': labels) ps rs ->
         Expr mod ('FrameShape locals ret) labels (rs ++ below) contOut ->
         Control mod res ret locals labels contOut ->
@@ -208,9 +208,9 @@ data
     depth off the nearest boundary instead of walking the whole stack.
     -}
     CallBoundary ::
-        Word ->
-        ValueStack below ->
-        LocalSpaceInst callerLocals ->
+        !Word ->
+        !(ValueStack below) ->
+        !(LocalSpaceInst callerLocals) ->
         Expr mod ('FrameShape callerLocals callerRet) callerLabels (rs ++ below) contOut ->
         Control mod res callerRet callerLocals callerLabels contOut ->
         Control mod res rs calleeLocals '[rs] rs
@@ -221,9 +221,9 @@ data
 -}
 data Config (mod :: ModuleShape) (res :: ResultType) where
     Config ::
-        Store mod ->
-        LocalSpaceInst locals ->
-        ValueStack cur ->
+        !(Store mod) ->
+        !(LocalSpaceInst locals) ->
+        !(ValueStack cur) ->
         Expr mod ('FrameShape locals ret) labels cur out ->
         Control mod res ret locals labels out ->
         Config mod res
@@ -233,8 +233,8 @@ data Config (mod :: ModuleShape) (res :: ResultType) where
   cannot perform and so hands out as a request.
 -}
 data StepResult (mod :: ModuleShape) (res :: ResultType) where
-    Stepped :: Config mod res -> StepResult mod res
-    Done :: Store mod -> ValueStack res -> StepResult mod res
+    Stepped :: !(Config mod res) -> StepResult mod res
+    Done :: !(Store mod) -> !(ValueStack res) -> StepResult mod res
     HostCall :: HostRequest mod res -> StepResult mod res
 
 {- | A call into the host, suspended: which function, its arguments (a stack of exactly its

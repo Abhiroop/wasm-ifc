@@ -54,11 +54,21 @@ import Syntax.Immediates (HostType)
 import Syntax.Types
 import Validation.Shape (Append (..), DataShape (..), Elem (..), MemShape, ReverseOnto, TableShape)
 
--- | The operand stack (head = top of stack), indexed by the types it holds.
+{- | The operand stack (head = top of stack), indexed by the types it holds.
+
+  Every field here and in the other runtime containers is strict, and deliberately so: a
+  WebAssembly value is a machine word that is always defined, so forcing one can never change
+  a result, whereas /not/ forcing it does. With lazy fields, @i32.add@ pushes an unevaluated
+  thunk, the next @i32.add@ builds a thunk on top of that, and a program whose working set is
+  a handful of words retains a heap proportional to the number of instructions it has run.
+  Measured before this became strict: @fib 30@ spent 48 % of its time in the collector and
+  peaked at 163 MB of residency — the specific, stated suspicion STYLE.md §0 asks for before
+  performance is allowed to motivate anything. See @bench/@ for how that was measured.
+-}
 type ValueStack :: [ValType] -> Type
 data ValueStack s where
     VNil :: ValueStack '[]
-    (:#) :: HostType t -> ValueStack ts -> ValueStack (t ': ts)
+    (:#) :: !(HostType t) -> !(ValueStack ts) -> ValueStack (t ': ts)
 
 infixr 5 :#
 
@@ -69,7 +79,7 @@ infixr 5 :#
 type LocalSpaceInst :: [ValType] -> Type
 data LocalSpaceInst ls where
     LNil :: LocalSpaceInst '[]
-    (:&) :: HostType t -> LocalSpaceInst ls -> LocalSpaceInst (t ': ls)
+    (:&) :: !(HostType t) -> !(LocalSpaceInst ls) -> LocalSpaceInst (t ': ls)
 
 infixr 5 :&
 
@@ -77,7 +87,7 @@ infixr 5 :&
 type GlobalSpaceInst :: [GlobalType] -> Type
 data GlobalSpaceInst gs where
     GNil :: GlobalSpaceInst '[]
-    GCons :: HostType t -> GlobalSpaceInst gs -> GlobalSpaceInst ('GlobalType mut t ': gs)
+    GCons :: !(HostType t) -> !(GlobalSpaceInst gs) -> GlobalSpaceInst ('GlobalType mut t ': gs)
 
 -- | Concatenate two stacks; the upper one ends up on top. Purely structural.
 appendStack :: ValueStack a -> ValueStack b -> ValueStack (a ++ b)
@@ -145,7 +155,7 @@ setGlobal (There ix) v (GCons x rest) = GCons x (setGlobal ix v rest)
 type MemSpaceInst :: [MemShape] -> Type
 data MemSpaceInst ms where
     MNil :: MemSpaceInst '[]
-    MCons :: MemInst m -> MemSpaceInst ms -> MemSpaceInst (m ': ms)
+    MCons :: !(MemInst m) -> !(MemSpaceInst ms) -> MemSpaceInst (m ': ms)
 
 firstMem :: MemSpaceInst (m ': ms) -> MemInst m
 firstMem (MCons mem _) = mem
@@ -160,7 +170,7 @@ setFirstMem mem (MCons _ rest) = MCons mem rest
 type TableSpaceInst :: [FuncType] -> [TableShape] -> Type
 data TableSpaceInst fts ts where
     TNil :: TableSpaceInst fts '[]
-    TCons :: TableInst fts -> TableSpaceInst fts ts -> TableSpaceInst fts (t ': ts)
+    TCons :: !(TableInst fts) -> !(TableSpaceInst fts ts) -> TableSpaceInst fts (t ': ts)
 
 firstTable :: TableSpaceInst fts (t ': ts) -> TableInst fts
 firstTable (TCons table _) = table
@@ -172,7 +182,7 @@ firstTable (TCons table _) = table
 type DataSpaceInst :: [DataShape] -> Type
 data DataSpaceInst ds where
     DNil :: DataSpaceInst '[]
-    DCons :: Maybe ByteString -> DataSpaceInst ds -> DataSpaceInst ('DataShape ': ds)
+    DCons :: !(Maybe ByteString) -> !(DataSpaceInst ds) -> DataSpaceInst ('DataShape ': ds)
 
 getSegment :: Elem 'DataShape ds -> DataSpaceInst ds -> Maybe ByteString
 getSegment Here (DCons segment _) = segment

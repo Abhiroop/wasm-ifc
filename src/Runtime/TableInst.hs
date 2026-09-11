@@ -27,8 +27,8 @@ import Validation.Shape (SomeFuncRef)
 
 type TableInst :: [FuncType] -> Type
 data TableInst fts = TableInst
-    { limits :: Limits
-    , entries :: IntMap (SomeFuncRef fts)
+    { limits :: !Limits
+    , entries :: !(IntMap (SomeFuncRef fts))
     -- ^ by index; an absent entry is uninitialised
     }
 

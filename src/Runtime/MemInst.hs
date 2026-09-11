@@ -55,9 +55,9 @@ import Validation.Shape (MemShape)
 -}
 type MemInst :: MemShape -> Type
 data MemInst m = MemInst
-    { limits :: Limits
-    , pageCount :: Word32
-    , pages :: IntMap (UV.Vector Word8)
+    { limits :: !Limits
+    , pageCount :: !Word32
+    , pages :: !(IntMap (UV.Vector Word8))
     -- ^ by page index; an absent page is all zeros
     }
 
