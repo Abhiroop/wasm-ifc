@@ -473,36 +473,71 @@ every measurement below is designed to attribute cost to exactly one of them:
    `Runtime.Convert`; one `Config` + one `Either` allocated per step.
 3. **The host language**: GHC code generation and the GC, versus C/C++/Rust interpreters.
 
-**Baseline measured today** (single runs, WSL2, unpinned, default `-O1`; `fib 30` ≈ 2.7 M
-calls ≈ 25 M dynamic instructions):
+### Results so far (2026-09-11)
 
-| runtime | `fib 30` | note |
+Two sweeps are recorded in `bench/results/`, one per commit, taken identically: 25 kernels ×
+5 runtimes, CPU seconds, median of 5, each runtime's own start-up subtracted. Ours and wabt's
+numbers are steady (median relative MAD 2.6 % and 2.2 %); the compiling tiers finish these
+kernels inside their own start-up spread, so they print as `<0.05` and take part in no ratio.
+Placing us against a JIT needs the real-program tier below, not these.
+
+**E0 — the baseline was a laziness leak, and had nothing to do with types.** At `48f8e3c`
+`i32.add` pushed `op a b` unevaluated onto a lazy `:#`, so a program retained every value it
+had ever computed:
+
+| `fib 30` | before (`48f8e3c`) | after (`f69ac27`) |
 |---|---|---|
-| `wasm-ifc` (this commit) | 1.03 s | `+RTS -s`: **productivity 52 %**, **163 MB max residency** |
-| wasmtime Pulley (interpreter) | 0.05 s | `wasmtime run --target pulley64` |
-| wasmtime Winch (baseline JIT) | 0.013 s | |
-| wasmtime Cranelift (JIT) | 0.010 s | |
+| max residency | 163 MB | 44 KB |
+| productivity | 52 % | 98.7 % |
+| GC share | 48 % | 0.0 % |
 
-So we sit at roughly 40 ns/instruction, ~20× behind the best-in-class interpreter, and half of
-that time is garbage collection with a residency that fib (30 frames deep) has no business
-having. **Hypothesis H0:** a laziness leak, not a typing cost — `stepBin` pushes `op a b`
-unevaluated onto a lazy `:#`, so the whole addition tree of fib is retained as thunks until
-the result is printed. That must be fixed and re-measured *before* any comparison, and the
-before/after pair is itself a result (the cost was laziness, not types).
+Making the running state strict bought **2.2× to 30×** across the kernels while every other
+runtime stayed within 0.97–1.04× — the control that says the harness measured the change and
+not the weather. Against wabt's plain C++ interpreter, the honest comparator for a
+tree-walking interpreter:
+
+| kernel | ours | wabt | ratio |
+|---|---|---|---|
+| `loop-arith` (pure dispatch) | 0.42 s | 0.27 s | 1.6× |
+| `float` | 0.27 s | 0.15 s | 1.8× |
+| `call-indirect` | 0.42 s | 0.24 s | 1.8× |
+| `fib` (calls) | 1.12 s | 0.59 s | 1.9× |
+| `br-table` | 0.41 s | 0.15 s | 2.7× |
+| `memory-random` | 1.52 s | 0.45 s | 3.4× |
+| `locals-64` | 0.89 s | 0.20 s | 4.6× |
+| `memory-stream` | 8.96 s | 0.41 s | 21.7× |
+
+So on everything that is neither memory-heavy nor deeply indexed we are **within a factor of
+two to three of a C++ interpreter**, in Haskell, with the program's type-correctness carried
+in the types. That is already most of what these experiments were meant to establish.
+
+**Both remaining gaps are representational, and both are already named in §F.**
+
+- *An indexed write rebuilds a linked list.* The sweeps isolate it exactly: `funcs-N`, which
+  only ever reads a deep index, barely moves (0.32 s at index 2, 0.44 s at 64), while
+  `locals-N` still runs 0.36 → 0.89 s because `setLocal` rebuilds N cons cells per store.
+  Strictness alone collapsed that spread from 10× to 2.5×; the rest is E2's typed vector.
+  `labels-64` (1.66 s against wabt's 0.10 s) is the same shape one level up — though wabt
+  flatters itself there, folding empty blocks away at validation time.
+- *A 4-byte store copies a 64 KiB page.* `writeBytes` rebuilds the page with `UV.//`, so
+  `memory-stream` moves tens of GB to write 4 MB. This is the §F P3·perf item, now with a
+  number on it.
 
 ### Hypotheses
 
-- **H0 (hygiene)** — strict fields in `ValueStack`/`LocalSpaceInst`/`GlobalSpaceInst`/`Store`/
-  `Config` and forcing `op a b` remove the residency; with a larger nursery (`-A64m`) GC share
-  drops below 10 % and `fib 30` at least halves. Cost attributed to (2).
+- **H0 (hygiene)** — **confirmed, and larger than predicted** (`f69ac27`). Strict fields
+  throughout the running state removed the residency entirely and bought 2.2–30×; no nursery
+  tuning was needed. Cost attributed to (2).
 - **H1 (erasure)** — the typed interpreter and a mechanically *erased* copy of it (same
   algorithm, plain ADTs, `[Value]` stack, dynamic tag checks) run within ±10 % of each other on
   every workload. This is the thesis question in its purest form.
-- **H2 (witness residue)** — only the `Elem`/`Append` witnesses cost anything, the cost is
-  linear in the index (visible only in sweeps over local/function/label depth), and it is
-  removable inside the typed design: a typed vector indexed by the witness (`Elem` → `Int`
-  computed once at elaboration, the unsafe index hidden behind a total interface whose proof
-  is the witness). After that change, typed ≡ erased-unchecked.
+- **H2 (witness residue)** — **sharpened by E0's sweeps.** What costs is not walking the
+  witness but what the walk is over: a read at index 64 is free (`funcs-N` flat), an *update*
+  at index 64 is not (`locals-N`, `globals-N`), because the container is a linked list that
+  `setLocal`/`storeSetGlobal` rebuild. The index is innocent; the spine is not. So the claim
+  to test is that the residue is removable inside the typed design, by indexing a typed vector
+  with the same witness (`Elem` → `Int` once at elaboration, the unsafe index hidden behind a
+  total interface whose proof is the witness). After that change, typed ≡ erased-unchecked.
 - **H3 (untyped Haskell is not faster)** — the Hackage `wasm` package (SPY/haskell-wasm 1.1.1,
   an untyped, spec-conformant Haskell interpreter) is not faster than ours on the same GHC and
   RTS; where it is, the profile points at representation (2), not typing (1).
@@ -577,25 +612,28 @@ before/after pair is itself a result (the cost was laziness, not types).
 
 ### Infrastructure to build
 
-- [ ] **[P2·perf]** `bench/` layout: `wat/` (T1 + `gen.py`), `c/` (T2 sources + `build.sh`
-  over wasi-sdk), `wasm/` (built T1 committed, T2 built on demand), `erased/` (C2), `drivers/`
-  (C3, the step-counting driver for C1), `results/<date>-<commit>.json` (committed),
-  `tools/fetch.sh` (wasi-sdk, wasm3, WAMR, wasmi into `~/.local/wasm-bench-tools`, never the
-  repo).
+- [x] **[P2·perf]** `bench/` layout — done for T1 (`gen.py`, `wat/`, `wasm/`, `build.sh`,
+  `results/<date>-<commit>.json`, `checksums.txt`). Still to add when their experiments start:
+  `c/` (T2 sources over wasi-sdk), `erased/` (C2), `drivers/` (C3 and the step counter),
+  `tools/fetch.sh` (wasi-sdk, wasm3, WAMR, wasmi into `~/.local`, never the repo).
 - [ ] **[P2·perf]** Cabal `benchmark wasm-ifc-bench` stanza on `tasty-bench` (0.5, installed):
   in-process per-phase numbers (decode / elaborate / instantiate / run) and the typed-vs-erased
   A/B under identical process conditions; `--csv` output; `-rtsopts`.
-- [ ] **[P2·perf]** `bench/run.py` (runtimes × workloads, reps, pinning, JSON) and
-  `bench/report.py` (JSON → markdown tables: absolute, ns/instr, speed-up ratios, N-sweeps).
-  Python 3 is on the machine, hyperfine is not; `resource.getrusage(RUSAGE_CHILDREN)` gives
-  CPU time.
-- [ ] **[P2·perf]** `bench/smoke.sh`: every workload once on C1 with checksum check, run from
-  the *full* gate only (never the fast loop); benchmarks themselves never gate.
+- [x] **[P2·perf]** `bench/run.py` and `bench/report.py`. Runtimes are discovered, not
+  configured; CPU time comes from `resource.getrusage(RUSAGE_CHILDREN)`; `taskset` pinning is
+  opt-in via `BENCH_CPU` because on this hybrid CPU under WSL2 it slows runs without steadying
+  them. Still missing from `report.py`: ns per dynamic instruction, which needs the step
+  counter.
+- [x] **[P2·perf]** `bench/smoke.sh`: every kernel once on C1 against `checksums.txt`.
+  **Deliberately not wired into `gate.sh`:** a full pass takes minutes (the kernels are sized
+  to be slow) and covers nothing the spec suite does not. It is the manual check to run after
+  editing `gen.py` or the hot path. Cross-runtime agreement, which is the real check, happens
+  in `run.py` and is what wrote `checksums.txt`.
 
 ### Experiment sequence (each step informs the next)
 
-- [ ] **E0** Hygiene baseline: measure C1 as is; fix H0 (strict fields, force `op a b`, `-A`);
-  measure again; keep both numbers.
+- [x] **E0** Hygiene baseline — done 2026-09-11, both sweeps kept (`48f8e3c`, `f69ac27`).
+  See the results above.
 - [ ] **E1** Typed vs erased (C1 vs C2, C2b) on T1 in-process; Core diff of `step`. Answers H1.
 - [ ] **E2** Witness-residue sweeps (`locals-N`, `funcs-N`, `labels-N`); then prototype the
   witness-indexed vector and re-measure. Answers H2. The store-side counterpart (mutable memory

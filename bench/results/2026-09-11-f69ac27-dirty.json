@@ -1,0 +1,1268 @@
+{
+  "environment": {
+    "date": "2026-09-11T17:42:40",
+    "commit": "f69ac27-dirty",
+    "cpu": "12th Gen Intel(R) Core(TM) i7-12700H",
+    "kernel": "6.18.33.2-microsoft-standard-WSL2",
+    "pinned_to": null,
+    "ghc": "The Glorious Glasgow Haskell Compilation System, version 9.12.2",
+    "versions": {
+      "wasmtime-cranelift": "wasmtime 48.0.1 (7bac2c277 2026-08-24)",
+      "wasmtime-winch": "wasmtime 48.0.1 (7bac2c277 2026-08-24)",
+      "wasmtime-pulley": "wasmtime 48.0.1 (7bac2c277 2026-08-24)",
+      "wabt-interp": "1.0.27"
+    }
+  },
+  "measurements": [
+    {
+      "workload": "br-table",
+      "runtime": "wasm-ifc",
+      "ok": true,
+      "checksum": "1375000",
+      "wall_s": 0.4165596530001494,
+      "wall_mad_s": 0.019314780998684,
+      "cpu_s": 0.41727100000000017,
+      "reps": 5
+    },
+    {
+      "workload": "br-table",
+      "runtime": "wasmtime-cranelift",
+      "ok": true,
+      "checksum": "1375000",
+      "wall_s": 0.015557049002381973,
+      "wall_mad_s": 0.004393477996927686,
+      "cpu_s": 0.019054000000000126,
+      "reps": 5
+    },
+    {
+      "workload": "br-table",
+      "runtime": "wasmtime-winch",
+      "ok": true,
+      "checksum": "1375000",
+      "wall_s": 0.010455124000145588,
+      "wall_mad_s": 0.0007512929987569805,
+      "cpu_s": 0.013915000000000455,
+      "reps": 5
+    },
+    {
+      "workload": "br-table",
+      "runtime": "wasmtime-pulley",
+      "ok": true,
+      "checksum": "1375000",
+      "wall_s": 0.023552912000013748,
+      "wall_mad_s": 0.0006768029998056591,
+      "cpu_s": 0.02769999999999978,
+      "reps": 5
+    },
+    {
+      "workload": "br-table",
+      "runtime": "wabt-interp",
+      "ok": true,
+      "checksum": "1375000",
+      "wall_s": 0.1540015630016569,
+      "wall_mad_s": 0.0018807340020430274,
+      "cpu_s": 0.15356900000000007,
+      "reps": 5
+    },
+    {
+      "workload": "call-indirect",
+      "runtime": "wasm-ifc",
+      "ok": true,
+      "checksum": "1630302344",
+      "wall_s": 0.42499986400071066,
+      "wall_mad_s": 0.0187117470013618,
+      "cpu_s": 0.42561300000000035,
+      "reps": 5
+    },
+    {
+      "workload": "call-indirect",
+      "runtime": "wasmtime-cranelift",
+      "ok": true,
+      "checksum": "1630302344",
+      "wall_s": 0.014543846999004018,
+      "wall_mad_s": 0.0012131219991715625,
+      "cpu_s": 0.021874999999999645,
+      "reps": 5
+    },
+    {
+      "workload": "call-indirect",
+      "runtime": "wasmtime-winch",
+      "ok": true,
+      "checksum": "1630302344",
+      "wall_s": 0.012946426999405958,
+      "wall_mad_s": 0.00023919500017655082,
+      "cpu_s": 0.016714999999999702,
+      "reps": 5
+    },
+    {
+      "workload": "call-indirect",
+      "runtime": "wasmtime-pulley",
+      "ok": true,
+      "checksum": "1630302344",
+      "wall_s": 0.050387958999635885,
+      "wall_mad_s": 0.002060691000224324,
+      "cpu_s": 0.054924999999999335,
+      "reps": 5
+    },
+    {
+      "workload": "call-indirect",
+      "runtime": "wabt-interp",
+      "ok": true,
+      "checksum": "1630302344",
+      "wall_s": 0.24128480100262095,
+      "wall_mad_s": 0.0042866569965553936,
+      "cpu_s": 0.24089399999999994,
+      "reps": 5
+    },
+    {
+      "workload": "empty",
+      "runtime": "wasm-ifc",
+      "ok": true,
+      "checksum": "0",
+      "wall_s": 0.002744386001722887,
+      "wall_mad_s": 8.59930005390197e-05,
+      "cpu_s": 0.0025760000000000227,
+      "reps": 5
+    },
+    {
+      "workload": "empty",
+      "runtime": "wasmtime-cranelift",
+      "ok": true,
+      "checksum": "0",
+      "wall_s": 0.009331697001471184,
+      "wall_mad_s": 0.00047946799895726144,
+      "cpu_s": 0.012930999999999804,
+      "reps": 5
+    },
+    {
+      "workload": "empty",
+      "runtime": "wasmtime-winch",
+      "ok": true,
+      "checksum": "0",
+      "wall_s": 0.009052112000063062,
+      "wall_mad_s": 0.0003550019973772578,
+      "cpu_s": 0.012239000000000111,
+      "reps": 5
+    },
+    {
+      "workload": "empty",
+      "runtime": "wasmtime-pulley",
+      "ok": true,
+      "checksum": "0",
+      "wall_s": 0.009387998998136027,
+      "wall_mad_s": 0.00014377899788087234,
+      "cpu_s": 0.012224000000000013,
+      "reps": 5
+    },
+    {
+      "workload": "empty",
+      "runtime": "wabt-interp",
+      "ok": true,
+      "checksum": "0",
+      "wall_s": 0.0020882499993604142,
+      "wall_mad_s": 0.00015870700008235872,
+      "cpu_s": 0.0018059999999999743,
+      "reps": 5
+    },
+    {
+      "workload": "fib",
+      "runtime": "wasm-ifc",
+      "ok": true,
+      "checksum": "832040",
+      "wall_s": 1.11614069999996,
+      "wall_mad_s": 0.011166683998453664,
+      "cpu_s": 1.1196669999999997,
+      "reps": 5
+    },
+    {
+      "workload": "fib",
+      "runtime": "wasmtime-cranelift",
+      "ok": true,
+      "checksum": "832040",
+      "wall_s": 0.021360679998906562,
+      "wall_mad_s": 0.0002020089996221941,
+      "cpu_s": 0.02632100000000015,
+      "reps": 5
+    },
+    {
+      "workload": "fib",
+      "runtime": "wasmtime-winch",
+      "ok": true,
+      "checksum": "832040",
+      "wall_s": 0.02084980200015707,
+      "wall_mad_s": 0.0010046579991467297,
+      "cpu_s": 0.023697999999999886,
+      "reps": 5
+    },
+    {
+      "workload": "fib",
+      "runtime": "wasmtime-pulley",
+      "ok": true,
+      "checksum": "832040",
+      "wall_s": 0.10584473100243486,
+      "wall_mad_s": 0.001117057996452786,
+      "cpu_s": 0.10931200000000008,
+      "reps": 5
+    },
+    {
+      "workload": "fib",
+      "runtime": "wabt-interp",
+      "ok": true,
+      "checksum": "832040",
+      "wall_s": 0.587769968999055,
+      "wall_mad_s": 0.022740863998478744,
+      "cpu_s": 0.587057999999999,
+      "reps": 5
+    },
+    {
+      "workload": "float",
+      "runtime": "wasm-ifc",
+      "ok": true,
+      "checksum": "1951612559",
+      "wall_s": 0.2710486360010691,
+      "wall_mad_s": 0.013166286003979621,
+      "cpu_s": 0.2712960000000024,
+      "reps": 5
+    },
+    {
+      "workload": "float",
+      "runtime": "wasmtime-cranelift",
+      "ok": true,
+      "checksum": "1951612559",
+      "wall_s": 0.013363780999497976,
+      "wall_mad_s": 0.0019279699990875088,
+      "cpu_s": 0.017465000000000952,
+      "reps": 5
+    },
+    {
+      "workload": "float",
+      "runtime": "wasmtime-winch",
+      "ok": true,
+      "checksum": "1951612559",
+      "wall_s": 0.013237753002613317,
+      "wall_mad_s": 6.179700358188711e-05,
+      "cpu_s": 0.016566999999999554,
+      "reps": 5
+    },
+    {
+      "workload": "float",
+      "runtime": "wasmtime-pulley",
+      "ok": true,
+      "checksum": "1951612559",
+      "wall_s": 0.0338251519970072,
+      "wall_mad_s": 0.0029029219986114185,
+      "cpu_s": 0.037927999999999296,
+      "reps": 5
+    },
+    {
+      "workload": "float",
+      "runtime": "wabt-interp",
+      "ok": true,
+      "checksum": "1951612559",
+      "wall_s": 0.1528420959984942,
+      "wall_mad_s": 0.0012818520008295309,
+      "cpu_s": 0.15239500000000206,
+      "reps": 5
+    },
+    {
+      "workload": "funcs-16",
+      "runtime": "wasm-ifc",
+      "ok": true,
+      "checksum": "454198416",
+      "wall_s": 0.3083627810010512,
+      "wall_mad_s": 0.01047910999841406,
+      "cpu_s": 0.3087830000000018,
+      "reps": 5
+    },
+    {
+      "workload": "funcs-16",
+      "runtime": "wasmtime-cranelift",
+      "ok": true,
+      "checksum": "454198416",
+      "wall_s": 0.010359955998865189,
+      "wall_mad_s": 0.0010514109962969087,
+      "cpu_s": 0.014438999999998536,
+      "reps": 5
+    },
+    {
+      "workload": "funcs-16",
+      "runtime": "wasmtime-winch",
+      "ok": true,
+      "checksum": "454198416",
+      "wall_s": 0.011584148000110872,
+      "wall_mad_s": 0.00018094000188284554,
+      "cpu_s": 0.014751999999997212,
+      "reps": 5
+    },
+    {
+      "workload": "funcs-16",
+      "runtime": "wasmtime-pulley",
+      "ok": true,
+      "checksum": "454198416",
+      "wall_s": 0.030087488998105982,
+      "wall_mad_s": 0.0012442229999578558,
+      "cpu_s": 0.032507999999999315,
+      "reps": 5
+    },
+    {
+      "workload": "funcs-16",
+      "runtime": "wabt-interp",
+      "ok": true,
+      "checksum": "454198416",
+      "wall_s": 0.16334877699773642,
+      "wall_mad_s": 0.0041630240048107225,
+      "cpu_s": 0.16293499999999805,
+      "reps": 5
+    },
+    {
+      "workload": "funcs-2",
+      "runtime": "wasm-ifc",
+      "ok": true,
+      "checksum": "447198416",
+      "wall_s": 0.3255664999996952,
+      "wall_mad_s": 0.023194975998194423,
+      "cpu_s": 0.3260969999999972,
+      "reps": 5
+    },
+    {
+      "workload": "funcs-2",
+      "runtime": "wasmtime-cranelift",
+      "ok": true,
+      "checksum": "447198416",
+      "wall_s": 0.010097600999870338,
+      "wall_mad_s": 0.0004313730023568496,
+      "cpu_s": 0.012677999999999301,
+      "reps": 5
+    },
+    {
+      "workload": "funcs-2",
+      "runtime": "wasmtime-winch",
+      "ok": true,
+      "checksum": "447198416",
+      "wall_s": 0.011375278001651168,
+      "wall_mad_s": 0.00013186800060793757,
+      "cpu_s": 0.014458000000001192,
+      "reps": 5
+    },
+    {
+      "workload": "funcs-2",
+      "runtime": "wasmtime-pulley",
+      "ok": true,
+      "checksum": "447198416",
+      "wall_s": 0.029444856001646258,
+      "wall_mad_s": 0.000676610001391964,
+      "cpu_s": 0.0358230000000026,
+      "reps": 5
+    },
+    {
+      "workload": "funcs-2",
+      "runtime": "wabt-interp",
+      "ok": true,
+      "checksum": "447198416",
+      "wall_s": 0.16615934000219568,
+      "wall_mad_s": 0.006923683002241887,
+      "cpu_s": 0.1655219999999984,
+      "reps": 5
+    },
+    {
+      "workload": "funcs-4",
+      "runtime": "wasm-ifc",
+      "ok": true,
+      "checksum": "448198416",
+      "wall_s": 0.3056199339989689,
+      "wall_mad_s": 0.002161779997550184,
+      "cpu_s": 0.30605499999999974,
+      "reps": 5
+    },
+    {
+      "workload": "funcs-4",
+      "runtime": "wasmtime-cranelift",
+      "ok": true,
+      "checksum": "448198416",
+      "wall_s": 0.01150596399747883,
+      "wall_mad_s": 0.0019873479941452388,
+      "cpu_s": 0.01596000000000175,
+      "reps": 5
+    },
+    {
+      "workload": "funcs-4",
+      "runtime": "wasmtime-winch",
+      "ok": true,
+      "checksum": "448198416",
+      "wall_s": 0.012206403000163846,
+      "wall_mad_s": 0.000469263999548275,
+      "cpu_s": 0.01684199999999847,
+      "reps": 5
+    },
+    {
+      "workload": "funcs-4",
+      "runtime": "wasmtime-pulley",
+      "ok": true,
+      "checksum": "448198416",
+      "wall_s": 0.028199608001159504,
+      "wall_mad_s": 0.0015543209992756601,
+      "cpu_s": 0.033012999999996406,
+      "reps": 5
+    },
+    {
+      "workload": "funcs-4",
+      "runtime": "wabt-interp",
+      "ok": true,
+      "checksum": "448198416",
+      "wall_s": 0.16533346199867083,
+      "wall_mad_s": 0.0006112529990787152,
+      "cpu_s": 0.16486700000000098,
+      "reps": 5
+    },
+    {
+      "workload": "funcs-64",
+      "runtime": "wasm-ifc",
+      "ok": true,
+      "checksum": "478198416",
+      "wall_s": 0.43756324499918264,
+      "wall_mad_s": 0.014013001000421355,
+      "cpu_s": 0.43858800000000286,
+      "reps": 5
+    },
+    {
+      "workload": "funcs-64",
+      "runtime": "wasmtime-cranelift",
+      "ok": true,
+      "checksum": "478198416",
+      "wall_s": 0.011738577999494737,
+      "wall_mad_s": 0.0011884730010933708,
+      "cpu_s": 0.016062999999998606,
+      "reps": 5
+    },
+    {
+      "workload": "funcs-64",
+      "runtime": "wasmtime-winch",
+      "ok": true,
+      "checksum": "478198416",
+      "wall_s": 0.014604534000682179,
+      "wall_mad_s": 0.0021014360027038492,
+      "cpu_s": 0.019986999999998645,
+      "reps": 5
+    },
+    {
+      "workload": "funcs-64",
+      "runtime": "wasmtime-pulley",
+      "ok": true,
+      "checksum": "478198416",
+      "wall_s": 0.028886898002383532,
+      "wall_mad_s": 0.0035471950031933375,
+      "cpu_s": 0.03294199999999314,
+      "reps": 5
+    },
+    {
+      "workload": "funcs-64",
+      "runtime": "wabt-interp",
+      "ok": true,
+      "checksum": "478198416",
+      "wall_s": 0.16491961599967908,
+      "wall_mad_s": 0.006094332999055041,
+      "cpu_s": 0.1644369999999986,
+      "reps": 5
+    },
+    {
+      "workload": "globals-16",
+      "runtime": "wasm-ifc",
+      "ok": true,
+      "checksum": "237685664",
+      "wall_s": 0.352241700002196,
+      "wall_mad_s": 0.0062400710048677865,
+      "cpu_s": 0.3528999999999982,
+      "reps": 5
+    },
+    {
+      "workload": "globals-16",
+      "runtime": "wasmtime-cranelift",
+      "ok": true,
+      "checksum": "237685664",
+      "wall_s": 0.011031722999177873,
+      "wall_mad_s": 0.000491487004183,
+      "cpu_s": 0.014978000000000158,
+      "reps": 5
+    },
+    {
+      "workload": "globals-16",
+      "runtime": "wasmtime-winch",
+      "ok": true,
+      "checksum": "237685664",
+      "wall_s": 0.011810328000137815,
+      "wall_mad_s": 0.0007226909983728547,
+      "cpu_s": 0.01553199999999988,
+      "reps": 5
+    },
+    {
+      "workload": "globals-16",
+      "runtime": "wasmtime-pulley",
+      "ok": true,
+      "checksum": "237685664",
+      "wall_s": 0.02490920099808136,
+      "wall_mad_s": 0.0013035000010859221,
+      "cpu_s": 0.027972000000002772,
+      "reps": 5
+    },
+    {
+      "workload": "globals-16",
+      "runtime": "wabt-interp",
+      "ok": true,
+      "checksum": "237685664",
+      "wall_s": 0.16304428199873655,
+      "wall_mad_s": 0.008349810999789042,
+      "cpu_s": 0.16219000000000028,
+      "reps": 5
+    },
+    {
+      "workload": "globals-2",
+      "runtime": "wasm-ifc",
+      "ok": true,
+      "checksum": "237761952",
+      "wall_s": 0.26063391999923624,
+      "wall_mad_s": 0.0204405209988181,
+      "cpu_s": 0.261200999999998,
+      "reps": 5
+    },
+    {
+      "workload": "globals-2",
+      "runtime": "wasmtime-cranelift",
+      "ok": true,
+      "checksum": "237761952",
+      "wall_s": 0.008167733998561744,
+      "wall_mad_s": 0.0008488299972668756,
+      "cpu_s": 0.012389999999996348,
+      "reps": 5
+    },
+    {
+      "workload": "globals-2",
+      "runtime": "wasmtime-winch",
+      "ok": true,
+      "checksum": "237761952",
+      "wall_s": 0.007116773998859571,
+      "wall_mad_s": 0.00043278400335111655,
+      "cpu_s": 0.009713000000000083,
+      "reps": 5
+    },
+    {
+      "workload": "globals-2",
+      "runtime": "wasmtime-pulley",
+      "ok": true,
+      "checksum": "237761952",
+      "wall_s": 0.014399551000678912,
+      "wall_mad_s": 0.0005803909989481326,
+      "cpu_s": 0.017244000000002035,
+      "reps": 5
+    },
+    {
+      "workload": "globals-2",
+      "runtime": "wabt-interp",
+      "ok": true,
+      "checksum": "237761952",
+      "wall_s": 0.11049120499956189,
+      "wall_mad_s": 0.0014520830009132624,
+      "cpu_s": 0.11014899999999983,
+      "reps": 5
+    },
+    {
+      "workload": "globals-4",
+      "runtime": "wasm-ifc",
+      "ok": true,
+      "checksum": "237762400",
+      "wall_s": 0.20309020800050348,
+      "wall_mad_s": 0.0123163790012768,
+      "cpu_s": 0.203364000000001,
+      "reps": 5
+    },
+    {
+      "workload": "globals-4",
+      "runtime": "wasmtime-cranelift",
+      "ok": true,
+      "checksum": "237762400",
+      "wall_s": 0.007639686999027617,
+      "wall_mad_s": 0.0003565010010788683,
+      "cpu_s": 0.009992000000000001,
+      "reps": 5
+    },
+    {
+      "workload": "globals-4",
+      "runtime": "wasmtime-winch",
+      "ok": true,
+      "checksum": "237762400",
+      "wall_s": 0.007930122999823652,
+      "wall_mad_s": 0.0004730119981104508,
+      "cpu_s": 0.010844999999999771,
+      "reps": 5
+    },
+    {
+      "workload": "globals-4",
+      "runtime": "wasmtime-pulley",
+      "ok": true,
+      "checksum": "237762400",
+      "wall_s": 0.01450006699815276,
+      "wall_mad_s": 0.0010229020008409861,
+      "cpu_s": 0.018323999999995344,
+      "reps": 5
+    },
+    {
+      "workload": "globals-4",
+      "runtime": "wabt-interp",
+      "ok": true,
+      "checksum": "237762400",
+      "wall_s": 0.11141553399647819,
+      "wall_mad_s": 0.0018189779948443174,
+      "cpu_s": 0.11094700000000302,
+      "reps": 5
+    },
+    {
+      "workload": "globals-64",
+      "runtime": "wasm-ifc",
+      "ok": true,
+      "checksum": "2388066144",
+      "wall_s": 0.4348064069999964,
+      "wall_mad_s": 0.004211294999549864,
+      "cpu_s": 0.43571199999999966,
+      "reps": 5
+    },
+    {
+      "workload": "globals-64",
+      "runtime": "wasmtime-cranelift",
+      "ok": true,
+      "checksum": "2388066144",
+      "wall_s": 0.009717156000988325,
+      "wall_mad_s": 0.000498621000588173,
+      "cpu_s": 0.013227999999999351,
+      "reps": 5
+    },
+    {
+      "workload": "globals-64",
+      "runtime": "wasmtime-winch",
+      "ok": true,
+      "checksum": "2388066144",
+      "wall_s": 0.007829893002053723,
+      "wall_mad_s": 0.00013983099779579788,
+      "cpu_s": 0.010165000000000202,
+      "reps": 5
+    },
+    {
+      "workload": "globals-64",
+      "runtime": "wasmtime-pulley",
+      "ok": true,
+      "checksum": "2388066144",
+      "wall_s": 0.017780128997401334,
+      "wall_mad_s": 0.0025259489957534242,
+      "cpu_s": 0.021082000000002488,
+      "reps": 5
+    },
+    {
+      "workload": "globals-64",
+      "runtime": "wabt-interp",
+      "ok": true,
+      "checksum": "2388066144",
+      "wall_s": 0.11070427999948151,
+      "wall_mad_s": 0.0015413359978992958,
+      "cpu_s": 0.11035399999999651,
+      "reps": 5
+    },
+    {
+      "workload": "labels-16",
+      "runtime": "wasm-ifc",
+      "ok": true,
+      "checksum": "445698416",
+      "wall_s": 0.43780418599999393,
+      "wall_mad_s": 0.021869909000088228,
+      "cpu_s": 0.4385839999999952,
+      "reps": 5
+    },
+    {
+      "workload": "labels-16",
+      "runtime": "wasmtime-cranelift",
+      "ok": true,
+      "checksum": "445698416",
+      "wall_s": 0.007824876000086078,
+      "wall_mad_s": 0.0007544949985458516,
+      "cpu_s": 0.00992999999999844,
+      "reps": 5
+    },
+    {
+      "workload": "labels-16",
+      "runtime": "wasmtime-winch",
+      "ok": true,
+      "checksum": "445698416",
+      "wall_s": 0.009345862003101502,
+      "wall_mad_s": 0.0005215110031713266,
+      "cpu_s": 0.014326999999997092,
+      "reps": 5
+    },
+    {
+      "workload": "labels-16",
+      "runtime": "wasmtime-pulley",
+      "ok": true,
+      "checksum": "445698416",
+      "wall_s": 0.015914915999019286,
+      "wall_mad_s": 0.0024055510002654046,
+      "cpu_s": 0.0180429999999987,
+      "reps": 5
+    },
+    {
+      "workload": "labels-16",
+      "runtime": "wabt-interp",
+      "ok": true,
+      "checksum": "445698416",
+      "wall_s": 0.09982886500074528,
+      "wall_mad_s": 0.012542846998258028,
+      "cpu_s": 0.09923200000000287,
+      "reps": 5
+    },
+    {
+      "workload": "labels-2",
+      "runtime": "wasm-ifc",
+      "ok": true,
+      "checksum": "445698416",
+      "wall_s": 0.2290809000005538,
+      "wall_mad_s": 0.010055291000753641,
+      "cpu_s": 0.22910999999999904,
+      "reps": 5
+    },
+    {
+      "workload": "labels-2",
+      "runtime": "wasmtime-cranelift",
+      "ok": true,
+      "checksum": "445698416",
+      "wall_s": 0.014190142002917128,
+      "wall_mad_s": 0.0012594909967447165,
+      "cpu_s": 0.018715999999995958,
+      "reps": 5
+    },
+    {
+      "workload": "labels-2",
+      "runtime": "wasmtime-winch",
+      "ok": true,
+      "checksum": "445698416",
+      "wall_s": 0.023128289998567197,
+      "wall_mad_s": 0.006501850002678111,
+      "cpu_s": 0.03658399999999995,
+      "reps": 5
+    },
+    {
+      "workload": "labels-2",
+      "runtime": "wasmtime-pulley",
+      "ok": true,
+      "checksum": "445698416",
+      "wall_s": 0.018930015998193994,
+      "wall_mad_s": 0.0009770790020411368,
+      "cpu_s": 0.022733000000000114,
+      "reps": 5
+    },
+    {
+      "workload": "labels-2",
+      "runtime": "wabt-interp",
+      "ok": true,
+      "checksum": "445698416",
+      "wall_s": 0.10800001600000542,
+      "wall_mad_s": 0.0035749620001297444,
+      "cpu_s": 0.10734500000000224,
+      "reps": 5
+    },
+    {
+      "workload": "labels-4",
+      "runtime": "wasm-ifc",
+      "ok": true,
+      "checksum": "445698416",
+      "wall_s": 0.28160257100171293,
+      "wall_mad_s": 0.005928924998443108,
+      "cpu_s": 0.2820979999999973,
+      "reps": 5
+    },
+    {
+      "workload": "labels-4",
+      "runtime": "wasmtime-cranelift",
+      "ok": true,
+      "checksum": "445698416",
+      "wall_s": 0.009762926001712913,
+      "wall_mad_s": 0.00016752000010455959,
+      "cpu_s": 0.013019999999999143,
+      "reps": 5
+    },
+    {
+      "workload": "labels-4",
+      "runtime": "wasmtime-winch",
+      "ok": true,
+      "checksum": "445698416",
+      "wall_s": 0.009244197000953136,
+      "wall_mad_s": 0.00013760799993178807,
+      "cpu_s": 0.01199099999999964,
+      "reps": 5
+    },
+    {
+      "workload": "labels-4",
+      "runtime": "wasmtime-pulley",
+      "ok": true,
+      "checksum": "445698416",
+      "wall_s": 0.019225026000640355,
+      "wall_mad_s": 0.002000325999688357,
+      "cpu_s": 0.023522000000001597,
+      "reps": 5
+    },
+    {
+      "workload": "labels-4",
+      "runtime": "wabt-interp",
+      "ok": true,
+      "checksum": "445698416",
+      "wall_s": 0.11535120199914672,
+      "wall_mad_s": 0.011247619997448055,
+      "cpu_s": 0.11421299999999945,
+      "reps": 5
+    },
+    {
+      "workload": "labels-64",
+      "runtime": "wasm-ifc",
+      "ok": true,
+      "checksum": "445698416",
+      "wall_s": 1.6585291619994678,
+      "wall_mad_s": 0.03749771699949633,
+      "cpu_s": 1.663240000000001,
+      "reps": 5
+    },
+    {
+      "workload": "labels-64",
+      "runtime": "wasmtime-cranelift",
+      "ok": true,
+      "checksum": "445698416",
+      "wall_s": 0.011626220999460202,
+      "wall_mad_s": 0.000990004999039229,
+      "cpu_s": 0.01569700000000207,
+      "reps": 5
+    },
+    {
+      "workload": "labels-64",
+      "runtime": "wasmtime-winch",
+      "ok": true,
+      "checksum": "445698416",
+      "wall_s": 0.010512842000025557,
+      "wall_mad_s": 9.508800212643109e-05,
+      "cpu_s": 0.013966999999997398,
+      "reps": 5
+    },
+    {
+      "workload": "labels-64",
+      "runtime": "wasmtime-pulley",
+      "ok": true,
+      "checksum": "445698416",
+      "wall_s": 0.016238052998232888,
+      "wall_mad_s": 0.0005637369977193885,
+      "cpu_s": 0.018315999999996002,
+      "reps": 5
+    },
+    {
+      "workload": "labels-64",
+      "runtime": "wabt-interp",
+      "ok": true,
+      "checksum": "445698416",
+      "wall_s": 0.10241844900156138,
+      "wall_mad_s": 0.0007663420037715696,
+      "cpu_s": 0.10203600000000712,
+      "reps": 5
+    },
+    {
+      "workload": "locals-16",
+      "runtime": "wasm-ifc",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.4703820700015058,
+      "wall_mad_s": 0.005002860001695808,
+      "cpu_s": 0.47110400000001107,
+      "reps": 5
+    },
+    {
+      "workload": "locals-16",
+      "runtime": "wasmtime-cranelift",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.010384035998868058,
+      "wall_mad_s": 0.0007904329977463931,
+      "cpu_s": 0.013940999999999981,
+      "reps": 5
+    },
+    {
+      "workload": "locals-16",
+      "runtime": "wasmtime-winch",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.010702673000196228,
+      "wall_mad_s": 8.35999999253545e-05,
+      "cpu_s": 0.013476999999999961,
+      "reps": 5
+    },
+    {
+      "workload": "locals-16",
+      "runtime": "wasmtime-pulley",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.025952843003324233,
+      "wall_mad_s": 0.0014742280036443844,
+      "cpu_s": 0.02991300000000585,
+      "reps": 5
+    },
+    {
+      "workload": "locals-16",
+      "runtime": "wabt-interp",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.1926118259980285,
+      "wall_mad_s": 0.0020338979993539397,
+      "cpu_s": 0.19199300000001074,
+      "reps": 5
+    },
+    {
+      "workload": "locals-2",
+      "runtime": "wasm-ifc",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.3577326480008196,
+      "wall_mad_s": 0.004637557998648845,
+      "cpu_s": 0.3582339999999977,
+      "reps": 5
+    },
+    {
+      "workload": "locals-2",
+      "runtime": "wasmtime-cranelift",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.010468762000527931,
+      "wall_mad_s": 0.0003387220021977555,
+      "cpu_s": 0.013950999999998714,
+      "reps": 5
+    },
+    {
+      "workload": "locals-2",
+      "runtime": "wasmtime-winch",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.011133605999930296,
+      "wall_mad_s": 0.0006887739982630592,
+      "cpu_s": 0.015363000000002458,
+      "reps": 5
+    },
+    {
+      "workload": "locals-2",
+      "runtime": "wasmtime-pulley",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.028421460003301036,
+      "wall_mad_s": 0.0015108899970073253,
+      "cpu_s": 0.031499999999994976,
+      "reps": 5
+    },
+    {
+      "workload": "locals-2",
+      "runtime": "wabt-interp",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.20131165599741507,
+      "wall_mad_s": 0.005048292994615622,
+      "cpu_s": 0.20084100000001115,
+      "reps": 5
+    },
+    {
+      "workload": "locals-4",
+      "runtime": "wasm-ifc",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.4034033450006973,
+      "wall_mad_s": 0.01058828199893469,
+      "cpu_s": 0.4042800000000044,
+      "reps": 5
+    },
+    {
+      "workload": "locals-4",
+      "runtime": "wasmtime-cranelift",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.017329770998912863,
+      "wall_mad_s": 0.001748515001963824,
+      "cpu_s": 0.021764999999994927,
+      "reps": 5
+    },
+    {
+      "workload": "locals-4",
+      "runtime": "wasmtime-winch",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.010377805003372487,
+      "wall_mad_s": 0.000476156004879158,
+      "cpu_s": 0.014015999999999806,
+      "reps": 5
+    },
+    {
+      "workload": "locals-4",
+      "runtime": "wasmtime-pulley",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.0248381090023031,
+      "wall_mad_s": 8.867200085660443e-05,
+      "cpu_s": 0.028611000000003273,
+      "reps": 5
+    },
+    {
+      "workload": "locals-4",
+      "runtime": "wabt-interp",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.2048691019990656,
+      "wall_mad_s": 0.007377353002084419,
+      "cpu_s": 0.20447500000000218,
+      "reps": 5
+    },
+    {
+      "workload": "locals-64",
+      "runtime": "wasm-ifc",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.8939336980001826,
+      "wall_mad_s": 0.03570489599951543,
+      "cpu_s": 0.8966100000000008,
+      "reps": 5
+    },
+    {
+      "workload": "locals-64",
+      "runtime": "wasmtime-cranelift",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.0104304089982179,
+      "wall_mad_s": 0.0007863410028221551,
+      "cpu_s": 0.014138999999998347,
+      "reps": 5
+    },
+    {
+      "workload": "locals-64",
+      "runtime": "wasmtime-winch",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.011145151001983322,
+      "wall_mad_s": 0.0002926880006270949,
+      "cpu_s": 0.01600100000000726,
+      "reps": 5
+    },
+    {
+      "workload": "locals-64",
+      "runtime": "wasmtime-pulley",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.025497046997770667,
+      "wall_mad_s": 0.0007252089999383315,
+      "cpu_s": 0.02991800000000744,
+      "reps": 5
+    },
+    {
+      "workload": "locals-64",
+      "runtime": "wabt-interp",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.19715764700231375,
+      "wall_mad_s": 0.0027828889978991356,
+      "cpu_s": 0.19677199999999573,
+      "reps": 5
+    },
+    {
+      "workload": "loop-arith",
+      "runtime": "wasm-ifc",
+      "ok": true,
+      "checksum": "2401681406",
+      "wall_s": 0.4223178520005604,
+      "wall_mad_s": 0.009227546001056908,
+      "cpu_s": 0.423029999999998,
+      "reps": 5
+    },
+    {
+      "workload": "loop-arith",
+      "runtime": "wasmtime-cranelift",
+      "ok": true,
+      "checksum": "2401681406",
+      "wall_s": 0.013231240001914557,
+      "wall_mad_s": 0.0013470599988067988,
+      "cpu_s": 0.018255999999991168,
+      "reps": 5
+    },
+    {
+      "workload": "loop-arith",
+      "runtime": "wasmtime-winch",
+      "ok": true,
+      "checksum": "2401681406",
+      "wall_s": 0.014487983997241827,
+      "wall_mad_s": 0.0013655520015163347,
+      "cpu_s": 0.01765099999999009,
+      "reps": 5
+    },
+    {
+      "workload": "loop-arith",
+      "runtime": "wasmtime-pulley",
+      "ok": true,
+      "checksum": "2401681406",
+      "wall_s": 0.0292547930002911,
+      "wall_mad_s": 0.0009550709983159322,
+      "cpu_s": 0.03515299999998689,
+      "reps": 5
+    },
+    {
+      "workload": "loop-arith",
+      "runtime": "wabt-interp",
+      "ok": true,
+      "checksum": "2401681406",
+      "wall_s": 0.2719903280012659,
+      "wall_mad_s": 0.006116395001299679,
+      "cpu_s": 0.2715959999999962,
+      "reps": 5
+    },
+    {
+      "workload": "loop-arith64",
+      "runtime": "wasm-ifc",
+      "ok": true,
+      "checksum": "4143906814",
+      "wall_s": 0.38346702399940114,
+      "wall_mad_s": 0.0017962839992833324,
+      "cpu_s": 0.3842340000000064,
+      "reps": 5
+    },
+    {
+      "workload": "loop-arith64",
+      "runtime": "wasmtime-cranelift",
+      "ok": true,
+      "checksum": "4143906814",
+      "wall_s": 0.011537402999238111,
+      "wall_mad_s": 0.0005328839979483746,
+      "cpu_s": 0.015767000000006526,
+      "reps": 5
+    },
+    {
+      "workload": "loop-arith64",
+      "runtime": "wasmtime-winch",
+      "ok": true,
+      "checksum": "4143906814",
+      "wall_s": 0.011668492999888258,
+      "wall_mad_s": 0.00022460900072474033,
+      "cpu_s": 0.0160090000000066,
+      "reps": 5
+    },
+    {
+      "workload": "loop-arith64",
+      "runtime": "wasmtime-pulley",
+      "ok": true,
+      "checksum": "4143906814",
+      "wall_s": 0.026694593998399796,
+      "wall_mad_s": 0.0006097459990996867,
+      "cpu_s": 0.031881999999997745,
+      "reps": 5
+    },
+    {
+      "workload": "loop-arith64",
+      "runtime": "wabt-interp",
+      "ok": true,
+      "checksum": "4143906814",
+      "wall_s": 0.2340163830012898,
+      "wall_mad_s": 0.0056538039971201215,
+      "cpu_s": 0.2334989999999948,
+      "reps": 5
+    },
+    {
+      "workload": "memory-random",
+      "runtime": "wasm-ifc",
+      "ok": true,
+      "checksum": "3894883294",
+      "wall_s": 1.5164011839988234,
+      "wall_mad_s": 0.006683126001007622,
+      "cpu_s": 1.521528000000008,
+      "reps": 5
+    },
+    {
+      "workload": "memory-random",
+      "runtime": "wasmtime-cranelift",
+      "ok": true,
+      "checksum": "3894883294",
+      "wall_s": 0.013071403998765163,
+      "wall_mad_s": 0.0009102600015467033,
+      "cpu_s": 0.018447999999994913,
+      "reps": 5
+    },
+    {
+      "workload": "memory-random",
+      "runtime": "wasmtime-winch",
+      "ok": true,
+      "checksum": "3894883294",
+      "wall_s": 0.012531262000265997,
+      "wall_mad_s": 0.00010483400183147751,
+      "cpu_s": 0.017408000000000534,
+      "reps": 5
+    },
+    {
+      "workload": "memory-random",
+      "runtime": "wasmtime-pulley",
+      "ok": true,
+      "checksum": "3894883294",
+      "wall_s": 0.037036677000287455,
+      "wall_mad_s": 0.00204253899937612,
+      "cpu_s": 0.04142100000001392,
+      "reps": 5
+    },
+    {
+      "workload": "memory-random",
+      "runtime": "wabt-interp",
+      "ok": true,
+      "checksum": "3894883294",
+      "wall_s": 0.4498416210008145,
+      "wall_mad_s": 0.009384143999341177,
+      "cpu_s": 0.4493359999999935,
+      "reps": 5
+    },
+    {
+      "workload": "memory-stream",
+      "runtime": "wasm-ifc",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 8.934963111001707,
+      "wall_mad_s": 0.01633866100019077,
+      "cpu_s": 8.959683000000004,
+      "reps": 5
+    },
+    {
+      "workload": "memory-stream",
+      "runtime": "wasmtime-cranelift",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.012039270000968827,
+      "wall_mad_s": 0.0006881400004203897,
+      "cpu_s": 0.015833999999999904,
+      "reps": 5
+    },
+    {
+      "workload": "memory-stream",
+      "runtime": "wasmtime-winch",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.012549937000585487,
+      "wall_mad_s": 0.0001285500002268236,
+      "cpu_s": 0.015711000000008468,
+      "reps": 5
+    },
+    {
+      "workload": "memory-stream",
+      "runtime": "wasmtime-pulley",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.03787159800049267,
+      "wall_mad_s": 0.0010780330012494233,
+      "cpu_s": 0.0421599999999982,
+      "reps": 5
+    },
+    {
+      "workload": "memory-stream",
+      "runtime": "wabt-interp",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.4143462059982994,
+      "wall_mad_s": 0.004627548998541897,
+      "cpu_s": 0.41391400000000544,
+      "reps": 5
+    }
+  ]
+}
