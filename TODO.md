@@ -454,6 +454,171 @@ in the plan at the top of this file, which also resolves the questions: host imp
 construction against a `WasiFunc (ft :: FuncType)` GADT; the request carries the whole `Store`; host
 functions are a `HostFunc` case of `FuncInst` in the one function index space.
 
+## I. Performance experiments — is an intrinsically typed interpreter necessarily slow?
+
+Planned 2026-09-11 (Daniel + Claude), **not started**. Goal: empirical evidence for the claim
+that intrinsic typing (GADT-indexed syntax, total small-step `step`) does not by itself make an
+interpreter slow. The argument the experiments must support has three separable parts, and
+every measurement below is designed to attribute cost to exactly one of them:
+
+1. **The typing discipline itself.** What survives GHC's type erasure is only the *witnesses*:
+   the unary `Elem` index for `local.*`/`global.*`/`call` (`getLocal`, `getFunc` walk a list:
+   O(index)), the `Append` spine at block/call boundaries (`splitStack`, `appendWith`), the
+   `Sing` of a block type, and the `decideEquality` in `call_indirect`. Nothing else is
+   typing-induced; the indices on `Instr`/`Config`/`Control` are free.
+2. **Our representation choices**, all orthogonal to typing: linked-list `ValueStack`,
+   `LocalSpaceInst`, `GlobalSpaceInst`, `FuncSpaceInst` (a typed *vector* could carry the same
+   index); lazy constructor fields (`:#`, `:&`, `Config`, `Store`); `IntMap` of immutable
+   pages + `[Word8]` marshalling (the P3·perf item in §F); `Integer` in `Runtime.Numeric` /
+   `Runtime.Convert`; one `Config` + one `Either` allocated per step.
+3. **The host language**: GHC code generation and the GC, versus C/C++/Rust interpreters.
+
+**Baseline measured today** (single runs, WSL2, unpinned, default `-O1`; `fib 30` ≈ 2.7 M
+calls ≈ 25 M dynamic instructions):
+
+| runtime | `fib 30` | note |
+|---|---|---|
+| `wasm-ifc` (this commit) | 1.03 s | `+RTS -s`: **productivity 52 %**, **163 MB max residency** |
+| wasmtime Pulley (interpreter) | 0.05 s | `wasmtime run --target pulley64` |
+| wasmtime Winch (baseline JIT) | 0.013 s | |
+| wasmtime Cranelift (JIT) | 0.010 s | |
+
+So we sit at roughly 40 ns/instruction, ~20× behind the best-in-class interpreter, and half of
+that time is garbage collection with a residency that fib (30 frames deep) has no business
+having. **Hypothesis H0:** a laziness leak, not a typing cost — `stepBin` pushes `op a b`
+unevaluated onto a lazy `:#`, so the whole addition tree of fib is retained as thunks until
+the result is printed. That must be fixed and re-measured *before* any comparison, and the
+before/after pair is itself a result (the cost was laziness, not types).
+
+### Hypotheses
+
+- **H0 (hygiene)** — strict fields in `ValueStack`/`LocalSpaceInst`/`GlobalSpaceInst`/`Store`/
+  `Config` and forcing `op a b` remove the residency; with a larger nursery (`-A64m`) GC share
+  drops below 10 % and `fib 30` at least halves. Cost attributed to (2).
+- **H1 (erasure)** — the typed interpreter and a mechanically *erased* copy of it (same
+  algorithm, plain ADTs, `[Value]` stack, dynamic tag checks) run within ±10 % of each other on
+  every workload. This is the thesis question in its purest form.
+- **H2 (witness residue)** — only the `Elem`/`Append` witnesses cost anything, the cost is
+  linear in the index (visible only in sweeps over local/function/label depth), and it is
+  removable inside the typed design: a typed vector indexed by the witness (`Elem` → `Int`
+  computed once at elaboration, the unsafe index hidden behind a total interface whose proof
+  is the witness). After that change, typed ≡ erased-unchecked.
+- **H3 (untyped Haskell is not faster)** — the Hackage `wasm` package (SPY/haskell-wasm 1.1.1,
+  an untyped, spec-conformant Haskell interpreter) is not faster than ours on the same GHC and
+  RTS; where it is, the profile points at representation (2), not typing (1).
+- **H4 (positioning against industrial interpreters)** — after H0 we are within a small
+  constant of the plain C++ interpreter (wabt `wasm-interp`) and the gap to the fast
+  interpreters (wasm3, WAMR fast-interp, Pulley) is attributable by profiling to allocation/GC
+  and dispatch, i.e. to (2)+(3). Report the gap honestly in ns/instruction; do not predict it.
+- **H5 (front end)** — decoding + elaboration (singleton-based validation) + instantiation are
+  linear in module size and take milliseconds, not seconds, on the largest real modules we
+  have (the 72 WASI-suite programs, C/Rust/AssemblyScript). Startup never dominates.
+
+### Workloads (three tiers)
+
+- **T1 micro-kernels**, hand-written `.wat` in `bench/wat/`, *self-contained*: a zero-argument
+  export `run` returning an `i32` checksum, sizes fixed by constants, so every runtime invokes
+  them identically (wabt's `wasm-interp --run-export` takes no arguments; that is what forced
+  the convention). Each targets one cost centre:
+  `fib` (call + if), `loop-arith` (i32/i64 ALU loop, no calls: pure dispatch),
+  `locals-N` / `funcs-N` / `labels-N` (the same loop with the hot local / callee / branch
+  target at index N ∈ {0, 4, 16, 64}: the `Elem` and label-depth residue of H2, generated by
+  `bench/gen.py`), `globals`, `memory-stream` (load/store sweep over 1 MiB), `memory-random`
+  (LCG-addressed loads), `call_indirect`, `br_table`, `float` (f64 mandelbrot/nbody-style),
+  `bulk` (`memory.copy`/`fill`). Existing `samples/wat` programs scaled up where they fit.
+- **T2 real programs**, C compiled with wasi-sdk (a tarball install under `~/.local`, no
+  root; there is no clang on this machine): CoreMark and a PolyBenchC subset (2mm, 3mm, atax,
+  gemm, jacobi-2d, …, the set used by the original Wasm paper and by Titzer's in-place
+  interpreter paper, §F reading list). Flags `-O2 -mcpu=mvp -mbulk-memory -msign-ext
+  -mmultivalue -mmutable-globals` (no reference types, no SIMD); check nontrapping
+  float-to-int support with `wasm-ifc check` first. Run through WASI `_start`, print a
+  checksum, and *compare the checksum across runtimes* (a differential test for free).
+  Prebuilt corpora as a fallback if compiling is a rabbit hole: wasmi's `benches/wasm/*.wasm`
+  (coremark, tiny_keccak, rev_complement, regex_redux), wasm3's `coremark-minimal.wasm`.
+- **T3 front end**: decode / elaborate / instantiate, timed separately, on the T2 binaries and
+  the WASI-suite programs; plotted against module size and function count (H5).
+
+### Comparators
+
+- **C1** `wasm-ifc` at the commit under test, `-O1` (default) and `-O2`; `-fllvm` optional.
+- **C2** `wasm-ifc-erased`: `Runtime.Interpreter` + `Syntax.Instructions` with every index
+  deleted, `data Value = I32 !Word32 | …`, `[Value]` stack, tag checks at each pop (`I32 x`
+  pattern, mismatch = crash) — the naive untyped Haskell interpreter one would write first.
+  **C2b** the same without tag checks (validation assumed). Lives in `bench/erased/`, a
+  frozen measurement device produced by textual deletion from C1 and reviewed as a diff, so
+  the evaluation strategy is provably the same; never part of the library.
+- **C3** Hackage `wasm` 1.1.1 driven in-process by a small `bench/drivers/HaskellWasm.hs`.
+  Risk: its bounds (`bytestring <0.12`, `containers <0.7`, `mtl <2.3`) need `allow-newer` on
+  GHC 9.12; if it does not build, H3 is answered by C2 alone.
+- **C4** industrial interpreters, three that span the design space: wabt `wasm-interp`
+  (installed; plain C++ stack machine), wasmtime **Pulley** (installed; register bytecode,
+  Rust), **wasm3** (C, the fastest classic interpreter; builds with `gcc` alone, cmake is not
+  installed, or `pip install pywasm3`). Optional: WAMR `iwasm` classic + fast-interp (prebuilt
+  release tarball), wasmi (prebuilt release), Wizard (Titzer's in-place interpreter).
+- **C5** JITs as the floor, not a fair comparison: wasmtime Cranelift and Winch (installed).
+
+### Metrics and method
+
+- Wall time and user+sys CPU per run, median of ≥ 10 after one warm-up, MAD reported;
+  pinned with `taskset` to one P-core (the i7-12700H is hybrid: unpinned runs land on E-cores
+  and are 2× off); CPU model, governor, GHC and runtime versions, flags and commit hash
+  recorded in the results file. WSL2 is noisy: CPU time is primary, wall time secondary, and
+  the final tables should be re-run on native Linux.
+- **ns per dynamic Wasm instruction**, the unit the interpreter papers use: count steps with a
+  bench-only driver over `step` (a `Stepped` counter; `runFor` already has the shape). The
+  same program has the same count in every runtime, so the ratio is comparable.
+- GHC-only: `+RTS -s` bytes allocated per instruction, GC share, max residency (needs
+  `-rtsopts` on the bench executable only). Profiling with `--enable-profiling
+  --profiling-detail=late` (late cost centres do not disturb optimisation), `-hT` heap by
+  closure type, and `-ddump-simpl` on typed vs erased `step` to *show* what remains of the
+  indices (the H1 argument in Core, not just in numbers).
+- Subtract the empty-program baseline per runtime, and make every workload run ≥ 1 s so
+  load/validate/JIT time is negligible where a runtime cannot report the run phase alone.
+
+### Infrastructure to build
+
+- [ ] **[P2·perf]** `bench/` layout: `wat/` (T1 + `gen.py`), `c/` (T2 sources + `build.sh`
+  over wasi-sdk), `wasm/` (built T1 committed, T2 built on demand), `erased/` (C2), `drivers/`
+  (C3, the step-counting driver for C1), `results/<date>-<commit>.json` (committed),
+  `tools/fetch.sh` (wasi-sdk, wasm3, WAMR, wasmi into `~/.local/wasm-bench-tools`, never the
+  repo).
+- [ ] **[P2·perf]** Cabal `benchmark wasm-ifc-bench` stanza on `tasty-bench` (0.5, installed):
+  in-process per-phase numbers (decode / elaborate / instantiate / run) and the typed-vs-erased
+  A/B under identical process conditions; `--csv` output; `-rtsopts`.
+- [ ] **[P2·perf]** `bench/run.py` (runtimes × workloads, reps, pinning, JSON) and
+  `bench/report.py` (JSON → markdown tables: absolute, ns/instr, speed-up ratios, N-sweeps).
+  Python 3 is on the machine, hyperfine is not; `resource.getrusage(RUSAGE_CHILDREN)` gives
+  CPU time.
+- [ ] **[P2·perf]** `bench/smoke.sh`: every workload once on C1 with checksum check, run from
+  the *full* gate only (never the fast loop); benchmarks themselves never gate.
+
+### Experiment sequence (each step informs the next)
+
+- [ ] **E0** Hygiene baseline: measure C1 as is; fix H0 (strict fields, force `op a b`, `-A`);
+  measure again; keep both numbers.
+- [ ] **E1** Typed vs erased (C1 vs C2, C2b) on T1 in-process; Core diff of `step`. Answers H1.
+- [ ] **E2** Witness-residue sweeps (`locals-N`, `funcs-N`, `labels-N`); then prototype the
+  witness-indexed vector and re-measure. Answers H2. The store-side counterpart (mutable memory
+  in `ST`, `Word32` numerics without `Integer`) is the §F P3·perf item and goes after this.
+- [ ] **E3** C1 vs C3 on T1 + T2. Answers H3.
+- [ ] **E4** C1 vs C4 (and C5 as the floor) on T1 + T2 in ns/instr, with the profile that
+  attributes the remaining gap. Answers H4.
+- [ ] **E5** Front-end scaling on T3. Answers H5.
+- [ ] **E6** Representation improvements suggested by the E4 profile, one at a time, each
+  measured: a "which change bought what" table is the second half of the argument (it shows the
+  remaining gap is representational and closable *within* the typed design).
+- [ ] Write-up `BENCHMARKS.md`: the tables above, the environment, and the attribution.
+
+### Risks
+
+- Erasure fidelity (C2): any divergence in evaluation order contaminates H1; mitigate by
+  textual derivation, diff review and the Core comparison.
+- Real programs may use instructions we lack (nontrapping float-to-int, `ref.func` in element
+  segments from newer clang); detect with `wasm-ifc check`, adjust `-m` flags, and record any
+  workload we had to drop.
+- Timing noise (WSL2, hybrid cores, turbo): pin, repeat, report CPU time, re-run natively.
+
+
 ---
 
 ### Provenance
