@@ -29,6 +29,18 @@ import Syntax.Types (FuncType (..), ValType (..))
 wasiModuleName :: Text
 wasiModuleName = "wasi_snapshot_preview1"
 
+{- TODO(ifc P1): each WASI function needs a labelled signature, the most concrete part of the
+   policy. Sources: @fd_read@ and @fd_pread@ results take the descriptor's label (a secret file
+   yields secret bytes); @args_get@, @environ_get@, @clock_time_get@ are public; @random_get@
+   is public entropy unless it seeds a key. Sinks: @fd_write@ and @fd_pwrite@ need the buffer's
+   label ⊑ the descriptor's label and the pc ⊑ it (a write under a secret pc leaks by
+   happening); @proc_exit@'s code and @path_open@'s path are public outputs. The catch: the
+   descriptor is a run-time value, so a purely static system must be coarse (every @fd_write@
+   a public sink, every @fd_read@ labelled by a policy over preopens) while a hybrid one checks
+   at the boundary, where the driver knows the descriptor's label (a label per preopen in
+   'Runtime.Wasi.WasiConfig', inherited through @path_open@). Encode the signature as a second
+   index here or as a function from the constructor to a labelled type; the check happens at
+   'Runtime.Interpreter.HostRequest'. -}
 data WasiFunc (ft :: FuncType) where
     -- | @args_get(argv, argv_buf)@
     ArgsGet :: WasiFunc ('FuncType '[ 'I32, 'I32] '[ 'I32])

@@ -40,7 +40,12 @@ import Validation.Shape (MemShape)
 
 -- *** Linear memory ***
 
--- | A linear memory: its declared limits, its current size in pages, and the written pages.
+{- | A linear memory: its declared limits, its current size in pages, and the written pages.
+  TODO(ifc P2): nothing to do here if the memory gets one static label
+  ('Validation.Shape.MemShape'); only a dynamic or hybrid design would keep a label per page
+  next to 'pages' (the sparse page map makes that cheap). Decide at the memory TODO in
+  "Syntax.InstructionsIFC" first.
+-}
 type MemInst :: MemShape -> Type
 data MemInst m = MemInst
     { limits :: Limits

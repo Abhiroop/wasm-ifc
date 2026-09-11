@@ -155,6 +155,14 @@ data ModuleInst (mod :: ModuleShape) = ModuleInst
 
    An @Elem rs labels@ branch target therefore selects an entry directly, and unwinding it
    stays type-correct without any coercion.
+
+   TODO(ifc P2): if the IFC system stays static (labels checked once, at validation), 'step'
+   needs no change and this stack is only where a /proof/ about the pc would live. If it goes
+   hybrid or dynamic (HLIO-style monitoring, see TODO.md §F), the pc label lives here:
+   'BlockLabel', 'LoopLabel' and 'CallBoundary' record the pc on entry, a branch raises it and
+   popping the entry restores it, exactly as the activation depth is kept today. Either way the
+   labelled instructions must be what 'step' runs for a noninterference statement about this
+   machine (see the P0 TODO on 'Syntax.InstructionsIFC.Instr').
 -}
 data
     Control
@@ -224,6 +232,14 @@ data StepResult (mod :: ModuleShape) (res :: ResultType) where
 {- | A call into the host, suspended: which function, its arguments (a stack of exactly its
   parameter shape), the store to perform it against, and how to continue once the results
   are known. The memory constraint travels with it so the driver can read and write memory.
+
+  TODO(ifc P1): this boundary is where information enters and leaves the module, so it is
+  where IFC has teeth: the host function's labelled type (from the policy, see the TODO on
+  'Validation.Elaborate.elaborateModule' and on 'Runtime.Host.WasiFunc') labels the results
+  the driver writes back (sources) and constrains the arguments and the pc of the call (sinks:
+  writing secret bytes to a public descriptor is the leak the whole system exists to stop).
+  The check is local here: the arguments' labels are on the stack, and the pc is the label of
+  the enclosing control entry.
 -}
 data HostRequest (mod :: ModuleShape) (res :: ResultType) where
     HostRequest ::

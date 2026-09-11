@@ -114,6 +114,9 @@ decideFloat SI64 = Nothing
 -}
 type ResultType = [ValType]
 
+-- TODO(ifc P1): a labelled counterpart (labelled parameters and results plus a pc bound) is
+-- what typing calls needs; see the calls TODO in "Syntax.InstructionsIFC" and the TODO on
+-- 'Validation.Shape.ModuleShape'.
 data FuncType = FuncType [ValType] [ValType] deriving stock (Eq, Show)
 type BlockType = FuncType
 
@@ -134,6 +137,8 @@ data MemType = MemType
 {- data TableType = TableType Limits RefType deriving stock (Eq, Show) -}
 
 data Mutability = Immutable | Mutable deriving stock (Eq, Show)
+
+-- TODO(ifc P1): a labelled counterpart; see the globals TODO in "Syntax.InstructionsIFC".
 data GlobalType = GlobalType Mutability ValType deriving stock (Eq, Show)
 
 -- Singletons for the remaining promotable types. Split from the 'ValType' splice above because

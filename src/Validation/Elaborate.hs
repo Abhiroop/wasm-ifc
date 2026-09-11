@@ -859,6 +859,21 @@ unStack (PolyStack xs) = xs
   every function against it, evaluate the global initializers and segment offsets, resolve
   the element segments' and start function's indices. The result is a validated 'Module';
   "Runtime.Instantiate" turns it into a running instance.
+
+  TODO(ifc P0): where do labels come from? A decoded 'RawModule' carries none and the binary
+  format has no place for them. Two pieces. (1) A /policy/ for the module's interface: the
+  labels (and pc bounds) of imported and exported function parameters and results, of the
+  mutable globals, of the memory, and of the host functions (sources such as @fd_read@ from a
+  secret file, sinks such as @fd_write@ to a public descriptor; see "Runtime.Host"), supplied
+  beside the module as a small file or custom section or CLI flags: decide the format, it is
+  small. (2) Everything inside a function body is then determined: explicit flows are joins
+  and the pc is fixed by the block structure, so IFC validation is a deterministic forward
+  propagation over the typed program, with no annotations and no search, that can only fail
+  at a flow check (a set, store, branch, call or host call into a lower label). Intuition for
+  the implementation: a second elaboration pass over the /typed/ 'Instr' (labels never change
+  what is on the stack, only how it is typed), or folded into this pass once the P0 structure
+  decision makes 'Instr' labelled. 'ElabError' gains one constructor: which instruction, and
+  which flow (from which label into which).
 -}
 elaborateModule :: RawModule -> Either ElabError SomeModule
 elaborateModule m = do

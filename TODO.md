@@ -8,7 +8,10 @@ and in `-- TODO`/`-- XXX` comments in the source. Consumer-facing docs (`README.
 ## How to use
 
 Each item: `- [ ] **[Pn·area]** Title — what & why. (file refs)`. Check items off as you land
-them. Priorities:
+them. **Exception (Daniel & Abhiroop's workflow for the IFC merge):** the open IFC design points
+live as `TODO(ifc Pn)` comments in the code, beside the construct each one concerns;
+`grep -rn 'TODO(ifc' src test` is that work list, and solving them all is finishing the merge.
+Priorities:
 
 - **P0** — defects that crash or misbehave on plausible input; fix first.
 - **P1** — high value: robustness, the tooling that enforces `STYLE.md`, core test coverage.
@@ -366,12 +369,13 @@ Open P0/P1 correctness items live in the plan above (section **P0**); the list b
   a parallel, not-yet-executed GADT: `Syntax.TypesIFC` (`SecLevel`, `LValType = ValType :~
   SecLevel`, `CanFlowInto`, the join `:/\`) and `Syntax.InstructionsIFC` (today's `Instr` over
   `[LValType]`; numeric results take the join of their operands' labels). `Append` is poly-kinded
-  for it. To decide together (the merge meeting): a program-counter label on `if`/`br*`/`select`
-  (implicit flows; the explicit `Control` stack is where the pc label lives at run time); labels
-  on memories and globals (today free placeholders at the access site); labelled `FuncType`s so
-  `call`/`call_indirect` can be typed; whether IFC stays a parallel GADT or the one `Instr` is
-  generalised over the label; singletons for `SecLevel` (needed by the elaborator and by the
-  general smart constructors); naming (`LValType`, `:/\` for a *join*).
+  for it. The open design points are `TODO(ifc Pn)` comments beside the code they concern
+  (`grep -rn 'TODO(ifc' src test`): P0 — parallel GADT vs one `Instr` generalised over the label;
+  the program-counter label; where labels come from (the policy). P1 — `select`'s condition label;
+  flow checks on `local.set`/`global.set`/stores (`CanFlowInto` as a GADT witness); memory and
+  global labels; labelled `FuncType`s for calls; labelled WASI signatures. P2 — singletons for
+  `SecLevel`; labelled shapes; run-time pc on `Control` if hybrid; next examples. P3 — naming,
+  the lattice, the termination channel.
   References (folded in from the old `discussions/READING_LIST.md`):
   - SecWasm — the IFC model we follow: <https://plas2022.github.io/files/pdf/SecWasm.pdf>
   - WANILLA (CCS '25) — noninterference via SMT: <https://arxiv.org/pdf/2509.08758>

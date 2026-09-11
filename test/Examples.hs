@@ -182,6 +182,12 @@ runIncrement initial = either (Left . show) completedI32 (runFunction globalModu
   Its type is the assertion: the sum is 'High because the join reduces, and the program
   compiles only because a free-labelled constant can be pinned to either level. Nothing runs
   it yet.
+  TODO(ifc P2): the examples to write as the TODOs land, each a type-level assertion like this
+  one: the leaky @if@ (a secret condition, a public @local.set@ in a branch) that must /not/
+  compile once the pc exists (keep it as a commented ill-typed program with its error, as the
+  early phases did for @broken@); @select@ on a secret condition typing secret after the
+  'ISelect' fix; a store of a public value into a secret local through the flow witness. When
+  the P0 structure decision lands, these become runnable through 'runFunction' too.
 -}
 secretPlusPublic :: IFC.Expr shape ret locals labels '[] (('I32 ':~ 'High) ': '[])
 secretPlusPublic = secret IFC.:. public IFC.:. IFC.IAdd I32IsNum IFC.:. IFC.INil

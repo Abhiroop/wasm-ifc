@@ -102,6 +102,14 @@ data SomeFuncRef (fts :: [FuncType]) where
   instance). A record only for the field names' documentation value — 'ModuleShape' is used
   promoted, and the projection type families below ('ModuleFuncs' etc.) are what read the
   fields at the type level.
+
+  TODO(ifc P1): this shape is over unlabelled types, which is why "Syntax.InstructionsIFC"
+  attaches free labels to global reads and cannot type calls. A labelled module shape needs
+  labelled function types (parameters, results, a pc bound), labelled global types, and a
+  label per memory ('MemShape'). Either a second shape with its own projections, or this one
+  made polymorphic in its value-type kind so the plain layer is the instance at 'ValType' and
+  the IFC layer the one at 'Syntax.TypesIFC.LValType'. Same fork as the P0 TODO on
+  'Syntax.InstructionsIFC.Instr'; decide them together. The singletons below regenerate either way.
 -}
 data ModuleShape = ModuleShape
     { funcTypes :: [FuncType]
@@ -136,6 +144,10 @@ type family ModuleData s where
   variable types and the function's result type. These two always share a scope — both
   are fixed within a function and both change exactly on a @call@ — so they travel
   together as one index on the typed AST.
+
+  TODO(ifc P2): the IFC 'Syntax.InstructionsIFC.Instr' spells @ret@ and @locals@ out because
+  this is over 'ValType'; labelled locals are the point (a local's label is fixed for the
+  function). Follows the 'ModuleShape' TODO.
 -}
 data FrameShape = FrameShape
     { locals :: [ValType]
@@ -156,6 +168,10 @@ type family FrameReturn f where
   from the decoded limits during elaboration). The limits are carried for faithfulness,
   not used for static checking — WebAssembly bounds are runtime traps. (Used only
   promoted; the term-level selectors document the fields.)
+
+  TODO(ifc P1): add the memory's security level here, one label per memory (see the memory
+  TODO in "Syntax.InstructionsIFC"). It is static policy exactly like the limits, and the
+  runtime 'Runtime.MemInst.MemInst' needs nothing for it.
 -}
 data MemShape = MemShape
     { addrType :: AddrType
