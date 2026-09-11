@@ -1,0 +1,327 @@
+diff --git a/src/Runtime/Interpreter.hs b/src/Runtime/Interpreter.hs
+index bbf9e73..45400ef 100644
+--- a/src/Runtime/Interpreter.hs
++++ b/src/Runtime/Interpreter.hs
+@@ -439,11 +439,11 @@ enterCall ::
+     Control mod res ret locals labels out ->
+     Either Trap (StepResult mod res)
+ enterCall funcs store locals witness ix stack rest control = case getFunc ix funcs of
+-    WasmFunc (Function declared body)
++    WasmFunc (Function params declared body)
+         | depth > callDepthBound -> Left CallStackExhausted
+         | otherwise ->
+             let (args, below) = splitStack witness stack
+-                calleeLocals = reverseOnto args (defaultLocals declared)
++                calleeLocals = seedLocals params declared args
+              in Right (Stepped (Config store calleeLocals VNil body (CallBoundary depth below locals rest control)))
+     HostFunc wasiFunc -> case wasiFuncType wasiFunc of
+         SFuncType _ resultsS ->
+@@ -649,7 +649,7 @@ runFunction ::
+     FuncInst mod ('FuncType ps rs) ->
+     ValueStack ps ->
+     Either Trap (Outcome mod rs)
+-runFunction tm (WasmFunc (Function declared body)) args = do
++runFunction tm (WasmFunc (Function params declared body)) args = do
+     halt <- run (tm.functions) (Config store locals VNil body EntryBoundary)
+     Right $ case halt of
+         Finished store' results ->
+@@ -657,11 +657,11 @@ runFunction tm (WasmFunc (Function declared body)) args = do
+         AwaitingHost request -> NeedsHost request
+   where
+     store = moduleToStore tm
+-    locals = reverseOnto args (defaultLocals declared)
++    locals = seedLocals params declared args
+ runFunction tm (HostFunc wasiFunc) args = case wasiFuncType wasiFunc of
+     SFuncType _ resultsS ->
+         let store = moduleToStore tm
+-         in Right (NeedsHost (HostRequest wasiFunc args store (Suspended (appendNil resultsS) LNil VNil INil EntryBoundary)))
++         in Right (NeedsHost (HostRequest wasiFunc args store (Suspended (appendNil resultsS) noLocals VNil INil EntryBoundary)))
+ 
+ {- *** Numeric dispatch ***
+ 
+diff --git a/src/Runtime/Stack.hs b/src/Runtime/Stack.hs
+index 91bfa0f..7133e6f 100644
+--- a/src/Runtime/Stack.hs
++++ b/src/Runtime/Stack.hs
+@@ -11,8 +11,9 @@
+ 
+ {- | Type-indexed runtime structures for the intrinsically-typed interpreter: the value
+   stack, locals, and globals, each indexed by the (type-level) list of value types it
+-  holds. A slot of type @t@ stores a bare @HostType t@ — there is no per-value
+-  tag, because the index already says how to read it.
++  holds. A value-stack or global slot of type @t@ stores a bare @HostType t@ — there is no
++  per-value tag, because the index already says how to read it. Locals are stored flat
++  instead, one packed word each, for the reason given at 'LocalSpaceInst'.
+ 
+   Splitting a concatenated stack @c = a ++ b@ back into its parts is driven by an
+   'Append' witness, not by inverting the (non-injective) @++@ family. The witness's
+@@ -20,7 +21,8 @@
+ -}
+ module Runtime.Stack (
+     ValueStack (..),
+-    LocalSpaceInst (..),
++    LocalSpaceInst,
++    noLocals,
+     GlobalSpaceInst (..),
+     initialGlobals,
+     MemSpaceInst (..),
+@@ -32,7 +34,7 @@ module Runtime.Stack (
+     appendStack,
+     appendWith,
+     splitStack,
+-    reverseOnto,
++    seedLocals,
+     defaultLocals,
+     getLocal,
+     setLocal,
+@@ -42,8 +44,13 @@ module Runtime.Stack (
+     setFirstMem,
+ ) where
+ 
++import Control.Monad.ST (ST)
+ import Data.ByteString (ByteString)
+ import Data.Kind (Type)
++import Data.Vector.Unboxed qualified as UV
++import Data.Vector.Unboxed.Mutable qualified as MV
++import Data.Word (Word64)
++import GHC.Float (castDoubleToWord64, castFloatToWord32, castWord32ToFloat, castWord64ToDouble)
+ 
+ import Data.List.Singletons (type (++))
+ import Data.Singletons.Base.TH (SList (SCons, SNil), Sing)
+@@ -52,6 +59,7 @@ import Runtime.TableInst (TableInst)
+ import Syntax.Globals (Global (..), GlobalSpace (..))
+ import Syntax.Immediates (HostType)
+ import Syntax.Types
++import Validation.Reflect (sReverseOnto)
+ import Validation.Shape (Append (..), DataShape (..), Elem (..), MemShape, ReverseOnto, TableShape)
+ 
+ {- | The operand stack (head = top of stack), indexed by the types it holds.
+@@ -73,15 +81,22 @@ data ValueStack s where
+ infixr 5 :#
+ 
+ {- | The instance of a function activation's local index space: its locals' current values,
+-  indexed by their types. (As for every @…SpaceInst@, the static description is the type
+-  index itself; the name says which index space the vector instantiates.)
++  indexed by their types.
++
++  Stored flat — one machine word per local, in an unboxed vector — beside the singleton of the
++  locals' types, which says how to read each word back. Every WebAssembly value fits in 64
++  bits, so the word /is/ the value, bit for bit (a float's NaN payload survives the round
++  trip). The obvious typed encoding, a cons list, makes @local.set@ rebuild every cell in front
++  of the one it writes: the kernel sweep in @bench/@ measured that as the whole of the gap
++  between a shallow and a deep local (TODO.md §I, E2).
++
++  The type is abstract, and its one invariant — the vector holds exactly as many words as the
++  singleton holds types — is established by 'defaultLocals' and 'seedLocals' and preserved by
++  'setLocal', the only ways to make or change one. Under it, the position an 'Elem' witness
++  denotes is always inside the vector, which is what licenses the unchecked read and write.
+ -}
+ type LocalSpaceInst :: [ValType] -> Type
+-data LocalSpaceInst ls where
+-    LNil :: LocalSpaceInst '[]
+-    (:&) :: !(HostType t) -> !(LocalSpaceInst ls) -> LocalSpaceInst (t ': ls)
+-
+-infixr 5 :&
++data LocalSpaceInst ls = LocalSpaceInst !(Sing ls) !(UV.Vector Word64)
+ 
+ -- | The instance of a module's global index space: the globals' current values, by type.
+ type GlobalSpaceInst :: [GlobalType] -> Type
+@@ -104,35 +119,82 @@ splitStack :: Append a b c -> ValueStack c -> (ValueStack a, ValueStack b)
+ splitStack ANil vs = (VNil, vs)
+ splitStack (ACons w) (x :# vs) = let (upper, lower) = splitStack w vs in (x :# upper, lower)
+ 
+-{- | Seed a callee's locals from its argument segment: the arguments go in front of @acc@ (the
+-  zero-initialised declared locals), reversed on the way, because the segment lists the last
+-  argument first (top of stack) while local 0 is the first parameter. Structural, mirroring
+-  'ReverseOnto'.
++{- | Seed a callee's locals from its argument segment: the parameters, then the declared locals
++  at zero. The segment lists the last argument first (top of stack) while local 0 is the first
++  parameter, so the arguments are written from the last slot of the parameters downwards —
++  which is 'ReverseOnto', done in place. One allocation per call: calls are the hottest path
++  there is, and building the frame through intermediate lists cost @fib@ a third more heap.
+ -}
+-reverseOnto :: ValueStack xs -> LocalSpaceInst acc -> LocalSpaceInst (ReverseOnto xs acc)
+-reverseOnto VNil acc = acc
+--- The slot's type @t@ is bound explicitly: 'HostType' is not injective, so it cannot be
+--- recovered from the value @x@ alone when it is pushed onto the locals.
+-reverseOnto ((:#) @t x xs) acc = reverseOnto xs ((:&) @t x acc)
+-
+--- | A locals frame of the given shape, every slot zero (how declared locals start a call).
+-defaultLocals :: Sing (ls :: [ValType]) -> LocalSpaceInst ls
+-defaultLocals SNil = LNil
+-defaultLocals (SCons st rest) = zeroOf st :& defaultLocals rest
++seedLocals :: Sing ps -> Sing declared -> ValueStack ps -> LocalSpaceInst (ReverseOnto ps declared)
++seedLocals paramTypes declaredTypes args =
++    LocalSpaceInst (sReverseOnto paramTypes declaredTypes) (UV.create frame)
+   where
+-    zeroOf :: Sing (t :: ValType) -> HostType t
+-    zeroOf SI32 = 0
+-    zeroOf SI64 = 0
+-    zeroOf SF32 = 0
+-    zeroOf SF64 = 0
++    arity = lengthOf paramTypes
++    frame :: ST s (MV.MVector s Word64)
++    frame = do
++        slots <- MV.replicate (arity + lengthOf declaredTypes) 0
++        writeArguments slots (arity - 1) paramTypes args
++        pure slots
++
++{- | Write a stack's values into consecutive slots, the top one at @slot@ and each deeper one
++  just below it.
++-}
++writeArguments :: MV.MVector s Word64 -> Int -> Sing (xs :: [ValType]) -> ValueStack xs -> ST s ()
++writeArguments _ _ SNil VNil = pure ()
++writeArguments slots slot (SCons st rest) (x :# xs) = do
++    MV.unsafeWrite slots slot (packValue st x)
++    writeArguments slots (slot - 1) rest xs
++
++{- | A locals frame of the given shape, every slot zero (how declared locals start a call).
++  Zero is the all-zero word at every value type, the floats' @+0.0@ included.
++-}
++defaultLocals :: Sing (ls :: [ValType]) -> LocalSpaceInst ls
++defaultLocals types = LocalSpaceInst types (UV.replicate (lengthOf types) 0)
++
++-- | The frame of a function with neither parameters nor declared locals.
++noLocals :: LocalSpaceInst '[]
++noLocals = defaultLocals SNil
+ 
++-- | Read a local: the witness gives both its type and its position.
+ getLocal :: Elem t ls -> LocalSpaceInst ls -> HostType t
+-getLocal Here (x :& _) = x
+-getLocal (There ix) (_ :& rest) = getLocal ix rest
++getLocal ix (LocalSpaceInst types values) =
++    unpackValue (elemType ix types) (UV.unsafeIndex values (elemPosition ix))
+ 
++-- | Write a local: a copy of the vector with one word replaced, so the same length.
+ setLocal :: Elem t ls -> HostType t -> LocalSpaceInst ls -> LocalSpaceInst ls
+-setLocal Here v (_ :& rest) = v :& rest
+-setLocal (There ix) v (x :& rest) = x :& setLocal ix v rest
++setLocal ix v (LocalSpaceInst types values) =
++    LocalSpaceInst types (UV.modify (\slots -> MV.unsafeWrite slots (elemPosition ix) (packValue (elemType ix types) v)) values)
++
++-- | Pack a value into the one machine word every WebAssembly value fits in, bit for bit.
++packValue :: Sing (t :: ValType) -> HostType t -> Word64
++packValue SI32 v = fromIntegral v
++packValue SI64 v = v
++packValue SF32 v = fromIntegral (castFloatToWord32 v)
++packValue SF64 v = castDoubleToWord64 v
++
++-- | Read a packed word back at its type: the inverse of 'packValue'.
++unpackValue :: Sing (t :: ValType) -> Word64 -> HostType t
++unpackValue SI32 w = fromIntegral w
++unpackValue SI64 w = w
++unpackValue SF32 w = castWord32ToFloat (fromIntegral w)
++unpackValue SF64 w = castWord64ToDouble w
++
++-- | The type of the element a witness points at, read off the list's singleton.
++elemType :: Elem t ls -> Sing (ls :: [ValType]) -> Sing t
++elemType Here (SCons st _) = st
++elemType (There ix) (SCons _ rest) = elemType ix rest
++
++-- | The position a witness denotes, counting from zero.
++elemPosition :: Elem t ls -> Int
++elemPosition = go 0
++  where
++    go :: Int -> Elem x xs -> Int
++    go !n Here = n
++    go !n (There ix) = go (n + 1) ix
++
++lengthOf :: Sing (ls :: [ValType]) -> Int
++lengthOf SNil = 0
++lengthOf (SCons _ rest) = 1 + lengthOf rest
+ 
+ -- | The globals as a module starts: each at its validated initial value.
+ initialGlobals :: GlobalSpace gs -> GlobalSpaceInst gs
+diff --git a/src/Syntax/Functions.hs b/src/Syntax/Functions.hs
+index 41e8883..98c1795 100644
+--- a/src/Syntax/Functions.hs
++++ b/src/Syntax/Functions.hs
+@@ -40,12 +40,15 @@ data RawFunction = RawFunction
+ -}
+ type FunctionBody mod locals rs = Expr mod ('FrameShape locals rs) '[rs] '[] rs
+ 
+-{- | A function as validated: the types of the locals it declares, and its body. The frame's
+-  locals are the parameters — reversed, since the argument segment lists the last one first
+-  and local 0 is the first parameter — followed by the declared locals.
++{- | A function as validated: the types of its parameters and of the locals it declares, and
++  its body. The frame's locals are the parameters — reversed, since the argument segment lists
++  the last one first and local 0 is the first parameter — followed by the declared locals.
++  Both singletons are kept because a call packs its arguments into the callee's locals, and
++  packing a value takes its type.
+ -}
+ data Function (mod :: ModuleShape) (ft :: FuncType) where
+     Function ::
++        Sing (ps :: [ValType]) ->
+         Sing (declared :: [ValType]) ->
+         FunctionBody mod (ReverseOnto ps declared) rs ->
+         Function mod ('FuncType ps rs)
+diff --git a/src/Validation/Elaborate.hs b/src/Validation/Elaborate.hs
+index c318cf6..7d2b67b 100644
+--- a/src/Validation/Elaborate.hs
++++ b/src/Validation/Elaborate.hs
+@@ -975,10 +975,10 @@ elaborateFunctionIn ctxS types (SFuncType psS rsS) (RawFunction _ declaredT body
+                     case elaborated of
+                         Reachable soS bodySeq -> do
+                             Refl <- note (ResultMismatch (stackToList rsS) (stackToList soS)) (decideEquality soS rsS)
+-                            Right (Function declS bodySeq)
++                            Right (Function psS declS bodySeq)
+                         Diverged final poly -> do
+                             checkDeadResult final rsS
+-                            Right (Function declS poly)
++                            Right (Function psS declS poly)
+ 
+ elaborateGlobals :: Sing gs -> [RawGlobal] -> Either ElabError (GlobalSpace gs)
+ elaborateGlobals = go 0
+diff --git a/test/Examples.hs b/test/Examples.hs
+index 1dc39f3..607d83a 100644
+--- a/test/Examples.hs
++++ b/test/Examples.hs
+@@ -55,7 +55,7 @@ completedI32 (NeedsHost _) = Left "the example called into the host"
+ 
+ factorial :: FuncInst shape ('FuncType '[ 'I32] '[ 'I32])
+ factorial =
+-    WasmFunc . Function (SCons SI32 SNil) $
++    WasmFunc . Function (SCons SI32 SNil) (SCons SI32 SNil) $
+         ( IConst I32IsNum 1
+             :. ILocalSet acc
+             :. block_
+@@ -100,7 +100,7 @@ spinForever = loop_ (br_ Here :. INil) :. INil
+ 
+ -- | Whether the loop is still running after the given number of steps (it always is).
+ runSpinFor :: Int -> Either String Bool
+-runSpinFor fuel = case runFor fuel FsNil (Config (moduleToStore emptyMod) LNil VNil spinForever EntryBoundary) of
++runSpinFor fuel = case runFor fuel FsNil (Config (moduleToStore emptyMod) noLocals VNil spinForever EntryBoundary) of
+     Left trap -> Left (show trap)
+     Right (OutOfFuel _) -> Right True
+     Right (Halted _) -> Right False
+@@ -123,10 +123,10 @@ runFactorial input =
+ type CallCtx = 'ModuleShape '[ 'FuncType '[ 'I32, 'I32] '[ 'I32]] '[] '[] '[] '[]
+ 
+ multiply :: FuncInst CallCtx ('FuncType '[ 'I32, 'I32] '[ 'I32])
+-multiply = WasmFunc . Function SNil $ (ILocalGet Here :. ILocalGet (There Here) :. IMul I32IsNum :. INil)
++multiply = WasmFunc . Function (SCons SI32 (SCons SI32 SNil)) SNil $ (ILocalGet Here :. ILocalGet (There Here) :. IMul I32IsNum :. INil)
+ 
+ square :: FuncInst CallCtx ('FuncType '[ 'I32] '[ 'I32])
+-square = WasmFunc . Function SNil $ (ILocalGet Here :. ILocalGet Here :. call toMultiply :. INil)
++square = WasmFunc . Function (SCons SI32 SNil) SNil $ (ILocalGet Here :. ILocalGet Here :. call toMultiply :. INil)
+   where
+     -- function index 0 in the module signature
+     toMultiply :: Elem ('FuncType '[ 'I32, 'I32] '[ 'I32]) '[ 'FuncType '[ 'I32, 'I32] '[ 'I32]]
+@@ -148,7 +148,7 @@ type GlobalCtx = 'ModuleShape '[] '[ 'GlobalType 'Mutable 'I32] '[] '[] '[]
+ 
+ increment :: FuncInst GlobalCtx ('FuncType '[] '[ 'I32])
+ increment =
+-    WasmFunc . Function SNil $
++    WasmFunc . Function SNil SNil $
+         ( IGlobalGet Here
+             :. IConst I32IsNum 1
+             :. IAdd I32IsNum
+@@ -175,7 +175,7 @@ runIncrement initial = either (Left . show) completedI32 (runFunction globalModu
+          In the first argument of ‘(:.)’, namely ‘IAdd I32IsNum’
+ 
+    broken :: FuncInst shape ('FuncType '[ 'I32 ] '[ 'I32 ])
+-   broken = WasmFunc . Function SNil $ (ILocalGet Here :. IAdd I32IsNum :. INil)
++   broken = WasmFunc . Function (SCons SI32 SNil) SNil $ (ILocalGet Here :. IAdd I32IsNum :. INil)
+ -}
+ 
+ {- | The first labelled program, for "Syntax.InstructionsIFC": a secret plus a public value.

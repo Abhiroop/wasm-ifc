@@ -8,6 +8,12 @@ Results (with the environment that produced them) go to bench/results/<stamp>.js
   ./bench/run.py                      # everything available
   ./bench/run.py -r wasm-ifc -w fib   # one runtime, one workload
   ./bench/run.py --reps 11
+  ./bench/run.py --binary before=/path/to/old/wasm-ifc -r wasm-ifc -r before -r wabt-interp
+
+Repetitions are taken round-robin across the runtimes of a workload (A B C A B C ...), not
+one runtime at a time: this laptop CPU runs a short burst at higher clocks than a sustained
+load, so an A/B taken in sequence compares thermal states as much as code. `--binary` adds
+another build of our interpreter under a name of its own, for exactly that kind of A/B.
 """
 
 from __future__ import annotations
@@ -27,12 +33,23 @@ def wasmtime() -> str | None:
     return shutil.which("wasmtime") or shutil.which(str(Path.home() / ".wasmtime/bin/wasmtime"))
 
 
-def runtimes() -> dict[str, list[str]]:
+# Runtimes invoked the way our CLI is (`invoke <module> run`); everything else takes the export
+# name in its flags and the module last.
+OURS_LIKE: set[str] = {"wasm-ifc"}
+
+
+def runtimes(extra: list[str]) -> dict[str, list[str]]:
     """name -> argv prefix; the module path is appended, then the invocation arguments."""
     found: dict[str, list[str]] = {}
     ours = subprocess.run(["cabal", "list-bin", "wasm-ifc"], cwd=ROOT, capture_output=True, text=True)
     if ours.returncode == 0:
         found["wasm-ifc"] = [ours.stdout.strip(), "invoke"]
+    for spec in extra:
+        name, _, path = spec.partition("=")
+        if not name or not path:
+            raise SystemExit(f"--binary wants NAME=PATH, got {spec!r}")
+        found[name] = [path, "invoke"]
+        OURS_LIKE.add(name)
     wt = wasmtime()
     if wt:
         found["wasmtime-cranelift"] = [wt, "run", "--invoke", "run"]
@@ -48,8 +65,7 @@ def runtimes() -> dict[str, list[str]]:
 
 
 def argv_for(name: str, prefix: list[str], module: Path) -> list[str]:
-    # Only ours takes the export name after the file; the others carry it in their flags.
-    return PIN + prefix + ([str(module), "run"] if name == "wasm-ifc" else [str(module)])
+    return PIN + prefix + ([str(module), "run"] if name in OURS_LIKE else [str(module)])
 
 
 def checksum(out: str) -> str:
@@ -116,7 +132,8 @@ def environment(rts: dict[str, list[str]]) -> dict:
         "kernel": platform.release(),
         "pinned_to": PIN[-1] if PIN else None,
         "ghc": version(["ghc", "--version"]),
-        "versions": {n: version([p[0], "--version"]) for n, p in rts.items() if n != "wasm-ifc"},
+        "versions": {n: version([p[0], "--version"]) for n, p in rts.items() if n not in OURS_LIKE},
+        "binaries": {n: p[0] for n, p in rts.items() if n in OURS_LIKE},
     }
 
 
@@ -127,9 +144,10 @@ def main() -> int:
     ap.add_argument("--reps", type=int, default=7, help="timed repetitions (plus one warm-up)")
     ap.add_argument("--timeout", type=float, default=120.0)
     ap.add_argument("-o", "--out", help="results file (default bench/results/<stamp>.json)")
+    ap.add_argument("--binary", action="append", default=[], metavar="NAME=PATH", help="another build of our interpreter to time")
     args = ap.parse_args()
 
-    rts = {n: p for n, p in runtimes().items() if not args.runtime or n in args.runtime}
+    rts = {n: p for n, p in runtimes(args.binary).items() if not args.runtime or n in args.runtime}
     if not rts:
         print("no runtimes found", file=sys.stderr)
         return 2
@@ -142,21 +160,31 @@ def main() -> int:
 
     rows = []
     for module in mods:
+        # One warm-up each, which also finds out who can run this kernel at all.
+        live: dict[str, tuple[list[str], str]] = {}
         for name, prefix in rts.items():
             argv = argv_for(name, prefix, module)
             _, _, warm, code = once(argv, args.timeout)
-            if code != 0:
+            if code == 0:
+                live[name] = (argv, warm)
+            else:
                 print(f"{module.stem:18s} {name:20s} unavailable (exit {code})", flush=True)
                 rows.append({"workload": module.stem, "runtime": name, "ok": False})
-                continue
-            walls, cpus = [], []
-            for _ in range(args.reps):
+        walls: dict[str, list[float]] = {n: [] for n in live}
+        cpus: dict[str, list[float]] = {n: [] for n in live}
+        broken: set[str] = set()
+        for _ in range(args.reps):
+            for name, (argv, warm) in live.items():
+                if name in broken:
+                    continue
                 wall, cpu, out, code = once(argv, args.timeout)
                 if code != 0 or out != warm:
-                    break
-                walls.append(wall)
-                cpus.append(cpu)
-            if len(walls) < args.reps:
+                    broken.add(name)
+                    continue
+                walls[name].append(wall)
+                cpus[name].append(cpu)
+        for name, (_, warm) in live.items():
+            if name in broken:
                 print(f"{module.stem:18s} {name:20s} inconsistent", flush=True)
                 rows.append({"workload": module.stem, "runtime": name, "ok": False})
                 continue
@@ -165,9 +193,9 @@ def main() -> int:
                 "runtime": name,
                 "ok": True,
                 "checksum": warm,
-                "wall_s": median(walls),
-                "wall_mad_s": mad(walls),
-                "cpu_s": median(cpus),
+                "wall_s": median(walls[name]),
+                "wall_mad_s": mad(walls[name]),
+                "cpu_s": median(cpus[name]),
                 "reps": args.reps,
             }
             rows.append(row)
@@ -186,28 +214,39 @@ def record_checksums(rows: list[dict]) -> int:
     """Cross-validate the kernels, and write down what the runtimes agreed on.
 
     A kernel's checksum has no independent oracle the way `samples/check.sh`'s expected values
-    do, so its authority is agreement: bench/checksums.txt holds the value every runtime that
-    ran the kernel produced, and bench/smoke.sh holds us to it afterwards. Kernels the runtimes
-    disagree on are reported and deliberately left out of the file.
+    do, so its authority is agreement with an independent implementation: a kernel is recorded
+    only when every runtime that ran it returned the same value and at least one of them is not
+    a build of ours. The file is merged, never rewritten from a partial run, so timing a few
+    kernels cannot drop the others. Kernels the runtimes disagree on are reported and left out.
     """
     seen: dict[str, set[str]] = {}
+    foreign: set[str] = set()
     for row in rows:
         if row.get("ok"):
             seen.setdefault(row["workload"], set()).add(row["checksum"])
-    agreed = {w: next(iter(sums)) for w, sums in sorted(seen.items()) if len(sums) == 1}
+            if row["runtime"] not in OURS_LIKE:
+                foreign.add(row["workload"])
     split = [w for w, sums in sorted(seen.items()) if len(sums) > 1]
     for workload in split:
         print(f"CHECKSUM MISMATCH {workload}: {sorted(seen[workload])}", flush=True)
+    agreed = {w: next(iter(sums)) for w, sums in seen.items() if len(sums) == 1 and w in foreign}
     path = ROOT / "bench" / "checksums.txt"
-    if agreed and not split:
+    recorded: dict[str, str] = {}
+    if path.exists():
+        for line in path.read_text().splitlines():
+            if line and not line.startswith("#"):
+                name, value = line.split()
+                recorded[name] = value
+    changed = {w: c for w, c in agreed.items() if recorded.get(w) != c}
+    if changed:
+        recorded.update(changed)
         path.write_text(
             "# The i32 every runtime returns from each kernel's `run`, as an unsigned decimal.\n"
             "# Written by bench/run.py when the runtimes agree; checked by bench/smoke.sh.\n"
-            + "".join(f"{w} {c}\n" for w, c in sorted(agreed.items()))
+            + "".join(f"{w} {c}\n" for w, c in sorted(recorded.items()))
         )
-        print(f"wrote {path.name} ({len(agreed)} kernels)")
+        print(f"updated {path.name}: {', '.join(sorted(changed))}")
     return 1 if split else 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

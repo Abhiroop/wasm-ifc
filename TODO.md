@@ -481,6 +481,15 @@ numbers are steady (median relative MAD 2.6 % and 2.2 %); the compiling tiers fi
 kernels inside their own start-up spread, so they print as `<0.05` and take part in no ratio.
 Placing us against a JIT needs the real-program tier below, not these.
 
+**Method correction (found during E2).** Absolute times are not comparable across sweeps on
+this laptop: a fifteen-minute sweep runs everything about 2.5× slower than a two-minute one
+(wabt's `fib`: 0.57 s in both long sweeps, 0.22 s in a short one), and a short run compared
+against a long sweep once reported a 1.4–2.0× "speed-up" that was entirely clock state.
+`run.py` now takes repetitions round-robin across runtimes and times other builds of ours
+with `--binary`, so every A/B happens inside one sweep; an A/A check of one binary against a
+copy of itself agreed within 2 %. Re-taken that way, the E0 ratios to wabt below hold: 1.6×
+`loop-arith`, 1.8× `float` and `call-indirect`, 2.0× `fib`.
+
 **E0 — the baseline was a laziness leak, and had nothing to do with types.** At `48f8e3c`
 `i32.add` pushed `op a b` unevaluated onto a lazy `:#`, so a program retained every value it
 had ever computed:
@@ -531,13 +540,12 @@ in the types. That is already most of what these experiments were meant to estab
 - **H1 (erasure)** — the typed interpreter and a mechanically *erased* copy of it (same
   algorithm, plain ADTs, `[Value]` stack, dynamic tag checks) run within ±10 % of each other on
   every workload. This is the thesis question in its purest form.
-- **H2 (witness residue)** — **sharpened by E0's sweeps.** What costs is not walking the
-  witness but what the walk is over: a read at index 64 is free (`funcs-N` flat), an *update*
-  at index 64 is not (`locals-N`, `globals-N`), because the container is a linked list that
-  `setLocal`/`storeSetGlobal` rebuild. The index is innocent; the spine is not. So the claim
-  to test is that the residue is removable inside the typed design, by indexing a typed vector
-  with the same witness (`Elem` → `Int` once at elaboration, the unsafe index hidden behind a
-  total interface whose proof is the witness). After that change, typed ≡ erased-unchecked.
+- **H2 (witness residue)** — **refined twice.** E0's sweeps said a read at index 64 is cheap
+  (`funcs-N` flat) while an update is not (`locals-N`, `globals-N`), because the list is
+  rebuilt. E2 then showed the walk is not innocent either: swap the rebuild for a vector copy
+  but keep walking the witness on every access, and it gets *slower*. The unary witness is
+  cheap only next to a rebuild. Removing its cost means resolving the position once, at
+  elaboration — E2b, which is a design decision rather than an experiment.
 - **H3 (untyped Haskell is not faster)** — the Hackage `wasm` package (SPY/haskell-wasm 1.1.1,
   an untyped, spec-conformant Haskell interpreter) is not faster than ours on the same GHC and
   RTS; where it is, the profile points at representation (2), not typing (1).
@@ -635,9 +643,29 @@ in the types. That is already most of what these experiments were meant to estab
 - [x] **E0** Hygiene baseline — done 2026-09-11, both sweeps kept (`48f8e3c`, `f69ac27`).
   See the results above.
 - [ ] **E1** Typed vs erased (C1 vs C2, C2b) on T1 in-process; Core diff of `step`. Answers H1.
-- [ ] **E2** Witness-residue sweeps (`locals-N`, `funcs-N`, `labels-N`); then prototype the
-  witness-indexed vector and re-measure. Answers H2. The store-side counterpart (mutable memory
-  in `ST`, `Word32` numerics without `Integer`) is the §F P3·perf item and goes after this.
+- [x] **E2** Witness-residue sweeps and the witness-indexed vector — done 2026-09-11, and the
+  vector **lost**. Prototype kept as `bench/prototypes/e2-vector-locals.patch`, the interleaved
+  four-way sweep as `bench/results/2026-09-11-e2-vector-ab.json` (worst MAD 5.1 %; spec and
+  WASI suites green on it). Locals stored as a flat vector of packed words, still addressed by
+  walking the `Elem` witness (and the type singleton, to unpack), ran **1.2–1.5× slower than
+  the E0 cons list on every kernel, `locals-64` included** (0.355 s list, 0.544 s vector).
+  Building the callee's frame in one allocation won back part of the call path, not the rest.
+  With the rebuild gone, each access walks the witness *and* the singleton, and pays a fresh
+  box per read and a vector copy plus closure per write. The micro-benchmark
+  (`bench/micro/IndexedUpdate.hs`) that promised 1.6–6.5× indexed by a precomputed `Int` —
+  exactly the part the prototype lacked. Reverted: the core keeps the by-construction list,
+  so here soundness and speed point the same way.
+- [ ] **E2b (decision for Daniel)** The one vector design the data still supports resolves the
+  position once, at elaboration, and carries the value type at the access site
+  (`ILocalGet`/`Set`/`Tee` and `IGlobalGet`/`Set` holding a resolved reference, not a bare
+  `Elem`). That moves one property — "this position is where the witness points" — from the
+  types into an abstract type built only from the witness, the same kind of invariant
+  `Data.Vector.Sized` keeps. Its ceiling is the micro-benchmark's, on local accesses only
+  (about a third of the kernels' steps): perhaps 1.1–1.3× overall at shallow depth, more on
+  deep frames. Worth it only if real compiled code (T2: wasi-sdk output has dozens of locals)
+  shows deep frames matter.
+  The store-side gap (mutable memory in `ST`, `Word32` numerics without `Integer`) is the §F
+  P3·perf item, independent of E2b and the larger one measured (`memory-stream` 21.7× wabt).
 - [ ] **E3** C1 vs C3 on T1 + T2. Answers H3.
 - [ ] **E4** C1 vs C4 (and C5 as the floor) on T1 + T2 in ns/instr, with the profile that
   attributes the remaining gap. Answers H4.
