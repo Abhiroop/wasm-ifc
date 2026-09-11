@@ -1,0 +1,27 @@
+# The i32 every runtime returns from each kernel's `run`, as an unsigned decimal.
+# Written by bench/run.py when the runtimes agree; checked by bench/smoke.sh.
+br-table 1375000
+call-indirect 1630302344
+empty 0
+fib 832040
+float 1951612559
+funcs-16 454198416
+funcs-2 447198416
+funcs-4 448198416
+funcs-64 478198416
+globals-16 237685664
+globals-2 237761952
+globals-4 237762400
+globals-64 2388066144
+labels-16 445698416
+labels-2 445698416
+labels-4 445698416
+labels-64 445698416
+locals-16 1783293664
+locals-2 1783293664
+locals-4 1783293664
+locals-64 1783293664
+loop-arith 2401681406
+loop-arith64 4143906814
+memory-random 3894883294
+memory-stream 1783293664
