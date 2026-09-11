@@ -75,6 +75,7 @@ library
     hs-source-dirs:   src
     exposed-modules:
         Syntax.Types
+      , Syntax.TypesIFC
       , Syntax.Indices
       , Syntax.Immediates
       , Syntax.Instructions

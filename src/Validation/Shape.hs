@@ -51,8 +51,10 @@ import Syntax.Types (AddrType, FuncType (..), GlobalType, ResultType, ValType)
 {- | Evidence that @c@ is @a ++ b@. Its spine is the length of @a@; because @a@, @b@ and
   @c@ are independent indices, consuming it (in @splitStack@) never requires inverting
   @++@. Carried by the framed/branching instructions so the interpreter can peel operands.
+  Poly-kinded so the IFC layer can index it by labelled value types as well; the kind is an
+  inferred binder (@forall {k}.@) so no use site has to pass it.
 -}
-type Append :: [ValType] -> [ValType] -> [ValType] -> Type
+type Append :: forall {k}. [k] -> [k] -> [k] -> Type
 data Append a b c where
     ANil :: Append '[] b b
     ACons :: Append a b c -> Append (x ': a) b (x ': c)
