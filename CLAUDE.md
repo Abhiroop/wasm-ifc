@@ -6,8 +6,8 @@ style + working rules are `STYLE.md` (§11 records the type-level override for t
 
 ## Build, test, gate
 
-- Full local gate (format, `-Werror` build, unit tests, hlint, samples): run the script the
-  maintainer keeps in the scratch dir as `gate.sh`; core-only is `SUITES=wasm-ifc-test gate.sh`.
+- Full local gate (format, `-Werror` build, tests, hlint, samples, cross-validate):
+  `./scripts/gate.sh`; the fast core loop is `SUITES=wasm-ifc-test ./scripts/gate.sh`.
 - Three cabal test suites: `wasm-ifc-test` (unit, ~1s), `wasm-ifc-spec` (official spec
   testsuite via `wast2json`, ~minutes), `wasm-ifc-wasi` (official wasi-testsuite).
 - `cabal build all --ghc-options=-Werror` — warnings are errors; fix them, do not suppress.
