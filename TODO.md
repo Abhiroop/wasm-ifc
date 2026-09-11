@@ -370,14 +370,22 @@ Open P0/P1 correctness items live in the plan above (section **P0**); the list b
   SecLevel`, `CanFlowInto`, the join `:/\`) and `Syntax.InstructionsIFC` (today's `Instr` over
   `[LValType]`; numeric results take the join of their operands' labels). `Append` is poly-kinded
   for it. The open design points are `TODO(ifc Pn)` comments beside the code they concern
-  (`grep -rn 'TODO(ifc' src test`): P0 — parallel GADT vs one `Instr` generalised over the label;
-  the program-counter label; where labels come from (the policy). P1 — `select`'s condition label;
-  flow checks on `local.set`/`global.set`/stores (`CanFlowInto` as a GADT witness); memory and
-  global labels; labelled `FuncType`s for calls; labelled WASI signatures. P2 — singletons for
-  `SecLevel`; labelled shapes; run-time pc on `Control` if hybrid; next examples. P3 — naming,
-  the lattice, the termination channel.
+  (`grep -rn 'TODO(ifc' src test`), grounded in the SecWasm paper (hybrid: static except the
+  memory read check; per-byte flow-sensitive memory labels with `load ℓ`/`store ℓ` immediates;
+  function types with a pc bound; flow-sensitive pc stack, which we recommend flattening to one
+  pc per block computed by a pre-pass; TINI). P0 — parallel GADT vs one `Instr` generalised over
+  the label; the pc label; where labels come from (a custom section; inferred store labels,
+  `Low` default for loads). P1 — the pc index and `LabelShape`; `select`; flow witnesses
+  (`FlowsInto`, `StackAtLeast`) on sets, stores, branches, calls; per-byte memory labels in
+  `MemInst` and the dynamic load check + trap in `step`; labelled `FuncType`s and globals;
+  labelled WASI signatures (our extension). P2 — singletons for `SecLevel`; explicit relabel;
+  bulk-memory label rules; the noninterference property test; next examples. P3 — naming, the
+  lattice, the termination channel, the flow-sensitive upgrade.
   References (folded in from the old `discussions/READING_LIST.md`):
   - SecWasm — the IFC model we follow: <https://plas2022.github.io/files/pdf/SecWasm.pdf>
+    Full version with every rule (T-IF, T-LOOP, T-SELECT, the sets, E-*-TRAP):
+    <https://www.cse.chalmers.se/research/group/security/secwasm/>. Read 2026-09-11; the
+    `TODO(ifc …)` comments cite its rules by name.
   - WANILLA (CCS '25) — noninterference via SMT: <https://arxiv.org/pdf/2509.08758>
   - HLIO — hybrid IFC: <https://www.cse.chalmers.se/~russo/publications_files/hybrid-icfp2015.pdf>
   - In-place interpreter for WASM (perf, later): <https://dl.acm.org/doi/pdf/10.1145/3563311>
