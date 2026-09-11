@@ -16,6 +16,9 @@ infrastructure here exists to tell the three apart.
 | `report.py`  | results → the markdown tables, or two result files against each other |
 | `smoke.sh`   | one run of every kernel on our interpreter, checksums checked |
 | `results/`   | committed measurements, one file per run, with the environment that produced it |
+| `micro/`     | stand-alone measurement devices, built ad hoc and not part of the package |
+| `prototypes/` | designs measured and rejected, kept as patches that still apply |
+| `tools/fetch.sh` | installs pinned, checksummed toolchains into `~/.local/wasm-bench-tools` (wasi-sdk so far) |
 
 ### The kernels
 

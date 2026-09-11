@@ -569,12 +569,16 @@ in the types. That is already most of what these experiments were meant to estab
   `bench/gen.py`), `globals`, `memory-stream` (load/store sweep over 1 MiB), `memory-random`
   (LCG-addressed loads), `call_indirect`, `br_table`, `float` (f64 mandelbrot/nbody-style),
   `bulk` (`memory.copy`/`fill`). Existing `samples/wat` programs scaled up where they fit.
-- **T2 real programs**, C compiled with wasi-sdk (a tarball install under `~/.local`, no
-  root; there is no clang on this machine): CoreMark and a PolyBenchC subset (2mm, 3mm, atax,
+- **T2 real programs**, C compiled with wasi-sdk (**installed 2026-09-11**: wasi-sdk 34.0,
+  clang 23.1, by `bench/tools/fetch.sh` into `~/.local/wasm-bench-tools/wasi-sdk`, pinned and
+  checksummed): CoreMark and a PolyBenchC subset (2mm, 3mm, atax,
   gemm, jacobi-2d, …, the set used by the original Wasm paper and by Titzer's in-place
-  interpreter paper, §F reading list). Flags `-O2 -mcpu=mvp -mbulk-memory -msign-ext
-  -mmultivalue -mmutable-globals` (no reference types, no SIMD); check nontrapping
-  float-to-int support with `wasm-ifc check` first. Run through WASI `_start`, print a
+  interpreter paper, §F reading list). Flags: clang 23's own default (`-target-cpu
+  generic`) already produces modules we validate. A probe using `printf` with floats,
+  `malloc`, `memcpy`, 64-bit arithmetic and `sqrt` agreed with wasmtime on stdout and exit
+  code at the default, at `-mcpu=mvp` plus our extensions, and at bare `-mcpu=mvp`. So no
+  special flags so far — but run `wasm-ifc check` on every real program, since one probe does
+  not cover CoreMark or PolyBench. Run through WASI `_start`, print a
   checksum, and *compare the checksum across runtimes* (a differential test for free).
   Prebuilt corpora as a fallback if compiling is a rabbit hole: wasmi's `benches/wasm/*.wasm`
   (coremark, tiny_keccak, rev_complement, regex_redux), wasm3's `coremark-minimal.wasm`.
@@ -622,8 +626,9 @@ in the types. That is already most of what these experiments were meant to estab
 
 - [x] **[P2·perf]** `bench/` layout — done for T1 (`gen.py`, `wat/`, `wasm/`, `build.sh`,
   `results/<date>-<commit>.json`, `checksums.txt`). Still to add when their experiments start:
-  `c/` (T2 sources over wasi-sdk), `erased/` (C2), `drivers/` (C3 and the step counter),
-  `tools/fetch.sh` (wasi-sdk, wasm3, WAMR, wasmi into `~/.local`, never the repo).
+  `c/` (T2 sources over wasi-sdk), `erased/` (C2), `drivers/` (C3 and the step counter).
+  `tools/fetch.sh` exists (2026-09-11) and installs wasi-sdk; wasm3, WAMR and wasmi are
+  still to be added to it. `micro/` and `prototypes/` arrived with E2.
 - [ ] **[P2·perf]** Cabal `benchmark wasm-ifc-bench` stanza on `tasty-bench` (0.5, installed):
   in-process per-phase numbers (decode / elaborate / instantiate / run) and the typed-vs-erased
   A/B under identical process conditions; `--csv` output; `-rtsopts`.
