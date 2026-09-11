@@ -15,6 +15,7 @@ module Examples (
     runSquare,
     runIncrement,
     runSpinFor,
+    labelledSumLength,
 ) where
 
 import Data.Word (Word32)
@@ -25,6 +26,7 @@ import Runtime.Stack
 import Syntax.Functions (Function (..), FunctionBody)
 import Syntax.Immediates (NumWithSign (..), Signedness (..))
 import Syntax.Instructions
+import Syntax.InstructionsIFC qualified as IFC
 import Syntax.Types (
     FuncType (..),
     GlobalType (..),
@@ -34,6 +36,7 @@ import Syntax.Types (
     SValType (..),
     ValType (..),
  )
+import Syntax.TypesIFC (LValType (..), SecLevel (..))
 import Validation.Shape (Elem (..), ModuleShape (..))
 
 {- | The single i32 a completed run produced. (These modules import nothing, so a call into
@@ -174,3 +177,24 @@ runIncrement initial = either (Left . show) completedI32 (runFunction globalModu
    broken :: FuncInst shape ('FuncType '[ 'I32 ] '[ 'I32 ])
    broken = WasmFunc . Function SNil $ (ILocalGet Here :. IAdd I32IsNum :. INil)
 -}
+
+{- | The first labelled program, for "Syntax.InstructionsIFC": a secret plus a public value.
+  Its type is the assertion: the sum is 'High because the join reduces, and the program
+  compiles only because a free-labelled constant can be pinned to either level. Nothing runs
+  it yet.
+-}
+secretPlusPublic :: IFC.Expr shape ret locals labels '[] (('I32 ':~ 'High) ': '[])
+secretPlusPublic = secret IFC.:. public IFC.:. IFC.IAdd I32IsNum IFC.:. IFC.INil
+  where
+    secret :: IFC.Instr shape ret locals labels s (('I32 ':~ 'High) ': s)
+    secret = IFC.IConst I32IsNum 42
+    public :: IFC.Instr shape ret locals labels s (('I32 ':~ 'Low) ': s)
+    public = IFC.IConst I32IsNum 1
+
+-- | The instruction count of 'secretPlusPublic': the one thing a labelled program can do so far.
+labelledSumLength :: Int
+labelledSumLength = count secretPlusPublic
+  where
+    count :: IFC.Expr shape ret locals labels s s' -> Int
+    count IFC.INil = 0
+    count (_ IFC.:. rest) = 1 + count rest

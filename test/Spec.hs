@@ -22,7 +22,7 @@ import Test.Hspec
 import Test.Hspec.Hedgehog (forAll, hedgehog, (===))
 
 import Codec.Wasm (decodeModule)
-import Examples (runFactorial, runIncrement, runSpinFor, runSquare)
+import Examples (labelledSumLength, runFactorial, runIncrement, runSpinFor, runSquare)
 import Runtime.Bytes (bytesOfWord32, bytesOfWord64, word32OfBytes, word64OfBytes)
 import Runtime.Convert (convertVal)
 import Runtime.Host (WasiFunc (..))
@@ -54,6 +54,7 @@ spec = do
         it "square 9     = 81" $ runSquare 9 `shouldBe` Right 81
         it "an endless loop is still running when the step budget is spent" $ runSpinFor 1000 `shouldBe` Right True
         it "increment 41 = 42" $ runIncrement 41 `shouldBe` Right 42
+        it "a secret plus a public value is typed secret (the first labelled program)" $ labelledSumLength `shouldBe` 3
 
     describe "elaborate + run (built from RawModule)" $ do
         it "adds two i32 parameters" $
