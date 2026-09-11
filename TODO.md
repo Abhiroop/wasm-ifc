@@ -361,13 +361,23 @@ Open P0/P1 correctness items live in the plan above (section **P0**); the list b
 ## F. Feature roadmap & known limitations
 
 - [ ] **[P2·epic·ifc]** **Information-flow control — the actual goal.** Security-level typing on
-  the typed layer (labels on value types / the stack; a noninterference argument). Not started.
+  the typed layer (labels on value types / the stack; a noninterference argument).
+  **Started (2026-09-11):** Abhiroop's first cut is merged and ported onto the current core as
+  a parallel, not-yet-executed GADT: `Syntax.TypesIFC` (`SecLevel`, `LValType = ValType :~
+  SecLevel`, `CanFlowInto`, the join `:/\`) and `Syntax.InstructionsIFC` (today's `Instr` over
+  `[LValType]`; numeric results take the join of their operands' labels). `Append` is poly-kinded
+  for it. To decide together (the merge meeting): a program-counter label on `if`/`br*`/`select`
+  (implicit flows; the explicit `Control` stack is where the pc label lives at run time); labels
+  on memories and globals (today free placeholders at the access site); labelled `FuncType`s so
+  `call`/`call_indirect` can be typed; whether IFC stays a parallel GADT or the one `Instr` is
+  generalised over the label; singletons for `SecLevel` (needed by the elaborator and by the
+  general smart constructors); naming (`LValType`, `:/\` for a *join*).
   References (folded in from the old `discussions/READING_LIST.md`):
   - SecWasm — the IFC model we follow: <https://plas2022.github.io/files/pdf/SecWasm.pdf>
   - WANILLA (CCS '25) — noninterference via SMT: <https://arxiv.org/pdf/2509.08758>
   - HLIO — hybrid IFC: <https://www.cse.chalmers.se/~russo/publications_files/hybrid-icfp2015.pdf>
   - In-place interpreter for WASM (perf, later): <https://dl.acm.org/doi/pdf/10.1145/3563311>
-  - [ ] **[decision]** **Pre-IFC base — proposed slice (2026-09-11).** The spec suite passes every
+  - [x] **[decision]** **Pre-IFC base — proposed slice (2026-09-11; Daniel took it, merge started the same day).** The spec suite passes every
     assertion it runs (0 failing); all 960 skips are feature gaps, not defects, and 72/72 WASI
     programs from real compilers exercise `br_table`/`call_indirect`/memory in anger — strong
     evidence against "silly" bugs of the reversed-arguments kind. Proposal: **merge IFC on this

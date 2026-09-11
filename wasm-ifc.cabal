@@ -79,6 +79,7 @@ library
       , Syntax.Indices
       , Syntax.Immediates
       , Syntax.Instructions
+      , Syntax.InstructionsIFC
       , Syntax.Globals
       , Syntax.Functions
       , Syntax.Module
