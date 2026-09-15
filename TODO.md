@@ -555,8 +555,8 @@ in the types. That is already most of what these experiments were meant to estab
   constant of the plain C++ interpreter (wabt `wasm-interp`) and the gap to the fast
   interpreters (wasm3, WAMR fast-interp, Pulley) is attributable by profiling to allocation/GC
   and dispatch, i.e. to (2)+(3). Report the gap honestly in ns/instruction; do not predict it.
-  **Confirmed in kind (E4):** 1.3× from wabt; 5–150× from the optimised interpreters, largest
-  where memory is used most.
+  **Confirmed in kind (E4):** 1.3× from wabt on the kernels; 23–111× from the optimised
+  interpreters on real programs, where memory is used most.
 - **H5 (front end)** — decoding + elaboration (singleton-based validation) + instantiation are
   linear in module size and take milliseconds, not seconds, on the largest real modules we
   have (the 72 WASI-suite programs, C/Rust/AssemblyScript). Startup never dominates.
@@ -689,8 +689,9 @@ in the types. That is already most of what these experiments were meant to estab
   builds on GHC 9.12 with relaxed bounds and no patch) is **4.6×** slower than ours in geometric
   mean over the kernels (1.6–12.4×). It serves no WASI, so the programs tier does not apply.
 - [x] **E4** Positioning — done (BENCHMARKS.md §E4). Per machine step: wabt 1.3× ahead on the
-  kernels (its Ubuntu build has no WASI, so kernels only); WAMR's interpreter 5–7×, Pulley ~28×,
-  wasm3 and wasmi ~70–150× on real programs; the JITs further still. Attribution by ticky and
+  kernels (its Ubuntu build has no WASI, so kernels only); on real programs, paired per step against ours at
+  small sizes, WAMR's interpreter 23×, Pulley 36×, wasm3 102×, wasmi 111×, Winch ~320×,
+  Cranelift ~640×. Attribution by ticky and
   STG rather than a cost-centre profile, which would change the optimisation it measures. Our
   cost per step triples from kernels (6–14 ns) to programs (19–58 ns): memory, as H4 expected.
 - [x] **E5** Front end — done: 129 modules, median 6.2 ms, worst 43 ms; the largest (2.2 MB,

@@ -28,6 +28,7 @@
   },
   "t2": {
     "coremark-100": 60713068,
+    "coremark-4000": 2425010104,
     "pb-2mm-medium": 305370422,
     "pb-2mm-small": 6844485,
     "pb-3mm-medium": 473519189,
@@ -36,11 +37,17 @@
     "pb-atax-small": 811531,
     "pb-correlation-medium": 151171461,
     "pb-correlation-small": 6896814,
+    "pb-floyd-warshall-medium": 3021524983,
     "pb-floyd-warshall-small": 142764663,
+    "pb-gemm-medium": 225876916,
     "pb-gemm-small": 7476256,
+    "pb-jacobi-2d-medium": 495297654,
     "pb-jacobi-2d-small": 25220206,
+    "pb-lu-medium": 1773597393,
     "pb-lu-small": 45296072,
+    "pb-nussinov-medium": 551038303,
     "pb-nussinov-small": 26487663,
+    "pb-seidel-2d-medium": 844104081,
     "pb-seidel-2d-small": 29983581
   }
 }

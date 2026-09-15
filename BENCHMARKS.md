@@ -25,11 +25,11 @@ Placed among other interpreters, measured per machine step:
 |---|---|---|
 | Hackage `wasm` 1.1.1 (untyped Haskell, IO, mutable vectors) | ours 4.6× faster | kernels |
 | wabt `wasm-interp` (plain C++) | 1.3× faster than ours | kernels; wabt has no WASI here |
-| WAMR `iwasm --interp` | 5–7× faster | kernels, real programs |
-| wasmtime Pulley | ~28× faster | real programs |
-| wasm3, wasmi | ~70–150× faster | real programs, where measurable |
-| wasmtime Winch (baseline JIT) | ~11× past Pulley, ~3× past wasm3 | real programs, medium sizes |
-| wasmtime Cranelift (optimising JIT) | faster still, under the floor | real programs, medium sizes |
+| WAMR `iwasm --interp` | 23× faster | real programs, per step |
+| wasmtime Pulley | 36× faster | real programs, per step |
+| wasm3, wasmi | 102×, 111× faster | real programs, per step |
+| wasmtime Winch (baseline JIT) | ~320× faster | real programs, per step |
+| wasmtime Cranelift (optimising JIT) | ~640× faster | real programs, partly under the floor |
 
 The remaining distance to the optimised interpreters is representation, and it is largest on
 memory-heavy real programs (19–58 ns per step, against 6–14 on the kernels): persistent,
@@ -125,16 +125,30 @@ ours per kernel, **4.6× in geometric mean**: untyped Haskell is not, by itself,
 
 ## E4 — positioning
 
-Per machine step on the kernels (full table in the appendix): ours 5.7–13.6 ns on everything but
-the deep-index and memory kernels (24–28 ns); wabt 6.6–11.6 ns, 1.3× ahead in geometric mean;
-the erased twin level with ours; WAMR's interpreter ~7× ahead where measurable; wasm3, wasmi and
-Pulley too fast for these kernels' size. On the real programs at small sizes ours is 19–58 ns per
-step, WAMR 5.5× faster, Pulley ~28×, wasm3 ~70× where measurable; at medium sizes, where ours
-was not run, Pulley is ~1.3 ns per step, wasm3 and wasmi ~0.3, Winch and Cranelift ~0.1.
+**Kernels**, per machine step (full table in the appendix): ours 5.7–13.6 ns on everything but
+the deep-index and memory kernels (24–28 ns); the erased twin level with ours; wabt 6.6–11.6 ns,
+1.3× ahead in geometric mean. The faster interpreters finish these kernels under the 50 ms
+floor, so they are placed by the real programs.
 
-The gap is widest exactly where memory is used most, and the per-step cost of ours roughly
-triples between the kernels and the programs. What stands between ours and the optimised
-interpreters is the pure, copy-on-write memory and boxed values, not the typing.
+**Real programs.** Ours was timed at the small sizes, where a run takes it seconds, and the fast
+runtimes at the medium sizes, where a run takes them seconds; the two are compared per step on
+the same ten programs. The pairing matters: at the small sizes the fast runtimes' start-up of
+10–15 ms is a large share of their time, which had made WAMR look 5.5× ahead where it is 23×.
+
+| runtime | ns per step | ahead of ours |
+|---|---|---|
+| ours (small sizes) | 37.1 | — |
+| WAMR `iwasm --interp` | 1.60 | 23× |
+| wasmtime Pulley | 1.03 | 36× |
+| wasm3 | 0.37 | 102× |
+| wasmi | 0.33 | 111× |
+| wasmtime Winch (5 programs above the floor) | 0.11 | 324× |
+| wasmtime Cranelift (4 programs above the floor) | 0.05 | 638× |
+
+Our cost per step triples from the kernels to the programs, and the programs are where memory is
+used: every store copies a 4 KiB chunk, and every value is boxed under a collector. Those are
+costs of keeping `step` a pure function over persistent state, not of its types; the typed and
+erased machines are level throughout.
 
 ## E5 — the front end
 
@@ -163,8 +177,10 @@ streaming-memory kernel from 5.4 s to 0.66 s. Each change passed the full suites
   on native Linux on a desktop CPU before they are quoted as absolute.
 - **Per-step comparisons across input sizes** (small for the slow interpreters, medium for the
   fast ones) assume cost per step does not depend on size; larger inputs stress caches more.
-- **Coverage of the fast tiers** on kernels is limited by the 50 ms floor; the real programs are
-  the fair comparison there, and some of their medium step counts were still being taken.
+- **Coverage of the fast tiers.** On the kernels they finish under the 50 ms floor; on the
+  programs they are compared at medium sizes per step, which assumes a step costs the same at
+  both sizes (larger inputs stress caches more). CoreMark's step count moves by a few dozen steps
+  between runs, because it formats timings that differ: 2 parts in 100 million.
 - **Open design decisions**: E2b (resolved positions for locals), and the memory representation
   — the largest remaining cost on real programs, bounded by keeping `step` pure.
 
@@ -312,13 +328,33 @@ Generated from `bench/results/2026-09-15-45a93c6-t1-stages.json`,
 
 #### E4, real programs at medium sizes (the compilers' tier; ours not run): nanoseconds per machine step
 
-| workload                                              | steps  | wasmtime-pulley | wamr-interp | wasm3 | wasmi | wasmtime-winch | wasmtime-cranelift |
-|-------------------------------------------------------|--------|-----------------|-------------|-------|-------|----------------|--------------------|
-| pb-2mm-medium                                         | 305.4M | 1.3             | 1.6         | 0.3   | 0.3   | <0.2           | <0.2               |
-| pb-3mm-medium                                         | 473.5M | 1.2             | 1.6         | 0.3   | 0.3   | 0.1            | <0.1               |
-| pb-atax-medium                                        | 8.9M   | <5.6            | 11.7        | <5.6  | <5.6  | <5.6           | <5.6               |
-| pb-correlation-medium                                 | 151.2M | 1.3             | 2.1         | 0.3   | <0.3  | <0.3           | <0.3               |
-| **geometric mean: times faster than wasmtime-pulley** |        |                 | 0.7x        | 4.0x  | 4.1x  | 11.1x          | —                  |
+| workload                                              | steps    | wasmtime-pulley | wamr-interp | wasm3 | wasmi | wasmtime-winch | wasmtime-cranelift |
+|-------------------------------------------------------|----------|-----------------|-------------|-------|-------|----------------|--------------------|
+| coremark-4000                                         | 2,425.0M | 0.7             | 1.9         | 0.5   | 0.4   | 0.1            | 0.1                |
+| pb-2mm-medium                                         | 305.4M   | 1.3             | 1.6         | 0.3   | 0.3   | <0.2           | <0.2               |
+| pb-3mm-medium                                         | 473.5M   | 1.2             | 1.6         | 0.3   | 0.3   | 0.1            | <0.1               |
+| pb-atax-medium                                        | 8.9M     | <5.6            | 11.7        | <5.6  | <5.6  | <5.6           | <5.6               |
+| pb-correlation-medium                                 | 151.2M   | 1.3             | 2.1         | 0.3   | <0.3  | <0.3           | <0.3               |
+| pb-floyd-warshall-medium                              | 3,021.5M | 0.4             | 1.4         | 0.4   | 0.3   | 0.1            | 0.0                |
+| pb-gemm-medium                                        | 225.9M   | 1.5             | 1.6         | 0.4   | 0.3   | <0.2           | <0.2               |
+| pb-jacobi-2d-medium                                   | 495.3M   | 1.5             | 1.4         | 0.4   | 0.4   | <0.1           | <0.1               |
+| pb-lu-medium                                          | 1,773.6M | 1.3             | 1.4         | 0.4   | 0.3   | 0.1            | 0.0                |
+| pb-nussinov-medium                                    | 551.0M   | 0.4             | 1.6         | 0.3   | 0.3   | <0.1           | <0.1               |
+| pb-seidel-2d-medium                                   | 844.1M   | 1.5             | 1.7         | 0.4   | 0.3   | 0.2            | 0.1                |
+| **geometric mean: times faster than wasmtime-pulley** |          |                 | 0.6x        | 2.8x  | 3.1x  | 9.1x           | 18.1x              |
+
+#### E4, paired: ours at small sizes against each runtime at medium sizes, per step
+
+ours, geometric mean over the programs: 37.1 ns per step
+
+| runtime            | programs | ns per step | times faster than ours |
+|--------------------|----------|-------------|------------------------|
+| wamr-interp        | 10       | 1.60        | 23x                    |
+| wasmtime-pulley    | 10       | 1.03        | 36x                    |
+| wasm3              | 10       | 0.37        | 102x                   |
+| wasmi              | 9        | 0.33        | 111x                   |
+| wasmtime-winch     | 5        | 0.11        | 324x                   |
+| wasmtime-cranelift | 4        | 0.05        | 638x                   |
 
 #### E3: Hackage wasm / typed (E6d), kernels
 
