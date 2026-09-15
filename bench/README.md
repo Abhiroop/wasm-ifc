@@ -18,7 +18,8 @@ infrastructure here exists to tell the three apart.
 | `results/`   | committed measurements, one file per run, with the environment that produced it |
 | `micro/`     | stand-alone measurement devices, built ad hoc and not part of the package |
 | `prototypes/` | designs measured and rejected, kept as patches that still apply |
-| `tools/fetch.sh` | installs pinned, checksummed toolchains into `~/.local/wasm-bench-tools` (wasi-sdk so far) |
+| `tools/fetch.sh` | installs pinned, checksummed toolchains, runtimes and third-party sources into `~/.local/wasm-bench-tools` |
+| `c/build.sh` | builds the real-program tier (CoreMark, ten PolyBench kernels) into `wasm-t2/`, which is not committed |
 
 ### The kernels
 
@@ -38,17 +39,36 @@ the one overhead intrinsic typing actually imposes here.
 ### Running
 
 ```sh
-./bench/build.sh                       # regenerate and compile the kernels
-./bench/run.py                         # everything available, ~10 minutes
-./bench/run.py -r wasm-ifc -w fib      # one runtime, one workload
+./bench/tools/fetch.sh                 # toolchain, other runtimes, CoreMark and PolyBench sources
+./bench/build.sh                       # regenerate and compile the kernels (t1)
+./bench/c/build.sh                     # compile the real programs (t2)
+./bench/run.py                         # t1 on everything available
+./bench/run.py --tier t2 -w coremark-100 -w 'pb-*-small'
+./bench/run.py --tier t2 --verify -w 'pb-*-small-dump'
 ./bench/report.py                      # tables from the newest results
 ./bench/report.py before.json after.json
 ```
 
 `run.py` finds the runtimes itself and skips what is missing: ours (via `cabal list-bin`),
 wasmtime in its three tiers (Cranelift, Winch, and the Pulley interpreter), wabt's
-`wasm-interp`, and wasm3. Set `BENCH_CPU=2` to pin with `taskset`; it is off by default
-because on this hybrid CPU under WSL2 it makes runs slower without steadying them.
+`wasm-interp`, wasm3, WAMR's `iwasm` pinned to its interpreter, and wasmi. Repetitions are
+interleaved across runtimes, and `--binary NAME=PATH` times another build of ours inside the
+same sweep; the method note in `TODO.md` §I says why both matter on this machine. Set
+`BENCH_CPU=2` to pin with `taskset`; it is off by default because on this hybrid CPU under
+WSL2 it makes runs slower without steadying them.
+
+### Machine steps
+
+Time per step is the unit that lets runtimes be compared on programs sized for different
+speeds. A step is one transition of our small-step machine, and `--ticky PATH` records each
+workload's count from a build of ours with GHC's ticky-ticky counters, which count entries
+into `step`. The count on `empty` is exactly 2, and on `locals-2` exactly 13 per iteration,
+as counted by hand. Build it once, outside the normal build directory:
+
+```sh
+cabal build exe:wasm-ifc --builddir=/tmp/ticky --ghc-options='-ticky -rtsopts'
+./bench/run.py --ticky "$(cabal list-bin exe:wasm-ifc --builddir=/tmp/ticky)"
+```
 
 ### What these kernels can and cannot compare
 

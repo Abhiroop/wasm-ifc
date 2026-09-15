@@ -1,3 +1,4 @@
 dist-newstyle
 *.~undo-tree~
 *.wasm*.agdai
+bench/wasm-t2/
