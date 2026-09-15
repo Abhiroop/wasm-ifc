@@ -1,0 +1,238 @@
+{
+  "environment": {
+    "date": "2026-09-15T18:25:51",
+    "commit": "15e5ace-dirty",
+    "tier": "t2",
+    "cpu": "12th Gen Intel(R) Core(TM) i7-12700H",
+    "kernel": "6.18.33.2-microsoft-standard-WSL2",
+    "pinned_to": null,
+    "ghc": "The Glorious Glasgow Haskell Compilation System, version 9.12.2",
+    "versions": {},
+    "binaries": {
+      "e2b": "/tmp/claude-1000/-home-dgalan-ethz-wasm-ifc/cab0c187-6a59-457e-be33-ea6164c18b88/scratchpad/wasm-ifc-e2b",
+      "chunk1k": "/tmp/claude-1000/-home-dgalan-ethz-wasm-ifc/cab0c187-6a59-457e-be33-ea6164c18b88/scratchpad/wasm-ifc-chunk1k"
+    }
+  },
+  "measurements": [
+    {
+      "workload": "coremark-100",
+      "runtime": "e2b",
+      "ok": true,
+      "checksum": "exit 0, results 962b6b52894c",
+      "wall_s": 1.3367620710014307,
+      "wall_mad_s": 0.06320635600059177,
+      "cpu_s": 1.33652,
+      "reps": 3
+    },
+    {
+      "workload": "coremark-100",
+      "runtime": "chunk1k",
+      "ok": true,
+      "checksum": "exit 0, results 962b6b52894c",
+      "wall_s": 0.9626744449997204,
+      "wall_mad_s": 0.09404726800130447,
+      "cpu_s": 0.9653530000000001,
+      "reps": 3
+    },
+    {
+      "workload": "pb-2mm-small",
+      "runtime": "e2b",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 0.20281608699951903,
+      "wall_mad_s": 0.0014400609979929868,
+      "cpu_s": 0.20293099999999958,
+      "reps": 3
+    },
+    {
+      "workload": "pb-2mm-small",
+      "runtime": "chunk1k",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 0.12947763099873555,
+      "wall_mad_s": 0.0009450379984627943,
+      "cpu_s": 0.12953800000000015,
+      "reps": 3
+    },
+    {
+      "workload": "pb-3mm-small",
+      "runtime": "e2b",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 0.36847310699886293,
+      "wall_mad_s": 0.009939856998244068,
+      "cpu_s": 0.3689379999999997,
+      "reps": 3
+    },
+    {
+      "workload": "pb-3mm-small",
+      "runtime": "chunk1k",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 0.2567113730001438,
+      "wall_mad_s": 0.0013993850006954744,
+      "cpu_s": 0.2568689999999995,
+      "reps": 3
+    },
+    {
+      "workload": "pb-atax-small",
+      "runtime": "e2b",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 0.04149820299790008,
+      "wall_mad_s": 0.0010803799996210728,
+      "cpu_s": 0.04138599999999926,
+      "reps": 3
+    },
+    {
+      "workload": "pb-atax-small",
+      "runtime": "chunk1k",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 0.03036052999959793,
+      "wall_mad_s": 0.00024791199757601134,
+      "cpu_s": 0.030066000000000204,
+      "reps": 3
+    },
+    {
+      "workload": "pb-correlation-small",
+      "runtime": "e2b",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 0.19296585800111643,
+      "wall_mad_s": 0.007050759002595441,
+      "cpu_s": 0.193005999999999,
+      "reps": 3
+    },
+    {
+      "workload": "pb-correlation-small",
+      "runtime": "chunk1k",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 0.13829850600086502,
+      "wall_mad_s": 0.0015834789992368314,
+      "cpu_s": 0.13832200000000056,
+      "reps": 3
+    },
+    {
+      "workload": "pb-floyd-warshall-small",
+      "runtime": "e2b",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 3.3679969099976006,
+      "wall_mad_s": 0.16794244500488276,
+      "cpu_s": 3.375796999999997,
+      "reps": 3
+    },
+    {
+      "workload": "pb-floyd-warshall-small",
+      "runtime": "chunk1k",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 2.057171316999302,
+      "wall_mad_s": 0.004581884000799619,
+      "cpu_s": 2.0619420000000006,
+      "reps": 3
+    },
+    {
+      "workload": "pb-gemm-small",
+      "runtime": "e2b",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 0.1953853019986127,
+      "wall_mad_s": 0.010718490997533081,
+      "cpu_s": 0.19534100000000032,
+      "reps": 3
+    },
+    {
+      "workload": "pb-gemm-small",
+      "runtime": "chunk1k",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 0.13975470199875417,
+      "wall_mad_s": 0.002231060996564338,
+      "cpu_s": 0.13979199999999825,
+      "reps": 3
+    },
+    {
+      "workload": "pb-jacobi-2d-small",
+      "runtime": "e2b",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 0.5000587990034546,
+      "wall_mad_s": 0.0019987380037491675,
+      "cpu_s": 0.5009839999999963,
+      "reps": 3
+    },
+    {
+      "workload": "pb-jacobi-2d-small",
+      "runtime": "chunk1k",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 0.35188046199982637,
+      "wall_mad_s": 0.0034227110008941963,
+      "cpu_s": 0.3524050000000052,
+      "reps": 3
+    },
+    {
+      "workload": "pb-lu-small",
+      "runtime": "e2b",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 1.487383903000591,
+      "wall_mad_s": 0.07660187000146834,
+      "cpu_s": 1.4898140000000044,
+      "reps": 3
+    },
+    {
+      "workload": "pb-lu-small",
+      "runtime": "chunk1k",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 0.9764074240010814,
+      "wall_mad_s": 0.014889202997437678,
+      "cpu_s": 0.9779679999999993,
+      "reps": 3
+    },
+    {
+      "workload": "pb-nussinov-small",
+      "runtime": "e2b",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 0.6359594659988943,
+      "wall_mad_s": 0.014008307000040077,
+      "cpu_s": 0.6368309999999977,
+      "reps": 3
+    },
+    {
+      "workload": "pb-nussinov-small",
+      "runtime": "chunk1k",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 0.435073114997067,
+      "wall_mad_s": 0.005972887996904319,
+      "cpu_s": 0.43571100000000007,
+      "reps": 3
+    },
+    {
+      "workload": "pb-seidel-2d-small",
+      "runtime": "e2b",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 0.5529872779989091,
+      "wall_mad_s": 0.02262118400176405,
+      "cpu_s": 0.5538020000000021,
+      "reps": 3
+    },
+    {
+      "workload": "pb-seidel-2d-small",
+      "runtime": "chunk1k",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 0.3920748939999612,
+      "wall_mad_s": 0.0008449269989796448,
+      "cpu_s": 0.3925249999999991,
+      "reps": 3
+    }
+  ]
+}

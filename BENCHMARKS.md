@@ -32,7 +32,8 @@ Placed among other interpreters, measured per machine step:
 | wasmtime Winch (baseline JIT) | ~320× faster | real programs, per step |
 | wasmtime Cranelift (optimising JIT) | ~640× faster | real programs, partly under the floor |
 
-The remaining distance to the optimised interpreters is representation, and it is largest on
+These ratios predate E2b and the 1 KiB memory chunks, which since made ours about 2.1× faster on
+the real programs. The remaining distance to the optimised interpreters is representation, and it is largest on
 memory-heavy real programs (19–58 ns per step, against 6–14 on the kernels): persistent,
 copy-on-write memory and boxed values under a garbage collector — costs of keeping `step` a
 pure function, not of its types. The front end, which includes full type elaboration of every
@@ -130,7 +131,8 @@ since the call-heavy ones lose 13–19 %: each call now builds a vector frame, a
 boxes a fresh value. The erased twin mirrors it (positions and value types at the access,
 packed frames, a tag check on each write); typed / erased is 0.95 afterwards
 (`bench/results/2026-09-15-e2b-e1.json`, `…-candidates-t2.json`). With it, our cost on the real
-programs falls from ~37 to ~26 ns per step, which narrows every ratio in the E4 table by 1.43×.
+programs falls from ~37 to ~26 ns per step, and with 1 KiB memory chunks after it (§E6) to ~18,
+which narrows every ratio in the E4 table by about 2.1×.
 
 ## E3 — an independent untyped Haskell interpreter
 
@@ -181,6 +183,7 @@ components, not core modules, and are rejected at decoding by design.)
 | `step` inlined | 1.42× | 1.15× |
 | `-O2` on the interpreter module | 1.26× | 1.08× |
 | **all three** | ~1.95× | ~5.1× |
+| later, after E2b: chunks of 1 KiB instead of 4 KiB | 1.07× | **1.46×** |
 
 CoreMark went from 8.4 s to 1.8 s, PolyBench `floyd-warshall` (small) from 25.8 s to 4.1 s, the
 streaming-memory kernel from 5.4 s to 0.66 s. Each change passed the full suites before timing.

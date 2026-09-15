@@ -77,9 +77,13 @@ data MemInst m = MemInst
 pageSize :: Int
 pageSize = 65536
 
--- | Bytes per stored chunk: the unit of storage and of copy-on-write (see the module header).
+{- | Bytes per stored chunk: the unit of storage and of copy-on-write (see the module header).
+  1 KiB was measured against 4 KiB on the real programs in @bench/@: 1.26× faster, and 1.04× on
+  the kernels; 256 bytes bought nothing more (TODO.md §I, "E6 next"). A label store kept beside
+  the bytes for IFC can share this granularity.
+-}
 chunkSize :: Int
-chunkSize = 4096
+chunkSize = 1024
 
 -- | A chunk that has never been written.
 zeroChunk :: UV.Vector Word8

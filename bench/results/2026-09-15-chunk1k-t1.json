@@ -1,0 +1,178 @@
+{
+  "environment": {
+    "date": "2026-09-15T18:24:50",
+    "commit": "15e5ace-dirty",
+    "tier": "t1",
+    "cpu": "12th Gen Intel(R) Core(TM) i7-12700H",
+    "kernel": "6.18.33.2-microsoft-standard-WSL2",
+    "pinned_to": null,
+    "ghc": "The Glorious Glasgow Haskell Compilation System, version 9.12.2",
+    "versions": {},
+    "binaries": {
+      "e2b": "/tmp/claude-1000/-home-dgalan-ethz-wasm-ifc/cab0c187-6a59-457e-be33-ea6164c18b88/scratchpad/wasm-ifc-e2b",
+      "chunk1k": "/tmp/claude-1000/-home-dgalan-ethz-wasm-ifc/cab0c187-6a59-457e-be33-ea6164c18b88/scratchpad/wasm-ifc-chunk1k"
+    }
+  },
+  "measurements": [
+    {
+      "workload": "call-indirect",
+      "runtime": "e2b",
+      "ok": true,
+      "checksum": "1630302344",
+      "wall_s": 0.1376108109980123,
+      "wall_mad_s": 0.0012191589994472452,
+      "cpu_s": 0.13756900000000016,
+      "reps": 5
+    },
+    {
+      "workload": "call-indirect",
+      "runtime": "chunk1k",
+      "ok": true,
+      "checksum": "1630302344",
+      "wall_s": 0.13841982699887012,
+      "wall_mad_s": 0.00434016600047471,
+      "cpu_s": 0.13855099999999998,
+      "reps": 5
+    },
+    {
+      "workload": "empty",
+      "runtime": "e2b",
+      "ok": true,
+      "checksum": "0",
+      "wall_s": 0.0016927969991229475,
+      "wall_mad_s": 7.013199865468778e-05,
+      "cpu_s": 0.0014719999999999178,
+      "reps": 5
+    },
+    {
+      "workload": "empty",
+      "runtime": "chunk1k",
+      "ok": true,
+      "checksum": "0",
+      "wall_s": 0.001616436002223054,
+      "wall_mad_s": 5.377800334827043e-05,
+      "cpu_s": 0.0014779999999998683,
+      "reps": 5
+    },
+    {
+      "workload": "fib",
+      "runtime": "e2b",
+      "ok": true,
+      "checksum": "832040",
+      "wall_s": 0.39121472199985874,
+      "wall_mad_s": 0.021581979999609757,
+      "cpu_s": 0.3918820000000001,
+      "reps": 5
+    },
+    {
+      "workload": "fib",
+      "runtime": "chunk1k",
+      "ok": true,
+      "checksum": "832040",
+      "wall_s": 0.3885688480004319,
+      "wall_mad_s": 0.01804851199995028,
+      "cpu_s": 0.3890370000000001,
+      "reps": 5
+    },
+    {
+      "workload": "labels-16",
+      "runtime": "e2b",
+      "ok": true,
+      "checksum": "445698416",
+      "wall_s": 0.14347058400016977,
+      "wall_mad_s": 0.0027093349999631755,
+      "cpu_s": 0.14349099999999995,
+      "reps": 5
+    },
+    {
+      "workload": "labels-16",
+      "runtime": "chunk1k",
+      "ok": true,
+      "checksum": "445698416",
+      "wall_s": 0.14545334899958107,
+      "wall_mad_s": 0.004942285999277374,
+      "cpu_s": 0.14553400000000027,
+      "reps": 5
+    },
+    {
+      "workload": "locals-16",
+      "runtime": "e2b",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.09325070200065966,
+      "wall_mad_s": 0.002101029000186827,
+      "cpu_s": 0.09325999999999865,
+      "reps": 5
+    },
+    {
+      "workload": "locals-16",
+      "runtime": "chunk1k",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.09421545699660783,
+      "wall_mad_s": 0.0009426650030945893,
+      "cpu_s": 0.09425399999999898,
+      "reps": 5
+    },
+    {
+      "workload": "loop-arith",
+      "runtime": "e2b",
+      "ok": true,
+      "checksum": "2401681406",
+      "wall_s": 0.08158668199757813,
+      "wall_mad_s": 0.003947762997995596,
+      "cpu_s": 0.0816060000000014,
+      "reps": 5
+    },
+    {
+      "workload": "loop-arith",
+      "runtime": "chunk1k",
+      "ok": true,
+      "checksum": "2401681406",
+      "wall_s": 0.08434005600065575,
+      "wall_mad_s": 0.0017427329985366669,
+      "cpu_s": 0.08413000000000004,
+      "reps": 5
+    },
+    {
+      "workload": "memory-random",
+      "runtime": "e2b",
+      "ok": true,
+      "checksum": "3894883294",
+      "wall_s": 0.25998748500205693,
+      "wall_mad_s": 0.0057501579976815265,
+      "cpu_s": 0.26042599999999927,
+      "reps": 5
+    },
+    {
+      "workload": "memory-random",
+      "runtime": "chunk1k",
+      "ok": true,
+      "checksum": "3894883294",
+      "wall_s": 0.25277984300191747,
+      "wall_mad_s": 0.005188336002902361,
+      "cpu_s": 0.2531290000000005,
+      "reps": 5
+    },
+    {
+      "workload": "memory-stream",
+      "runtime": "e2b",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.5112081490005949,
+      "wall_mad_s": 0.03584138999940478,
+      "cpu_s": 0.5122089999999976,
+      "reps": 5
+    },
+    {
+      "workload": "memory-stream",
+      "runtime": "chunk1k",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.30342617399946903,
+      "wall_mad_s": 0.007778567000059411,
+      "cpu_s": 0.30395300000000036,
+      "reps": 5
+    }
+  ]
+}
