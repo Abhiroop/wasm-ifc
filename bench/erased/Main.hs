@@ -1,3 +1,7 @@
+{-# LANGUAGE CPP #-}
+-- -O2, as "Runtime.Interpreter" has: the two machines are compared at the same optimisation.
+{-# OPTIONS_GHC -O2 #-}
+
 {- | The erased machine: the interpreter with its types forgotten (TODO.md §I, experiment E1).
 
   The question is whether intrinsic typing costs anything at run time. Racing some other
@@ -181,7 +185,17 @@ data Control
     | LoopLabel !Values [Instruction] [Instruction] Control
     | CallBoundary !Word !Values !Values [Instruction] Control
 
+#ifdef EXISTENTIAL_CONFIG
+-- The control experiment for E1's last allocation gap (built with -DEXISTENTIAL_CONFIG): the
+-- same configuration with one existential type variable that nothing uses. The typed 'Config'
+-- hides its stack and label indices existentially, and GHC does not unbox a constructor with
+-- existential type variables into a worker's arguments. If that is what keeps the typed machine
+-- building a configuration per step, this build allocates like the typed machine does.
+data Config m where
+    Config :: forall m (unused :: Type). !(Store m) -> !Values -> !Values -> [Instruction] -> Control -> Config m
+#else
 data Config m = Config !(Store m) !Values !Values [Instruction] Control
+#endif
 
 data StepResult m = Stepped !(Config m) | Done !(Store m) !Values | Wedged
 

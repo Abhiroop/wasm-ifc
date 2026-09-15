@@ -5,6 +5,12 @@
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TypeOperators #-}
+-- -O2 for this module alone: its specialisation passes (SpecConstr above all) are what stop the
+-- driver loop building a Config and a Stepped for every step, which at -O1 it did even with
+-- 'step' inlined. With them the typed machine allocates less than its erased twin, where at -O1
+-- it allocated twice as much (TODO.md §I, E1/E6). Confined to this module because it is the one
+-- that runs hot, and -O2 costs compile time wherever it is on.
+{-# OPTIONS_GHC -O2 #-}
 
 {- | The intrinsically-typed interpreter, as a small-step abstract machine.
 
