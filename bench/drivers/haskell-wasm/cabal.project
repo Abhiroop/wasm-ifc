@@ -1,0 +1,9 @@
+-- A project of its own, so the Hackage wasm package's old bounds never reach wasm-ifc's plan.
+packages: . wasm-1.1.1
+
+-- wasm-1.1.1 predates GHC 9.12's boot packages; ghc-9.12.patch makes the source build, and these
+-- relax the bounds that the patched source no longer needs.
+allow-newer:
+    wasm:base, wasm:bytestring, wasm:containers, wasm:deepseq, wasm:mtl, wasm:primitive,
+    wasm:text, wasm:transformers, wasm:vector, wasm:array, wasm:ieee754, wasm:cereal,
+    wasm:utf8-string

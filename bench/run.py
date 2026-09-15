@@ -45,7 +45,7 @@ PIN = ["taskset", "-c", _CPU] if _CPU and shutil.which("taskset") else []
 # runtime makes a recorded checksum authoritative.
 OURS_LIKE: set[str] = {"wasm-ifc"}
 MODULE = "{module}"
-TICKY_STEP = re.compile(r"^\s*(\d+)\s.*Runtime\.Interpreter\.\$?w?step\{")
+TICKY_STEP = re.compile(r"Runtime\.Interpreter\.\$?w?step\{")
 
 
 def runtimes(extra: list[str]) -> dict[str, dict[str, list[str]]]:
@@ -138,10 +138,17 @@ def count_steps(ticky: str, tier: str, module: Path, timeout: float) -> int | No
         subprocess.run(argv_for(template, module) + ["+RTS", f"-r{report}", "-RTS"], capture_output=True, timeout=timeout)
         if not report.exists():
             return None
-        for line in report.read_text(errors="replace").splitlines():
-            match = TICKY_STEP.match(line)
-            if match:
-                return int(match.group(1))
+        # The report's numeric columns are fixed-width and right-aligned, and a number wider than
+        # its column runs into the one before it (2425010054 entries next to 419770625128 bytes
+        # print as one 22-digit number). So the entry count is read by the header's position.
+        lines = report.read_text(errors="replace").splitlines()
+        header = next((line for line in lines if "Entries" in line and "Alloc" in line), None)
+        if header is None:
+            return None
+        width = header.index("Entries") + len("Entries")
+        for line in lines:
+            if TICKY_STEP.search(line):
+                return int(line[:width].strip())
     return None
 
 

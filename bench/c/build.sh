@@ -17,8 +17,11 @@ OUT=bench/wasm-t2
 mkdir -p "$OUT"
 
 CM=$TOOLS/src/coremark
+# SEED_VOLATILE compiles the seeds and the iteration count in. The POSIX port's default reads
+# them from the command line, and without arguments CoreMark calibrates itself to run for ten
+# seconds — a different number of iterations, and so different CRCs, on every runtime and run.
 for iterations in 100 4000; do
-    "${CC[@]}" -w -I"$CM" -I"$CM/posix" -DPERFORMANCE_RUN=1 -DITERATIONS=$iterations -DFLAGS_STR='"-O2"' \
+    "${CC[@]}" -w -I"$CM" -I"$CM/posix" -DSEED_METHOD=SEED_VOLATILE -DPERFORMANCE_RUN=1 -DITERATIONS=$iterations -DFLAGS_STR='"-O2"' \
         "$CM"/core_{list_join,main,matrix,state,util}.c "$CM/posix/core_portme.c" -o "$OUT/coremark-$iterations.wasm"
 done
 

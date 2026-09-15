@@ -194,3 +194,15 @@ benchmark wasm-ifc-erased
       , containers
       , singletons-base
       , text
+
+-- Front-end timing for the performance experiments (TODO.md §I, E5): decode, validate and
+-- instantiate, per module. A measurement device like wasm-ifc-erased; built only on request.
+benchmark wasm-ifc-phases
+    import:           warnings
+    type:             exitcode-stdio-1.0
+    main-is:          Main.hs
+    hs-source-dirs:   bench/phases
+    build-depends:
+        base
+      , wasm-ifc
+      , bytestring
