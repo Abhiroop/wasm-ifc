@@ -12,7 +12,8 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-BIN=$(cabal list-bin wasm-ifc 2>/dev/null) || { echo "cannot find wasm-ifc"; exit 2; }
+# WASM_IFC_BIN checks another build, such as the erased machine: it must give the same answers.
+BIN=${WASM_IFC_BIN:-$(cabal list-bin wasm-ifc 2>/dev/null)} || { echo "cannot find wasm-ifc"; exit 2; }
 pass=0; fail=0; started=$SECONDS
 
 while read -r name expected; do

@@ -177,3 +177,20 @@ test-suite wasm-ifc-wasi
       , process
       , text
       , hspec          ^>=2.11
+
+-- The untyped twin of the interpreter for the performance experiments (TODO.md §I, E1): the
+-- same elaborated program with its types forgotten, run by a machine that mirrors
+-- Runtime.Interpreter.step clause for clause. A measurement device, not part of the package;
+-- built only with --enable-benchmarks, so the normal build and the gate never see it.
+benchmark wasm-ifc-erased
+    import:           warnings
+    type:             exitcode-stdio-1.0
+    main-is:          Main.hs
+    hs-source-dirs:   bench/erased
+    build-depends:
+        base
+      , wasm-ifc
+      , bytestring
+      , containers
+      , singletons-base
+      , text

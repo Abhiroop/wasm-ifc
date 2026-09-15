@@ -25,7 +25,10 @@ done
 PB=$TOOLS/src/polybench
 KERNELS=(2mm 3mm atax gemm jacobi-2d seidel-2d floyd-warshall nussinov correlation lu)
 for kernel in "${KERNELS[@]}"; do
-    src=$(find "$PB" -name "$kernel.c" -not -path '*/utilities/*' | head -1)
+    # The trailing slash matters: src/polybench is a symlink, and find does not descend into a
+    # symlinked starting point, so without it every kernel's source came back empty.
+    src=$(find "$PB/" -name "$kernel.c" -not -path '*/utilities/*' | head -1)
+    [ -n "$src" ] || { echo "no PolyBench source for $kernel" >&2; exit 1; }
     for size in MINI SMALL MEDIUM; do
         # polybench.c includes <sys/resource.h>, which WASI only has as an emulation.
         common=(-w -D_WASI_EMULATED_PROCESS_CLOCKS -I"$PB/utilities" -I"$(dirname "$src")" -D"${size}_DATASET"

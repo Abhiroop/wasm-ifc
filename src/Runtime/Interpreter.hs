@@ -51,6 +51,29 @@ module Runtime.Interpreter (
     run,
     runFunction,
     callDepthBound,
+
+    -- * Per-type operations
+
+    {- | Exported for the benchmarks' erased machine (@bench/erased@), which picks these by a
+    value's tag where 'step' picks them by a witness, so that the two machines differ only in
+    where a type comes from.
+    -}
+    numBinary,
+    numDiv,
+    numRem,
+    numCompare,
+    numEqNe,
+    numEqz,
+    bitwiseT,
+    countT,
+    floatUnT,
+    floatBinT,
+    loadValue,
+    storeBytes,
+    narrowLoadT,
+    narrowStoreT,
+    effectiveAddr,
+    growFailed,
 ) where
 
 import Data.Bits (
