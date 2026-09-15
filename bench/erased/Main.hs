@@ -39,7 +39,7 @@ import Data.Maybe (fromMaybe)
 import Data.Singletons.Base.TH (SList (SCons, SNil), Sing, fromSing)
 import Data.Text (Text)
 import Data.Text qualified as T
-import Data.Word (Word32, Word64, Word8)
+import Data.Word (Word32, Word64)
 import GHC.Exts (Any)
 import System.Environment (getArgs)
 import System.Exit (die)
@@ -67,9 +67,9 @@ import Runtime.Interpreter (
     numEqNe,
     numEqz,
     numRem,
-    storeBytes,
+    storedWord,
  )
-import Runtime.MemInst (MemInst, copyWithin, fillBytes, growMemory, memoryPages, readBytes, writeBytes)
+import Runtime.MemInst (MemInst, copyWithin, fillBytes, growMemory, loadWord, memoryPages, storeWord, writeBytes)
 import Runtime.Module (SomeModuleInst (..))
 import Runtime.Stack (DataSpaceInst (..), GlobalSpaceInst (..), MemSpaceInst (..), TableSpaceInst (..))
 import Runtime.TableInst (tableLookup, tableSize)
@@ -254,15 +254,15 @@ step funcs (Config store locals stack code control) = case code of
                 Nothing -> stepped store locals (VI32 growFailed :> r) rest control
             _ -> Left Stuck
         ELoadN (SomeNarrow it nw) sign memArg -> case (store.memory, stack) of
-            (Just mem, VI32 addr :> r) -> case readBytes mem (effectiveAddr addr memArg) (narrowBytes nw) of
-                Just bytes -> stepped store locals (taggedInt it (narrowLoadT nw sign bytes) :> r) rest control
+            (Just mem, VI32 addr :> r) -> case loadWord mem (effectiveAddr addr memArg) (narrowBytes nw) of
+                Just word -> stepped store locals (taggedInt it (narrowLoadT nw sign word) :> r) rest control
                 Nothing -> Left (Trapped OutOfBoundsMemoryAccess)
             _ -> Left Stuck
         EStoreN (SomeNarrow it nw) memArg -> case (store.memory, it, stack) of
             (Just mem, I32IsInt, VI32 value :> VI32 addr :> r) ->
-                written store locals rest control (writeBytes mem (effectiveAddr addr memArg) (narrowStoreT nw value)) r
+                written store locals rest control (storeWord mem (effectiveAddr addr memArg) (narrowBytes nw) (narrowStoreT nw value)) r
             (Just mem, I64IsInt, VI64 value :> VI32 addr :> r) ->
-                written store locals rest control (writeBytes mem (effectiveAddr addr memArg) (narrowStoreT nw value)) r
+                written store locals rest control (storeWord mem (effectiveAddr addr memArg) (narrowBytes nw) (narrowStoreT nw value)) r
             _ -> Left Stuck
         {- Bulk memory: each checks both ranges before writing anything -}
         EMemCopy -> case (store.memory, stack) of
@@ -307,15 +307,15 @@ step funcs (Config store locals stack code control) = case code of
             Empty -> Left Stuck
         {- Memory -}
         ELoad ty memArg -> case (store.memory, stack) of
-            (Just mem, VI32 addr :> r) -> case readBytes mem (effectiveAddr addr memArg) (byteWidth ty) of
-                Just bytes -> stepped store locals (loaded ty bytes :> r) rest control
+            (Just mem, VI32 addr :> r) -> case loadWord mem (effectiveAddr addr memArg) (byteWidth ty) of
+                Just word -> stepped store locals (loaded ty word :> r) rest control
                 Nothing -> Left (Trapped OutOfBoundsMemoryAccess)
             _ -> Left Stuck
         EStore ty memArg -> case (store.memory, ty, stack) of
-            (Just mem, I32, VI32 v :> VI32 addr :> r) -> written store locals rest control (writeBytes mem (effectiveAddr addr memArg) (storeBytes I32IsNum v)) r
-            (Just mem, I64, VI64 v :> VI32 addr :> r) -> written store locals rest control (writeBytes mem (effectiveAddr addr memArg) (storeBytes I64IsNum v)) r
-            (Just mem, F32, VF32 v :> VI32 addr :> r) -> written store locals rest control (writeBytes mem (effectiveAddr addr memArg) (storeBytes F32IsNum v)) r
-            (Just mem, F64, VF64 v :> VI32 addr :> r) -> written store locals rest control (writeBytes mem (effectiveAddr addr memArg) (storeBytes F64IsNum v)) r
+            (Just mem, I32, VI32 v :> VI32 addr :> r) -> written store locals rest control (storeWord mem (effectiveAddr addr memArg) (numBytes I32IsNum) (storedWord I32IsNum v)) r
+            (Just mem, I64, VI64 v :> VI32 addr :> r) -> written store locals rest control (storeWord mem (effectiveAddr addr memArg) (numBytes I64IsNum) (storedWord I64IsNum v)) r
+            (Just mem, F32, VF32 v :> VI32 addr :> r) -> written store locals rest control (storeWord mem (effectiveAddr addr memArg) (numBytes F32IsNum) (storedWord F32IsNum v)) r
+            (Just mem, F64, VF64 v :> VI32 addr :> r) -> written store locals rest control (storeWord mem (effectiveAddr addr memArg) (numBytes F64IsNum) (storedWord F64IsNum v)) r
             _ -> Left Stuck
         {- Calls: an indirect call first reads the table entry and compares its type -}
         ECall width ix -> enterCall funcs store locals width ix stack rest control
@@ -462,11 +462,11 @@ taggedInt I64IsInt = VI64
 byteWidth :: ValType -> Int
 byteWidth ty = case ty of I32 -> 4; I64 -> 8; F32 -> 4; F64 -> 8
 
-loaded :: ValType -> [Word8] -> Value
-loaded I32 bytes = VI32 (loadValue I32IsNum bytes)
-loaded I64 bytes = VI64 (loadValue I64IsNum bytes)
-loaded F32 bytes = VF32 (loadValue F32IsNum bytes)
-loaded F64 bytes = VF64 (loadValue F64IsNum bytes)
+loaded :: ValType -> Word64 -> Value
+loaded I32 word = VI32 (loadValue I32IsNum word)
+loaded I64 word = VI64 (loadValue I64IsNum word)
+loaded F32 word = VF32 (loadValue F32IsNum word)
+loaded F64 word = VF64 (loadValue F64IsNum word)
 
 withMemory :: MemInst m -> Store m -> Store m
 withMemory mem store = Store {globals = store.globals, memory = Just mem, table = store.table, segments = store.segments}

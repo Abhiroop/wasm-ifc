@@ -69,7 +69,7 @@ module Runtime.Interpreter (
     floatUnT,
     floatBinT,
     loadValue,
-    storeBytes,
+    storedWord,
     narrowLoadT,
     narrowStoreT,
     effectiveAddr,
@@ -91,7 +91,7 @@ import Data.Bits (
     (.&.),
     (.|.),
  )
-import Data.Word (Word32, Word64, Word8)
+import Data.Word (Word32, Word64)
 import GHC.Float (castDoubleToWord64, castFloatToWord32, castWord32ToFloat, castWord64ToDouble)
 
 import Data.ByteString qualified as BS
@@ -99,10 +99,9 @@ import Data.List.Singletons (type (++))
 import Data.Maybe (fromMaybe)
 import Data.Singletons.Decide (decideEquality)
 import Data.Type.Equality ((:~:) (Refl))
-import Runtime.Bytes (bytesOfWord32, bytesOfWord64, word32OfBytes, word64OfBytes)
 import Runtime.Convert (convertVal)
 import Runtime.Host (WasiFunc, wasiFuncType)
-import Runtime.MemInst (MemInst, copyWithin, fillBytes, growMemory, memoryPages, readBytes, writeBytes)
+import Runtime.MemInst (MemInst, copyWithin, fillBytes, growMemory, loadWord, memoryPages, storeWord, writeBytes)
 import Runtime.Numeric (copysign32, copysign64, fromSigned32, fromSigned64, intDiv32, intDiv64, intRem32, intRem64, toSigned32, toSigned64, wasmMax, wasmMin)
 import Runtime.Stack
 import Runtime.TableInst (tableLookup)
@@ -353,12 +352,12 @@ step funcs (Config store locals stack code control) = case code of
                         Nothing -> stepped store locals (growFailed :# r) rest control
         ILoadN nw sign memArg -> case stack of
             addr :# r ->
-                case readBytes (currentMem store) (effectiveAddr addr memArg) (narrowBytes nw) of
-                    Just bytes -> stepped store locals (narrowLoadT nw sign bytes :# r) rest control
+                case loadWord (currentMem store) (effectiveAddr addr memArg) (narrowBytes nw) of
+                    Just word -> stepped store locals (narrowLoadT nw sign word :# r) rest control
                     Nothing -> Left OutOfBoundsMemoryAccess
         IStoreN nw memArg -> case stack of
             value :# addr :# r ->
-                case writeBytes (currentMem store) (effectiveAddr addr memArg) (narrowStoreT nw value) of
+                case storeWord (currentMem store) (effectiveAddr addr memArg) (narrowBytes nw) (narrowStoreT nw value) of
                     Just mem' -> stepped (storeMem mem' store) locals r rest control
                     Nothing -> Left OutOfBoundsMemoryAccess
         {- Bulk memory: each checks both ranges before writing anything -}
@@ -398,12 +397,12 @@ step funcs (Config store locals stack code control) = case code of
         {- Memory -}
         ILoad nt memArg -> case stack of
             addr :# r ->
-                case readBytes (currentMem store) (effectiveAddr addr memArg) (numBytes nt) of
-                    Just bytes -> stepped store locals (loadValue nt bytes :# r) rest control
+                case loadWord (currentMem store) (effectiveAddr addr memArg) (numBytes nt) of
+                    Just word -> stepped store locals (loadValue nt word :# r) rest control
                     Nothing -> Left OutOfBoundsMemoryAccess
         IStore nt memArg -> case stack of
             value :# addr :# r ->
-                case writeBytes (currentMem store) (effectiveAddr addr memArg) (storeBytes nt value) of
+                case storeWord (currentMem store) (effectiveAddr addr memArg) (numBytes nt) (storedWord nt value) of
                     Just mem' -> stepped (storeMem mem' store) locals r rest control
                     Nothing -> Left OutOfBoundsMemoryAccess
         {- Calls: enter the callee (see 'enterCall'); an indirect call first reads the table entry
@@ -761,17 +760,17 @@ boolWord False = 0
 
 -- *** Memory <-> value marshalling ***
 
-loadValue :: IsNum t -> [Word8] -> HostType t
-loadValue I32IsNum = word32OfBytes
-loadValue I64IsNum = word64OfBytes
-loadValue F32IsNum = castWord32ToFloat . word32OfBytes
-loadValue F64IsNum = castWord64ToDouble . word64OfBytes
+loadValue :: IsNum t -> Word64 -> HostType t
+loadValue I32IsNum = fromIntegral
+loadValue I64IsNum = id
+loadValue F32IsNum = castWord32ToFloat . fromIntegral
+loadValue F64IsNum = castWord64ToDouble
 
-storeBytes :: IsNum t -> HostType t -> [Word8]
-storeBytes I32IsNum = bytesOfWord32
-storeBytes I64IsNum = bytesOfWord64
-storeBytes F32IsNum = bytesOfWord32 . castFloatToWord32
-storeBytes F64IsNum = bytesOfWord64 . castDoubleToWord64
+storedWord :: IsNum t -> HostType t -> Word64
+storedWord I32IsNum = fromIntegral
+storedWord I64IsNum = id
+storedWord F32IsNum = fromIntegral . castFloatToWord32
+storedWord F64IsNum = castDoubleToWord64
 
 -- *** Bitwise / count / float / narrow-memory helpers ***
 
@@ -859,24 +858,23 @@ floatBinT F64IsFloat op = case op of
     FMax -> wasmMax
     FCopysign -> copysign64
 
-{- | Widen loaded bytes to the access's integer type, sign- or zero-extending from the narrow
+{- | Widen a loaded word to the access's integer type, sign- or zero-extending from the narrow
   width the witness names.
 -}
-narrowLoadT :: NarrowWidth t -> Signedness -> [Word8] -> HostType t
-narrowLoadT nw sign bytes = case narrowInt nw of
-    I32IsInt -> fromIntegral (assembleNarrow (narrowBytes nw) sign bytes)
-    I64IsInt -> assembleNarrow (narrowBytes nw) sign bytes
+narrowLoadT :: NarrowWidth t -> Signedness -> Word64 -> HostType t
+narrowLoadT nw sign word = case narrowInt nw of
+    I32IsInt -> fromIntegral (extendNarrow (narrowBytes nw) sign word)
+    I64IsInt -> extendNarrow (narrowBytes nw) sign word
 
-assembleNarrow :: Int -> Signedness -> [Word8] -> Word64
-assembleNarrow width sign bytes =
-    let raw = foldr (.|.) 0 [fromIntegral b `shiftL` (8 * i) | (i, b) <- zip [0 ..] bytes] :: Word64
-        bits = width * 8
+extendNarrow :: Int -> Signedness -> Word64 -> Word64
+extendNarrow width sign raw =
+    let bits = width * 8
      in if sign == Signed && testBit raw (bits - 1)
             then raw .|. (complement 0 `shiftL` bits)
             else raw
 
--- | The low bytes of the value, as many as the narrow width names.
-narrowStoreT :: NarrowWidth t -> HostType t -> [Word8]
+-- | The value as a word; the store keeps as many low bytes of it as the narrow width names.
+narrowStoreT :: NarrowWidth t -> HostType t -> Word64
 narrowStoreT nw value = case narrowInt nw of
-    I32IsInt -> take (narrowBytes nw) (bytesOfWord64 (fromIntegral value))
-    I64IsInt -> take (narrowBytes nw) (bytesOfWord64 value)
+    I32IsInt -> fromIntegral value
+    I64IsInt -> value
