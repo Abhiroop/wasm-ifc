@@ -4,3 +4,4 @@ dist-newstyle
 bench/wasm-t2/
 bench/drivers/haskell-wasm/wasm-1.1.1/
 bench/drivers/haskell-wasm/dist-newstyle/
+bench/__pycache__/

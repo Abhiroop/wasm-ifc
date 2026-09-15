@@ -427,9 +427,9 @@ Open P0/P1 correctness items live in the plan above (section **P0**); the list b
   extend, but `HostType` and the value stack would need reference/vector representations.
 - [x] **[P3·feature]** Bulk memory (`memory.copy`/`fill`/`init`, `data.drop`, passive data segments;
   2026-09-10). Open: imports of tables, memories and globals.
-- [ ] **[P3·perf]** Linear memory is now sparse, copy-on-write per 64 KiB page; byte marshalling still uses
-  `[Word8]` lists (`Runtime.Bytes`). Move to a mutable / growable-vector representation when perf
-  matters.
+- [ ] **[P3·perf]** Linear memory is sparse and copy-on-write per 4 KiB chunk, and whole values
+  load and store as words with no byte lists (2026-09-15, §I E6). Every store still copies a
+  chunk; a mutable or growable representation that keeps `step` pure is §I's "E6 next".
 
 ## G. Soundness-artifact niceties
 
@@ -539,7 +539,8 @@ in the types. That is already most of what these experiments were meant to estab
   tuning was needed. Cost attributed to (2).
 - **H1 (erasure)** — the typed interpreter and a mechanically *erased* copy of it (same
   algorithm, plain ADTs, `[Value]` stack, dynamic tag checks) run within ±10 % of each other on
-  every workload. This is the thesis question in its purest form.
+  every workload. This is the thesis question in its purest form. **Confirmed (E1)**, once two
+  optimiser effects on the typed driver were removed: 0.97 in geometric mean.
 - **H2 (witness residue)** — **refined twice.** E0's sweeps said a read at index 64 is cheap
   (`funcs-N` flat) while an update is not (`locals-N`, `globals-N`), because the list is
   rebuilt. E2 then showed the walk is not innocent either: swap the rebuild for a vector copy
@@ -548,14 +549,18 @@ in the types. That is already most of what these experiments were meant to estab
   elaboration — E2b, which is a design decision rather than an experiment.
 - **H3 (untyped Haskell is not faster)** — the Hackage `wasm` package (SPY/haskell-wasm 1.1.1,
   an untyped, spec-conformant Haskell interpreter) is not faster than ours on the same GHC and
-  RTS; where it is, the profile points at representation (2), not typing (1).
+  RTS; where it is, the profile points at representation (2), not typing (1). **Confirmed
+  (E3):** ours is 4.6× faster.
 - **H4 (positioning against industrial interpreters)** — after H0 we are within a small
   constant of the plain C++ interpreter (wabt `wasm-interp`) and the gap to the fast
   interpreters (wasm3, WAMR fast-interp, Pulley) is attributable by profiling to allocation/GC
   and dispatch, i.e. to (2)+(3). Report the gap honestly in ns/instruction; do not predict it.
+  **Confirmed in kind (E4):** 1.3× from wabt; 5–150× from the optimised interpreters, largest
+  where memory is used most.
 - **H5 (front end)** — decoding + elaboration (singleton-based validation) + instantiation are
   linear in module size and take milliseconds, not seconds, on the largest real modules we
   have (the 72 WASI-suite programs, C/Rust/AssemblyScript). Startup never dominates.
+  **Confirmed (E5).**
 
 ### Workloads (three tiers)
 
@@ -629,9 +634,12 @@ in the types. That is already most of what these experiments were meant to estab
   `c/` (T2 sources over wasi-sdk), `erased/` (C2), `drivers/` (C3 and the step counter).
   `tools/fetch.sh` exists (2026-09-11) and installs wasi-sdk; wasm3, WAMR and wasmi are
   still to be added to it. `micro/` and `prototypes/` arrived with E2.
-- [ ] **[P2·perf]** Cabal `benchmark wasm-ifc-bench` stanza on `tasty-bench` (0.5, installed):
-  in-process per-phase numbers (decode / elaborate / instantiate / run) and the typed-vs-erased
-  A/B under identical process conditions; `--csv` output; `-rtsopts`.
+- [x] **[P2·perf]** The `tasty-bench` stanza — **deliberately not built.** Its purpose was an
+  in-process A/B and per-phase numbers, but tasty-bench runs benchmarks one after another, which
+  is what the thermal lesson below rules out; A/Bs stay process-level and interleaved
+  (`run.py --binary`). In its place: two benchmark stanzas built only with
+  `--enable-benchmarks`, `wasm-ifc-erased` (C2) and `wasm-ifc-phases` (E5), and ticky step
+  counts (`bench/steps.py`, `run.py --ticky`) for nanoseconds per step.
 - [x] **[P2·perf]** `bench/run.py` and `bench/report.py`. Runtimes are discovered, not
   configured; CPU time comes from `resource.getrusage(RUSAGE_CHILDREN)`; `taskset` pinning is
   opt-in via `BENCH_CPU` because on this hybrid CPU under WSL2 it slows runs without steadying
@@ -647,7 +655,13 @@ in the types. That is already most of what these experiments were meant to estab
 
 - [x] **E0** Hygiene baseline — done 2026-09-11, both sweeps kept (`48f8e3c`, `f69ac27`).
   See the results above.
-- [ ] **E1** Typed vs erased (C1 vs C2, C2b) on T1 in-process; Core diff of `step`. Answers H1.
+- [x] **E1** Typed vs erased — done 2026-09-15 (`bench/erased`; BENCHMARKS.md §E1). At `-O1`
+  the typed machine was ~20 % slower and allocated more. Ticky and the final STG traced it to
+  GHC's handling of the driver, not to the types: `step` was not inlined, and then a `Config`
+  and a `Stepped` were built per step for a join point. `INLINE step` and `-O2` on
+  `Runtime.Interpreter` closed it — typed / erased = **0.97** (geometric mean, 24 kernels). The
+  existential in `Config` was tested and ruled out (`-DEXISTENTIAL_CONFIG`). C2b, the untagged
+  twin, not built: the tag checks are worth at most the 3 % the typed machine now leads by.
 - [x] **E2** Witness-residue sweeps and the witness-indexed vector — done 2026-09-11, and the
   vector **lost**. Prototype kept as `bench/prototypes/e2-vector-locals.patch`, the interleaved
   four-way sweep as `bench/results/2026-09-11-e2-vector-ab.json` (worst MAD 5.1 %; spec and
@@ -671,14 +685,28 @@ in the types. That is already most of what these experiments were meant to estab
   shows deep frames matter.
   The store-side gap (mutable memory in `ST`, `Word32` numerics without `Integer`) is the §F
   P3·perf item, independent of E2b and the larger one measured (`memory-stream` 21.7× wabt).
-- [ ] **E3** C1 vs C3 on T1 + T2. Answers H3.
-- [ ] **E4** C1 vs C4 (and C5 as the floor) on T1 + T2 in ns/instr, with the profile that
-  attributes the remaining gap. Answers H4.
-- [ ] **E5** Front-end scaling on T3. Answers H5.
-- [ ] **E6** Representation improvements suggested by the E4 profile, one at a time, each
-  measured: a "which change bought what" table is the second half of the argument (it shows the
-  remaining gap is representational and closable *within* the typed design).
-- [ ] Write-up `BENCHMARKS.md`: the tables above, the environment, and the attribution.
+- [x] **E3** C1 vs C3 — done: the Hackage `wasm` 1.1.1 interpreter (`bench/drivers/haskell-wasm`;
+  builds on GHC 9.12 with relaxed bounds and no patch) is **4.6×** slower than ours in geometric
+  mean over the kernels (1.6–12.4×). It serves no WASI, so the programs tier does not apply.
+- [x] **E4** Positioning — done (BENCHMARKS.md §E4). Per machine step: wabt 1.3× ahead on the
+  kernels (its Ubuntu build has no WASI, so kernels only); WAMR's interpreter 5–7×, Pulley ~28×,
+  wasm3 and wasmi ~70–150× on real programs; the JITs further still. Attribution by ticky and
+  STG rather than a cost-centre profile, which would change the optimisation it measures. Our
+  cost per step triples from kernels (6–14 ns) to programs (19–58 ns): memory, as H4 expected.
+- [x] **E5** Front end — done: 129 modules, median 6.2 ms, worst 43 ms; the largest (2.2 MB,
+  42,775 instructions) decodes in 14 ms, validates in 19 ms, instantiates in 1.2 ms; ~85 ms per
+  100,000 instructions, correlation 0.90 (`bench/results/2026-09-15-e5-phases.csv`).
+- [x] **E6** Representation improvements, one at a time, each measured — done for three
+  (BENCHMARKS.md §E6): memory in 4 KiB chunks with word loads and stores (kernels 1.09×,
+  programs **4.07×**); `INLINE step` (1.42×, 1.15×); `-O2` on the interpreter module (1.26×,
+  1.08×). Together ~1.95× on kernels and ~5.1× on programs; CoreMark 8.4 s → 1.8 s.
+- [ ] **E6 next [P3·perf, design question for Daniel]** Memory is still the largest cost on real
+  programs: to keep `step` pure, every store copies a 4 KiB chunk. Candidates to measure:
+  smaller chunks (a cheaper copy, a deeper map), a wider-fanout persistent trie, or memory
+  threaded linearly or through `ST` behind an interface that keeps `step` a pure function.
+- [ ] **[P3·perf]** Retake the final tables on native Linux on a desktop CPU before quoting any
+  absolute number; the ratios were taken interleaved and should hold.
+- [x] Write-up `BENCHMARKS.md` — done 2026-09-15.
 
 ### Risks
 
