@@ -1,0 +1,1020 @@
+{
+  "environment": {
+    "date": "2026-09-15T17:11:42",
+    "commit": "b4f290b-dirty",
+    "tier": "t1",
+    "cpu": "12th Gen Intel(R) Core(TM) i7-12700H",
+    "kernel": "6.18.33.2-microsoft-standard-WSL2",
+    "pinned_to": null,
+    "ghc": "The Glorious Glasgow Haskell Compilation System, version 9.12.2",
+    "versions": {},
+    "binaries": {
+      "e6d": "/tmp/claude-1000/-home-dgalan-ethz-wasm-ifc/cab0c187-6a59-457e-be33-ea6164c18b88/scratchpad/wasm-ifc-e6d",
+      "e2b": "/tmp/claude-1000/-home-dgalan-ethz-wasm-ifc/cab0c187-6a59-457e-be33-ea6164c18b88/scratchpad/wasm-ifc-e2b",
+      "erased-e6d": "/tmp/claude-1000/-home-dgalan-ethz-wasm-ifc/cab0c187-6a59-457e-be33-ea6164c18b88/scratchpad/erased-e6d",
+      "erased-e2b": "/tmp/claude-1000/-home-dgalan-ethz-wasm-ifc/cab0c187-6a59-457e-be33-ea6164c18b88/scratchpad/erased-e2b"
+    }
+  },
+  "measurements": [
+    {
+      "workload": "br-table",
+      "runtime": "e6d",
+      "ok": true,
+      "checksum": "1375000",
+      "wall_s": 0.08176218700100435,
+      "wall_mad_s": 0.0015090589986357372,
+      "cpu_s": 0.08164000000000005,
+      "reps": 5
+    },
+    {
+      "workload": "br-table",
+      "runtime": "e2b",
+      "ok": true,
+      "checksum": "1375000",
+      "wall_s": 0.08563753199996427,
+      "wall_mad_s": 0.0005734469996241387,
+      "cpu_s": 0.08528000000000002,
+      "reps": 5
+    },
+    {
+      "workload": "br-table",
+      "runtime": "erased-e6d",
+      "ok": true,
+      "checksum": "1375000",
+      "wall_s": 0.08206778599924291,
+      "wall_mad_s": 0.0021192720014369115,
+      "cpu_s": 0.08196799999999982,
+      "reps": 5
+    },
+    {
+      "workload": "br-table",
+      "runtime": "erased-e2b",
+      "ok": true,
+      "checksum": "1375000",
+      "wall_s": 0.09275325399721623,
+      "wall_mad_s": 0.0006791340056224726,
+      "cpu_s": 0.09257800000000005,
+      "reps": 5
+    },
+    {
+      "workload": "call-indirect",
+      "runtime": "e6d",
+      "ok": true,
+      "checksum": "1630302344",
+      "wall_s": 0.10193693600012921,
+      "wall_mad_s": 0.003657683002529666,
+      "cpu_s": 0.10182499999999955,
+      "reps": 5
+    },
+    {
+      "workload": "call-indirect",
+      "runtime": "e2b",
+      "ok": true,
+      "checksum": "1630302344",
+      "wall_s": 0.12532574400029262,
+      "wall_mad_s": 0.0015124780002224725,
+      "cpu_s": 0.1252859999999999,
+      "reps": 5
+    },
+    {
+      "workload": "call-indirect",
+      "runtime": "erased-e6d",
+      "ok": true,
+      "checksum": "1630302344",
+      "wall_s": 0.09078514700013329,
+      "wall_mad_s": 0.0007657890018890612,
+      "cpu_s": 0.09082399999999957,
+      "reps": 5
+    },
+    {
+      "workload": "call-indirect",
+      "runtime": "erased-e2b",
+      "ok": true,
+      "checksum": "1630302344",
+      "wall_s": 0.1069821220007725,
+      "wall_mad_s": 0.0018402710011287127,
+      "cpu_s": 0.10677300000000023,
+      "reps": 5
+    },
+    {
+      "workload": "empty",
+      "runtime": "e6d",
+      "ok": true,
+      "checksum": "0",
+      "wall_s": 0.00131452999994508,
+      "wall_mad_s": 5.939000038779341e-05,
+      "cpu_s": 0.0012380000000007385,
+      "reps": 5
+    },
+    {
+      "workload": "empty",
+      "runtime": "e2b",
+      "ok": true,
+      "checksum": "0",
+      "wall_s": 0.0012304609990678728,
+      "wall_mad_s": 2.2604999685427174e-05,
+      "cpu_s": 0.0011789999999999856,
+      "reps": 5
+    },
+    {
+      "workload": "empty",
+      "runtime": "erased-e6d",
+      "ok": true,
+      "checksum": "0",
+      "wall_s": 0.0011837269994430244,
+      "wall_mad_s": 3.0559000151697546e-05,
+      "cpu_s": 0.0011700000000001154,
+      "reps": 5
+    },
+    {
+      "workload": "empty",
+      "runtime": "erased-e2b",
+      "ok": true,
+      "checksum": "0",
+      "wall_s": 0.0011851429990201723,
+      "wall_mad_s": 2.0557999960146844e-05,
+      "cpu_s": 0.0011020000000000474,
+      "reps": 5
+    },
+    {
+      "workload": "fib",
+      "runtime": "e6d",
+      "ok": true,
+      "checksum": "832040",
+      "wall_s": 0.2840651760016044,
+      "wall_mad_s": 0.0067433219992381055,
+      "cpu_s": 0.2844810000000017,
+      "reps": 5
+    },
+    {
+      "workload": "fib",
+      "runtime": "e2b",
+      "ok": true,
+      "checksum": "832040",
+      "wall_s": 0.3382406679993437,
+      "wall_mad_s": 0.002627114998176694,
+      "cpu_s": 0.3385459999999991,
+      "reps": 5
+    },
+    {
+      "workload": "fib",
+      "runtime": "erased-e6d",
+      "ok": true,
+      "checksum": "832040",
+      "wall_s": 0.2606346869979461,
+      "wall_mad_s": 0.0005386169978010003,
+      "cpu_s": 0.26086700000000057,
+      "reps": 5
+    },
+    {
+      "workload": "fib",
+      "runtime": "erased-e2b",
+      "ok": true,
+      "checksum": "832040",
+      "wall_s": 0.2848112850006146,
+      "wall_mad_s": 0.0038819049987068865,
+      "cpu_s": 0.28521799999999936,
+      "reps": 5
+    },
+    {
+      "workload": "float",
+      "runtime": "e6d",
+      "ok": true,
+      "checksum": "1951612559",
+      "wall_s": 0.05303171799823758,
+      "wall_mad_s": 0.0006931069983693305,
+      "cpu_s": 0.05290300000000059,
+      "reps": 5
+    },
+    {
+      "workload": "float",
+      "runtime": "e2b",
+      "ok": true,
+      "checksum": "1951612559",
+      "wall_s": 0.053292780998162925,
+      "wall_mad_s": 0.0006048430004739203,
+      "cpu_s": 0.0531839999999999,
+      "reps": 5
+    },
+    {
+      "workload": "float",
+      "runtime": "erased-e6d",
+      "ok": true,
+      "checksum": "1951612559",
+      "wall_s": 0.05200469099872862,
+      "wall_mad_s": 0.00016720799976610579,
+      "cpu_s": 0.05177899999999991,
+      "reps": 5
+    },
+    {
+      "workload": "float",
+      "runtime": "erased-e2b",
+      "ok": true,
+      "checksum": "1951612559",
+      "wall_s": 0.05856930799927795,
+      "wall_mad_s": 0.0004098720019101165,
+      "cpu_s": 0.058540999999999954,
+      "reps": 5
+    },
+    {
+      "workload": "funcs-16",
+      "runtime": "e6d",
+      "ok": true,
+      "checksum": "454198416",
+      "wall_s": 0.07332067899915273,
+      "wall_mad_s": 0.0012141319966758601,
+      "cpu_s": 0.073205999999999,
+      "reps": 5
+    },
+    {
+      "workload": "funcs-16",
+      "runtime": "e2b",
+      "ok": true,
+      "checksum": "454198416",
+      "wall_s": 0.08945605400003842,
+      "wall_mad_s": 0.002962615002616076,
+      "cpu_s": 0.08942300000000003,
+      "reps": 5
+    },
+    {
+      "workload": "funcs-16",
+      "runtime": "erased-e6d",
+      "ok": true,
+      "checksum": "454198416",
+      "wall_s": 0.07423757099968498,
+      "wall_mad_s": 0.0010086180009238888,
+      "cpu_s": 0.07397100000000056,
+      "reps": 5
+    },
+    {
+      "workload": "funcs-16",
+      "runtime": "erased-e2b",
+      "ok": true,
+      "checksum": "454198416",
+      "wall_s": 0.08790189300270868,
+      "wall_mad_s": 0.001958340002602199,
+      "cpu_s": 0.08774700000000024,
+      "reps": 5
+    },
+    {
+      "workload": "funcs-2",
+      "runtime": "e6d",
+      "ok": true,
+      "checksum": "447198416",
+      "wall_s": 0.0692960190026497,
+      "wall_mad_s": 0.0008400520018767565,
+      "cpu_s": 0.06908400000000015,
+      "reps": 5
+    },
+    {
+      "workload": "funcs-2",
+      "runtime": "e2b",
+      "ok": true,
+      "checksum": "447198416",
+      "wall_s": 0.07924008899863111,
+      "wall_mad_s": 0.0010663539978850167,
+      "cpu_s": 0.07923300000000211,
+      "reps": 5
+    },
+    {
+      "workload": "funcs-2",
+      "runtime": "erased-e6d",
+      "ok": true,
+      "checksum": "447198416",
+      "wall_s": 0.06864671700168401,
+      "wall_mad_s": 0.0002606770030979533,
+      "cpu_s": 0.06851100000000088,
+      "reps": 5
+    },
+    {
+      "workload": "funcs-2",
+      "runtime": "erased-e2b",
+      "ok": true,
+      "checksum": "447198416",
+      "wall_s": 0.08003669800018542,
+      "wall_mad_s": 0.0019306959984533023,
+      "cpu_s": 0.07993699999999926,
+      "reps": 5
+    },
+    {
+      "workload": "funcs-4",
+      "runtime": "e6d",
+      "ok": true,
+      "checksum": "448198416",
+      "wall_s": 0.06968260900248424,
+      "wall_mad_s": 0.0004045690002385527,
+      "cpu_s": 0.06943300000000008,
+      "reps": 5
+    },
+    {
+      "workload": "funcs-4",
+      "runtime": "e2b",
+      "ok": true,
+      "checksum": "448198416",
+      "wall_s": 0.08172021000063978,
+      "wall_mad_s": 0.0005142959962540772,
+      "cpu_s": 0.08173600000000247,
+      "reps": 5
+    },
+    {
+      "workload": "funcs-4",
+      "runtime": "erased-e6d",
+      "ok": true,
+      "checksum": "448198416",
+      "wall_s": 0.06893048799975077,
+      "wall_mad_s": 0.0005474499994306825,
+      "cpu_s": 0.06880299999999917,
+      "reps": 5
+    },
+    {
+      "workload": "funcs-4",
+      "runtime": "erased-e2b",
+      "ok": true,
+      "checksum": "448198416",
+      "wall_s": 0.08046125400142046,
+      "wall_mad_s": 0.0007862050006224308,
+      "cpu_s": 0.08037699999999903,
+      "reps": 5
+    },
+    {
+      "workload": "funcs-64",
+      "runtime": "e6d",
+      "ok": true,
+      "checksum": "478198416",
+      "wall_s": 0.10946979000073043,
+      "wall_mad_s": 0.0020630710023397114,
+      "cpu_s": 0.10951700000000053,
+      "reps": 5
+    },
+    {
+      "workload": "funcs-64",
+      "runtime": "e2b",
+      "ok": true,
+      "checksum": "478198416",
+      "wall_s": 0.12159465699733119,
+      "wall_mad_s": 0.0017889539994939696,
+      "cpu_s": 0.1215919999999997,
+      "reps": 5
+    },
+    {
+      "workload": "funcs-64",
+      "runtime": "erased-e6d",
+      "ok": true,
+      "checksum": "478198416",
+      "wall_s": 0.11331805400186568,
+      "wall_mad_s": 0.0013000110011489596,
+      "cpu_s": 0.11331100000000305,
+      "reps": 5
+    },
+    {
+      "workload": "funcs-64",
+      "runtime": "erased-e2b",
+      "ok": true,
+      "checksum": "478198416",
+      "wall_s": 0.12729611100076,
+      "wall_mad_s": 0.006251684000744717,
+      "cpu_s": 0.12729199999999685,
+      "reps": 5
+    },
+    {
+      "workload": "globals-16",
+      "runtime": "e6d",
+      "ok": true,
+      "checksum": "237685664",
+      "wall_s": 0.08013130899780663,
+      "wall_mad_s": 0.004735320995678194,
+      "cpu_s": 0.08002699999999763,
+      "reps": 5
+    },
+    {
+      "workload": "globals-16",
+      "runtime": "e2b",
+      "ok": true,
+      "checksum": "237685664",
+      "wall_s": 0.0809860289991775,
+      "wall_mad_s": 0.0005565139981626999,
+      "cpu_s": 0.08091800000000049,
+      "reps": 5
+    },
+    {
+      "workload": "globals-16",
+      "runtime": "erased-e6d",
+      "ok": true,
+      "checksum": "237685664",
+      "wall_s": 0.09277875999759999,
+      "wall_mad_s": 0.003480597002635477,
+      "cpu_s": 0.09275799999999879,
+      "reps": 5
+    },
+    {
+      "workload": "globals-16",
+      "runtime": "erased-e2b",
+      "ok": true,
+      "checksum": "237685664",
+      "wall_s": 0.1026534119991993,
+      "wall_mad_s": 0.007004441999015398,
+      "cpu_s": 0.10266100000000011,
+      "reps": 5
+    },
+    {
+      "workload": "globals-2",
+      "runtime": "e6d",
+      "ok": true,
+      "checksum": "237761952",
+      "wall_s": 0.06221800499770325,
+      "wall_mad_s": 0.002519361994927749,
+      "cpu_s": 0.062142999999999615,
+      "reps": 5
+    },
+    {
+      "workload": "globals-2",
+      "runtime": "e2b",
+      "ok": true,
+      "checksum": "237761952",
+      "wall_s": 0.06878166900060023,
+      "wall_mad_s": 0.005927473997871857,
+      "cpu_s": 0.06878299999999737,
+      "reps": 5
+    },
+    {
+      "workload": "globals-2",
+      "runtime": "erased-e6d",
+      "ok": true,
+      "checksum": "237761952",
+      "wall_s": 0.07341656199787394,
+      "wall_mad_s": 0.0075552520029305015,
+      "cpu_s": 0.07341399999999965,
+      "reps": 5
+    },
+    {
+      "workload": "globals-2",
+      "runtime": "erased-e2b",
+      "ok": true,
+      "checksum": "237761952",
+      "wall_s": 0.07610222199946293,
+      "wall_mad_s": 0.0027593669983616564,
+      "cpu_s": 0.07597000000000165,
+      "reps": 5
+    },
+    {
+      "workload": "globals-4",
+      "runtime": "e6d",
+      "ok": true,
+      "checksum": "237762400",
+      "wall_s": 0.056952669998281635,
+      "wall_mad_s": 0.0015241900000546593,
+      "cpu_s": 0.056736000000000786,
+      "reps": 5
+    },
+    {
+      "workload": "globals-4",
+      "runtime": "e2b",
+      "ok": true,
+      "checksum": "237762400",
+      "wall_s": 0.05719907199818408,
+      "wall_mad_s": 0.0005074669970781542,
+      "cpu_s": 0.057085999999998194,
+      "reps": 5
+    },
+    {
+      "workload": "globals-4",
+      "runtime": "erased-e6d",
+      "ok": true,
+      "checksum": "237762400",
+      "wall_s": 0.06133723899984034,
+      "wall_mad_s": 0.00033810300010372885,
+      "cpu_s": 0.061168999999999585,
+      "reps": 5
+    },
+    {
+      "workload": "globals-4",
+      "runtime": "erased-e2b",
+      "ok": true,
+      "checksum": "237762400",
+      "wall_s": 0.07020306000049459,
+      "wall_mad_s": 0.0018780600003083237,
+      "cpu_s": 0.07017599999999946,
+      "reps": 5
+    },
+    {
+      "workload": "globals-64",
+      "runtime": "e6d",
+      "ok": true,
+      "checksum": "2388066144",
+      "wall_s": 0.1987131749992841,
+      "wall_mad_s": 0.006352197000524029,
+      "cpu_s": 0.19875700000000052,
+      "reps": 5
+    },
+    {
+      "workload": "globals-64",
+      "runtime": "e2b",
+      "ok": true,
+      "checksum": "2388066144",
+      "wall_s": 0.20158453199837822,
+      "wall_mad_s": 0.011092884997196961,
+      "cpu_s": 0.20184899999999928,
+      "reps": 5
+    },
+    {
+      "workload": "globals-64",
+      "runtime": "erased-e6d",
+      "ok": true,
+      "checksum": "2388066144",
+      "wall_s": 0.19967955900210654,
+      "wall_mad_s": 0.002517164004530059,
+      "cpu_s": 0.19997000000000043,
+      "reps": 5
+    },
+    {
+      "workload": "globals-64",
+      "runtime": "erased-e2b",
+      "ok": true,
+      "checksum": "2388066144",
+      "wall_s": 0.2087322879997373,
+      "wall_mad_s": 0.0041454989986959845,
+      "cpu_s": 0.20739400000000108,
+      "reps": 5
+    },
+    {
+      "workload": "labels-16",
+      "runtime": "e6d",
+      "ok": true,
+      "checksum": "445698416",
+      "wall_s": 0.1324424859994906,
+      "wall_mad_s": 0.012922436999360798,
+      "cpu_s": 0.1324559999999977,
+      "reps": 5
+    },
+    {
+      "workload": "labels-16",
+      "runtime": "e2b",
+      "ok": true,
+      "checksum": "445698416",
+      "wall_s": 0.14695963300255244,
+      "wall_mad_s": 0.001874955003586365,
+      "cpu_s": 0.147192000000004,
+      "reps": 5
+    },
+    {
+      "workload": "labels-16",
+      "runtime": "erased-e6d",
+      "ok": true,
+      "checksum": "445698416",
+      "wall_s": 0.13076530000034836,
+      "wall_mad_s": 0.0032456260014441796,
+      "cpu_s": 0.13087100000000085,
+      "reps": 5
+    },
+    {
+      "workload": "labels-16",
+      "runtime": "erased-e2b",
+      "ok": true,
+      "checksum": "445698416",
+      "wall_s": 0.15227918500022497,
+      "wall_mad_s": 0.008347332000994356,
+      "cpu_s": 0.15241799999999883,
+      "reps": 5
+    },
+    {
+      "workload": "labels-2",
+      "runtime": "e6d",
+      "ok": true,
+      "checksum": "445698416",
+      "wall_s": 0.06072694199974649,
+      "wall_mad_s": 0.0012674650024564471,
+      "cpu_s": 0.060599000000000514,
+      "reps": 5
+    },
+    {
+      "workload": "labels-2",
+      "runtime": "e2b",
+      "ok": true,
+      "checksum": "445698416",
+      "wall_s": 0.06290251600148622,
+      "wall_mad_s": 0.0004538020002655685,
+      "cpu_s": 0.0627750000000018,
+      "reps": 5
+    },
+    {
+      "workload": "labels-2",
+      "runtime": "erased-e6d",
+      "ok": true,
+      "checksum": "445698416",
+      "wall_s": 0.059934721000900026,
+      "wall_mad_s": 0.0015538890002062544,
+      "cpu_s": 0.05991599999999542,
+      "reps": 5
+    },
+    {
+      "workload": "labels-2",
+      "runtime": "erased-e2b",
+      "ok": true,
+      "checksum": "445698416",
+      "wall_s": 0.06912686699797632,
+      "wall_mad_s": 0.0005088660000183154,
+      "cpu_s": 0.06880699999999984,
+      "reps": 5
+    },
+    {
+      "workload": "labels-4",
+      "runtime": "e6d",
+      "ok": true,
+      "checksum": "445698416",
+      "wall_s": 0.060985508000158006,
+      "wall_mad_s": 0.001412980000168318,
+      "cpu_s": 0.06087699999999785,
+      "reps": 5
+    },
+    {
+      "workload": "labels-4",
+      "runtime": "e2b",
+      "ok": true,
+      "checksum": "445698416",
+      "wall_s": 0.06311324399939622,
+      "wall_mad_s": 0.0005527039975277148,
+      "cpu_s": 0.06311699999999831,
+      "reps": 5
+    },
+    {
+      "workload": "labels-4",
+      "runtime": "erased-e6d",
+      "ok": true,
+      "checksum": "445698416",
+      "wall_s": 0.06063430100039113,
+      "wall_mad_s": 0.0006086619978304952,
+      "cpu_s": 0.06065499999999813,
+      "reps": 5
+    },
+    {
+      "workload": "labels-4",
+      "runtime": "erased-e2b",
+      "ok": true,
+      "checksum": "445698416",
+      "wall_s": 0.06887367500166874,
+      "wall_mad_s": 8.00279995019082e-05,
+      "cpu_s": 0.06872599999999807,
+      "reps": 5
+    },
+    {
+      "workload": "labels-64",
+      "runtime": "e6d",
+      "ok": true,
+      "checksum": "445698416",
+      "wall_s": 0.326510500999575,
+      "wall_mad_s": 0.008131660000799457,
+      "cpu_s": 0.32697000000000065,
+      "reps": 5
+    },
+    {
+      "workload": "labels-64",
+      "runtime": "e2b",
+      "ok": true,
+      "checksum": "445698416",
+      "wall_s": 0.3488765889997012,
+      "wall_mad_s": 0.007028162999631604,
+      "cpu_s": 0.34933600000000564,
+      "reps": 5
+    },
+    {
+      "workload": "labels-64",
+      "runtime": "erased-e6d",
+      "ok": true,
+      "checksum": "445698416",
+      "wall_s": 0.3232737409998663,
+      "wall_mad_s": 0.003682460999698378,
+      "cpu_s": 0.3236129999999984,
+      "reps": 5
+    },
+    {
+      "workload": "labels-64",
+      "runtime": "erased-e2b",
+      "ok": true,
+      "checksum": "445698416",
+      "wall_s": 0.3753407839976717,
+      "wall_mad_s": 0.003594648998841876,
+      "cpu_s": 0.376041999999998,
+      "reps": 5
+    },
+    {
+      "workload": "locals-16",
+      "runtime": "e6d",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.15057098800025415,
+      "wall_mad_s": 0.0011150389982503839,
+      "cpu_s": 0.15077499999999566,
+      "reps": 5
+    },
+    {
+      "workload": "locals-16",
+      "runtime": "e2b",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.09769476399742416,
+      "wall_mad_s": 0.00022205699860933237,
+      "cpu_s": 0.09760499999999439,
+      "reps": 5
+    },
+    {
+      "workload": "locals-16",
+      "runtime": "erased-e6d",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.14052933799757739,
+      "wall_mad_s": 0.0005565620012930594,
+      "cpu_s": 0.1405329999999978,
+      "reps": 5
+    },
+    {
+      "workload": "locals-16",
+      "runtime": "erased-e2b",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.10457944399968255,
+      "wall_mad_s": 0.0011019259982276708,
+      "cpu_s": 0.1042550000000011,
+      "reps": 5
+    },
+    {
+      "workload": "locals-2",
+      "runtime": "e6d",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.07578163799917093,
+      "wall_mad_s": 0.0005813450006826315,
+      "cpu_s": 0.07561299999999704,
+      "reps": 5
+    },
+    {
+      "workload": "locals-2",
+      "runtime": "e2b",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.07750172200030647,
+      "wall_mad_s": 0.000588841998251155,
+      "cpu_s": 0.07738900000000548,
+      "reps": 5
+    },
+    {
+      "workload": "locals-2",
+      "runtime": "erased-e6d",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.07695983499797876,
+      "wall_mad_s": 0.001811633996112505,
+      "cpu_s": 0.07675899999999913,
+      "reps": 5
+    },
+    {
+      "workload": "locals-2",
+      "runtime": "erased-e2b",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.08758697600205778,
+      "wall_mad_s": 0.00020212700110278092,
+      "cpu_s": 0.08748199999999429,
+      "reps": 5
+    },
+    {
+      "workload": "locals-4",
+      "runtime": "e6d",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.09270466300222324,
+      "wall_mad_s": 0.003255375002481742,
+      "cpu_s": 0.09258800000000278,
+      "reps": 5
+    },
+    {
+      "workload": "locals-4",
+      "runtime": "e2b",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.08194307099984144,
+      "wall_mad_s": 0.005216194000240648,
+      "cpu_s": 0.081901000000002,
+      "reps": 5
+    },
+    {
+      "workload": "locals-4",
+      "runtime": "erased-e6d",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.09782821599947056,
+      "wall_mad_s": 0.011731776998203713,
+      "cpu_s": 0.09785300000000063,
+      "reps": 5
+    },
+    {
+      "workload": "locals-4",
+      "runtime": "erased-e2b",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.09399316899725818,
+      "wall_mad_s": 0.003989578995970078,
+      "cpu_s": 0.09398699999999849,
+      "reps": 5
+    },
+    {
+      "workload": "locals-64",
+      "runtime": "e6d",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.2837291700016067,
+      "wall_mad_s": 0.004582931000186363,
+      "cpu_s": 0.2841789999999973,
+      "reps": 5
+    },
+    {
+      "workload": "locals-64",
+      "runtime": "e2b",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.11062642300021253,
+      "wall_mad_s": 0.00613296099982108,
+      "cpu_s": 0.11051799999999878,
+      "reps": 5
+    },
+    {
+      "workload": "locals-64",
+      "runtime": "erased-e6d",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.2862904699977662,
+      "wall_mad_s": 0.0013208950040279888,
+      "cpu_s": 0.2865989999999994,
+      "reps": 5
+    },
+    {
+      "workload": "locals-64",
+      "runtime": "erased-e2b",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.11365558200122905,
+      "wall_mad_s": 0.0012908380012959242,
+      "cpu_s": 0.11365299999999623,
+      "reps": 5
+    },
+    {
+      "workload": "loop-arith",
+      "runtime": "e6d",
+      "ok": true,
+      "checksum": "2401681406",
+      "wall_s": 0.078136962998542,
+      "wall_mad_s": 0.000512047998199705,
+      "cpu_s": 0.07822399999999652,
+      "reps": 5
+    },
+    {
+      "workload": "loop-arith",
+      "runtime": "e2b",
+      "ok": true,
+      "checksum": "2401681406",
+      "wall_s": 0.08112052399883396,
+      "wall_mad_s": 0.002742533000855474,
+      "cpu_s": 0.081156,
+      "reps": 5
+    },
+    {
+      "workload": "loop-arith",
+      "runtime": "erased-e6d",
+      "ok": true,
+      "checksum": "2401681406",
+      "wall_s": 0.08363256899974658,
+      "wall_mad_s": 0.0009509780029475223,
+      "cpu_s": 0.08361599999999925,
+      "reps": 5
+    },
+    {
+      "workload": "loop-arith",
+      "runtime": "erased-e2b",
+      "ok": true,
+      "checksum": "2401681406",
+      "wall_s": 0.09261806300128228,
+      "wall_mad_s": 0.001898897004139144,
+      "cpu_s": 0.09271699999999661,
+      "reps": 5
+    },
+    {
+      "workload": "loop-arith64",
+      "runtime": "e6d",
+      "ok": true,
+      "checksum": "4143906814",
+      "wall_s": 0.08636144000047352,
+      "wall_mad_s": 0.0010163010010728613,
+      "cpu_s": 0.08625699999999781,
+      "reps": 5
+    },
+    {
+      "workload": "loop-arith64",
+      "runtime": "e2b",
+      "ok": true,
+      "checksum": "4143906814",
+      "wall_s": 0.08459509200110915,
+      "wall_mad_s": 0.0008479120006086305,
+      "cpu_s": 0.08452300000000434,
+      "reps": 5
+    },
+    {
+      "workload": "loop-arith64",
+      "runtime": "erased-e6d",
+      "ok": true,
+      "checksum": "4143906814",
+      "wall_s": 0.09099004499876173,
+      "wall_mad_s": 0.0010316689986211713,
+      "cpu_s": 0.09092599999999607,
+      "reps": 5
+    },
+    {
+      "workload": "loop-arith64",
+      "runtime": "erased-e2b",
+      "ok": true,
+      "checksum": "4143906814",
+      "wall_s": 0.09847590699791908,
+      "wall_mad_s": 0.004760378997161752,
+      "cpu_s": 0.09851799999999855,
+      "reps": 5
+    },
+    {
+      "workload": "memory-random",
+      "runtime": "e6d",
+      "ok": true,
+      "checksum": "3894883294",
+      "wall_s": 0.2437366860031034,
+      "wall_mad_s": 0.004606217004038626,
+      "cpu_s": 0.24400799999999379,
+      "reps": 5
+    },
+    {
+      "workload": "memory-random",
+      "runtime": "e2b",
+      "ok": true,
+      "checksum": "3894883294",
+      "wall_s": 0.2432106289998046,
+      "wall_mad_s": 0.0023971699993126094,
+      "cpu_s": 0.24361499999999725,
+      "reps": 5
+    },
+    {
+      "workload": "memory-random",
+      "runtime": "erased-e6d",
+      "ok": true,
+      "checksum": "3894883294",
+      "wall_s": 0.19762625799921807,
+      "wall_mad_s": 0.002078720997815253,
+      "cpu_s": 0.19791800000000137,
+      "reps": 5
+    },
+    {
+      "workload": "memory-random",
+      "runtime": "erased-e2b",
+      "ok": true,
+      "checksum": "3894883294",
+      "wall_s": 0.21297262000007322,
+      "wall_mad_s": 0.003152990000671707,
+      "cpu_s": 0.21327200000000035,
+      "reps": 5
+    },
+    {
+      "workload": "memory-stream",
+      "runtime": "e6d",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.49425053099912475,
+      "wall_mad_s": 0.026808839000295848,
+      "cpu_s": 0.4952599999999978,
+      "reps": 5
+    },
+    {
+      "workload": "memory-stream",
+      "runtime": "e2b",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.4610147870007495,
+      "wall_mad_s": 0.010599340999760898,
+      "cpu_s": 0.4619290000000029,
+      "reps": 5
+    },
+    {
+      "workload": "memory-stream",
+      "runtime": "erased-e6d",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.4182476019996102,
+      "wall_mad_s": 0.014888575999066234,
+      "cpu_s": 0.4190810000000027,
+      "reps": 5
+    },
+    {
+      "workload": "memory-stream",
+      "runtime": "erased-e2b",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.41639721899991855,
+      "wall_mad_s": 0.012068435000401223,
+      "cpu_s": 0.4172490000000124,
+      "reps": 5
+    }
+  ]
+}

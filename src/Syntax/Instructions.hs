@@ -44,6 +44,7 @@ import Data.Singletons.TH (Sing, SingI (sing))
 import Syntax.Immediates
 import Syntax.Indices
 import Syntax.Types
+import Validation.Ref (LocalRef)
 import Validation.Shape (
     Append (..),
     DataShape (..),
@@ -284,9 +285,9 @@ data
     IDrop :: Instr m f l (t ': s) s
     ISelect :: IsNum t -> Instr m f l ('I32 ': t ': t ': s) (t ': s)
     {- Locals (from the @frame@) & globals (from the @mod@) -}
-    ILocalGet :: Elem t (FrameLocals f) -> Instr m f l s (t ': s)
-    ILocalSet :: Elem t (FrameLocals f) -> Instr m f l (t ': s) s
-    ILocalTee :: Elem t (FrameLocals f) -> Instr m f l (t ': s) (t ': s)
+    ILocalGet :: LocalRef t (FrameLocals f) -> Instr m f l s (t ': s)
+    ILocalSet :: LocalRef t (FrameLocals f) -> Instr m f l (t ': s) s
+    ILocalTee :: LocalRef t (FrameLocals f) -> Instr m f l (t ': s) (t ': s)
     IGlobalGet :: Elem ('GlobalType mut t) (ModuleGlobals m) -> Instr m f l s (t ': s)
     IGlobalSet :: Elem ('GlobalType 'Mutable t) (ModuleGlobals m) -> Instr m f l (t ': s) s
     {- Memory (requires the module to declare a memory) -}

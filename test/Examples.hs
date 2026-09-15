@@ -37,6 +37,7 @@ import Syntax.Types (
     ValType (..),
  )
 import Syntax.TypesIFC (LValType (..), SecLevel (..))
+import Validation.Ref (LocalRef, resolveLocal)
 import Validation.Shape (Elem (..), ModuleShape (..))
 
 {- | The single i32 a completed run produced. (These modules import nothing, so a call into
@@ -55,7 +56,7 @@ completedI32 (NeedsHost _) = Left "the example called into the host"
 
 factorial :: FuncInst shape ('FuncType '[ 'I32] '[ 'I32])
 factorial =
-    WasmFunc . Function (SCons SI32 SNil) $
+    WasmFunc . Function (SCons SI32 SNil) (SCons SI32 SNil) $
         ( IConst I32IsNum 1
             :. ILocalSet acc
             :. block_
@@ -81,9 +82,9 @@ factorial =
             :. INil
         )
   where
-    n, acc :: Elem 'I32 '[ 'I32, 'I32]
-    n = Here
-    acc = There Here
+    n, acc :: LocalRef 'I32 '[ 'I32, 'I32]
+    n = resolveLocal SI32 Here
+    acc = resolveLocal SI32 (There Here)
     -- Inside the loop the labels are: 0 = loop, 1 = block, 2 = function.
     toContinue, toDone :: Elem '[] '[ '[], '[], '[ 'I32]]
     toContinue = Here -- branch to the loop header (restarts it)
@@ -100,7 +101,7 @@ spinForever = loop_ (br_ Here :. INil) :. INil
 
 -- | Whether the loop is still running after the given number of steps (it always is).
 runSpinFor :: Int -> Either String Bool
-runSpinFor fuel = case runFor fuel FsNil (Config (moduleToStore emptyMod) LNil VNil spinForever EntryBoundary) of
+runSpinFor fuel = case runFor fuel FsNil (Config (moduleToStore emptyMod) noLocals VNil spinForever EntryBoundary) of
     Left trap -> Left (show trap)
     Right (OutOfFuel _) -> Right True
     Right (Halted _) -> Right False
@@ -123,10 +124,10 @@ runFactorial input =
 type CallCtx = 'ModuleShape '[ 'FuncType '[ 'I32, 'I32] '[ 'I32]] '[] '[] '[] '[]
 
 multiply :: FuncInst CallCtx ('FuncType '[ 'I32, 'I32] '[ 'I32])
-multiply = WasmFunc . Function SNil $ (ILocalGet Here :. ILocalGet (There Here) :. IMul I32IsNum :. INil)
+multiply = WasmFunc . Function (SCons SI32 (SCons SI32 SNil)) SNil $ (ILocalGet (resolveLocal SI32 Here) :. ILocalGet (resolveLocal SI32 (There Here)) :. IMul I32IsNum :. INil)
 
 square :: FuncInst CallCtx ('FuncType '[ 'I32] '[ 'I32])
-square = WasmFunc . Function SNil $ (ILocalGet Here :. ILocalGet Here :. call toMultiply :. INil)
+square = WasmFunc . Function (SCons SI32 SNil) SNil $ (ILocalGet (resolveLocal SI32 Here) :. ILocalGet (resolveLocal SI32 Here) :. call toMultiply :. INil)
   where
     -- function index 0 in the module signature
     toMultiply :: Elem ('FuncType '[ 'I32, 'I32] '[ 'I32]) '[ 'FuncType '[ 'I32, 'I32] '[ 'I32]]
@@ -148,7 +149,7 @@ type GlobalCtx = 'ModuleShape '[] '[ 'GlobalType 'Mutable 'I32] '[] '[] '[]
 
 increment :: FuncInst GlobalCtx ('FuncType '[] '[ 'I32])
 increment =
-    WasmFunc . Function SNil $
+    WasmFunc . Function SNil SNil $
         ( IGlobalGet Here
             :. IConst I32IsNum 1
             :. IAdd I32IsNum
@@ -175,7 +176,7 @@ runIncrement initial = either (Left . show) completedI32 (runFunction globalModu
          In the first argument of ‘(:.)’, namely ‘IAdd I32IsNum’
 
    broken :: FuncInst shape ('FuncType '[ 'I32 ] '[ 'I32 ])
-   broken = WasmFunc . Function SNil $ (ILocalGet Here :. IAdd I32IsNum :. INil)
+   broken = WasmFunc . Function (SCons SI32 SNil) SNil $ (ILocalGet (resolveLocal SI32 Here) :. IAdd I32IsNum :. INil)
 -}
 
 {- | The first labelled program, for "Syntax.InstructionsIFC": a secret plus a public value.

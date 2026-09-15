@@ -85,6 +85,7 @@ library
       , Syntax.Module
       , Validation.Shape
       , Validation.Reflect
+      , Validation.Ref
       , Validation.Elaborate
       , Runtime.MemInst
       , Runtime.TableInst
@@ -194,6 +195,7 @@ benchmark wasm-ifc-erased
       , containers
       , singletons-base
       , text
+      , vector
 
 -- Front-end timing for the performance experiments (TODO.md §I, E5): decode, validate and
 -- instantiate, per module. A measurement device like wasm-ifc-erased; built only on request.

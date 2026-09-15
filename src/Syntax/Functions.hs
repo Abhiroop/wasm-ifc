@@ -40,12 +40,15 @@ data RawFunction = RawFunction
 -}
 type FunctionBody mod locals rs = Expr mod ('FrameShape locals rs) '[rs] '[] rs
 
-{- | A function as validated: the types of the locals it declares, and its body. The frame's
-  locals are the parameters — reversed, since the argument segment lists the last one first
-  and local 0 is the first parameter — followed by the declared locals.
+{- | A function as validated: the types of its parameters and of the locals it declares, and
+  its body. The frame's locals are the parameters — reversed, since the argument segment lists
+  the last one first and local 0 is the first parameter — followed by the declared locals.
+  Both singletons are kept because a call packs its arguments into the callee's locals, and
+  packing a value takes its type.
 -}
 data Function (mod :: ModuleShape) (ft :: FuncType) where
     Function ::
+        Sing (ps :: [ValType]) ->
         Sing (declared :: [ValType]) ->
         FunctionBody mod (ReverseOnto ps declared) rs ->
         Function mod ('FuncType ps rs)

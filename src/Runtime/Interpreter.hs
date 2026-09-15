@@ -474,11 +474,11 @@ enterCall ::
     Control mod res ret locals labels out ->
     Either Trap (StepResult mod res)
 enterCall funcs store locals witness ix stack rest control = case getFunc ix funcs of
-    WasmFunc (Function declared body)
+    WasmFunc (Function params declared body)
         | depth > callDepthBound -> Left CallStackExhausted
         | otherwise ->
             let (args, below) = splitStack witness stack
-                calleeLocals = reverseOnto args (defaultLocals declared)
+                calleeLocals = seedLocals params declared args
              in Right (Stepped (Config store calleeLocals VNil body (CallBoundary depth below locals rest control)))
     HostFunc wasiFunc -> case wasiFuncType wasiFunc of
         SFuncType _ resultsS ->
@@ -684,7 +684,7 @@ runFunction ::
     FuncInst mod ('FuncType ps rs) ->
     ValueStack ps ->
     Either Trap (Outcome mod rs)
-runFunction tm (WasmFunc (Function declared body)) args = do
+runFunction tm (WasmFunc (Function params declared body)) args = do
     halt <- run (tm.functions) (Config store locals VNil body EntryBoundary)
     Right $ case halt of
         Finished store' results ->
@@ -692,11 +692,11 @@ runFunction tm (WasmFunc (Function declared body)) args = do
         AwaitingHost request -> NeedsHost request
   where
     store = moduleToStore tm
-    locals = reverseOnto args (defaultLocals declared)
+    locals = seedLocals params declared args
 runFunction tm (HostFunc wasiFunc) args = case wasiFuncType wasiFunc of
     SFuncType _ resultsS ->
         let store = moduleToStore tm
-         in Right (NeedsHost (HostRequest wasiFunc args store (Suspended (appendNil resultsS) LNil VNil INil EntryBoundary)))
+         in Right (NeedsHost (HostRequest wasiFunc args store (Suspended (appendNil resultsS) noLocals VNil INil EntryBoundary)))
 
 {- *** Numeric dispatch ***
 

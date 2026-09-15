@@ -1,0 +1,824 @@
+{
+  "environment": {
+    "date": "2026-09-15T17:02:34",
+    "commit": "b4f290b-dirty",
+    "tier": "t1",
+    "cpu": "12th Gen Intel(R) Core(TM) i7-12700H",
+    "kernel": "6.18.33.2-microsoft-standard-WSL2",
+    "pinned_to": null,
+    "ghc": "The Glorious Glasgow Haskell Compilation System, version 9.12.2",
+    "versions": {},
+    "binaries": {
+      "e6d": "/tmp/claude-1000/-home-dgalan-ethz-wasm-ifc/cab0c187-6a59-457e-be33-ea6164c18b88/scratchpad/wasm-ifc-e6d",
+      "e2b": "/tmp/claude-1000/-home-dgalan-ethz-wasm-ifc/cab0c187-6a59-457e-be33-ea6164c18b88/scratchpad/wasm-ifc-e2b",
+      "a64m": "/tmp/claude-1000/-home-dgalan-ethz-wasm-ifc/cab0c187-6a59-457e-be33-ea6164c18b88/scratchpad/wasm-ifc-var-a64m",
+      "chunk1024": "/tmp/claude-1000/-home-dgalan-ethz-wasm-ifc/cab0c187-6a59-457e-be33-ea6164c18b88/scratchpad/wasm-ifc-var-chunk1024",
+      "chunk256": "/tmp/claude-1000/-home-dgalan-ethz-wasm-ifc/cab0c187-6a59-457e-be33-ea6164c18b88/scratchpad/wasm-ifc-var-chunk256",
+      "memo2": "/tmp/claude-1000/-home-dgalan-ethz-wasm-ifc/cab0c187-6a59-457e-be33-ea6164c18b88/scratchpad/wasm-ifc-var-memo2",
+      "combo1024": "/tmp/claude-1000/-home-dgalan-ethz-wasm-ifc/cab0c187-6a59-457e-be33-ea6164c18b88/scratchpad/wasm-ifc-var-combo1024",
+      "combo256": "/tmp/claude-1000/-home-dgalan-ethz-wasm-ifc/cab0c187-6a59-457e-be33-ea6164c18b88/scratchpad/wasm-ifc-var-combo256"
+    }
+  },
+  "measurements": [
+    {
+      "workload": "call-indirect",
+      "runtime": "e6d",
+      "ok": true,
+      "checksum": "1630302344",
+      "wall_s": 0.10612959900026908,
+      "wall_mad_s": 0.003665037998871412,
+      "cpu_s": 0.10605,
+      "reps": 5
+    },
+    {
+      "workload": "call-indirect",
+      "runtime": "e2b",
+      "ok": true,
+      "checksum": "1630302344",
+      "wall_s": 0.12184048199924291,
+      "wall_mad_s": 0.0029158370016375557,
+      "cpu_s": 0.12198900000000021,
+      "reps": 5
+    },
+    {
+      "workload": "call-indirect",
+      "runtime": "a64m",
+      "ok": true,
+      "checksum": "1630302344",
+      "wall_s": 0.14374469600079465,
+      "wall_mad_s": 0.012213840000185883,
+      "cpu_s": 0.14384899999999984,
+      "reps": 5
+    },
+    {
+      "workload": "call-indirect",
+      "runtime": "chunk1024",
+      "ok": true,
+      "checksum": "1630302344",
+      "wall_s": 0.11006861200075946,
+      "wall_mad_s": 0.0013204319984652102,
+      "cpu_s": 0.11011200000000015,
+      "reps": 5
+    },
+    {
+      "workload": "call-indirect",
+      "runtime": "chunk256",
+      "ok": true,
+      "checksum": "1630302344",
+      "wall_s": 0.10353159900114406,
+      "wall_mad_s": 0.0014482379992841743,
+      "cpu_s": 0.10359899999999983,
+      "reps": 5
+    },
+    {
+      "workload": "call-indirect",
+      "runtime": "memo2",
+      "ok": true,
+      "checksum": "1630302344",
+      "wall_s": 0.10913648199857562,
+      "wall_mad_s": 0.004163574998528929,
+      "cpu_s": 0.10906599999999989,
+      "reps": 5
+    },
+    {
+      "workload": "call-indirect",
+      "runtime": "combo1024",
+      "ok": true,
+      "checksum": "1630302344",
+      "wall_s": 0.11651349699968705,
+      "wall_mad_s": 0.004341347001172835,
+      "cpu_s": 0.116541,
+      "reps": 5
+    },
+    {
+      "workload": "call-indirect",
+      "runtime": "combo256",
+      "ok": true,
+      "checksum": "1630302344",
+      "wall_s": 0.13158240200209548,
+      "wall_mad_s": 0.003323519998957636,
+      "cpu_s": 0.1316310000000005,
+      "reps": 5
+    },
+    {
+      "workload": "empty",
+      "runtime": "e6d",
+      "ok": true,
+      "checksum": "0",
+      "wall_s": 0.001604010998562444,
+      "wall_mad_s": 0.00010479300181032158,
+      "cpu_s": 0.0014379999999999948,
+      "reps": 5
+    },
+    {
+      "workload": "empty",
+      "runtime": "e2b",
+      "ok": true,
+      "checksum": "0",
+      "wall_s": 0.0014544149998982903,
+      "wall_mad_s": 4.000800254289061e-05,
+      "cpu_s": 0.0013279999999999959,
+      "reps": 5
+    },
+    {
+      "workload": "empty",
+      "runtime": "a64m",
+      "ok": true,
+      "checksum": "0",
+      "wall_s": 0.0021252870028547477,
+      "wall_mad_s": 4.766599886352196e-05,
+      "cpu_s": 0.001835000000000031,
+      "reps": 5
+    },
+    {
+      "workload": "empty",
+      "runtime": "chunk1024",
+      "ok": true,
+      "checksum": "0",
+      "wall_s": 0.0014801340003032237,
+      "wall_mad_s": 0.00011638200157904066,
+      "cpu_s": 0.0013260000000006045,
+      "reps": 5
+    },
+    {
+      "workload": "empty",
+      "runtime": "chunk256",
+      "ok": true,
+      "checksum": "0",
+      "wall_s": 0.0015699690011388157,
+      "wall_mad_s": 9.313600094174035e-05,
+      "cpu_s": 0.0013439999999995678,
+      "reps": 5
+    },
+    {
+      "workload": "empty",
+      "runtime": "memo2",
+      "ok": true,
+      "checksum": "0",
+      "wall_s": 0.0015995350004232023,
+      "wall_mad_s": 7.587399886688218e-05,
+      "cpu_s": 0.0013329999999998066,
+      "reps": 5
+    },
+    {
+      "workload": "empty",
+      "runtime": "combo1024",
+      "ok": true,
+      "checksum": "0",
+      "wall_s": 0.001490881997597171,
+      "wall_mad_s": 5.840499943587929e-05,
+      "cpu_s": 0.0013250000000004647,
+      "reps": 5
+    },
+    {
+      "workload": "empty",
+      "runtime": "combo256",
+      "ok": true,
+      "checksum": "0",
+      "wall_s": 0.001585966001584893,
+      "wall_mad_s": 6.655400284216739e-05,
+      "cpu_s": 0.0013499999999995183,
+      "reps": 5
+    },
+    {
+      "workload": "fib",
+      "runtime": "e6d",
+      "ok": true,
+      "checksum": "832040",
+      "wall_s": 0.2916530510010489,
+      "wall_mad_s": 0.0027993199983029626,
+      "cpu_s": 0.29219300000000115,
+      "reps": 5
+    },
+    {
+      "workload": "fib",
+      "runtime": "e2b",
+      "ok": true,
+      "checksum": "832040",
+      "wall_s": 0.36049421099960455,
+      "wall_mad_s": 0.01681947499673697,
+      "cpu_s": 0.36096700000000026,
+      "reps": 5
+    },
+    {
+      "workload": "fib",
+      "runtime": "a64m",
+      "ok": true,
+      "checksum": "832040",
+      "wall_s": 0.37734804499996244,
+      "wall_mad_s": 0.0002883099987229798,
+      "cpu_s": 0.37793699999999775,
+      "reps": 5
+    },
+    {
+      "workload": "fib",
+      "runtime": "chunk1024",
+      "ok": true,
+      "checksum": "832040",
+      "wall_s": 0.2875584860012168,
+      "wall_mad_s": 0.0022762160006095655,
+      "cpu_s": 0.28788700000000134,
+      "reps": 5
+    },
+    {
+      "workload": "fib",
+      "runtime": "chunk256",
+      "ok": true,
+      "checksum": "832040",
+      "wall_s": 0.29390779599998496,
+      "wall_mad_s": 0.012552240998047637,
+      "cpu_s": 0.2942009999999995,
+      "reps": 5
+    },
+    {
+      "workload": "fib",
+      "runtime": "memo2",
+      "ok": true,
+      "checksum": "832040",
+      "wall_s": 0.30046905700146453,
+      "wall_mad_s": 0.0055778119967726525,
+      "cpu_s": 0.3008460000000015,
+      "reps": 5
+    },
+    {
+      "workload": "fib",
+      "runtime": "combo1024",
+      "ok": true,
+      "checksum": "832040",
+      "wall_s": 0.32788307200098643,
+      "wall_mad_s": 0.000596502999542281,
+      "cpu_s": 0.32853399999999977,
+      "reps": 5
+    },
+    {
+      "workload": "fib",
+      "runtime": "combo256",
+      "ok": true,
+      "checksum": "832040",
+      "wall_s": 0.3543126679978741,
+      "wall_mad_s": 0.01245092500175815,
+      "cpu_s": 0.3547700000000007,
+      "reps": 5
+    },
+    {
+      "workload": "labels-2",
+      "runtime": "e6d",
+      "ok": true,
+      "checksum": "445698416",
+      "wall_s": 0.05314570400150842,
+      "wall_mad_s": 0.002340447001188295,
+      "cpu_s": 0.05298099999999906,
+      "reps": 5
+    },
+    {
+      "workload": "labels-2",
+      "runtime": "e2b",
+      "ok": true,
+      "checksum": "445698416",
+      "wall_s": 0.05703425800311379,
+      "wall_mad_s": 0.0018066810043819714,
+      "cpu_s": 0.05692400000000053,
+      "reps": 5
+    },
+    {
+      "workload": "labels-2",
+      "runtime": "a64m",
+      "ok": true,
+      "checksum": "445698416",
+      "wall_s": 0.09312074000263237,
+      "wall_mad_s": 0.014337483004055684,
+      "cpu_s": 0.09319300000000008,
+      "reps": 5
+    },
+    {
+      "workload": "labels-2",
+      "runtime": "chunk1024",
+      "ok": true,
+      "checksum": "445698416",
+      "wall_s": 0.05322617599813384,
+      "wall_mad_s": 0.0016092059995571617,
+      "cpu_s": 0.05312699999999948,
+      "reps": 5
+    },
+    {
+      "workload": "labels-2",
+      "runtime": "chunk256",
+      "ok": true,
+      "checksum": "445698416",
+      "wall_s": 0.05451411499961978,
+      "wall_mad_s": 0.0016830700005812105,
+      "cpu_s": 0.05426299999999884,
+      "reps": 5
+    },
+    {
+      "workload": "labels-2",
+      "runtime": "memo2",
+      "ok": true,
+      "checksum": "445698416",
+      "wall_s": 0.05787636199966073,
+      "wall_mad_s": 0.004167048002273077,
+      "cpu_s": 0.05783199999999977,
+      "reps": 5
+    },
+    {
+      "workload": "labels-2",
+      "runtime": "combo1024",
+      "ok": true,
+      "checksum": "445698416",
+      "wall_s": 0.057069346999924164,
+      "wall_mad_s": 0.00205091800307855,
+      "cpu_s": 0.05697600000000014,
+      "reps": 5
+    },
+    {
+      "workload": "labels-2",
+      "runtime": "combo256",
+      "ok": true,
+      "checksum": "445698416",
+      "wall_s": 0.06120886200005771,
+      "wall_mad_s": 0.000155000998347532,
+      "cpu_s": 0.060942999999999525,
+      "reps": 5
+    },
+    {
+      "workload": "locals-16",
+      "runtime": "e6d",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.14029531999767642,
+      "wall_mad_s": 0.009214127996528987,
+      "cpu_s": 0.14033500000000032,
+      "reps": 5
+    },
+    {
+      "workload": "locals-16",
+      "runtime": "e2b",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.09287869699983275,
+      "wall_mad_s": 0.005053346998465713,
+      "cpu_s": 0.09294200000000075,
+      "reps": 5
+    },
+    {
+      "workload": "locals-16",
+      "runtime": "a64m",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.18167106400142075,
+      "wall_mad_s": 0.0023560180015920196,
+      "cpu_s": 0.18184900000000082,
+      "reps": 5
+    },
+    {
+      "workload": "locals-16",
+      "runtime": "chunk1024",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.14197283400062588,
+      "wall_mad_s": 0.007884747999924002,
+      "cpu_s": 0.14194400000000118,
+      "reps": 5
+    },
+    {
+      "workload": "locals-16",
+      "runtime": "chunk256",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.13673499699871172,
+      "wall_mad_s": 0.00424996899891994,
+      "cpu_s": 0.13683100000000326,
+      "reps": 5
+    },
+    {
+      "workload": "locals-16",
+      "runtime": "memo2",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.13572408400068525,
+      "wall_mad_s": 0.007779753999784589,
+      "cpu_s": 0.1358390000000007,
+      "reps": 5
+    },
+    {
+      "workload": "locals-16",
+      "runtime": "combo1024",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.09130812100192998,
+      "wall_mad_s": 0.004669308003940387,
+      "cpu_s": 0.09107500000000002,
+      "reps": 5
+    },
+    {
+      "workload": "locals-16",
+      "runtime": "combo256",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.0963348400000541,
+      "wall_mad_s": 0.005812108000100125,
+      "cpu_s": 0.09642500000000154,
+      "reps": 5
+    },
+    {
+      "workload": "locals-2",
+      "runtime": "e6d",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.07522407400028897,
+      "wall_mad_s": 0.000959043998591369,
+      "cpu_s": 0.0749819999999981,
+      "reps": 5
+    },
+    {
+      "workload": "locals-2",
+      "runtime": "e2b",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.07540118600081769,
+      "wall_mad_s": 0.000282007000350859,
+      "cpu_s": 0.07529000000000363,
+      "reps": 5
+    },
+    {
+      "workload": "locals-2",
+      "runtime": "a64m",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.11108688300009817,
+      "wall_mad_s": 0.0077663449992542155,
+      "cpu_s": 0.11088700000000151,
+      "reps": 5
+    },
+    {
+      "workload": "locals-2",
+      "runtime": "chunk1024",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.07519941200007452,
+      "wall_mad_s": 0.0019911180024791975,
+      "cpu_s": 0.07499599999999873,
+      "reps": 5
+    },
+    {
+      "workload": "locals-2",
+      "runtime": "chunk256",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.07542323899906478,
+      "wall_mad_s": 0.0007917680013633799,
+      "cpu_s": 0.0752130000000042,
+      "reps": 5
+    },
+    {
+      "workload": "locals-2",
+      "runtime": "memo2",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.0807405209998251,
+      "wall_mad_s": 0.0004444550031621475,
+      "cpu_s": 0.08066699999999827,
+      "reps": 5
+    },
+    {
+      "workload": "locals-2",
+      "runtime": "combo1024",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.0814870569993218,
+      "wall_mad_s": 0.0009695349981484469,
+      "cpu_s": 0.08149600000000112,
+      "reps": 5
+    },
+    {
+      "workload": "locals-2",
+      "runtime": "combo256",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.08508848799829138,
+      "wall_mad_s": 0.0018692250014282763,
+      "cpu_s": 0.08508300000000069,
+      "reps": 5
+    },
+    {
+      "workload": "locals-64",
+      "runtime": "e6d",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.27153965400066227,
+      "wall_mad_s": 0.00043247200301266275,
+      "cpu_s": 0.2718759999999989,
+      "reps": 5
+    },
+    {
+      "workload": "locals-64",
+      "runtime": "e2b",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.10512934400321683,
+      "wall_mad_s": 0.0006156620002002455,
+      "cpu_s": 0.10501299999999425,
+      "reps": 5
+    },
+    {
+      "workload": "locals-64",
+      "runtime": "a64m",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.3394121279998217,
+      "wall_mad_s": 0.0015370690016425215,
+      "cpu_s": 0.33973199999999526,
+      "reps": 5
+    },
+    {
+      "workload": "locals-64",
+      "runtime": "chunk1024",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.2746384739984933,
+      "wall_mad_s": 0.0007091749976098072,
+      "cpu_s": 0.2744220000000024,
+      "reps": 5
+    },
+    {
+      "workload": "locals-64",
+      "runtime": "chunk256",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.275230969000404,
+      "wall_mad_s": 0.004413828999531688,
+      "cpu_s": 0.27525600000000017,
+      "reps": 5
+    },
+    {
+      "workload": "locals-64",
+      "runtime": "memo2",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.2765730959981738,
+      "wall_mad_s": 0.001967388994671637,
+      "cpu_s": 0.2767389999999992,
+      "reps": 5
+    },
+    {
+      "workload": "locals-64",
+      "runtime": "combo1024",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.1059570059987891,
+      "wall_mad_s": 0.0019431189975875895,
+      "cpu_s": 0.10594600000000298,
+      "reps": 5
+    },
+    {
+      "workload": "locals-64",
+      "runtime": "combo256",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.10525318600048195,
+      "wall_mad_s": 0.0016571810010646004,
+      "cpu_s": 0.10528999999999655,
+      "reps": 5
+    },
+    {
+      "workload": "loop-arith",
+      "runtime": "e6d",
+      "ok": true,
+      "checksum": "2401681406",
+      "wall_s": 0.07555802800197853,
+      "wall_mad_s": 0.0010796530004881788,
+      "cpu_s": 0.07550200000000062,
+      "reps": 5
+    },
+    {
+      "workload": "loop-arith",
+      "runtime": "e2b",
+      "ok": true,
+      "checksum": "2401681406",
+      "wall_s": 0.07892598499893211,
+      "wall_mad_s": 0.0017851420016086195,
+      "cpu_s": 0.07883200000000112,
+      "reps": 5
+    },
+    {
+      "workload": "loop-arith",
+      "runtime": "a64m",
+      "ok": true,
+      "checksum": "2401681406",
+      "wall_s": 0.09890133600129047,
+      "wall_mad_s": 0.0015311789975385182,
+      "cpu_s": 0.09896000000000105,
+      "reps": 5
+    },
+    {
+      "workload": "loop-arith",
+      "runtime": "chunk1024",
+      "ok": true,
+      "checksum": "2401681406",
+      "wall_s": 0.07536107499981881,
+      "wall_mad_s": 0.0007411820006382186,
+      "cpu_s": 0.07515899999999931,
+      "reps": 5
+    },
+    {
+      "workload": "loop-arith",
+      "runtime": "chunk256",
+      "ok": true,
+      "checksum": "2401681406",
+      "wall_s": 0.07500581199929002,
+      "wall_mad_s": 0.00027090000003227033,
+      "cpu_s": 0.07477300000000175,
+      "reps": 5
+    },
+    {
+      "workload": "loop-arith",
+      "runtime": "memo2",
+      "ok": true,
+      "checksum": "2401681406",
+      "wall_s": 0.07983570699798292,
+      "wall_mad_s": 0.0003232369963370729,
+      "cpu_s": 0.07988300000000237,
+      "reps": 5
+    },
+    {
+      "workload": "loop-arith",
+      "runtime": "combo1024",
+      "ok": true,
+      "checksum": "2401681406",
+      "wall_s": 0.08049778500208049,
+      "wall_mad_s": 0.0008785249956417829,
+      "cpu_s": 0.0803149999999988,
+      "reps": 5
+    },
+    {
+      "workload": "loop-arith",
+      "runtime": "combo256",
+      "ok": true,
+      "checksum": "2401681406",
+      "wall_s": 0.08858450499974424,
+      "wall_mad_s": 0.0006892849996802397,
+      "cpu_s": 0.08842299999999881,
+      "reps": 5
+    },
+    {
+      "workload": "memory-random",
+      "runtime": "e6d",
+      "ok": true,
+      "checksum": "3894883294",
+      "wall_s": 0.24883818099988275,
+      "wall_mad_s": 0.00025297299725934863,
+      "cpu_s": 0.24920400000000154,
+      "reps": 5
+    },
+    {
+      "workload": "memory-random",
+      "runtime": "e2b",
+      "ok": true,
+      "checksum": "3894883294",
+      "wall_s": 0.2382238909995067,
+      "wall_mad_s": 0.001501744998677168,
+      "cpu_s": 0.23860400000000181,
+      "reps": 5
+    },
+    {
+      "workload": "memory-random",
+      "runtime": "a64m",
+      "ok": true,
+      "checksum": "3894883294",
+      "wall_s": 0.36203512599968235,
+      "wall_mad_s": 0.00826301499910187,
+      "cpu_s": 0.3626430000000025,
+      "reps": 5
+    },
+    {
+      "workload": "memory-random",
+      "runtime": "chunk1024",
+      "ok": true,
+      "checksum": "3894883294",
+      "wall_s": 0.24808016400129418,
+      "wall_mad_s": 0.00366172600115533,
+      "cpu_s": 0.24841199999999475,
+      "reps": 5
+    },
+    {
+      "workload": "memory-random",
+      "runtime": "chunk256",
+      "ok": true,
+      "checksum": "3894883294",
+      "wall_s": 0.264546808997693,
+      "wall_mad_s": 0.008686946999659995,
+      "cpu_s": 0.26491299999999995,
+      "reps": 5
+    },
+    {
+      "workload": "memory-random",
+      "runtime": "memo2",
+      "ok": true,
+      "checksum": "3894883294",
+      "wall_s": 0.2520697670006484,
+      "wall_mad_s": 0.008631611002783757,
+      "cpu_s": 0.252448000000002,
+      "reps": 5
+    },
+    {
+      "workload": "memory-random",
+      "runtime": "combo1024",
+      "ok": true,
+      "checksum": "3894883294",
+      "wall_s": 0.2435000109981047,
+      "wall_mad_s": 0.0006346060035866685,
+      "cpu_s": 0.24392599999999387,
+      "reps": 5
+    },
+    {
+      "workload": "memory-random",
+      "runtime": "combo256",
+      "ok": true,
+      "checksum": "3894883294",
+      "wall_s": 0.25657839300038177,
+      "wall_mad_s": 0.0012639320011658128,
+      "cpu_s": 0.2568720000000013,
+      "reps": 5
+    },
+    {
+      "workload": "memory-stream",
+      "runtime": "e6d",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.3957159290002892,
+      "wall_mad_s": 0.0039020240037643816,
+      "cpu_s": 0.39636800000000383,
+      "reps": 5
+    },
+    {
+      "workload": "memory-stream",
+      "runtime": "e2b",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.3921954349971202,
+      "wall_mad_s": 0.00574507299461402,
+      "cpu_s": 0.3926469999999971,
+      "reps": 5
+    },
+    {
+      "workload": "memory-stream",
+      "runtime": "a64m",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.7564589659996273,
+      "wall_mad_s": 0.008664765002322383,
+      "cpu_s": 0.7579220000000091,
+      "reps": 5
+    },
+    {
+      "workload": "memory-stream",
+      "runtime": "chunk1024",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.2608224010000413,
+      "wall_mad_s": 0.0030175320025591645,
+      "cpu_s": 0.26120000000000543,
+      "reps": 5
+    },
+    {
+      "workload": "memory-stream",
+      "runtime": "chunk256",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.25712684500103933,
+      "wall_mad_s": 0.0053313310017983895,
+      "cpu_s": 0.2571599999999945,
+      "reps": 5
+    },
+    {
+      "workload": "memory-stream",
+      "runtime": "memo2",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.3896016040016548,
+      "wall_mad_s": 0.012240632000612095,
+      "cpu_s": 0.3899959999999991,
+      "reps": 5
+    },
+    {
+      "workload": "memory-stream",
+      "runtime": "combo1024",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.25423070499891764,
+      "wall_mad_s": 0.00232924099691445,
+      "cpu_s": 0.2534590000000012,
+      "reps": 5
+    },
+    {
+      "workload": "memory-stream",
+      "runtime": "combo256",
+      "ok": true,
+      "checksum": "1783293664",
+      "wall_s": 0.2705884300012258,
+      "wall_mad_s": 0.0055839439992269035,
+      "cpu_s": 0.27091799999999466,
+      "reps": 5
+    }
+  ]
+}

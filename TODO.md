@@ -674,7 +674,13 @@ in the types. That is already most of what these experiments were meant to estab
   (`bench/micro/IndexedUpdate.hs`) that promised 1.6–6.5× indexed by a precomputed `Int` —
   exactly the part the prototype lacked. Reverted: the core keeps the by-construction list,
   so here soundness and speed point the same way.
-- [ ] **E2b (decision for Daniel)** The one vector design the data still supports resolves the
+- [x] **E2b** — approved by Daniel 2026-09-15 and done (BENCHMARKS.md §E2b): `Validation.Ref.LocalRef`
+  carries position and type, built only from the witness; frames are packed-word vectors. Real
+  programs 1.43×, deepest-local kernel 2.6×, all kernels 1.00× (calls lose 13–19 %: vector frame
+  per call, a box per local read); erased twin mirrored, typed / erased 0.95. Globals still walk
+  their witness, as real programs barely index them (the stack pointer is global 0). The note
+  below is the design as proposed:
+  The one vector design the data still supports resolves the
   position once, at elaboration, and carries the value type at the access site
   (`ILocalGet`/`Set`/`Tee` and `IGlobalGet`/`Set` holding a resolved reference, not a bare
   `Elem`). That moves one property — "this position is where the witness points" — from the
@@ -702,7 +708,14 @@ in the types. That is already most of what these experiments were meant to estab
   programs **4.07×**); `INLINE step` (1.42×, 1.15×); `-O2` on the interpreter module (1.26×,
   1.08×). Together ~1.95× on kernels and ~5.1× on programs; CoreMark 8.4 s → 1.8 s.
 - [ ] **E6 next [P3·perf, design question for Daniel]** Memory is still the largest cost on real
-  programs: to keep `step` pure, every store copies a 4 KiB chunk. Candidates to measure:
+  programs: to keep `step` pure, every store copies a 4 KiB chunk. Ticky and the RTS total on
+  CoreMark and `pb-2mm`: chunk copies are 52–63 % of all allocation, the locals list 15–17 %
+  (since removed by E2b), the run loop 11–15 %, word loads 9 % (a `Just` and a box each).
+  Measured candidates, interleaved against `45a93c6` (`bench/results/2026-09-15-candidates-*`):
+  1 KiB chunks 1.26× on programs and 1.04× on kernels (256 bytes: the same, so 1 KiB); `-O2` on
+  `Runtime.MemInst` and `Runtime.Stack` 1.07× and 0.97× (marginal); a 64 MB nursery 0.70× and
+  0.69× (rejected — GC was only 1–6 % of time, and the big nursery costs cache); E2b with 1 KiB
+  chunks and that `-O2`, together, 2.11× and 1.17×. Candidates to measure:
   smaller chunks (a cheaper copy, a deeper map), a wider-fanout persistent trie, or memory
   threaded linearly or through `ST` behind an interface that keeps `step` a pure function.
 - [ ] **[P3·perf]** Retake the final tables on native Linux on a desktop CPU before quoting any

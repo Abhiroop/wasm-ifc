@@ -48,6 +48,7 @@ import Syntax.Instructions (
  )
 import Syntax.Module
 import Syntax.Types
+import Validation.Ref (resolveLocal)
 import Validation.Reflect
 import Validation.Shape
 
@@ -243,20 +244,20 @@ elabInstr env stackIn instr = case instr of
     SelectTyped ts -> Left (InvalidSelectArity (length ts))
     {- Locals -}
     LocalGet (LocalIdx i) -> case mkLocalElem (env.locals) i of
-        Just (SomeElem sv ix) -> Right (Produces (SCons sv stackIn) (ILocalGet ix))
+        Just (SomeElem sv ix) -> Right (Produces (SCons sv stackIn) (ILocalGet (resolveLocal sv ix)))
         Nothing -> Left (IndexOutOfRange Locals i)
     LocalSet (LocalIdx i) -> case mkLocalElem (env.locals) i of
         Just (SomeElem sv ix) -> case stackIn of
             SCons stop rest -> do
                 Refl <- note (OperandMismatch "local.set" (valTypeOf sv) (valTypeOf stop)) (decideEquality stop sv)
-                Right (Produces rest (ILocalSet ix))
+                Right (Produces rest (ILocalSet (resolveLocal sv ix)))
             _ -> Left (StackUnderflow "local.set")
         Nothing -> Left (IndexOutOfRange Locals i)
     LocalTee (LocalIdx i) -> case mkLocalElem (env.locals) i of
         Just (SomeElem sv ix) -> case stackIn of
             SCons stop _ -> do
                 Refl <- note (OperandMismatch "local.tee" (valTypeOf sv) (valTypeOf stop)) (decideEquality stop sv)
-                Right (Produces stackIn (ILocalTee ix))
+                Right (Produces stackIn (ILocalTee (resolveLocal sv ix)))
             _ -> Left (StackUnderflow "local.tee")
         Nothing -> Left (IndexOutOfRange Locals i)
     {- Globals -}
@@ -975,10 +976,10 @@ elaborateFunctionIn ctxS types (SFuncType psS rsS) (RawFunction _ declaredT body
                     case elaborated of
                         Reachable soS bodySeq -> do
                             Refl <- note (ResultMismatch (stackToList rsS) (stackToList soS)) (decideEquality soS rsS)
-                            Right (Function declS bodySeq)
+                            Right (Function psS declS bodySeq)
                         Diverged final poly -> do
                             checkDeadResult final rsS
-                            Right (Function declS poly)
+                            Right (Function psS declS poly)
 
 elaborateGlobals :: Sing gs -> [RawGlobal] -> Either ElabError (GlobalSpace gs)
 elaborateGlobals = go 0

@@ -12,8 +12,9 @@ and its collector).
 ## The answer
 
 **No — the typing itself costs nothing measurable.** Compared with an erased twin that is the
-same machine with its types removed and nothing else changed, the typed interpreter is 3 %
-*faster* (geometric mean over 24 kernels; it makes no run-time tag checks the twin must). Where
+same machine with its types removed and nothing else changed, the typed interpreter is 3–5 %
+*faster* (geometric mean over 24 kernels, before and after E2b; it makes no run-time tag checks
+the twin must). Where
 it had been slower — by about 20 % at GHC's default `-O1` — the cause was traced to the byte
 in GHC's final STG: the optimiser left a configuration record allocated per step in the typed
 driver. Types have no run-time representation, but they did change the optimiser's decisions,
@@ -88,6 +89,7 @@ its step mirrors the typed one clause for clause, calling the typed machine's ow
 | before E6 (`-O1`) | 1.18 |
 | step inlined into the driver (`-O1`) | 1.22 |
 | `-O2` for the interpreter module | **0.97** |
+| E2b: locals resolved at elaboration (twin mirrored) | **0.95** |
 
 How the gap was found and closed (`bench/results/2026-09-15-e1-allocation.txt`, ticky reports,
 final STG):
@@ -110,13 +112,25 @@ final STG):
 The erased machine's tag checks are therefore worth at most the 3 % the typed machine now leads
 by, which is why the plan's untagged variant of the twin was not built.
 
-## E2 — a witness-indexed vector for locals (lost)
+## E2 and E2b — locals in a vector
 
 Locals as a flat vector of packed words, still reached by walking the `Elem` witness, ran
 1.2–1.5× slower than the cons list on every kernel, deepest local included; the micro-benchmark
 promising 1.6–6.5× had indexed by a precomputed `Int`. Reverted; the prototype is
 `bench/prototypes/e2-vector-locals.patch`. A design that resolves positions at elaboration
 remains possible but moves one property out of the types (TODO.md §I, E2b).
+
+**E2b (approved and done, 2026-09-15): resolve the position at elaboration.** The local
+instructions now carry a `Validation.Ref.LocalRef` — the local's position and type, computed
+once from its witness by the only function that builds one, with the constructor hidden — and a
+frame is a flat vector of packed words that an access indexes directly. It wins where E2 lost:
+**1.43× on the real programs** (geometric mean; `pb-nussinov` 2.09×, `pb-3mm` 1.73×, CoreMark
+1.47×) and 2.6× on the deepest-local kernel, while over all 25 kernels it is neutral (1.00×),
+since the call-heavy ones lose 13–19 %: each call now builds a vector frame, and each local read
+boxes a fresh value. The erased twin mirrors it (positions and value types at the access,
+packed frames, a tag check on each write); typed / erased is 0.95 afterwards
+(`bench/results/2026-09-15-e2b-e1.json`, `…-candidates-t2.json`). With it, our cost on the real
+programs falls from ~37 to ~26 ns per step, which narrows every ratio in the E4 table by 1.43×.
 
 ## E3 — an independent untyped Haskell interpreter
 
@@ -181,8 +195,11 @@ streaming-memory kernel from 5.4 s to 0.66 s. Each change passed the full suites
   programs they are compared at medium sizes per step, which assumes a step costs the same at
   both sizes (larger inputs stress caches more). CoreMark's step count moves by a few dozen steps
   between runs, because it formats timings that differ: 2 parts in 100 million.
-- **Open design decisions**: E2b (resolved positions for locals), and the memory representation
-  — the largest remaining cost on real programs, bounded by keeping `step` pure.
+- **The paired E4 comparison combines two sweeps** (ours in one, the fast runtimes in another),
+  where every other comparison here is interleaved inside one; its ratios are good to the
+  run-to-run spread of long sweeps on this machine, not to the 2 % of an interleaved A/B.
+- **Open design decision**: the memory representation — the largest remaining cost on real
+  programs, bounded by keeping `step` pure (TODO.md §I, "E6 next", with measured candidates).
 
 ## Reproducing
 
