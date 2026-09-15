@@ -29,6 +29,11 @@
   > wasm-ifc-erased invoke <module.wasm> <export>
 
   Host calls are not supported: the kernels the experiment runs import nothing.
+
+  Frozen at commit 15e5ace (2026-09-15), where E1 stands at typed / erased = 0.95. It is not
+  updated for later changes: IFC reshapes 'Syntax.Instructions.Instr' and
+  'Runtime.Interpreter.step', and mirroring every such change here would double that work. To
+  rerun E1, build this file at that commit.
 -}
 module Main (main) where
 

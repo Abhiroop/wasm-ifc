@@ -182,7 +182,8 @@ test-suite wasm-ifc-wasi
 -- The untyped twin of the interpreter for the performance experiments (TODO.md §I, E1): the
 -- same elaborated program with its types forgotten, run by a machine that mirrors
 -- Runtime.Interpreter.step clause for clause. A measurement device, not part of the package;
--- built only with --enable-benchmarks, so the normal build and the gate never see it.
+-- built only with --enable-benchmarks, so the normal build and the gate never see it. Frozen at
+-- 15e5ace (bench/README.md): it may not build against later commits.
 benchmark wasm-ifc-erased
     import:           warnings
     type:             exitcode-stdio-1.0

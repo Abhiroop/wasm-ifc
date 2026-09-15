@@ -427,7 +427,7 @@ Open P0/P1 correctness items live in the plan above (section **P0**); the list b
   extend, but `HostType` and the value stack would need reference/vector representations.
 - [x] **[P3·feature]** Bulk memory (`memory.copy`/`fill`/`init`, `data.drop`, passive data segments;
   2026-09-10). Open: imports of tables, memories and globals.
-- [ ] **[P3·perf]** Linear memory is sparse and copy-on-write per 4 KiB chunk, and whole values
+- [ ] **[P3·perf]** Linear memory is sparse and copy-on-write per 1 KiB chunk, and whole values
   load and store as words with no byte lists (2026-09-15, §I E6). Every store still copies a
   chunk; a mutable or growable representation that keeps `step` pure is §I's "E6 next".
 
@@ -708,7 +708,8 @@ in the types. That is already most of what these experiments were meant to estab
   programs **4.07×**); `INLINE step` (1.42×, 1.15×); `-O2` on the interpreter module (1.26×,
   1.08×). Together ~1.95× on kernels and ~5.1× on programs; CoreMark 8.4 s → 1.8 s.
 - [ ] **E6 next [P3·perf, design question for Daniel]** Memory is still the largest cost on real
-  programs: to keep `step` pure, every store copies a 4 KiB chunk. Ticky and the RTS total on
+  programs: to keep `step` pure, every store copies a chunk. **1 KiB chunks done 2026-09-15**, on top
+  of E2b: 1.46× on programs, 1.07× on kernels (`bench/results/2026-09-15-chunk1k-*`). Ticky and the RTS total on
   CoreMark and `pb-2mm`: chunk copies are 52–63 % of all allocation, the locals list 15–17 %
   (since removed by E2b), the run loop 11–15 %, word loads 9 % (a `Just` and a box each).
   Measured candidates, interleaved against `45a93c6` (`bench/results/2026-09-15-candidates-*`):
@@ -731,6 +732,35 @@ in the types. That is already most of what these experiments were meant to estab
   workload we had to drop.
 - Timing noise (WSL2, hybrid cores, turbo): pin, repeat, report CPU time, re-run natively.
 
+
+### Performance while IFC lands (agreed with Daniel, 2026-09-15)
+
+IFC's P0 and P1 reshape exactly what the remaining optimisations touch — the instruction
+indices, `step`, and memory with its label store — so performance work pauses at the changes
+IFC cannot collide with, and the memory decision waits for the first IFC cut, when labels are
+real. Done now: 1 KiB chunks, `bench/tripwire.py` with a recorded reference, and the erased twin
+frozen at `15e5ace`. For the IFC work, the lessons that are cheap to honour while designing it:
+
+- [ ] **[P1·perf·ifc]** Keep labels static wherever SecWasm allows — the value stack, locals,
+  globals and the pc. Types erase, so static labels should cost nothing at run time; only memory
+  needs labels at run time.
+- [ ] **[P1·perf·ifc]** Keep memory labels at the bytes' chunk granularity (`chunkSize`). For the
+  two-point lattice a label chunk can be a bitmap, an eighth the size of a byte chunk: under the
+  persistent representation a labelled store copies both, so this keeps labels' cost small.
+- [ ] **[P2·perf·ifc]** Build the label singletons that loads and stores need into the
+  instructions at elaboration, as the numeric witnesses are, not per step.
+- [ ] **[P1·perf·ifc]** Keep `INLINE step` and `-O2` on `Runtime.Interpreter`, and run
+  `bench/tripwire.py` once the label index is in: E1 showed that an extra index can change what
+  GHC's optimiser does to the driver, and allocation per step shows it at once.
+- [ ] **[P2·perf]** At each IFC milestone, the tripwire; at larger ones, an interleaved sweep
+  against the previous milestone's saved binary (bench/README.md). The first such sweep is also
+  the next experiment: **IFC's own cost**, the all-`Low` instance of the labelled machine against
+  the pre-IFC build.
+- [ ] **[P3·perf, after the first IFC cut]** Decide memory with labels in place: mutable memory in
+  `ST` (removes byte and label copies; `step` stays total and well-typed, but monadic), or linear
+  types (keeps `step` pure-looking, but linearity runs through `Config`, `Store` and every helper,
+  and `vector` is not linear). If linear types appeal, prototype them on `Runtime.MemInst` alone,
+  on a throwaway branch, before committing the core to them.
 
 ---
 

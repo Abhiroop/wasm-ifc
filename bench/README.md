@@ -20,10 +20,11 @@ infrastructure here exists to tell the three apart.
 | `prototypes/` | designs measured and rejected, kept as patches that still apply |
 | `tools/fetch.sh` | installs pinned, checksummed toolchains, runtimes and third-party sources into `~/.local/wasm-bench-tools` |
 | `c/build.sh` | builds the real-program tier (CoreMark, ten PolyBench kernels) into `wasm-t2/`, which is not committed |
-| `erased/`    | the erased machine (E1): the interpreter with its types forgotten; `cabal build bench:wasm-ifc-erased --enable-benchmarks` |
+| `erased/`    | the erased machine (E1): the interpreter with its types forgotten; frozen at `15e5ace` (see below) |
 | `phases/`    | front-end timing per module (E5); `cabal build bench:wasm-ifc-phases --enable-benchmarks` |
 | `drivers/haskell-wasm/` | the Hackage `wasm` interpreter behind our command line (E3); `build.sh` prints its path |
 | `steps.py`   | records machine-step counts once per module in `results/steps.json` |
+| `tripwire.py` | bytes allocated by nine workloads against `allocation.txt`: deterministic, under a minute |
 
 ### The kernels
 
@@ -86,5 +87,24 @@ PolyBench) in `TODO.md` §I is for.
 
 Benchmarks never gate: `smoke.sh` is a manual check, and timings are taken deliberately, not
 on every commit. Each file in `results/` names the commit and the machine it came from.
+
+### Checking for regressions
+
+Timings need a quiet machine and interleaving, so they are for milestones. Between milestones,
+run `./bench/tripwire.py` after any change to `step`, the stack or memory. It counts the bytes
+each of nine workloads allocates, which is deterministic and has moved with every regression
+found so far, and fails when one grows by more than 2 % over `allocation.txt`. A change meant to
+move allocation re-records the reference with `--record` in the same commit.
+
+At a milestone, save the built binary; time the next milestone against it in one sweep:
+
+```sh
+./bench/run.py --binary before=/path/to/saved/wasm-ifc -r before -r wasm-ifc
+./bench/run.py --binary before=/path/to/saved/wasm-ifc -r before -r wasm-ifc --tier t2 -w coremark-100 -w 'pb-*-small'
+```
+
+The erased machine is frozen at `15e5ace`, where it answered E1 (typed / erased 0.95). It is not
+kept in lockstep while IFC reshapes the instructions and `step`, and it will stop compiling once
+they change; to rerun E1, build `bench/erased` from that commit.
 
 The findings, with their method and threats, are in `BENCHMARKS.md` at the repository root.
