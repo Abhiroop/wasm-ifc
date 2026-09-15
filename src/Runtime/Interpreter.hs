@@ -304,6 +304,13 @@ resumeWith store results (Suspended witness locals below cont control) =
 
 -- *** The step relation ***
 
+-- Inlined into the drivers ('run', 'runFor'), which take its result apart at once. As a call,
+-- every step allocated the @Right (Stepped (Config …))@ it returns only for the driver to
+-- discard it: bench/'s erased machine, where GHC inlines its 'step' because it has one caller,
+-- showed that to be the whole of this machine's extra allocation (TODO.md §I, E1). A pragma
+-- changes the code GHC emits, not the meaning: 'step' is the same total function.
+{-# INLINE step #-}
+
 {- | Advance one configuration. Total over every well-typed configuration: see the module
   header for how this constitutes the progress half of type soundness.
 -}

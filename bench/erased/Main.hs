@@ -190,6 +190,10 @@ data Failure = Trapped Trap | Stuck | HostCallUnsupported
 
 -- *** The step relation ***
 
+-- Inlined, with the per-operation helpers below, so that this machine compiles to the shape the
+-- typed one does: there 'step' is INLINE and its small helpers inline on their own, and a
+-- difference in what GHC happens to inline must not pass for a difference the types make.
+{-# INLINE step #-}
 step :: Funcs -> Config m -> Either Failure (StepResult m)
 step funcs (Config store locals stack code control) = case code of
     [] -> Right (popControl store locals stack control)
@@ -397,6 +401,7 @@ written store locals rest control result r = case result of
 
 type Arithmetic = forall t. IsNum t -> HostType t -> HostType t -> HostType t
 
+{-# INLINE arithmetic #-}
 arithmetic :: Store m -> Values -> Values -> [Instruction] -> Control -> ValType -> Arithmetic -> Either Failure (StepResult m)
 arithmetic store locals stack rest control ty op = case (ty, stack) of
     (I32, VI32 b :> VI32 a :> r) -> stepped store locals (VI32 (op I32IsNum a b) :> r) rest control
@@ -407,6 +412,7 @@ arithmetic store locals stack rest control ty op = case (ty, stack) of
 
 type Equality = forall t. IsNum t -> HostType t -> HostType t -> Word32
 
+{-# INLINE equality #-}
 equality :: Store m -> Values -> Values -> [Instruction] -> Control -> ValType -> Equality -> Either Failure (StepResult m)
 equality store locals stack rest control ty op = case (ty, stack) of
     (I32, VI32 b :> VI32 a :> r) -> stepped store locals (VI32 (op I32IsNum a b) :> r) rest control
@@ -417,6 +423,7 @@ equality store locals stack rest control ty op = case (ty, stack) of
 
 type Ordering' = forall t. NumWithSign t -> HostType t -> HostType t -> Word32
 
+{-# INLINE ordering #-}
 ordering :: Store m -> Values -> Values -> [Instruction] -> Control -> ValType -> Signedness -> Ordering' -> Either Failure (StepResult m)
 ordering store locals stack rest control ty sign op = case (ty, stack) of
     (I32, VI32 b :> VI32 a :> r) -> stepped store locals (VI32 (op (i32WithSign sign) a b) :> r) rest control
