@@ -413,3 +413,14 @@ Largest: fd_readdir.wasm, 2.20 MB, 42,775 instructions: decode 14.1 ms, validate
 Slowest total: 43.3 ms. Median total: 6.17 ms.
 Fit through the origin, modules with 1,000+ instructions: 84.5 ms per 100,000 instructions; correlation 0.898.
 Share of the front end, median over those: decode 45%, validate 52%.
+
+## Re-run at 0fcf4b4 (2026-09-18, for the paper)
+
+One interleaved sweep, harness defaults, all seven runtimes on all 22 real-program workloads
+plus ours and wabt on the kernels (`bench/results/2026-09-18-0fcf4b4-t2.json`,
+`…-0fcf4b4.json`). Ours: 16.1 ns per step at the small sizes and 15.9 at the medium sizes
+(geometric means), so per-step cost is size-independent and the medium-size table can be
+quoted directly. Ahead of ours at medium: WAMR 9×, Pulley 16×, wasm3 45×, wasmi 49×, Winch
+~144× (5 programs), Cranelift ~288× (4 programs); on the kernels wabt 1.18× (20 kernels above
+the floor for both), ours ahead on `float`, `globals-2/4`, `locals-2/4`, `loop-arith(64)`.
+Every ratio in the E4 table above roughly halves; the fast runtimes themselves moved ≤10 %.
