@@ -11,8 +11,9 @@
 
 {- | Type-indexed runtime structures for the intrinsically-typed interpreter: the value
   stack, locals, and globals, each indexed by the (type-level) list of value types it
-  holds. A value-stack or global slot of type @t@ stores a bare @HostType t@ — there is no
-  per-value tag, because the index already says how to read it. Locals are stored flat
+  holds. A value-stack or global slot of type @t ':~ l@ stores a bare @HostType t@ — there is no
+  per-value tag, because the index already says how to read it, and no trace of the security
+  level @l@, which exists only in the types. Locals are stored flat
   instead, one packed word each, for the reason given at 'LocalSpaceInst'.
 
   Splitting a concatenated stack @c = a ++ b@ back into its parts is driven by an
@@ -59,6 +60,7 @@ import Runtime.TableInst (TableInst)
 import Syntax.Globals (Global (..), GlobalSpace (..))
 import Syntax.Immediates (HostType)
 import Syntax.Types
+import Syntax.TypesIFC
 import Validation.Ref (LocalRef, localPosition, localType)
 import Validation.Shape (Append (..), DataShape (..), Elem (..), MemShape, ReverseOnto, TableShape)
 
@@ -73,10 +75,10 @@ import Validation.Shape (Append (..), DataShape (..), Elem (..), MemShape, Rever
   peaked at 163 MB of residency — the specific, stated suspicion STYLE.md §0 asks for before
   performance is allowed to motivate anything. See @bench/@ for how that was measured.
 -}
-type ValueStack :: [ValType] -> Type
+type ValueStack :: [LValType] -> Type
 data ValueStack s where
     VNil :: ValueStack '[]
-    (:#) :: !(HostType t) -> !(ValueStack ts) -> ValueStack (t ': ts)
+    (:#) :: !(HostType t) -> !(ValueStack ts) -> ValueStack ((t ':~ l) ': ts)
 
 infixr 5 :#
 
@@ -95,14 +97,14 @@ infixr 5 :#
   only ways to make or change a frame; and a reference's position is below that length because
   its witness proves the local exists. The two together license the unchecked read and write.
 -}
-type LocalSpaceInst :: [ValType] -> Type
+type LocalSpaceInst :: [LValType] -> Type
 newtype LocalSpaceInst ls = LocalSpaceInst (UV.Vector Word64)
 
 -- | The instance of a module's global index space: the globals' current values, by type.
-type GlobalSpaceInst :: [GlobalType] -> Type
+type GlobalSpaceInst :: [LGlobalType] -> Type
 data GlobalSpaceInst gs where
     GNil :: GlobalSpaceInst '[]
-    GCons :: !(HostType t) -> !(GlobalSpaceInst gs) -> GlobalSpaceInst ('GlobalType mut t ': gs)
+    GCons :: !(HostType t) -> !(GlobalSpaceInst gs) -> GlobalSpaceInst ('GlobalType mut (t ':~ l) ': gs)
 
 -- | Concatenate two stacks; the upper one ends up on top. Purely structural.
 appendStack :: ValueStack a -> ValueStack b -> ValueStack (a ++ b)
@@ -139,16 +141,16 @@ seedLocals paramTypes declaredTypes args =
 {- | Write a stack's values into consecutive slots, the top one at @slot@ and each deeper one
   just below it.
 -}
-writeArguments :: MV.MVector s Word64 -> Int -> Sing (xs :: [ValType]) -> ValueStack xs -> ST s ()
+writeArguments :: MV.MVector s Word64 -> Int -> Sing (xs :: [LValType]) -> ValueStack xs -> ST s ()
 writeArguments _ _ SNil VNil = pure ()
-writeArguments slots slot (SCons st rest) (x :# xs) = do
+writeArguments slots slot (SCons (st :%~ _) rest) (x :# xs) = do
     MV.unsafeWrite slots slot (packValue st x)
     writeArguments slots (slot - 1) rest xs
 
 {- | A locals frame of the given shape, every slot zero (how declared locals start a call).
   Zero is the all-zero word at every value type, the floats' @+0.0@ included.
 -}
-defaultLocals :: Sing (ls :: [ValType]) -> LocalSpaceInst ls
+defaultLocals :: Sing (ls :: [LValType]) -> LocalSpaceInst ls
 defaultLocals types = LocalSpaceInst (UV.replicate (lengthOf types) 0)
 
 -- | The frame of a function with neither parameters nor declared locals.
@@ -156,11 +158,11 @@ noLocals :: LocalSpaceInst '[]
 noLocals = defaultLocals SNil
 
 -- | Read a local: its reference says where it is and how to read the word found there.
-getLocal :: LocalRef t ls -> LocalSpaceInst ls -> HostType t
+getLocal :: LocalRef (t ':~ l) ls -> LocalSpaceInst ls -> HostType t
 getLocal ref (LocalSpaceInst values) = unpackValue (localType ref) (UV.unsafeIndex values (localPosition ref))
 
 -- | Write a local: a copy of the frame with one word replaced, so of the same length.
-setLocal :: LocalRef t ls -> HostType t -> LocalSpaceInst ls -> LocalSpaceInst ls
+setLocal :: LocalRef (t ':~ l) ls -> HostType t -> LocalSpaceInst ls -> LocalSpaceInst ls
 setLocal ref v (LocalSpaceInst values) =
     LocalSpaceInst (UV.modify (\slots -> MV.unsafeWrite slots (localPosition ref) (packValue (localType ref) v)) values)
 
@@ -178,7 +180,7 @@ unpackValue SI64 w = w
 unpackValue SF32 w = castWord32ToFloat (fromIntegral w)
 unpackValue SF64 w = castWord64ToDouble w
 
-lengthOf :: Sing (ls :: [ValType]) -> Int
+lengthOf :: Sing (ls :: [LValType]) -> Int
 lengthOf SNil = 0
 lengthOf (SCons _ rest) = 1 + lengthOf rest
 
@@ -187,11 +189,11 @@ initialGlobals :: GlobalSpace gs -> GlobalSpaceInst gs
 initialGlobals NoGlobals = GNil
 initialGlobals (Declared (Global value) rest) = GCons value (initialGlobals rest)
 
-getGlobal :: Elem ('GlobalType mut t) gs -> GlobalSpaceInst gs -> HostType t
+getGlobal :: Elem ('GlobalType mut (t ':~ l)) gs -> GlobalSpaceInst gs -> HostType t
 getGlobal Here (GCons x _) = x
 getGlobal (There ix) (GCons _ rest) = getGlobal ix rest
 
-setGlobal :: Elem ('GlobalType mut t) gs -> HostType t -> GlobalSpaceInst gs -> GlobalSpaceInst gs
+setGlobal :: Elem ('GlobalType mut (t ':~ l)) gs -> HostType t -> GlobalSpaceInst gs -> GlobalSpaceInst gs
 setGlobal Here v (GCons _ rest) = GCons v rest
 setGlobal (There ix) v (GCons x rest) = GCons x (setGlobal ix v rest)
 
@@ -215,7 +217,7 @@ setFirstMem mem (MCons _ rest) = MCons mem rest
   (which every entry is a reference into). Non-emptiness is the runtime counterpart of the
   @ModuleTables shape ~ (t ': ts)@ constraint @call_indirect@ carries, so 'firstTable' is total.
 -}
-type TableSpaceInst :: [FuncType] -> [TableShape] -> Type
+type TableSpaceInst :: [LFuncType] -> [TableShape] -> Type
 data TableSpaceInst fts ts where
     TNil :: TableSpaceInst fts '[]
     TCons :: !(TableInst fts) -> !(TableSpaceInst fts ts) -> TableSpaceInst fts (t ': ts)

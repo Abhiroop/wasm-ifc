@@ -36,7 +36,8 @@ import Syntax.Functions (FunctionSpace, RawFunction)
 import Syntax.Globals (GlobalSpace, RawGlobal)
 import Syntax.Indices (FunctionIdx, GlobalIdx, MemoryIdx, TableIdx)
 import Syntax.Instructions (RawExpr)
-import Syntax.Types (FuncType (..), Limits, MemType)
+import Syntax.Types (FuncType, FuncTypeOf (..), Limits, MemType)
+import Syntax.TypesIFC (LFuncType)
 import Validation.Shape (Elem, ModuleFuncs, ModuleGlobals, ModuleShape, SomeFuncRef)
 
 data RawModule = RawModule
@@ -135,7 +136,7 @@ data DataSegment = DataSegment
     }
 
 -- | An element segment as validated: its constant offset, and its functions, each resolved.
-data ElementSegment (fts :: [FuncType]) = ElementSegment
+data ElementSegment (fts :: [LFuncType]) = ElementSegment
     { offset :: Word32
     , functions :: [SomeFuncRef fts]
     }

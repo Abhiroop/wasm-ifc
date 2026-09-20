@@ -105,7 +105,8 @@ import Runtime.MemInst (MemInst, readBytes, writeBytes)
 import Runtime.Module (Invocation (..), RunError, SomeHostRequest (..), SomeModuleInst, Value, continueWith, invokeExport)
 import Runtime.Numeric (toSigned64)
 import Runtime.Stack (ValueStack (..))
-import Syntax.Types (FuncType (..), ValType (..))
+import Syntax.Types (FuncTypeOf (..), ValType (..))
+import Syntax.TypesIFC (LValType, Public)
 import Validation.Shape (MemShape)
 
 -- *** Configuration and the descriptor table ***
@@ -566,12 +567,12 @@ atOffset fd offset action = do
 -- *** Performing one call ***
 
 -- | What a host call produced: results to push and the memory as it left it, or an exit.
-data WasiOutcome (rs :: [ValType]) (m :: MemShape) where
+data WasiOutcome (rs :: [LValType]) (m :: MemShape) where
     WasiReturn :: ValueStack rs -> MemInst m -> WasiOutcome rs m
     WasiExit :: Int -> WasiOutcome rs m
 
 -- | Run an errno-returning call: on failure the memory is as it was.
-completing :: MemInst m -> Host (MemInst m) -> IO (WasiOutcome '[ 'I32] m)
+completing :: MemInst m -> Host (MemInst m) -> IO (WasiOutcome '[Public 'I32] m)
 completing mem action = do
     result <- runExceptT action
     pure $ case result of

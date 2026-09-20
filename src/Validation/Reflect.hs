@@ -52,6 +52,7 @@ import Data.Word (Word32)
 import Data.Singletons.Base.TH (SList (SCons, SNil), Sing, withSomeSing)
 import Data.Singletons.Decide (decideEquality)
 import Syntax.Types
+import Syntax.TypesIFC
 
 -- Open import: the generated single-constructor 'SModuleShape' shares its name with its type.
 import Validation.Shape
@@ -64,10 +65,18 @@ import Validation.Shape
 
 -- | A term-level stack shape reflected to its singleton, hidden existentially.
 data SomeStack where
-    SomeStack :: Sing (s :: [ValType]) -> SomeStack
+    SomeStack :: Sing (s :: [LValType]) -> SomeStack
 
+{- | Reflect decoded value types, labelling each one public: a decoded module says nothing about
+  security levels.
+
+  TODO(ifc P0): this is where a policy would enter. Decide where the levels of a module's
+  function types, globals and memory accesses come from (SecWasm has the developer annotate
+  them; a custom section of the module could carry them), and label accordingly here and in
+  'reflectCtx'.
+-}
 reflectStack :: [ValType] -> SomeStack
-reflectStack vs = withSomeSing vs SomeStack
+reflectStack vs = withSomeSing (publicAll vs) SomeStack
 
 {- | Convert between the decoded (declared) order of a parameter or result list and the stack
   order the shapes use (top of stack first; see "Validation.Shape"). Both are a reversal; the
@@ -84,12 +93,12 @@ stackOrderFuncType :: FuncType -> FuncType
 stackOrderFuncType (FuncType params results) = FuncType (stackOrder params) (stackOrder results)
 
 -- | The witness that appending nothing changes nothing, for a stack whose singleton we hold.
-appendNil :: Sing (xs :: [ValType]) -> Append xs '[] xs
+appendNil :: Sing (xs :: [LValType]) -> Append xs '[] xs
 appendNil SNil = ANil
 appendNil (SCons _ rest) = ACons (appendNil rest)
 
 -- | The singleton of 'ReverseOnto', built the same structural way.
-sReverseOnto :: Sing (xs :: [ValType]) -> Sing (acc :: [ValType]) -> Sing (ReverseOnto xs acc)
+sReverseOnto :: Sing (xs :: [LValType]) -> Sing (acc :: [LValType]) -> Sing (ReverseOnto xs acc)
 sReverseOnto SNil acc = acc
 sReverseOnto (SCons x xs) acc = sReverseOnto xs (SCons x acc)
 
@@ -101,19 +110,19 @@ sReverseOnto (SCons x xs) acc = sReverseOnto xs (SCons x acc)
 -}
 
 -- | @∃x. (Sing (x :: ValType), Elem x xs)@ — a bounds-checked index into a stack shape.
-data SomeElem (xs :: [ValType]) where
-    SomeElem :: Sing (x :: ValType) -> Elem x xs -> SomeElem xs
+data SomeElem (xs :: [LValType]) where
+    SomeElem :: Sing (x :: LValType) -> Elem x xs -> SomeElem xs
 
-mkLocalElem :: Sing (xs :: [ValType]) -> Word32 -> Maybe (SomeElem xs)
+mkLocalElem :: Sing (xs :: [LValType]) -> Word32 -> Maybe (SomeElem xs)
 mkLocalElem (SCons x _) 0 = Just (SomeElem x Here)
 mkLocalElem (SCons _ xs) n = (\(SomeElem y ix) -> SomeElem y (There ix)) <$> mkLocalElem xs (n - 1)
 mkLocalElem SNil _ = Nothing
 
 -- | @∃rs. (Sing (rs :: ResultType), Elem rs ls)@ — a bounds-checked index into a label context.
-data SomeLabel (ls :: [ResultType]) where
-    SomeLabel :: Sing (rs :: ResultType) -> Elem rs ls -> SomeLabel ls
+data SomeLabel (ls :: [LResultType]) where
+    SomeLabel :: Sing (rs :: LResultType) -> Elem rs ls -> SomeLabel ls
 
-mkLabelElem :: Sing (ls :: [ResultType]) -> Word32 -> Maybe (SomeLabel ls)
+mkLabelElem :: Sing (ls :: [LResultType]) -> Word32 -> Maybe (SomeLabel ls)
 mkLabelElem (SCons rs _) 0 = Just (SomeLabel rs Here)
 mkLabelElem (SCons _ rest) n = (\(SomeLabel rs ix) -> SomeLabel rs (There ix)) <$> mkLabelElem rest (n - 1)
 mkLabelElem SNil _ = Nothing
@@ -121,10 +130,10 @@ mkLabelElem SNil _ = Nothing
 {- | @∃s. (Sing (s :: [ValType]), Append ps s full)@ — proof that @ps@ is a prefix of @full@,
   with the suffix singleton and the 'Append' witness used to split/recombine stacks.
 -}
-data SomeSplit (ps :: [ValType]) (full :: [ValType]) where
-    SomeSplit :: Sing (s :: [ValType]) -> Append ps s full -> SomeSplit ps full
+data SomeSplit (ps :: [LValType]) (full :: [LValType]) where
+    SomeSplit :: Sing (s :: [LValType]) -> Append ps s full -> SomeSplit ps full
 
-matchPrefix :: Sing (ps :: [ValType]) -> Sing (full :: [ValType]) -> Maybe (SomeSplit ps full)
+matchPrefix :: Sing (ps :: [LValType]) -> Sing (full :: [LValType]) -> Maybe (SomeSplit ps full)
 matchPrefix SNil sfull = Just (SomeSplit sfull ANil)
 matchPrefix (SCons p ps) (SCons f fs) = do
     Refl <- decideEquality p f
@@ -158,8 +167,8 @@ reflectCtx :: [FuncType] -> [GlobalType] -> [MemType] -> [Limits] -> Int -> Some
 reflectCtx funcTypes globalTypes memTypes tableLimits dataCount =
     withSomeSing
         ( ModuleShape
-            (map stackOrderFuncType funcTypes)
-            globalTypes
+            (map (publicFuncType . stackOrderFuncType) funcTypes)
+            (map publicGlobalType globalTypes)
             (map memShapeOf memTypes)
             (map tableShapeOf tableLimits)
             (replicate dataCount DataShape)
@@ -188,7 +197,7 @@ mkDataElem (SCons SDataShape _) 0 = Just Here
 mkDataElem (SCons _ rest) n = There <$> mkDataElem rest (n - 1)
 mkDataElem SNil _ = Nothing
 
-lookupFuncRef :: Sing (fts :: [FuncType]) -> Word32 -> Maybe (SomeFuncRef fts)
+lookupFuncRef :: Sing (fts :: [LFuncType]) -> Word32 -> Maybe (SomeFuncRef fts)
 lookupFuncRef (SCons (SFuncType ps rs) _) 0 = Just (SomeFuncRef ps rs Here)
 lookupFuncRef (SCons _ rest) n =
     (\(SomeFuncRef ps rs ix) -> SomeFuncRef ps rs (There ix)) <$> lookupFuncRef rest (n - 1)
@@ -197,10 +206,10 @@ lookupFuncRef SNil _ = Nothing
 {- | @∃m t. (Sing m, Sing (t :: ValType), Elem ('GlobalType m t) gs)@ — a global resolved
   against the signature, carrying its mutability and type.
 -}
-data SomeGlobalRef (gs :: [GlobalType]) where
-    SomeGlobalRef :: Sing (m :: Mutability) -> Sing (t :: ValType) -> Elem ('GlobalType m t) gs -> SomeGlobalRef gs
+data SomeGlobalRef (gs :: [LGlobalType]) where
+    SomeGlobalRef :: Sing (m :: Mutability) -> Sing (t :: LValType) -> Elem ('GlobalType m t) gs -> SomeGlobalRef gs
 
-lookupGlobalRef :: Sing (gs :: [GlobalType]) -> Word32 -> Maybe (SomeGlobalRef gs)
+lookupGlobalRef :: Sing (gs :: [LGlobalType]) -> Word32 -> Maybe (SomeGlobalRef gs)
 lookupGlobalRef (SCons (SGlobalType sm st) _) 0 = Just (SomeGlobalRef sm st Here)
 lookupGlobalRef (SCons _ rest) n =
     (\(SomeGlobalRef sm st ix) -> SomeGlobalRef sm st (There ix)) <$> lookupGlobalRef rest (n - 1)

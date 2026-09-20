@@ -29,11 +29,12 @@ import Data.List.Singletons (type (++))
 import Data.Singletons.Base.TH (SList (SCons, SNil), Sing, genSingletons)
 import Numeric.Natural (Natural)
 
-import Syntax.Types (AddrType, FuncType (..), GlobalType, ResultType, ValType)
+import Syntax.Types (AddrType, FuncTypeOf (..), GlobalTypeOf)
+import Syntax.TypesIFC (LValType)
 
 {- *** Stack order ***
 
-   Every type-level @[ValType]@ that describes a stack segment lists the /top/ of the stack
+   Every type-level @[LValType]@ that describes a stack segment lists the /top/ of the stack
    first — the operand stack indices of 'Syntax.Instructions.Instr', the label result types,
    and the parameter and result lists of a 'FuncType' or block type once it is inside a shape
    (they are exactly the segment a call or block consumes and produces). Declared order, the
@@ -51,8 +52,8 @@ import Syntax.Types (AddrType, FuncType (..), GlobalType, ResultType, ValType)
 {- | Evidence that @c@ is @a ++ b@. Its spine is the length of @a@; because @a@, @b@ and
   @c@ are independent indices, consuming it (in @splitStack@) never requires inverting
   @++@. Carried by the framed/branching instructions so the interpreter can peel operands.
-  Poly-kinded so the IFC layer can index it by labelled value types as well; the kind is an
-  inferred binder (@forall {k}.@) so no use site has to pass it.
+  Poly-kinded, although every use is at labelled value types; the kind is an inferred binder
+  (@forall {k}.@) so no use site has to pass it.
 -}
 type Append :: forall {k}. [k] -> [k] -> [k] -> Type
 data Append a b c where
@@ -65,7 +66,7 @@ data Append a b c where
   write witnesses by hand; the elaborator builds the same witness from decoded data with
   'Validation.Reflect.matchPrefix'.
 -}
-appendFromSing :: forall a b. Sing (a :: [ValType]) -> Append a b (a ++ b)
+appendFromSing :: forall {k} (a :: [k]) (b :: [k]). Sing a -> Append a b (a ++ b)
 appendFromSing SNil = ANil
 appendFromSing (SCons _ rest) = ACons (appendFromSing rest)
 
@@ -74,7 +75,7 @@ appendFromSing (SCons _ rest) = ACons (appendFromSing rest)
   a call's argument segment lists the last argument first (top of stack), while locals number
   the first parameter 0 — so a function body's locals are @ReverseOnto params declared@.
 -}
-type ReverseOnto :: [ValType] -> [ValType] -> [ValType]
+type ReverseOnto :: [k] -> [k] -> [k]
 type family ReverseOnto xs acc where
     ReverseOnto '[] acc = acc
     ReverseOnto (x ': xs) acc = ReverseOnto xs (x ': acc)
@@ -93,8 +94,8 @@ data Elem x xs where
   against the signature, carrying its parameter and result shapes: what a table entry, an
   element segment and the runtime's export lookup hold.
 -}
-data SomeFuncRef (fts :: [FuncType]) where
-    SomeFuncRef :: Sing (ps :: [ValType]) -> Sing (rs :: [ValType]) -> Elem ('FuncType ps rs) fts -> SomeFuncRef fts
+data SomeFuncRef (fts :: [FuncTypeOf LValType]) where
+    SomeFuncRef :: Sing (ps :: [LValType]) -> Sing (rs :: [LValType]) -> Elem ('FuncType ps rs) fts -> SomeFuncRef fts
 
 {- | The compile-time shape of a module: the types of its function, global, memory, table and
   data-segment index spaces. Used as a single kind index on the instruction GADT so it stays compact. Memories
@@ -103,31 +104,28 @@ data SomeFuncRef (fts :: [FuncType]) where
   promoted, and the projection type families below ('ModuleFuncs' etc.) are what read the
   fields at the type level.
 
-  TODO(ifc P1): this shape is over unlabelled types, which is why "Syntax.InstructionsIFC"
-  attaches free labels to global reads and cannot type calls. The labelled shape follows
-  SecWasm's Fig. 8: function types @τ* →ℓ τ*@ (labelled parameters and results plus the pc
-  bound @ℓ@, with "results @⊒ ℓ@" as a well-formedness condition), global types @mut? τ@, and
-  memories unchanged (SecWasm labels bytes at run time and instructions with immediates, not
-  the memory as a whole; see the memory TODO in "Syntax.InstructionsIFC"). Either a second
-  shape with its own projections, or this one made polymorphic in its value-type kind so the
-  plain layer is the instance at 'ValType' and the IFC layer the one at
-  'Syntax.TypesIFC.LValType'. Same fork as the P0 TODO on 'Syntax.InstructionsIFC.Instr';
-  decide them together. The singletons below regenerate either way.
+  The function and global types here are over labelled value types, so a function's
+  parameters and results and a global each have a security level.
+
+  TODO(ifc P1): a function type has no bound yet on the context it may be called from; see the
+  TODO on 'Syntax.Instructions.ICall'. Adding it means a third field on
+  'Syntax.Types.FuncTypeOf' (or a separate labelled function type), and a public default for it
+  in "Validation.Reflect". The singletons below regenerate by themselves.
 -}
 data ModuleShape = ModuleShape
-    { funcTypes :: [FuncType]
-    , globalTypes :: [GlobalType]
+    { funcTypes :: [FuncTypeOf LValType]
+    , globalTypes :: [GlobalTypeOf LValType]
     , memShapes :: [MemShape]
     , tableShapes :: [TableShape]
     , dataShapes :: [DataShape]
     -- ^ one entry per data segment: the data index space, which only has a size
     }
 
-type ModuleFuncs :: ModuleShape -> [FuncType]
+type ModuleFuncs :: ModuleShape -> [FuncTypeOf LValType]
 type family ModuleFuncs s where
     ModuleFuncs ('ModuleShape fs _ _ _ _) = fs
 
-type ModuleGlobals :: ModuleShape -> [GlobalType]
+type ModuleGlobals :: ModuleShape -> [GlobalTypeOf LValType]
 type family ModuleGlobals s where
     ModuleGlobals ('ModuleShape _ gs _ _ _) = gs
 
@@ -148,22 +146,21 @@ type family ModuleData s where
   are fixed within a function and both change exactly on a @call@ — so they travel
   together as one index on the typed AST.
 
-  TODO(ifc P2): the IFC 'Syntax.InstructionsIFC.Instr' spells @ret@ and @locals@ out because
-  this is over 'ValType'; labelled locals are the point (a local's label is declared once and
-  fixed, SecWasm's flow-insensitive locals), and the labelled frame also carries the function's
-  pc bound, which @return@ and every effect in the body are checked against. Follows the
-  'ModuleShape' TODO.
+  The locals are labelled: a local's security level is declared once and fixed for the function.
+
+  TODO(ifc P1): the frame will also hold the function's bound on the program counter label,
+  once that exists: @return@ and every write in the body are checked against it.
 -}
 data FrameShape = FrameShape
-    { locals :: [ValType]
-    , results :: ResultType
+    { locals :: [LValType]
+    , results :: [LValType]
     }
 
-type FrameLocals :: FrameShape -> [ValType]
+type FrameLocals :: FrameShape -> [LValType]
 type family FrameLocals f where
     FrameLocals ('FrameShape ls _) = ls
 
-type FrameReturn :: FrameShape -> ResultType
+type FrameReturn :: FrameShape -> [LValType]
 type family FrameReturn f where
     FrameReturn ('FrameShape _ rs) = rs
 
@@ -177,7 +174,7 @@ type family FrameReturn f where
   IFC note: nothing to add here. SecWasm labels every /byte/ at run time, flow-sensitively, and
   puts the static labels on the load and store instructions as immediates (its §3.2 rejects a
   single label per memory as too rigid); so the memory's shape stays as it is and the labels
-  live in 'Runtime.MemInst.MemInst'. See the memory TODO in "Syntax.InstructionsIFC".
+  live in 'Runtime.MemInst.MemInst'. See the memory TODO on 'Syntax.Instructions.IMemSize'.
 -}
 data MemShape = MemShape
     { addrType :: AddrType

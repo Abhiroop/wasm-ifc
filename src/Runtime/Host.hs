@@ -23,119 +23,116 @@ module Runtime.Host (
 import Data.Singletons (Sing, sing)
 import Data.Text (Text)
 
-import Syntax.Types (FuncType (..), ValType (..))
+import Syntax.Types (ValType (..))
+import Syntax.TypesIFC (LFuncType, PublicFunc)
 
 -- | The import module name WASI functions are resolved against.
 wasiModuleName :: Text
 wasiModuleName = "wasi_snapshot_preview1"
 
-{- TODO(ifc P1): each WASI function needs a labelled signature, the most concrete part of the
-   policy, and this is our extension of SecWasm (host imports are a stated non-goal there).
-   Sources: @fd_read@ and @fd_pread@ results take the descriptor's label (a secret file yields
-   secret bytes, written into memory /with that label/ per byte, which the hybrid memory model
-   supports directly); @args_get@, @environ_get@, @clock_time_get@ are public; @random_get@ is
-   public entropy unless it seeds a key. Sinks: @fd_write@ and @fd_pwrite@ need the labels of
-   the bytes they read from memory ⊑ the descriptor's label and the pc ⊑ it (a write under a
-   secret pc leaks by happening); @proc_exit@'s code and @path_open@'s path are public outputs.
-   The descriptor is a run-time value, so its label is dynamic: a label per preopen in
-   'Runtime.Wasi.WasiConfig', inherited through @path_open@, checked by the driver at the
-   boundary against the per-byte labels of the buffer, the same kind of dynamic check as
-   SecWasm's load. Statically each host function then only needs a pc bound and labels for its
-   scalar arguments and results, encoded as a second index here or as a function from the
-   constructor to a labelled type; the check happens at 'Runtime.Interpreter.HostRequest'. -}
-data WasiFunc (ft :: FuncType) where
+{- TODO(ifc P1): every host function is declared public throughout ('PublicFunc'), which says
+   nothing useful yet. Each needs a real labelled type. Some are sources of secrets: @fd_read@
+   from a secret file yields secret bytes. Some are sinks: @fd_write@ to a public descriptor
+   must only see public bytes, and must not happen inside a secret branch at all, because the
+   write itself reveals the branch. Most are neither (@args_get@, @clock_time_get@). The
+   difficulty is that a file descriptor is a run-time number, so its level cannot appear in a
+   static type. One way out: give each preopened directory a level in
+   'Runtime.Wasi.WasiConfig', let opened files inherit it, and have the driver check buffers
+   against it at run time, byte by byte (see 'Runtime.Interpreter.HostRequest'). SecWasm leaves
+   host functions out of scope, so there is no rule to copy here. -}
+data WasiFunc (ft :: LFuncType) where
     -- | @args_get(argv, argv_buf)@
-    ArgsGet :: WasiFunc ('FuncType '[ 'I32, 'I32] '[ 'I32])
+    ArgsGet :: WasiFunc (PublicFunc '[ 'I32, 'I32] '[ 'I32])
     -- | @args_sizes_get(argc, argv_buf_size)@
-    ArgsSizesGet :: WasiFunc ('FuncType '[ 'I32, 'I32] '[ 'I32])
+    ArgsSizesGet :: WasiFunc (PublicFunc '[ 'I32, 'I32] '[ 'I32])
     -- | @environ_get(environ, environ_buf)@
-    EnvironGet :: WasiFunc ('FuncType '[ 'I32, 'I32] '[ 'I32])
+    EnvironGet :: WasiFunc (PublicFunc '[ 'I32, 'I32] '[ 'I32])
     -- | @environ_sizes_get(count, buf_size)@
-    EnvironSizesGet :: WasiFunc ('FuncType '[ 'I32, 'I32] '[ 'I32])
+    EnvironSizesGet :: WasiFunc (PublicFunc '[ 'I32, 'I32] '[ 'I32])
     -- | @clock_res_get(id, resolution)@
-    ClockResGet :: WasiFunc ('FuncType '[ 'I32, 'I32] '[ 'I32])
+    ClockResGet :: WasiFunc (PublicFunc '[ 'I32, 'I32] '[ 'I32])
     -- | @clock_time_get(id, precision, time)@
-    ClockTimeGet :: WasiFunc ('FuncType '[ 'I32, 'I64, 'I32] '[ 'I32])
+    ClockTimeGet :: WasiFunc (PublicFunc '[ 'I32, 'I64, 'I32] '[ 'I32])
     -- | @fd_advise(fd, offset, len, advice)@
-    FdAdvise :: WasiFunc ('FuncType '[ 'I32, 'I64, 'I64, 'I32] '[ 'I32])
+    FdAdvise :: WasiFunc (PublicFunc '[ 'I32, 'I64, 'I64, 'I32] '[ 'I32])
     -- | @fd_allocate(fd, offset, len)@
-    FdAllocate :: WasiFunc ('FuncType '[ 'I64, 'I64, 'I32] '[ 'I32])
+    FdAllocate :: WasiFunc (PublicFunc '[ 'I64, 'I64, 'I32] '[ 'I32])
     -- | @fd_close(fd)@
-    FdClose :: WasiFunc ('FuncType '[ 'I32] '[ 'I32])
+    FdClose :: WasiFunc (PublicFunc '[ 'I32] '[ 'I32])
     -- | @fd_datasync(fd)@
-    FdDatasync :: WasiFunc ('FuncType '[ 'I32] '[ 'I32])
+    FdDatasync :: WasiFunc (PublicFunc '[ 'I32] '[ 'I32])
     -- | @fd_fdstat_get(fd, stat)@
-    FdFdstatGet :: WasiFunc ('FuncType '[ 'I32, 'I32] '[ 'I32])
+    FdFdstatGet :: WasiFunc (PublicFunc '[ 'I32, 'I32] '[ 'I32])
     -- | @fd_fdstat_set_flags(fd, flags)@
-    FdFdstatSetFlags :: WasiFunc ('FuncType '[ 'I32, 'I32] '[ 'I32])
+    FdFdstatSetFlags :: WasiFunc (PublicFunc '[ 'I32, 'I32] '[ 'I32])
     -- | @fd_fdstat_set_rights(fd, base, inheriting)@
-    FdFdstatSetRights :: WasiFunc ('FuncType '[ 'I64, 'I64, 'I32] '[ 'I32])
+    FdFdstatSetRights :: WasiFunc (PublicFunc '[ 'I64, 'I64, 'I32] '[ 'I32])
     -- | @fd_filestat_get(fd, stat)@
-    FdFilestatGet :: WasiFunc ('FuncType '[ 'I32, 'I32] '[ 'I32])
+    FdFilestatGet :: WasiFunc (PublicFunc '[ 'I32, 'I32] '[ 'I32])
     -- | @fd_filestat_set_size(fd, size)@
-    FdFilestatSetSize :: WasiFunc ('FuncType '[ 'I64, 'I32] '[ 'I32])
+    FdFilestatSetSize :: WasiFunc (PublicFunc '[ 'I64, 'I32] '[ 'I32])
     -- | @fd_filestat_set_times(fd, atim, mtim, flags)@
-    FdFilestatSetTimes :: WasiFunc ('FuncType '[ 'I32, 'I64, 'I64, 'I32] '[ 'I32])
+    FdFilestatSetTimes :: WasiFunc (PublicFunc '[ 'I32, 'I64, 'I64, 'I32] '[ 'I32])
     -- | @fd_pread(fd, iovs, iovs_len, offset, nread)@
-    FdPread :: WasiFunc ('FuncType '[ 'I32, 'I64, 'I32, 'I32, 'I32] '[ 'I32])
+    FdPread :: WasiFunc (PublicFunc '[ 'I32, 'I64, 'I32, 'I32, 'I32] '[ 'I32])
     -- | @fd_prestat_get(fd, prestat)@
-    FdPrestatGet :: WasiFunc ('FuncType '[ 'I32, 'I32] '[ 'I32])
+    FdPrestatGet :: WasiFunc (PublicFunc '[ 'I32, 'I32] '[ 'I32])
     -- | @fd_prestat_dir_name(fd, path, path_len)@
-    FdPrestatDirName :: WasiFunc ('FuncType '[ 'I32, 'I32, 'I32] '[ 'I32])
+    FdPrestatDirName :: WasiFunc (PublicFunc '[ 'I32, 'I32, 'I32] '[ 'I32])
     -- | @fd_pwrite(fd, iovs, iovs_len, offset, nwritten)@
-    FdPwrite :: WasiFunc ('FuncType '[ 'I32, 'I64, 'I32, 'I32, 'I32] '[ 'I32])
+    FdPwrite :: WasiFunc (PublicFunc '[ 'I32, 'I64, 'I32, 'I32, 'I32] '[ 'I32])
     -- | @fd_read(fd, iovs, iovs_len, nread)@
-    FdRead :: WasiFunc ('FuncType '[ 'I32, 'I32, 'I32, 'I32] '[ 'I32])
+    FdRead :: WasiFunc (PublicFunc '[ 'I32, 'I32, 'I32, 'I32] '[ 'I32])
     -- | @fd_readdir(fd, buf, buf_len, cookie, bufused)@
-    FdReaddir :: WasiFunc ('FuncType '[ 'I32, 'I64, 'I32, 'I32, 'I32] '[ 'I32])
+    FdReaddir :: WasiFunc (PublicFunc '[ 'I32, 'I64, 'I32, 'I32, 'I32] '[ 'I32])
     -- | @fd_renumber(fd, to)@
-    FdRenumber :: WasiFunc ('FuncType '[ 'I32, 'I32] '[ 'I32])
+    FdRenumber :: WasiFunc (PublicFunc '[ 'I32, 'I32] '[ 'I32])
     -- | @fd_seek(fd, offset, whence, newoffset)@
-    FdSeek :: WasiFunc ('FuncType '[ 'I32, 'I32, 'I64, 'I32] '[ 'I32])
+    FdSeek :: WasiFunc (PublicFunc '[ 'I32, 'I32, 'I64, 'I32] '[ 'I32])
     -- | @fd_sync(fd)@
-    FdSync :: WasiFunc ('FuncType '[ 'I32] '[ 'I32])
+    FdSync :: WasiFunc (PublicFunc '[ 'I32] '[ 'I32])
     -- | @fd_tell(fd, offset)@
-    FdTell :: WasiFunc ('FuncType '[ 'I32, 'I32] '[ 'I32])
+    FdTell :: WasiFunc (PublicFunc '[ 'I32, 'I32] '[ 'I32])
     -- | @fd_write(fd, iovs, iovs_len, nwritten)@
-    FdWrite :: WasiFunc ('FuncType '[ 'I32, 'I32, 'I32, 'I32] '[ 'I32])
+    FdWrite :: WasiFunc (PublicFunc '[ 'I32, 'I32, 'I32, 'I32] '[ 'I32])
     -- | @path_create_directory(fd, path, path_len)@
-    PathCreateDirectory :: WasiFunc ('FuncType '[ 'I32, 'I32, 'I32] '[ 'I32])
+    PathCreateDirectory :: WasiFunc (PublicFunc '[ 'I32, 'I32, 'I32] '[ 'I32])
     -- | @path_filestat_get(fd, flags, path, path_len, stat)@
-    PathFilestatGet :: WasiFunc ('FuncType '[ 'I32, 'I32, 'I32, 'I32, 'I32] '[ 'I32])
+    PathFilestatGet :: WasiFunc (PublicFunc '[ 'I32, 'I32, 'I32, 'I32, 'I32] '[ 'I32])
     -- | @path_filestat_set_times(fd, flags, path, path_len, atim, mtim, fst_flags)@
-    PathFilestatSetTimes :: WasiFunc ('FuncType '[ 'I32, 'I64, 'I64, 'I32, 'I32, 'I32, 'I32] '[ 'I32])
+    PathFilestatSetTimes :: WasiFunc (PublicFunc '[ 'I32, 'I64, 'I64, 'I32, 'I32, 'I32, 'I32] '[ 'I32])
     -- | @path_link(old_fd, old_flags, old_path, old_path_len, new_fd, new_path, new_path_len)@
-    PathLink :: WasiFunc ('FuncType '[ 'I32, 'I32, 'I32, 'I32, 'I32, 'I32, 'I32] '[ 'I32])
+    PathLink :: WasiFunc (PublicFunc '[ 'I32, 'I32, 'I32, 'I32, 'I32, 'I32, 'I32] '[ 'I32])
     -- | @path_open(fd, dirflags, path, path_len, oflags, rights_base, rights_inheriting, fdflags, opened_fd)@
-    PathOpen :: WasiFunc ('FuncType '[ 'I32, 'I32, 'I64, 'I64, 'I32, 'I32, 'I32, 'I32, 'I32] '[ 'I32])
+    PathOpen :: WasiFunc (PublicFunc '[ 'I32, 'I32, 'I64, 'I64, 'I32, 'I32, 'I32, 'I32, 'I32] '[ 'I32])
     -- | @path_readlink(fd, path, path_len, buf, buf_len, bufused)@
-    PathReadlink :: WasiFunc ('FuncType '[ 'I32, 'I32, 'I32, 'I32, 'I32, 'I32] '[ 'I32])
+    PathReadlink :: WasiFunc (PublicFunc '[ 'I32, 'I32, 'I32, 'I32, 'I32, 'I32] '[ 'I32])
     -- | @path_remove_directory(fd, path, path_len)@
-    PathRemoveDirectory :: WasiFunc ('FuncType '[ 'I32, 'I32, 'I32] '[ 'I32])
+    PathRemoveDirectory :: WasiFunc (PublicFunc '[ 'I32, 'I32, 'I32] '[ 'I32])
     -- | @path_rename(fd, old_path, old_path_len, new_fd, new_path, new_path_len)@
-    PathRename :: WasiFunc ('FuncType '[ 'I32, 'I32, 'I32, 'I32, 'I32, 'I32] '[ 'I32])
+    PathRename :: WasiFunc (PublicFunc '[ 'I32, 'I32, 'I32, 'I32, 'I32, 'I32] '[ 'I32])
     -- | @path_symlink(old_path, old_path_len, fd, new_path, new_path_len)@
-    PathSymlink :: WasiFunc ('FuncType '[ 'I32, 'I32, 'I32, 'I32, 'I32] '[ 'I32])
+    PathSymlink :: WasiFunc (PublicFunc '[ 'I32, 'I32, 'I32, 'I32, 'I32] '[ 'I32])
     -- | @path_unlink_file(fd, path, path_len)@
-    PathUnlinkFile :: WasiFunc ('FuncType '[ 'I32, 'I32, 'I32] '[ 'I32])
+    PathUnlinkFile :: WasiFunc (PublicFunc '[ 'I32, 'I32, 'I32] '[ 'I32])
     -- | @poll_oneoff(in, out, nsubscriptions, nevents)@
-    PollOneoff :: WasiFunc ('FuncType '[ 'I32, 'I32, 'I32, 'I32] '[ 'I32])
+    PollOneoff :: WasiFunc (PublicFunc '[ 'I32, 'I32, 'I32, 'I32] '[ 'I32])
     -- | @proc_exit(rval)@ — never returns
-    ProcExit :: WasiFunc ('FuncType '[ 'I32] '[])
+    ProcExit :: WasiFunc (PublicFunc '[ 'I32] '[])
     -- | @proc_raise(sig)@
-    ProcRaise :: WasiFunc ('FuncType '[ 'I32] '[ 'I32])
+    ProcRaise :: WasiFunc (PublicFunc '[ 'I32] '[ 'I32])
     -- | @sched_yield()@
-    SchedYield :: WasiFunc ('FuncType '[] '[ 'I32])
+    SchedYield :: WasiFunc (PublicFunc '[] '[ 'I32])
     -- | @random_get(buf, buf_len)@
-    RandomGet :: WasiFunc ('FuncType '[ 'I32, 'I32] '[ 'I32])
+    RandomGet :: WasiFunc (PublicFunc '[ 'I32, 'I32] '[ 'I32])
     -- | @sock_accept(fd, flags, fd_out)@
-    SockAccept :: WasiFunc ('FuncType '[ 'I32, 'I32, 'I32] '[ 'I32])
+    SockAccept :: WasiFunc (PublicFunc '[ 'I32, 'I32, 'I32] '[ 'I32])
     -- | @sock_recv(fd, ri_data, ri_data_len, ri_flags, ro_datalen, ro_flags)@
-    SockRecv :: WasiFunc ('FuncType '[ 'I32, 'I32, 'I32, 'I32, 'I32, 'I32] '[ 'I32])
+    SockRecv :: WasiFunc (PublicFunc '[ 'I32, 'I32, 'I32, 'I32, 'I32, 'I32] '[ 'I32])
     -- | @sock_send(fd, si_data, si_data_len, si_flags, so_datalen)@
-    SockSend :: WasiFunc ('FuncType '[ 'I32, 'I32, 'I32, 'I32, 'I32] '[ 'I32])
+    SockSend :: WasiFunc (PublicFunc '[ 'I32, 'I32, 'I32, 'I32, 'I32] '[ 'I32])
     -- | @sock_shutdown(fd, how)@
-    SockShutdown :: WasiFunc ('FuncType '[ 'I32, 'I32] '[ 'I32])
+    SockShutdown :: WasiFunc (PublicFunc '[ 'I32, 'I32] '[ 'I32])
 
 data SomeWasiFunc where
     SomeWasiFunc :: WasiFunc ft -> SomeWasiFunc

@@ -24,14 +24,16 @@ import Data.Kind (Type)
 import Data.Singletons.Base.TH (Sing)
 
 import Syntax.Types (ValType)
+import Syntax.TypesIFC (LValType (..), SLValType (..))
 import Validation.Shape (Elem (..))
 
-type LocalRef :: ValType -> [ValType] -> Type
-data LocalRef t ls = LocalRef !Int !(Sing t)
+type LocalRef :: LValType -> [LValType] -> Type
+data LocalRef t ls where
+    LocalRef :: !Int -> !(Sing (vt :: ValType)) -> LocalRef (vt ':~ l) ls
 
 -- | Resolve a local's witness into its position, counted from zero, and its value type.
-resolveLocal :: Sing t -> Elem t ls -> LocalRef t ls
-resolveLocal ty ix = LocalRef (positionOf 0 ix) ty
+resolveLocal :: Sing (t :: LValType) -> Elem t ls -> LocalRef t ls
+resolveLocal (ty :%~ _) ix = LocalRef (positionOf 0 ix) ty
   where
     positionOf :: Int -> Elem x xs -> Int
     positionOf !n Here = n
@@ -41,6 +43,8 @@ resolveLocal ty ix = LocalRef (positionOf 0 ix) ty
 localPosition :: LocalRef t ls -> Int
 localPosition (LocalRef position _) = position
 
--- | The local's value type, which says how to read its word back.
-localType :: LocalRef t ls -> Sing t
+{- | The local's value type, which says how to read its word back. (Its security level is
+  static only: nothing at run time depends on it.)
+-}
+localType :: LocalRef (vt ':~ l) ls -> Sing vt
 localType (LocalRef _ ty) = ty

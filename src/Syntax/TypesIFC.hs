@@ -1,93 +1,118 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE EmptyCase #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneKindSignatures #-}
+{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TypeAbstractions #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableInstances #-}
 
-{- | The information-flow vocabulary the IFC layer adds to the core types: security levels,
-  value types labelled with one, the flow relation and the join. Abhiroop's first cut
-  (2026-09); the labelled instruction GADT in "Syntax.InstructionsIFC" is indexed by these.
+{- | The information-flow vocabulary of the typed layer: security levels, value types labelled
+  with one, the join, and the flow relation. Every stack, local, global and function type the
+  typed AST is indexed by is over 'LValType', so the one instruction type of
+  "Syntax.Instructions" tracks information flow as well as value types. The model we follow is
+  SecWasm (Bastys, Algehed, Sjösten, Sabelfeld, SAS 2022; linked from TODO.md §F).
+
+  Exports openly, like "Syntax.Types", so the generated singletons are visible.
 -}
-module Syntax.TypesIFC (
-    SecLevel (..),
-    LValType (..),
-    KnownSecLevel (..),
-    CanFlowInto,
-    type (:/\),
-) where
+module Syntax.TypesIFC where
 
-import Syntax.Types (ValType)
+import Data.List.Singletons (MapSym0, sMap)
+import Data.Singletons.Base.TH
 
-{- | The two-point security lattice.
-  TODO(ifc P3): two points are enough for the theorem and for every example in sight (SecWasm
-  itself is stated over any join semi-lattice, §3.1, but its examples use L/M/H). Keep two:
-  the pc pre-pass in "Syntax.InstructionsIFC" converges trivially over two points, and a
-  finite lattice can be a later generalisation if a case study asks for it.
--}
-data SecLevel = Low | High
-    deriving stock (Eq, Ord, Show)
+import Syntax.Types
+
+$( singletons
+    [d|
+        -- The two-point security lattice: public and secret.
+        data SecLevel = Low | High
+
+        -- The join (least upper bound): the level of a value computed from two others.
+        join :: SecLevel -> SecLevel -> SecLevel
+        join Low l = l
+        join High _ = High
+        |]
+ )
+
+deriving stock instance Eq SecLevel
+deriving stock instance Show SecLevel
 
 infix 6 :~
 
 {- | A value type together with the security level of the values it classifies: SecWasm's
-  labelled type @τ ::= t⟨ℓ⟩@ (Fig. 8), which is also what its type stack @st@ holds, so the
-  single-list encoding is the paper's.
-  TODO(ifc P3): naming. @LValType@ reads as "l-value type"; the repo's rule is names that read
-  as prose (CLAUDE.md), so @LabelledValType@ would fit. Keep the label on the type rather than
-  as a parallel @[SecLevel]@ index: one list is the simpler encoding (STYLE.md §2's spirit)
-  and matches the paper's @st@.
+  labelled type @τ ::= t⟨ℓ⟩@.
+
+  TODO(ifc P3): naming. @LValType@ reads as "l-value type"; @LabelledValType@ would read as
+  prose, which is the repo's rule.
 -}
 data LValType = ValType :~ SecLevel
     deriving stock (Eq, Show)
 
-{- | The term-level witness of a security level (a hand-rolled singleton).
-  TODO(ifc P2): replace by @genSingletons [''SecLevel, ''LValType]@ (singletons-base, as
-  "Syntax.Types" does for 'ValType'), which gives @SSecLevel@ (@SLow@, @SHigh@),
-  @Sing (l :: SecLevel)@, 'Data.Singletons.SingI' and the list singletons for @[LValType]@ for
-  free. Needed in three places: the elaborator reflects the policy's labels and the load/store
-  immediates to the type level; 'Validation.Shape.Append' witnesses over labelled stacks; and
-  the interpreter reads the load's @Sing ℓ@ at run time for SecWasm's dynamic check. This GADT
-  then goes.
+$(genSingletons [''LValType])
+$(singDecideInstances [''SecLevel])
+
+-- Written by hand: the generated instance carries constraints GHC reports as redundant.
+instance SDecide LValType where
+    (t :%~ l) %~ (t' :%~ l') = case t %~ t' of
+        Disproved differ -> Disproved (\Refl -> differ Refl)
+        Proved Refl -> case l %~ l' of
+            Disproved differ -> Disproved (\Refl -> differ Refl)
+            Proved Refl -> Proved Refl
+
+$( singletons
+    [d|
+        -- A value type at the public level: how every type of a decoded module is labelled
+        -- until a policy says otherwise.
+        public :: ValType -> LValType
+        public t = t :~ Low
+
+        publicAll :: [ValType] -> [LValType]
+        publicAll ts = map public ts
+
+        -- A labelled type without its label.
+        unlabelled :: LValType -> ValType
+        unlabelled (t :~ _) = t
+        |]
+ )
+
+-- | A labelled result type: the stack segment a block, loop, if or function yields.
+type LResultType = [LValType]
+
+-- | A function type over labelled value types, as the shapes hold it.
+type LFuncType = FuncTypeOf LValType
+
+-- | A global's type over labelled value types, as the shapes hold it.
+type LGlobalType = GlobalTypeOf LValType
+
+-- | A decoded function type labelled public throughout.
+publicFuncType :: FuncType -> LFuncType
+publicFuncType (FuncType params results) = FuncType (publicAll params) (publicAll results)
+
+-- | A decoded global type labelled public.
+publicGlobalType :: GlobalType -> LGlobalType
+publicGlobalType (GlobalType mutability t) = GlobalType mutability (public t)
+
+{- | The type of a function all of whose parameters and results are public, from plain value
+  types. The host functions of "Runtime.Host" are declared with it.
 -}
-data KnownSecLevel (l :: SecLevel) where
-    IsLow :: KnownSecLevel 'Low
-    IsHigh :: KnownSecLevel 'High
+type PublicFunc ps rs = 'FuncType (PublicAll ps) (PublicAll rs)
 
-{- | @l@ may flow into @l'@: the lattice order, as a constraint.
-  TODO(ifc P1): unused so far; it is meant for every @⊑@ premise of SecWasm's rules (T-STORE's
-  @pc ⊔ ℓa ⊔ ℓv ⊑ ℓ@, T-CALL's @pc ⊑ ℓ@, T-BR-IF's @pc ⊔ ℓ ⊑ C.labels[i]@, the sets) and for
-  the explicit relabelling that replaces the paper's subtyping (see the header of
-  "Syntax.InstructionsIFC"). Before using it, change its form: a class is resolved by GHC on
-  hand-written programs, but validating a /decoded/ module must produce the evidence at run
-  time from singletons, and a class constraint cannot be constructed dynamically. Make it a
-  GADT witness, as 'Syntax.Types.IsNum' is:
-  @data FlowsInto l l' where LowFlowsAnywhere :: FlowsInto 'Low l; HighFlowsToHigh :: FlowsInto 'High 'High@
-  with @decideFlow :: Sing l -> Sing l' -> Maybe (FlowsInto l l')@ for the elaborator, and a
-  second witness @StackAtLeast pc rs@ (structured like 'Validation.Shape.Append') for "every
-  label in @rs@ is @⊒ pc@", which block results and branch targets need. Instructions carry
-  these as fields, like every other refinement in 'Instr'.
+{- | Evidence that level @l@ may flow into level @l'@: the lattice order. A witness rather than
+  a class because validation of a decoded module has to construct it at run time, from
+  singletons, with 'decideFlow'.
+
+  TODO(ifc P1): no instruction carries this yet. It is the premise of every SecWasm rule with a
+  @⊑@ in it: @local.set@, @global.set@, the stores, the branches and the calls.
 -}
-class CanFlowInto (l :: SecLevel) (l' :: SecLevel)
+data FlowsInto (l :: SecLevel) (l' :: SecLevel) where
+    LowFlowsAnywhere :: FlowsInto 'Low l
+    HighFlowsToHigh :: FlowsInto 'High 'High
 
-instance CanFlowInto 'Low 'Low
-instance CanFlowInto 'Low 'High
-instance CanFlowInto 'High 'High
-
-infixl 7 :/\
-
-{- | The join (least upper bound) of two levels: the label of a value computed from both.
-  TODO(ifc P3): naming. @/\@ is the meet in lattice notation; the join is @\/@ (⊔). Rename
-  before it spreads.
-  TODO(ifc P2): the elaborator also needs the join on singletons,
-  @sJoin :: Sing l -> Sing l' -> Sing (l :/\ l')@, one pattern match once the singletons exist
-  (with singletons-th a term-level @join@ generates the family and @sJoin@ together).
-  TODO(ifc P1): a design constraint on every rule that uses this family: GHC reduces it only
-  on concrete levels; it knows nothing of commutativity, associativity or idempotence, so a
-  rule that needs @l :/\ l' ~ l' :/\ l@ or @l :/\ l ~ l@ to unify will not type-check on
-  variables. Write the rules so the join only ever appears in a /result/ position built from
-  the operands' labels (as every rule in "Syntax.InstructionsIFC" does), and let the elaborator
-  instantiate everything concretely; never require GHC to prove two joins equal. If a rule
-  ever needs a lattice law, add it as a witness the elaborator produces, not as an axiom.
--}
-type family (:/\) (l :: SecLevel) (l' :: SecLevel) :: SecLevel where
-    'Low :/\ 'Low = 'Low
-    _ :/\ _ = 'High
+decideFlow :: Sing (l :: SecLevel) -> Sing (l' :: SecLevel) -> Maybe (FlowsInto l l')
+decideFlow SLow _ = Just LowFlowsAnywhere
+decideFlow SHigh SHigh = Just HighFlowsToHigh
+decideFlow SHigh SLow = Nothing

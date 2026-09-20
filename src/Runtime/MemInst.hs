@@ -52,18 +52,16 @@ import Validation.Shape (MemShape)
 
 -- *** Linear memory ***
 
-{- | A linear memory: its declared limits, its current size in pages, and the written chunks.
-  TODO(ifc P1): SecWasm's memory is labelled per byte, flow-sensitively, at run time (§3.2:
-  each location is a pair @(byte, ℓ)@), so this record grows a label store. Recommended shape:
-  a second sparse chunk map next to 'chunks', @labels :: IntMap (UV.Vector Word8)@ (or a bit
-  vector while the lattice has two points), where an absent chunk is all-'Low exactly as an
-  absent chunk is all-zero; @memory.grow@ then labels new pages 'Low for free (E-MEMORY-GROW),
-  and only chunks that ever held a secret are materialised. Operations: a load returns the bytes
-  and the join of their labels (the caller compares it with the instruction's @ℓ@ and traps,
-  E-LOAD); a store writes bytes and sets their labels to its @ℓ@ (E-STORE, no check); the bulk
-  operations compute labels per byte (see the bulk TODO in "Syntax.InstructionsIFC"); a WASI
-  read writes the descriptor's label, a WASI write joins the labels it reads (see
-  "Runtime.Host"). Copy-on-write per chunk carries over unchanged.
+{- | A linear memory: its declared limits, its current size in pages, and the written pages.
+
+  TODO(ifc P1): SecWasm keeps a security level for every byte of memory, at run time, and
+  updates it on every store. So this record needs a second map next to 'pages' that holds the
+  levels. It can be sparse in the same way: a missing page means "all public", just as a
+  missing page of bytes means "all zero", so @memory.grow@ labels new pages public for free and
+  only pages that once held a secret cost anything. The operations change as follows. A load
+  also returns the join of the levels it read, and the interpreter compares it with the
+  instruction's level. A store also sets the levels of the bytes it writes. The bulk operations
+  compute a level per byte (see the TODO on 'Syntax.Instructions.IMemCopy').
 -}
 type MemInst :: MemShape -> Type
 data MemInst m = MemInst

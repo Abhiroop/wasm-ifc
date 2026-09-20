@@ -25,6 +25,11 @@ The three layers follow one naming convention (with `Raw` for the decoder's unty
   `RawModule`, …) and the *intrinsically-typed* `Instr`/`Expr`/`Function`/`Module` — indexed
   by the value-stack shape, locals, labels and module shape they run within, so ill-typed
   programs are not representable.
+  Every value type in those indices also carries a security level (`Syntax.TypesIFC`:
+  `ValType :~ SecLevel`, public or secret), so the same `Instr` tracks information flow: a
+  computed value is as secret as its most secret operand. The levels exist only in types. A
+  decoded module is labelled public throughout for now, and the checks still missing are
+  marked `TODO(ifc …)` beside the instructions they belong to.
 * **Validation** (`Validation.*`): the type-level *shapes* the syntax is indexed by
   (`Validation.Shape`: `ModuleShape`, `MemShape`, `Append`, `Elem`), the singleton witnesses
   and decidable equality (`Validation.Reflect`), and the elaborator (`Validation.Elaborate`),

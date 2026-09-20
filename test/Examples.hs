@@ -26,24 +26,40 @@ import Runtime.Stack
 import Syntax.Functions (Function (..), FunctionBody)
 import Syntax.Immediates (NumWithSign (..), Signedness (..))
 import Syntax.Instructions
-import Syntax.InstructionsIFC qualified as IFC
 import Syntax.Types (
-    FuncType (..),
-    GlobalType (..),
+    FuncTypeOf (..),
+    GlobalTypeOf (..),
     IsInt (..),
     IsNum (..),
     Mutability (..),
     SValType (..),
     ValType (..),
  )
-import Syntax.TypesIFC (LValType (..), SecLevel (..))
+import Syntax.TypesIFC (LValType (..), SLValType (..), SSecLevel (..), SecLevel (..))
 import Validation.Ref (LocalRef, resolveLocal)
 import Validation.Shape (Elem (..), ModuleShape (..))
 
 {- | The single i32 a completed run produced. (These modules import nothing, so a call into
 the host cannot arise; the case is still spelled out because the type admits it.)
 -}
-completedI32 :: Outcome mod '[ 'I32] -> Either String Word32
+
+-- | A public i32: the labelled type nearly every example here works with.
+type PublicI32 = 'I32 ':~ 'Low
+
+-- | A secret i32.
+type SecretI32 = 'I32 ':~ 'High
+
+-- | The singleton of 'PublicI32'.
+publicI32 :: SLValType PublicI32
+publicI32 = SI32 :%~ SLow
+
+{- | The constant one, public. A constant's level is free in its type (see 'IConst'), so an
+  example has to say which level it means wherever nothing else decides it.
+-}
+one :: Instr mod frame labels s (PublicI32 ': s)
+one = IConst I32IsNum 1
+
+completedI32 :: Outcome mod '[PublicI32] -> Either String Word32
 completedI32 (Completed _ (x :# VNil)) = Right x
 completedI32 (NeedsHost _) = Left "the example called into the host"
 
@@ -54,15 +70,15 @@ completedI32 (NeedsHost _) = Left "the example called into the host"
    stack effect line up; a single misplaced instruction would not compile.
 -}
 
-factorial :: FuncInst shape ('FuncType '[ 'I32] '[ 'I32])
+factorial :: FuncInst shape ('FuncType '[PublicI32] '[PublicI32])
 factorial =
-    WasmFunc . Function (SCons SI32 SNil) (SCons SI32 SNil) $
-        ( IConst I32IsNum 1
+    WasmFunc . Function (SCons publicI32 SNil) (SCons publicI32 SNil) $
+        ( one
             :. ILocalSet acc
             :. block_
                 ( loop_
                     ( ILocalGet n
-                        :. IConst I32IsNum 1
+                        :. one
                         :. ILe (IntsHaveSign I32IsInt Signed)
                         :. brIf_ toDone
                         :. ILocalGet acc
@@ -70,7 +86,7 @@ factorial =
                         :. IMul I32IsNum
                         :. ILocalSet acc
                         :. ILocalGet n
-                        :. IConst I32IsNum 1
+                        :. one
                         :. ISub I32IsNum
                         :. ILocalSet n
                         :. br_ toContinue
@@ -82,11 +98,11 @@ factorial =
             :. INil
         )
   where
-    n, acc :: LocalRef 'I32 '[ 'I32, 'I32]
-    n = resolveLocal SI32 Here
-    acc = resolveLocal SI32 (There Here)
+    n, acc :: LocalRef PublicI32 '[PublicI32, PublicI32]
+    n = resolveLocal publicI32 Here
+    acc = resolveLocal publicI32 (There Here)
     -- Inside the loop the labels are: 0 = loop, 1 = block, 2 = function.
-    toContinue, toDone :: Elem '[] '[ '[], '[], '[ 'I32]]
+    toContinue, toDone :: Elem '[] '[ '[], '[], '[PublicI32]]
     toContinue = Here -- branch to the loop header (restarts it)
     toDone = There Here -- branch out of the block (exits the loop)
 
@@ -121,16 +137,16 @@ runFactorial input =
    @square x = mul x x@, exercising a typed 'call' into another function in the module.
 -}
 
-type CallCtx = 'ModuleShape '[ 'FuncType '[ 'I32, 'I32] '[ 'I32]] '[] '[] '[] '[]
+type CallCtx = 'ModuleShape '[ 'FuncType '[PublicI32, PublicI32] '[PublicI32]] '[] '[] '[] '[]
 
-multiply :: FuncInst CallCtx ('FuncType '[ 'I32, 'I32] '[ 'I32])
-multiply = WasmFunc . Function (SCons SI32 (SCons SI32 SNil)) SNil $ (ILocalGet (resolveLocal SI32 Here) :. ILocalGet (resolveLocal SI32 (There Here)) :. IMul I32IsNum :. INil)
+multiply :: FuncInst CallCtx ('FuncType '[PublicI32, PublicI32] '[PublicI32])
+multiply = WasmFunc . Function (SCons publicI32 (SCons publicI32 SNil)) SNil $ (ILocalGet (resolveLocal publicI32 Here) :. ILocalGet (resolveLocal publicI32 (There Here)) :. IMul I32IsNum :. INil)
 
-square :: FuncInst CallCtx ('FuncType '[ 'I32] '[ 'I32])
-square = WasmFunc . Function (SCons SI32 SNil) SNil $ (ILocalGet (resolveLocal SI32 Here) :. ILocalGet (resolveLocal SI32 Here) :. call toMultiply :. INil)
+square :: FuncInst CallCtx ('FuncType '[PublicI32] '[PublicI32])
+square = WasmFunc . Function (SCons publicI32 SNil) SNil $ (ILocalGet (resolveLocal publicI32 Here) :. ILocalGet (resolveLocal publicI32 Here) :. call toMultiply :. INil)
   where
     -- function index 0 in the module signature
-    toMultiply :: Elem ('FuncType '[ 'I32, 'I32] '[ 'I32]) '[ 'FuncType '[ 'I32, 'I32] '[ 'I32]]
+    toMultiply :: Elem ('FuncType '[PublicI32, PublicI32] '[PublicI32]) '[ 'FuncType '[PublicI32, PublicI32] '[PublicI32]]
     toMultiply = Here
 
 runSquare :: Word32 -> Either String Word32
@@ -145,13 +161,13 @@ runSquare input = either (Left . show) completedI32 (runFunction callModule squa
    on the (only) global type-checks only because it is declared 'Mutable.
 -}
 
-type GlobalCtx = 'ModuleShape '[] '[ 'GlobalType 'Mutable 'I32] '[] '[] '[]
+type GlobalCtx = 'ModuleShape '[] '[ 'GlobalType 'Mutable PublicI32] '[] '[] '[]
 
-increment :: FuncInst GlobalCtx ('FuncType '[] '[ 'I32])
+increment :: FuncInst GlobalCtx ('FuncType '[] '[PublicI32])
 increment =
     WasmFunc . Function SNil SNil $
         ( IGlobalGet Here
-            :. IConst I32IsNum 1
+            :. one
             :. IAdd I32IsNum
             :. IGlobalSet Here
             :. IGlobalGet Here
@@ -176,32 +192,28 @@ runIncrement initial = either (Left . show) completedI32 (runFunction globalModu
          In the first argument of ‘(:.)’, namely ‘IAdd I32IsNum’
 
    broken :: FuncInst shape ('FuncType '[ 'I32 ] '[ 'I32 ])
-   broken = WasmFunc . Function (SCons SI32 SNil) SNil $ (ILocalGet (resolveLocal SI32 Here) :. IAdd I32IsNum :. INil)
+   broken = WasmFunc . Function (SCons publicI32 SNil) SNil $ (ILocalGet (resolveLocal publicI32 Here) :. IAdd I32IsNum :. INil)
 -}
 
-{- | The first labelled program, for "Syntax.InstructionsIFC": a secret plus a public value.
-  Its type is the assertion: the sum is 'High because the join reduces, and the program
-  compiles only because a free-labelled constant can be pinned to either level. Nothing runs
-  it yet.
-  TODO(ifc P2): the examples to write as the TODOs land, each a type-level assertion like this
-  one: the leaky @if@ (a secret condition, a public @local.set@ in a branch) that must /not/
-  compile once the pc exists (keep it as a commented ill-typed program with its error, as the
-  early phases did for @broken@); @select@ on a secret condition typing secret after the
-  'ISelect' fix; a store of a public value into a secret local through the flow witness. When
-  the P0 structure decision lands, these become runnable through 'runFunction' too.
+{- | A secret plus a public value. The type is the assertion: the sum is 'High, because a
+  result is as secret as its most secret operand. Writing 'Low in the signature instead is a
+  compile error. The test only counts the instructions, since the levels exist in types alone.
+
+  TODO(ifc P2): examples to add as the checks land. A secret @if@ around a public @local.set@
+  should not compile once the program counter label exists; keep it here as a commented
+  program with the error GHC gives, as @broken@ above does for an ill-typed stack. A public
+  value stored into a secret local should compile once the writes take a flow witness.
 -}
-secretPlusPublic :: IFC.Expr shape ret locals labels '[] (('I32 ':~ 'High) ': '[])
-secretPlusPublic = secret IFC.:. public IFC.:. IFC.IAdd I32IsNum IFC.:. IFC.INil
+secretPlusPublic :: Expr mod frame labels '[] '[SecretI32]
+secretPlusPublic = secret :. one :. IAdd I32IsNum :. INil
   where
-    secret :: IFC.Instr shape ret locals labels s (('I32 ':~ 'High) ': s)
-    secret = IFC.IConst I32IsNum 42
-    public :: IFC.Instr shape ret locals labels s (('I32 ':~ 'Low) ': s)
-    public = IFC.IConst I32IsNum 1
+    secret :: Instr mod frame labels s (SecretI32 ': s)
+    secret = IConst I32IsNum 42
 
--- | The instruction count of 'secretPlusPublic': the one thing a labelled program can do so far.
+-- | The instruction count of 'secretPlusPublic'.
 labelledSumLength :: Int
 labelledSumLength = count secretPlusPublic
   where
-    count :: IFC.Expr shape ret locals labels s s' -> Int
-    count IFC.INil = 0
-    count (_ IFC.:. rest) = 1 + count rest
+    count :: Expr mod frame labels s s' -> Int
+    count INil = 0
+    count (_ :. rest) = 1 + count rest

@@ -10,7 +10,15 @@
 -- 'step' inlined. With them the typed machine allocates less than its erased twin, where at -O1
 -- it allocated twice as much (TODO.md §I, E1/E6). Confined to this module because it is the one
 -- that runs hot, and -O2 costs compile time wherever it is on.
-{-# OPTIONS_GHC -O2 #-}
+--
+-- -fno-spec-constr-count lifts SpecConstr's limit of three specialisations per function. The
+-- driver's continuation is specialised once per shape of "stepped to this configuration". With
+-- security levels in the stack types those shapes differ in more type variables, there are
+-- more than three of them, and under the default limit most instructions fell back to building
+-- the Stepped and the Config after all: 60 bytes more per step, which bench/tripwire.py caught
+-- when the levels went in (2026-09-20). Without the limit the figures equal the unlabelled
+-- build's exactly.
+{-# OPTIONS_GHC -O2 -fno-spec-constr-count #-}
 
 {- | The intrinsically-typed interpreter, as a small-step abstract machine.
 
@@ -123,6 +131,7 @@ import Syntax.Instructions (
     Instr (..),
  )
 import Syntax.Types
+import Syntax.TypesIFC
 import Validation.Reflect (appendNil)
 import Validation.Shape (Append, DataShape (..), Elem (..), FrameShape (..), ModuleData, ModuleFuncs, ModuleGlobals, ModuleMems, ModuleShape, ModuleTables, SomeFuncRef (..), appendFromSing)
 
@@ -132,12 +141,12 @@ import Validation.Shape (Append, DataShape (..), Elem (..), FrameShape (..), Mod
   was linked to. A host function can only live in a module that has a memory, which WASI
   requires; the constraint is packed here so the driver can reach that memory without asking.
 -}
-data FuncInst (mod :: ModuleShape) (ft :: FuncType) where
+data FuncInst (mod :: ModuleShape) (ft :: LFuncType) where
     WasmFunc :: Function mod ft -> FuncInst mod ft
     HostFunc :: (ModuleMems mod ~ (mem ': mems)) => WasiFunc ft -> FuncInst mod ft
 
 -- | The instance of a module's function index space: one 'FuncInst' per type in 'ModuleFuncs'.
-data FuncSpaceInst (mod :: ModuleShape) (fts :: [FuncType]) where
+data FuncSpaceInst (mod :: ModuleShape) (fts :: [LFuncType]) where
     FsNil :: FuncSpaceInst mod '[]
     FsCons :: FuncInst mod ft -> FuncSpaceInst mod fts -> FuncSpaceInst mod (ft ': fts)
 
@@ -184,30 +193,21 @@ data ModuleInst (mod :: ModuleShape) = ModuleInst
    An @Elem rs labels@ branch target therefore selects an entry directly, and unwinding it
    stays type-correct without any coercion.
 
-   TODO(ifc P1): SecWasm is hybrid, so 'step' takes part: the load check (E-LOAD's premise
-   @⨆ ℓ ⊑ ℓm@ over the bytes read, a trap when it fails), the relabelling of bytes on a store
-   (E-STORE), 'Low labels for the pages @memory.grow@ adds, and the per-byte computations of
-   the bulk operations, all against the label store in 'Runtime.MemInst.MemInst'. Nothing else
-   is dynamic: the pc is static, so this control stack needs no label for the /checks/. It is,
-   however, where the proof lives: SecWasm's confinement lemma (Lemma 1, Fig. 11) says a
-   high-context execution changes only the entries above the lowest entry whose pc is high,
-   and in this machine that region is exactly the 'Control' entries above the last one with a
-   low pc, plus the segment of the value stack they frame. If the pc is ever kept here at run
-   time (a dynamic or hybrid-monitoring variant), it goes on 'BlockLabel', 'LoopLabel' and
-   'CallBoundary' as the activation depth is kept today. Either way the labelled instructions
-   must be what 'step' runs for a noninterference statement about this machine (see the P0
-   TODO on 'Syntax.InstructionsIFC.Instr'); SecWasm's big-step choice (§3.5) was for proof
-   convenience only, this small-step machine is the faithful one, and the paper's Definitions
-   3–9 are the invariants to test (see the property TODO in @test/Spec.hs@).
+   TODO(ifc P1): SecWasm checks most flows during validation, but not memory reads: those are
+   checked at run time, so 'step' has work to do. A load joins the levels of the bytes it reads
+   and traps if the result exceeds the level written in the instruction; a store marks the bytes
+   it writes with its level; @memory.grow@ marks the new pages public. The byte levels live in
+   'Runtime.MemInst.MemInst'. Nothing else in 'step' changes: the levels of the value stack,
+   the locals and the globals exist only in the types, and this control stack needs none.
 -}
 data
     Control
         (mod :: ModuleShape)
-        (res :: ResultType)
-        (ret :: ResultType)
-        (locals :: [ValType])
-        (labels :: [ResultType])
-        (cur :: [ValType])
+        (res :: LResultType)
+        (ret :: LResultType)
+        (locals :: [LValType])
+        (labels :: [LResultType])
+        (cur :: [LValType])
     where
     {- | The bottom of the stack: the entry activation. Falling through (or @br@ to its only
     label, or @return@) leaving @res@ completes the whole computation.
@@ -247,7 +247,7 @@ data
   stack expects exactly the @out@ it leaves. All shape indices are existential; only the
   module signature @mod@ and the overall result @res@ are visible.
 -}
-data Config (mod :: ModuleShape) (res :: ResultType) where
+data Config (mod :: ModuleShape) (res :: LResultType) where
     Config ::
         !(Store mod) ->
         !(LocalSpaceInst locals) ->
@@ -260,7 +260,7 @@ data Config (mod :: ModuleShape) (res :: ResultType) where
   the store as the computation left it; or a call into the host, which the pure machine
   cannot perform and so hands out as a request.
 -}
-data StepResult (mod :: ModuleShape) (res :: ResultType) where
+data StepResult (mod :: ModuleShape) (res :: LResultType) where
     Stepped :: !(Config mod res) -> StepResult mod res
     Done :: !(Store mod) -> !(ValueStack res) -> StepResult mod res
     HostCall :: HostRequest mod res -> StepResult mod res
@@ -269,19 +269,14 @@ data StepResult (mod :: ModuleShape) (res :: ResultType) where
   parameter shape), the store to perform it against, and how to continue once the results
   are known. The memory constraint travels with it so the driver can read and write memory.
 
-  TODO(ifc P1): this boundary is where information enters and leaves the module, so it is
-  where IFC has teeth; it is also outside SecWasm, whose attacker sees only the final values of
-  the public globals and which lists imported host functions as a non-goal (§1, §3.1). Our
-  extension: the host function's labelled type (from the policy, see the TODO on
-  'Validation.Elaborate.elaborateModule' and on 'Runtime.Host.WasiFunc') labels the results the
-  driver writes back (sources) and constrains the arguments and the pc of the call (sinks:
-  writing secret bytes to a public descriptor is the leak the whole system exists to stop), and
-  the attacker model grows by "the sequence of public sink outputs". The check is local here:
-  the arguments' labels are on the stack, the pc is the call site's, and the bytes a WASI call
-  reads from memory carry their own labels, so a sink can be checked per byte at the boundary
-  exactly like a load (dynamic), which is what makes descriptors, run-time values, tractable.
+  TODO(ifc P1): a host call is where data enters and leaves the module, so it is where a leak
+  finally happens, for example when secret bytes are written to a public file descriptor.
+  SecWasm does not cover host functions, so this part is ours to design. Each host function
+  needs a labelled type (see "Runtime.Host"). For the buffers a call reads from memory, the
+  driver can compare the byte levels with the descriptor's level at this boundary, in the same
+  way as a load does.
 -}
-data HostRequest (mod :: ModuleShape) (res :: ResultType) where
+data HostRequest (mod :: ModuleShape) (res :: LResultType) where
     HostRequest ::
         (ModuleMems mod ~ (mem ': mems)) =>
         WasiFunc ('FuncType ps rs) ->
@@ -294,7 +289,7 @@ data HostRequest (mod :: ModuleShape) (res :: ResultType) where
   the stack it saved below the arguments, the code after the call and its control stack. The
   'Append' witness says where the results sit on that stack.
 -}
-data Suspended (mod :: ModuleShape) (res :: ResultType) (rs :: ResultType) where
+data Suspended (mod :: ModuleShape) (res :: LResultType) (rs :: LResultType) where
     Suspended ::
         Append rs below full ->
         LocalSpaceInst locals ->
@@ -521,9 +516,9 @@ stepped store locals stack code control = Right (Stepped (Config store locals st
 stepBin ::
     Store mod ->
     LocalSpaceInst locals ->
-    ValueStack (x ': x ': s) ->
+    ValueStack ((x ':~ lb) ': (x ':~ la) ': s) ->
     (HostType x -> HostType x -> HostType z) ->
-    Expr mod ('FrameShape locals ret) labels (z ': s) out ->
+    Expr mod ('FrameShape locals ret) labels ((z ':~ l) ': s) out ->
     Control mod res ret locals labels out ->
     Either Trap (StepResult mod res)
 stepBin store locals (b :# a :# r) op = stepped store locals (op a b :# r)
@@ -532,9 +527,9 @@ stepBin store locals (b :# a :# r) op = stepped store locals (op a b :# r)
 stepUn ::
     Store mod ->
     LocalSpaceInst locals ->
-    ValueStack (x ': s) ->
+    ValueStack ((x ':~ la) ': s) ->
     (HostType x -> HostType z) ->
-    Expr mod ('FrameShape locals ret) labels (z ': s) out ->
+    Expr mod ('FrameShape locals ret) labels ((z ':~ l) ': s) out ->
     Control mod res ret locals labels out ->
     Either Trap (StepResult mod res)
 stepUn store locals (a :# r) op = stepped store locals (op a :# r)
@@ -551,7 +546,7 @@ storeMem mem store =
 
 -- The store's other updates. (Its field names are shared with 'ModuleInst', so the records are
 -- rebuilt rather than updated: GHC no longer disambiguates such updates by type.)
-storeSetGlobal :: Elem ('GlobalType mut t) (ModuleGlobals mod) -> HostType t -> Store mod -> Store mod
+storeSetGlobal :: Elem ('GlobalType mut (t ':~ l)) (ModuleGlobals mod) -> HostType t -> Store mod -> Store mod
 storeSetGlobal ix v store =
     Store {globals = setGlobal ix v store.globals, memories = store.memories, tables = store.tables, dataSegments = store.dataSegments}
 
@@ -637,7 +632,7 @@ storeToModule funcs store =
     ModuleInst {functions = funcs, globals = store.globals, memories = store.memories, tables = store.tables, dataSegments = store.dataSegments}
 
 -- | Where a run stops: with its results and final store, or waiting for the host.
-data Halt (mod :: ModuleShape) (res :: ResultType) where
+data Halt (mod :: ModuleShape) (res :: LResultType) where
     Finished :: Store mod -> ValueStack res -> Halt mod res
     AwaitingHost :: HostRequest mod res -> Halt mod res
 
@@ -653,7 +648,7 @@ run funcs config = case step funcs config of
     Right (Stepped next) -> run funcs next
 
 -- | How a fuel-bounded run ends: halted like 'run', or stopped with the budget spent.
-data Fuelled (mod :: ModuleShape) (res :: ResultType) where
+data Fuelled (mod :: ModuleShape) (res :: LResultType) where
     Halted :: Halt mod res -> Fuelled mod res
     OutOfFuel :: Config mod res -> Fuelled mod res
 
@@ -670,7 +665,7 @@ runFor fuel funcs config
         Right (Stepped next) -> runFor (fuel - 1) funcs next
 
 -- | How a function invocation ends: with the module as the call left it, or needing the host.
-data Outcome (mod :: ModuleShape) (rs :: ResultType) where
+data Outcome (mod :: ModuleShape) (rs :: LResultType) where
     Completed :: ModuleInst mod -> ValueStack rs -> Outcome mod rs
     NeedsHost :: HostRequest mod rs -> Outcome mod rs
 

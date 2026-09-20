@@ -365,22 +365,18 @@ Open P0/P1 correctness items live in the plan above (section **P0**); the list b
 
 - [ ] **[P2·epic·ifc]** **Information-flow control — the actual goal.** Security-level typing on
   the typed layer (labels on value types / the stack; a noninterference argument).
-  **Started (2026-09-11):** Abhiroop's first cut is merged and ported onto the current core as
-  a parallel, not-yet-executed GADT: `Syntax.TypesIFC` (`SecLevel`, `LValType = ValType :~
-  SecLevel`, `CanFlowInto`, the join `:/\`) and `Syntax.InstructionsIFC` (today's `Instr` over
-  `[LValType]`; numeric results take the join of their operands' labels). `Append` is poly-kinded
-  for it. The open design points are `TODO(ifc Pn)` comments beside the code they concern
-  (`grep -rn 'TODO(ifc' src test`), grounded in the SecWasm paper (hybrid: static except the
-  memory read check; per-byte flow-sensitive memory labels with `load ℓ`/`store ℓ` immediates;
-  function types with a pc bound; flow-sensitive pc stack, which we recommend flattening to one
-  pc per block computed by a pre-pass; TINI). P0 — parallel GADT vs one `Instr` generalised over
-  the label; the pc label; where labels come from (a custom section; inferred store labels,
-  `Low` default for loads). P1 — the pc index and `LabelShape`; `select`; flow witnesses
-  (`FlowsInto`, `StackAtLeast`) on sets, stores, branches, calls; per-byte memory labels in
-  `MemInst` and the dynamic load check + trap in `step`; labelled `FuncType`s and globals;
-  labelled WASI signatures (our extension). P2 — singletons for `SecLevel`; explicit relabel;
-  bulk-memory label rules; the noninterference property test; next examples. P3 — naming, the
-  lattice, the termination channel, the flow-sensitive upgrade.
+  **Status (2026-09-20):** one instruction type tracks both value types and security levels.
+  Every stack, local, global and function type in the typed layer is over `LValType`
+  (`ValType :~ SecLevel`, in `Syntax.TypesIFC`, with generated singletons, the join `Join` and
+  the flow witness `FlowsInto`). The numeric, comparison, conversion and `select` instructions
+  have their final signatures. Levels exist only in types; the run-time representation and the
+  benchmarks' erased twin are unchanged. A decoded module is labelled `Low` throughout, so
+  validation accepts what it always did. Abhiroop's parallel `Syntax.InstructionsIFC` is gone.
+  What remains is a `TODO(ifc Pn)` comment beside each construct (`grep -rn 'TODO(ifc' src test`):
+  P0: where levels come from (the policy), and the program counter label. P1: flow checks on
+  writes, branches and calls; a bound on function types; levels per byte of memory with the
+  run-time load check and its trap; labelled host functions. P2: a relabelling instruction;
+  bulk-memory rules; constants at the pc; the two-run property test; more examples. P3: naming.
   References (folded in from the old `discussions/READING_LIST.md`):
   - SecWasm — the IFC model we follow: <https://plas2022.github.io/files/pdf/SecWasm.pdf>
     Full version with every rule (T-IF, T-LOOP, T-SELECT, the sets, E-*-TRAP):
@@ -749,9 +745,20 @@ frozen at `15e5ace`. For the IFC work, the lessons that are cheap to honour whil
   persistent representation a labelled store copies both, so this keeps labels' cost small.
 - [ ] **[P2·perf·ifc]** Build the label singletons that loads and stores need into the
   instructions at elaboration, as the numeric witnesses are, not per step.
-- [ ] **[P1·perf·ifc]** Keep `INLINE step` and `-O2` on `Runtime.Interpreter`, and run
+- [x] **[P1·perf·ifc]** Keep `INLINE step` and `-O2` on `Runtime.Interpreter`, and run
   `bench/tripwire.py` once the label index is in: E1 showed that an extra index can change what
   GHC's optimiser does to the driver, and allocation per step shows it at once.
+  **Done 2026-09-20, and it did:** with levels in the stack types every workload allocated 37 to
+  160 % more. SpecConstr stops at three specialisations per function, and the driver's
+  continuation now has more call shapes than that, so most instructions built their `Stepped`
+  and `Config` again. `-fno-spec-constr-count` on the module restores the unlabelled build's
+  figures exactly (the comment at the pragma has the details).
+  One workload stays 2.3 % above its reference, just past the tripwire's tolerance:
+  `call-indirect`, by 16 bytes per indirect call. The run-time type check of `call_indirect` now
+  compares security levels as well, and the equality proof for a labelled type is one more
+  heap object per compared type. `bench/allocation.txt` is unchanged, so the tripwire reports
+  it; either accept it and re-record, or avoid the proof (for instance by giving each table
+  entry's type a number at instantiation and comparing numbers).
 - [ ] **[P2·perf]** At each IFC milestone, the tripwire; at larger ones, an interleaved sweep
   against the previous milestone's saved binary (bench/README.md). The first such sweep is also
   the next experiment: **IFC's own cost**, the all-`Low` instance of the labelled machine against

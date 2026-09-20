@@ -48,6 +48,7 @@ import Syntax.Instructions (
  )
 import Syntax.Module
 import Syntax.Types
+import Syntax.TypesIFC
 import Validation.Ref (resolveLocal)
 import Validation.Reflect
 import Validation.Shape
@@ -120,7 +121,7 @@ data IndexSpace = Locals | Globals | Functions | Labels | Memories | Types | Tab
 {- | What elaboration knows: the module signature witness, the enclosing function's result
   type and locals, and the result type of each enclosing label.
 -}
-data ElabEnv (shape :: ModuleShape) (ret :: ResultType) (locals :: [ValType]) (labels :: [ResultType]) = ElabEnv
+data ElabEnv (shape :: ModuleShape) (ret :: LResultType) (locals :: [LValType]) (labels :: [LResultType]) = ElabEnv
     { shape :: Sing shape
     , types :: [FuncType]
     -- ^ the module's type section, which @call_indirect@ refers into
@@ -133,7 +134,7 @@ data ElabEnv (shape :: ModuleShape) (ret :: ResultType) (locals :: [ValType]) (l
   A sequence either runs to its end or leaves early through an unconditional branch, and the
   two cases carry different evidence:
 -}
-data ElaboratedExpr (shape :: ModuleShape) (ret :: ResultType) (locals :: [ValType]) (labels :: [ResultType]) (stackIn :: [ValType]) where
+data ElaboratedExpr (shape :: ModuleShape) (ret :: LResultType) (locals :: [LValType]) (labels :: [LResultType]) (stackIn :: [LValType]) where
     -- | Control reached the end of the sequence, leaving a concrete @stackOut@ on top.
     Reachable :: Sing stackOut -> Expr shape ('FrameShape locals ret) labels stackIn stackOut -> ElaboratedExpr shape ret locals labels stackIn
     {- | The sequence ended in an unconditional transfer (@br@ / @return@ / @unreachable@), so
@@ -147,7 +148,7 @@ data ElaboratedExpr (shape :: ModuleShape) (ret :: ResultType) (locals :: [ValTy
   'ElaboratedExpr', with the same two cases. 'elabSeq' folds these into an 'ElaboratedExpr'
   as it walks the sequence.
 -}
-data ElaboratedInstr (shape :: ModuleShape) (ret :: ResultType) (locals :: [ValType]) (labels :: [ResultType]) (stackIn :: [ValType]) where
+data ElaboratedInstr (shape :: ModuleShape) (ret :: LResultType) (locals :: [LValType]) (labels :: [LResultType]) (stackIn :: [LValType]) where
     {- | An ordinary instruction: it leaves a concrete @stackOut@ and elaboration continues
     from there (the analogue of 'Reachable').
     -}
@@ -193,7 +194,7 @@ elabInstr env stackIn instr = case instr of
     {- Constants -}
     Const st literal -> do
         isNum <- requireNum st
-        Right (Produces (SCons st stackIn) (IConst isNum literal))
+        Right (Produces (SCons (st :%~ SLow) stackIn) (IConst isNum literal))
     {- Numeric (consume two of type t, produce one of type t) -}
     Add st -> do
         isNum <- requireNum st
@@ -230,10 +231,10 @@ elabInstr env stackIn instr = case instr of
         sn <- requireNumWithSign st sign
         consumeTwo st SI32 stackIn (IGe sn)
     Eqz st -> case stackIn of
-        SCons sa rest -> do
+        SCons (sa :%~ la) rest -> do
             isInt <- requireInt st
             Refl <- note (OperandMismatch "eqz" (valTypeOf st) (valTypeOf sa)) (decideEquality sa st)
-            Right (Produces (SCons SI32 rest) (IEqz isInt))
+            Right (Produces (SCons (SI32 :%~ la) rest) (IEqz isInt))
         _ -> Left (StackUnderflow "eqz")
     {- Stack management -}
     Drop -> case stackIn of
@@ -244,46 +245,46 @@ elabInstr env stackIn instr = case instr of
     SelectTyped ts -> Left (InvalidSelectArity (length ts))
     {- Locals -}
     LocalGet (LocalIdx i) -> case mkLocalElem (env.locals) i of
-        Just (SomeElem sv ix) -> Right (Produces (SCons sv stackIn) (ILocalGet (resolveLocal sv ix)))
+        Just (SomeElem sv@(_ :%~ _) ix) -> Right (Produces (SCons sv stackIn) (ILocalGet (resolveLocal sv ix)))
         Nothing -> Left (IndexOutOfRange Locals i)
     LocalSet (LocalIdx i) -> case mkLocalElem (env.locals) i of
-        Just (SomeElem sv ix) -> case stackIn of
+        Just (SomeElem sv@(_ :%~ _) ix) -> case stackIn of
             SCons stop rest -> do
-                Refl <- note (OperandMismatch "local.set" (valTypeOf sv) (valTypeOf stop)) (decideEquality stop sv)
+                Refl <- note (OperandMismatch "local.set" (unlabelledTypeOf sv) (unlabelledTypeOf stop)) (decideEquality stop sv)
                 Right (Produces rest (ILocalSet (resolveLocal sv ix)))
             _ -> Left (StackUnderflow "local.set")
         Nothing -> Left (IndexOutOfRange Locals i)
     LocalTee (LocalIdx i) -> case mkLocalElem (env.locals) i of
-        Just (SomeElem sv ix) -> case stackIn of
+        Just (SomeElem sv@(_ :%~ _) ix) -> case stackIn of
             SCons stop _ -> do
-                Refl <- note (OperandMismatch "local.tee" (valTypeOf sv) (valTypeOf stop)) (decideEquality stop sv)
+                Refl <- note (OperandMismatch "local.tee" (unlabelledTypeOf sv) (unlabelledTypeOf stop)) (decideEquality stop sv)
                 Right (Produces stackIn (ILocalTee (resolveLocal sv ix)))
             _ -> Left (StackUnderflow "local.tee")
         Nothing -> Left (IndexOutOfRange Locals i)
     {- Globals -}
     GlobalGet (GlobalIdx g) -> case lookupGlobalRef (globalTypesSing (env.shape)) g of
         Nothing -> Left (IndexOutOfRange Globals g)
-        Just (SomeGlobalRef _ st gix) -> Right (Produces (SCons st stackIn) (IGlobalGet gix))
+        Just (SomeGlobalRef _ st@(_ :%~ _) gix) -> Right (Produces (SCons st stackIn) (IGlobalGet gix))
     GlobalSet (GlobalIdx g) -> case lookupGlobalRef (globalTypesSing (env.shape)) g of
         Nothing -> Left (IndexOutOfRange Globals g)
-        Just (SomeGlobalRef smut st gix) -> case smut of
+        Just (SomeGlobalRef smut st@(_ :%~ _) gix) -> case smut of
             SImmutable -> Left (ImmutableGlobal g)
             SMutable -> case stackIn of
                 SCons stop rest -> do
-                    Refl <- note (OperandMismatch "global.set" (valTypeOf st) (valTypeOf stop)) (decideEquality stop st)
+                    Refl <- note (OperandMismatch "global.set" (unlabelledTypeOf st) (unlabelledTypeOf stop)) (decideEquality stop st)
                     Right (Produces rest (IGlobalSet gix))
                 _ -> Left (StackUnderflow "global.set")
     {- Memory -}
     Load st memArg -> case stackIn of
-        SCons sc rest -> do
+        SCons (sc :%~ _) rest -> do
             NonEmptyMems <- requireMemory env "load"
             isNum <- requireNum st
             Refl <- note (OperandMismatch "load" I32 (valTypeOf sc)) (decideEquality sc SI32)
             checkAlign memArg (numBytes isNum)
-            Right (Produces (SCons st rest) (ILoad isNum memArg))
+            Right (Produces (SCons (st :%~ SLow) rest) (ILoad isNum memArg))
         _ -> Left (StackUnderflow "load")
     Store st memArg -> case stackIn of
-        SCons sv (SCons sc rest) -> do
+        SCons (sv :%~ _) (SCons (sc :%~ _) rest) -> do
             NonEmptyMems <- requireMemory env "store"
             isNum <- requireNum st
             Refl <- note (OperandMismatch "store" (valTypeOf st) (valTypeOf sv)) (decideEquality sv st)
@@ -292,15 +293,15 @@ elabInstr env stackIn instr = case instr of
             Right (Produces rest (IStore isNum memArg))
         _ -> Left (StackUnderflow "store")
     LoadN st width sign memArg -> case stackIn of
-        SCons sc rest -> do
+        SCons (sc :%~ _) rest -> do
             NonEmptyMems <- requireMemory env "load"
             nw <- requireNarrow st width
             Refl <- note (OperandMismatch "load" I32 (valTypeOf sc)) (decideEquality sc SI32)
             checkAlign memArg (narrowBytes nw)
-            Right (Produces (SCons st rest) (ILoadN nw sign memArg))
+            Right (Produces (SCons (st :%~ SLow) rest) (ILoadN nw sign memArg))
         _ -> Left (StackUnderflow "load")
     StoreN st width memArg -> case stackIn of
-        SCons sv (SCons sc rest) -> do
+        SCons (sv :%~ _) (SCons (sc :%~ _) rest) -> do
             NonEmptyMems <- requireMemory env "store"
             nw <- requireNarrow st width
             Refl <- note (OperandMismatch "store" (valTypeOf st) (valTypeOf sv)) (decideEquality sv st)
@@ -310,7 +311,7 @@ elabInstr env stackIn instr = case instr of
         _ -> Left (StackUnderflow "store")
     MemorySize -> do
         NonEmptyMems <- requireMemory env "memory.size"
-        Right (Produces (SCons SI32 stackIn) IMemSize)
+        Right (Produces (SCons (SI32 :%~ SLow) stackIn) IMemSize)
     MemoryCopy -> do
         NonEmptyMems <- requireMemory env "memory.copy"
         threeAddresses "memory.copy" stackIn IMemCopy
@@ -325,18 +326,18 @@ elabInstr env stackIn instr = case instr of
         segmentIx <- note (IndexOutOfRange DataSegments d) (mkDataElem (dataShapesSing (env.shape)) d)
         Right (Produces stackIn (IDataDrop segmentIx))
     MemoryGrow -> case stackIn of
-        SCons sc rest -> do
+        SCons (sc :%~ lc) rest -> do
             NonEmptyMems <- requireMemory env "memory.grow"
             Refl <- note (OperandMismatch "memory.grow" I32 (valTypeOf sc)) (decideEquality sc SI32)
-            Right (Produces (SCons SI32 rest) IMemGrow)
+            Right (Produces (SCons (SI32 :%~ lc) rest) IMemGrow)
         _ -> Left (StackUnderflow "memory.grow")
     {- Calls -}
     CallIndirect (TypeIdx t) -> case stackIn of
-        SCons sc rest -> do
+        SCons (sc :%~ _) rest -> do
             NonEmptyTables <- requireTable env
             Refl <- note (OperandMismatch "call_indirect" I32 (valTypeOf sc)) (decideEquality sc SI32)
             expected <- note (IndexOutOfRange Types t) (nth (env.types) t)
-            case toSing (stackOrderFuncType expected) of
+            case toSing (publicFuncType (stackOrderFuncType expected)) of
                 SomeSing (SFuncType psS rsS) -> case matchPrefix psS rest of
                     Nothing -> Left (StackMismatch "call_indirect" (stackToList psS) (stackToList rest))
                     Just (SomeSplit sS witness) -> Right (Produces (rsS %++ sS) (ICallIndirect witness (SFuncType psS rsS)))
@@ -412,9 +413,9 @@ elabInstr env stackIn instr = case instr of
     Convert op ->
         let (nf, nt) = convertEnds op
          in case stackIn of
-                SCons sa rest -> do
+                SCons (sa :%~ la) rest -> do
                     Refl <- note (OperandMismatch "conversion" (fromSing (numSing nf)) (valTypeOf sa)) (decideEquality sa (numSing nf))
-                    Right (Produces (SCons (numSing nt) rest) (IConvert op))
+                    Right (Produces (SCons (numSing nt :%~ la) rest) (IConvert op))
                 _ -> Left (StackUnderflow "conversion")
     {- Inert -}
     Nop -> Right (Produces stackIn INop)
@@ -434,7 +435,7 @@ elabInstr env stackIn instr = case instr of
                     elabBodyChecked (pushLabel psS env) psS rsS body $ \bodySeq ->
                         Right (Produces (rsS %++ sS) (ILoop witness bodySeq))
     If (FuncType psT rsT) thenBody elseBody -> case stackIn of
-        SCons sc rest -> do
+        SCons (sc :%~ _) rest -> do
             Refl <- note (OperandMismatch "if" I32 (valTypeOf sc)) (decideEquality sc SI32)
             case (reflectStack (stackOrder psT), reflectStack (stackOrder rsT)) of
                 (SomeStack psS, SomeStack rsS) -> case matchPrefix psS rest of
@@ -451,7 +452,7 @@ elabInstr env stackIn instr = case instr of
             Nothing -> Left (StackMismatch "br" (stackToList rsS) (stackToList stackIn))
             Just (SomeSplit _ witness) -> Right (Transfers (IBr witness labelIx))
     BrIf (LabelIdx l) -> case stackIn of
-        SCons sc rest -> do
+        SCons (sc :%~ _) rest -> do
             Refl <- note (OperandMismatch "br_if" I32 (valTypeOf sc)) (decideEquality sc SI32)
             case mkLabelElem (env.labels) l of
                 Nothing -> Left (IndexOutOfRange Labels l)
@@ -460,7 +461,7 @@ elabInstr env stackIn instr = case instr of
                     Just (SomeSplit _ witness) -> Right (Produces rest (IBrIf witness labelIx))
         _ -> Left (StackUnderflow "br_if")
     BrTable targets (LabelIdx d) -> case stackIn of
-        SCons sc rest -> case decideEquality sc SI32 of
+        SCons (sc :%~ _) rest -> case decideEquality sc SI32 of
             Nothing -> Left (OperandMismatch "br_table" I32 (valTypeOf sc))
             Just Refl -> case mkLabelElem (env.labels) d of
                 Nothing -> Left (IndexOutOfRange Labels d)
@@ -482,12 +483,12 @@ elabInstr env stackIn instr = case instr of
 -}
 elabSelect :: Maybe ValType -> Sing stackIn -> Either ElabError (ElaboratedInstr shape ret locals labels stackIn)
 elabSelect annotation stackIn = case stackIn of
-    SCons sc (SCons va (SCons vb rest)) -> do
+    SCons (sc :%~ lc) (SCons (va :%~ l1) (SCons (vb :%~ l2) rest)) -> do
         Refl <- note (OperandMismatch "select" I32 (valTypeOf sc)) (decideEquality sc SI32)
         Refl <- note (OperandMismatch "select" (valTypeOf va) (valTypeOf vb)) (decideEquality va vb)
         mapM_ (\t -> if t == valTypeOf va then Right () else Left (OperandMismatch "select" t (valTypeOf va))) annotation
         isNum <- requireNum va
-        Right (Produces (SCons va rest) (ISelect isNum))
+        Right (Produces (SCons (va :%~ sJoin lc (sJoin l1 l2)) rest) (ISelect isNum))
     _ -> Left (StackUnderflow "select")
 
 pushLabel :: Sing rs -> ElabEnv shape ret locals labels -> ElabEnv shape ret locals (rs ': labels)
@@ -555,10 +556,10 @@ requireNarrow st width =
 threeAddresses ::
     Text ->
     Sing stackIn ->
-    (forall s. Instr shape ('FrameShape locals ret) labels ('I32 ': 'I32 ': 'I32 ': s) s) ->
+    (forall s ln lsrc ldst. Instr shape ('FrameShape locals ret) labels (('I32 ':~ ln) ': ('I32 ':~ lsrc) ': ('I32 ':~ ldst) ': s) s) ->
     Either ElabError (ElaboratedInstr shape ret locals labels stackIn)
 threeAddresses name stackIn typed = case stackIn of
-    SCons a (SCons b (SCons c rest)) -> do
+    SCons (a :%~ _) (SCons (b :%~ _) (SCons (c :%~ _) rest)) -> do
         Refl <- note (OperandMismatch name I32 (valTypeOf a)) (decideEquality a SI32)
         Refl <- note (OperandMismatch name I32 (valTypeOf b)) (decideEquality b SI32)
         Refl <- note (OperandMismatch name I32 (valTypeOf c)) (decideEquality c SI32)
@@ -601,20 +602,20 @@ consumeTwo ::
     Sing (t :: ValType) ->
     Sing (r :: ValType) ->
     Sing stackIn ->
-    (forall s. Instr shape ('FrameShape locals ret) labels (t ': t ': s) (r ': s)) ->
+    (forall s lv lv'. Instr shape ('FrameShape locals ret) labels ((t ':~ lv) ': (t ':~ lv') ': s) ((r ':~ Join lv lv') ': s)) ->
     Either ElabError (ElaboratedInstr shape ret locals labels stackIn)
 consumeTwo st sr stackIn typed = case stackIn of
-    SCons sa (SCons sb rest) -> do
+    SCons (sa :%~ la) (SCons (sb :%~ lb) rest) -> do
         Refl <- note (OperandMismatch "binary operation" (valTypeOf st) (valTypeOf sa)) (decideEquality sa st)
         Refl <- note (OperandMismatch "binary operation" (valTypeOf st) (valTypeOf sb)) (decideEquality sb st)
-        Right (Produces (SCons sr rest) typed)
+        Right (Produces (SCons (sr :%~ sJoin la lb) rest) typed)
     _ -> Left (StackUnderflow "binary operation")
 
 -- | A binary operation whose result has the same type as its (matching) operands.
 sameTypeBinary ::
     Sing (t :: ValType) ->
     Sing stackIn ->
-    (forall s. Instr shape ('FrameShape locals ret) labels (t ': t ': s) (t ': s)) ->
+    (forall s lv lv'. Instr shape ('FrameShape locals ret) labels ((t ':~ lv) ': (t ':~ lv') ': s) ((t ':~ Join lv lv') ': s)) ->
     Either ElabError (ElaboratedInstr shape ret locals labels stackIn)
 sameTypeBinary st = consumeTwo st st
 
@@ -622,12 +623,12 @@ sameTypeBinary st = consumeTwo st st
 sameTypeUnary ::
     Sing (t :: ValType) ->
     Sing stackIn ->
-    (forall s. Instr shape ('FrameShape locals ret) labels (t ': s) (t ': s)) ->
+    (forall s lv. Instr shape ('FrameShape locals ret) labels ((t ':~ lv) ': s) ((t ':~ lv) ': s)) ->
     Either ElabError (ElaboratedInstr shape ret locals labels stackIn)
 sameTypeUnary st stackIn typed = case stackIn of
-    SCons sa rest -> do
+    SCons (sa :%~ la) rest -> do
         Refl <- note (OperandMismatch "unary operation" (valTypeOf st) (valTypeOf sa)) (decideEquality sa st)
-        Right (Produces (SCons st rest) typed)
+        Right (Produces (SCons (st :%~ la) rest) typed)
     _ -> Left (StackUnderflow "unary operation")
 
 {- *** Unreachable code (full unreachable typing) ***
@@ -664,7 +665,7 @@ validateDead env = go (PolyStack [])
   (a known entry must match, an unknown one may be anything) and nothing may be left above the
   polymorphic bottom.
 -}
-checkDeadResult :: PolyStack -> Sing (rs :: [ValType]) -> Either ElabError ()
+checkDeadResult :: PolyStack -> Sing (rs :: [LValType]) -> Either ElabError ()
 checkDeadResult final rsS = do
     remaining <- foldM (flip popKnown) final (stackToList rsS)
     case unStack remaining of
@@ -701,10 +702,10 @@ stepDead env s instr = case instr of
     LocalTee (LocalIdx i) -> withLocal env i (\v -> pushKnown v <$> popKnown v s)
     GlobalGet (GlobalIdx g) -> case lookupGlobalRef (globalTypesSing (env.shape)) g of
         Nothing -> Left (IndexOutOfRange Globals g)
-        Just (SomeGlobalRef _ st _) -> Right (pushKnown (valTypeOf st) s)
+        Just (SomeGlobalRef _ st _) -> Right (pushKnown (unlabelledTypeOf st) s)
     GlobalSet (GlobalIdx g) -> case lookupGlobalRef (globalTypesSing (env.shape)) g of
         Nothing -> Left (IndexOutOfRange Globals g)
-        Just (SomeGlobalRef _ st _) -> popKnown (valTypeOf st) s
+        Just (SomeGlobalRef _ st _) -> popKnown (unlabelledTypeOf st) s
     Load t _ -> pushKnown (valTypeOf t) <$> popKnown I32 s
     Store t _ -> popKnown (valTypeOf t) s >>= popKnown I32
     LoadN t _ _ _ -> pushKnown (valTypeOf t) <$> popKnown I32 s
@@ -821,7 +822,7 @@ afterFrame psT rsT s = Right (pushResults rsT (popN (length psT) s))
 
 withLocal :: ElabEnv shape ret locals labels -> Word32 -> (ValType -> Either ElabError a) -> Either ElabError a
 withLocal env i k = case mkLocalElem (env.locals) i of
-    Just (SomeElem sv _) -> k (valTypeOf sv)
+    Just (SomeElem sv _) -> k (unlabelledTypeOf sv)
     Nothing -> Left (IndexOutOfRange Locals i)
 
 -- | The result types of a label, in stack order.
@@ -844,8 +845,14 @@ pushTypes ts s = foldr pushKnown s ts
 valTypeOf :: Sing (t :: ValType) -> ValType
 valTypeOf = fromSing
 
-stackToList :: Sing (s :: [ValType]) -> [ValType]
-stackToList = fromSing
+{- | The value type of a labelled type, and of a whole labelled stack: what the error reports
+and the dead-code checker work with, neither of which looks at security levels.
+-}
+unlabelledTypeOf :: Sing (t :: LValType) -> ValType
+unlabelledTypeOf = unlabelled . fromSing
+
+stackToList :: Sing (s :: [LValType]) -> [ValType]
+stackToList = map unlabelled . fromSing
 
 orElse :: Maybe a -> Maybe a -> Maybe a
 orElse (Just x) _ = Just x
@@ -861,31 +868,25 @@ unStack (PolyStack xs) = xs
   the element segments' and start function's indices. The result is a validated 'Module';
   "Runtime.Instantiate" turns it into a running instance.
 
-  TODO(ifc P0): where do labels come from? A decoded 'RawModule' carries none and the binary
-  format has no place for them. SecWasm's answer (§6, Usability): "the developer would have to
-  manually annotate the function types and the load and store operations with security labels";
-  everything else is derived. So the /policy/ is exactly: (1) per function type, the labels of
-  parameters and results and the pc bound (@τ* →ℓ τ*@); (2) per global, its label; (3) per
-  @load@/@store@ site, the immediate @ℓ@; and, our extension, (4) per host function, its
-  labelled type (see "Runtime.Host"). Recommended carrier: a WebAssembly /custom section/
-  (say @"ifc"@), which travels with the module, keeps it valid for every other tool (wabt and
-  wasmtime preserve custom sections; the decoder already skips them, @custom.wast@ passes), and
-  is keyed by function index, global index and code offset. Recommended defaults so unannotated
-  modules still elaborate: a store's immediate is /inferred/ as @pc ⊔ ℓa ⊔ ℓv@, the least label
-  that satisfies T-STORE and the most precise labelling of memory (no annotation ever needed for
-  stores); a load's immediate defaults to 'Low ("I expect public bytes"), which is precise and
-  traps at run time exactly where a secret is read unannotated (SecWasm's Example 1), so the
-  trap tells you where an annotation belongs; function types and globals default to 'Low with
-  pc bound 'Low, i.e. today's behaviour. Everything inside a function body is then determined:
-  explicit flows are joins, the block pcs come from the pre-pass described at
-  'Syntax.InstructionsIFC.IBlock' (a joint fixpoint of label propagation and pc assignment,
-  cheap over two points; re-elaborating a block body at a higher pc is just calling the body
-  elaborator again with another pc argument), and the elaborator inserts an @IRelabel@ wherever
-  SecWasm's subtyping would apply (call arguments, block results, sets). Elaboration can only
-  fail at a flow check, and 'ElabError' gains one constructor for it: which instruction, which
-  flow (from which label into which). Intuition for staging: a second elaboration pass over the
-  /typed/ 'Instr' (labels never change what is on the stack, only how it is typed), or folded
-  into this pass once the P0 structure decision makes 'Instr' labelled.
+  TODO(ifc P0): every security level in a validated module is 'Low today, because a decoded
+  module says nothing about levels and "Validation.Reflect" labels everything public. So this
+  accepts exactly the modules it accepted before labels existed. To make the levels mean
+  something, decide where they come from. In SecWasm the developer annotates three things: the
+  function types, the globals, and each load and store; the rest follows from the rules. A
+  custom section of the module could carry those annotations: it travels with the module, and
+  other tools ignore it. Sensible defaults keep unannotated modules working: 'Low for function
+  types and globals; for a store, the lowest level the rule allows (the join of the pc, the
+  address and the value); for a load, 'Low, so that reading a secret byte without an annotation
+  traps and points at the place that needs one.
+
+  TODO(ifc P1): once levels differ, validation has three more jobs. (1) Choose the pc of each
+  block before checking its body (step 5 of the TODO on 'Syntax.Instructions.IBlock'). (2)
+  Build the 'FlowsInto' witnesses that the writes, branches and calls will ask for, with
+  'decideFlow', and report a failed one through a new 'ElabError' constructor that names the
+  instruction and the two levels. (3) Raise a value's level where a higher one is expected (call
+  arguments, block results) by inserting the relabelling instruction described at
+  'Syntax.Instructions.ICall'. Today the stack comparisons in this module demand /equal/
+  levels, which is only right while everything is 'Low.
 -}
 elaborateModule :: RawModule -> Either ElabError SomeModule
 elaborateModule m = do
@@ -937,7 +938,7 @@ validateStructure m = do
         | otherwise = Left (IndexOutOfRange space i)
 
 -- | The start function must exist and take and return nothing.
-resolveStart :: Sing (fts :: [FuncType]) -> FunctionIdx -> Either ElabError (Elem ('FuncType '[] '[]) fts)
+resolveStart :: Sing (fts :: [LFuncType]) -> FunctionIdx -> Either ElabError (Elem ('FuncType '[] '[]) fts)
 resolveStart ftsS (FunctionIdx idx) = do
     SomeFuncRef psS rsS funcIx <- note (IndexOutOfRange Functions idx) (lookupFuncRef ftsS idx)
     Refl <- note InvalidStartFunction (decideEquality psS SNil)
@@ -964,7 +965,7 @@ elaborateFuncs _ _ _ _ = Left (Malformed "function/signature count mismatch")
 elaborateFunctionIn ::
     SModuleShape shape ->
     [FuncType] ->
-    SFuncType ft ->
+    SFuncTypeOf ft ->
     RawFunction ->
     Either ElabError (Function shape ft)
 elaborateFunctionIn ctxS types (SFuncType psS rsS) (RawFunction _ declaredT body) =
@@ -986,7 +987,7 @@ elaborateGlobals = go 0
   where
     go :: Word32 -> Sing gs -> [RawGlobal] -> Either ElabError (GlobalSpace gs)
     go _ SNil [] = Right NoGlobals
-    go index (SCons (SGlobalType _ sn) gs) (RawGlobal _ initExpr : rest) = do
+    go index (SCons (SGlobalType _ (sn :%~ _)) gs) (RawGlobal _ initExpr : rest) = do
         value <- evalConstInit (InvalidGlobalInitializer index) sn initExpr
         rest' <- go (index + 1) gs rest
         Right (Declared (Global value) rest')
@@ -1012,7 +1013,7 @@ elaborateData mems (index, RawDataSegment mode bytes) = case mode of
   exist: each index is resolved to a typed reference ('SomeFuncRef'), so a table only ever
   holds real functions.
 -}
-elaborateElements :: Sing (fts :: [FuncType]) -> Maybe (NonEmptyTables ts) -> (Int, RawElementSegment) -> Either ElabError (ElementSegment fts)
+elaborateElements :: Sing (fts :: [LFuncType]) -> Maybe (NonEmptyTables ts) -> (Int, RawElementSegment) -> Either ElabError (ElementSegment fts)
 elaborateElements ftsS tables (index, RawElementSegment offsetExpr functions) = do
     NonEmptyTables <- note (NoTable "elem") tables
     offset <- evalConstInit (InvalidElementSegmentOffset index) SI32 offsetExpr

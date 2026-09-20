@@ -5,6 +5,7 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TypeAbstractions #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -114,10 +115,19 @@ decideFloat SI64 = Nothing
 -}
 type ResultType = [ValType]
 
--- TODO(ifc P1): a labelled counterpart (labelled parameters and results plus a pc bound) is
--- what typing calls needs; see the calls TODO in "Syntax.InstructionsIFC" and the TODO on
--- 'Validation.Shape.ModuleShape'.
-data FuncType = FuncType [ValType] [ValType] deriving stock (Eq, Show)
+{- | A function type, generic in what it calls a value type. The decoder produces it over plain
+  'ValType' ('FuncType'); the shapes the typed AST is indexed by use it over the labelled value
+  type of "Syntax.TypesIFC", so a function's parameters and results carry security levels.
+
+  TODO(ifc P1): SecWasm's function type is @τ* →ℓ τ*@: besides labelled parameters and results
+  it has a bound @ℓ@ on the context the function may be called from. That third field is
+  missing here; see the TODO on 'Syntax.Instructions.ICall'.
+-}
+data FuncTypeOf v = FuncType [v] [v] deriving stock (Eq, Show)
+
+-- | A function type as decoded: over unlabelled value types.
+type FuncType = FuncTypeOf ValType
+
 type BlockType = FuncType
 
 data Limits = Limits
@@ -138,10 +148,13 @@ data MemType = MemType
 
 data Mutability = Immutable | Mutable deriving stock (Eq, Show)
 
--- TODO(ifc P1): a labelled counterpart; see the globals TODO in "Syntax.InstructionsIFC".
-data GlobalType = GlobalType Mutability ValType deriving stock (Eq, Show)
+-- | A global's type, generic in its value type for the same reason as 'FuncTypeOf'.
+data GlobalTypeOf v = GlobalType Mutability v deriving stock (Eq, Show)
+
+-- | A global's type as decoded: over unlabelled value types.
+type GlobalType = GlobalTypeOf ValType
 
 -- Singletons for the remaining promotable types. Split from the 'ValType' splice above because
 -- Template Haskell needs each type defined before its splice, and the witnesses (which use the
 -- value-type singleton) sit in between.
-$(genSingletons [''Mutability, ''AddrType, ''FuncType, ''GlobalType])
+$(genSingletons [''Mutability, ''AddrType, ''FuncTypeOf, ''GlobalTypeOf])

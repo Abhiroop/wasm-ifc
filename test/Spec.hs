@@ -383,15 +383,12 @@ spec = do
             w <- forAll (Gen.word32 Range.linearBounded)
             (convertVal (I32TruncF64 Signed) =<< convertVal (F64ConvertI32 Signed) w) === Right w
 
-    {- TODO(ifc P2): noninterference is a two-run property no type checker states, so test it
-       here the way this generator already tests elaboration: extend 'genProgram' with a
-       secret parameter and a policy (which parameter is 'High, the result 'Low), keep only
-       programs the labelled elaborator accepts, run each twice with the same public input and
-       different secrets, and require equal results (SecWasm Cor. 1, TINI: compare only runs
-       that both terminate without trapping). The rejected programs are worth a second
-       property: every generated leak (a secret @if@ around a public @local.set@, Example 8's
-       @br_if@) must be rejected. And run the spec testsuite through the labelled machine with
-       everything 'Low: it must pass unchanged. -}
+    {- TODO(ifc P2): the property we are after (noninterference) compares two runs, so no type can
+       state it; test it here instead. Extend 'genProgram' with a secret parameter, keep the
+       programs that validate with a public result, run each twice with the same public input and
+       different secrets, and require equal results whenever both runs finish. A second property:
+       a generated leak, such as a secret @if@ around a write to a public local, must be rejected.
+       Neither can be written until validation assigns levels other than 'Low. -}
     describe "generated well-typed programs (i32 arithmetic with if/else over two parameters)" $ do
         it "elaborate, run, and agree with a reference evaluator" $ hedgehog $ do
             program <- forAll (genProgram 4)

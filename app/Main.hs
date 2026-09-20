@@ -17,7 +17,7 @@ import Runtime.Instantiate (instantiate)
 import Runtime.Module (RunError (..), SomeModuleInst, Value (..), exportSignature, readGlobalExport, renderValue)
 import Runtime.Wasi (Completion (..), Preopen (..), WasiConfig (..), runWithWasi)
 import Syntax.Module (SomeModule)
-import Syntax.Types (FuncType (..), ValType (..))
+import Syntax.Types (FuncTypeOf (..), ValType (..))
 import System.FilePath (takeFileName)
 import Validation.Elaborate (elaborateModule)
 

@@ -22,10 +22,11 @@ import Data.Kind (Type)
 import Data.Word (Word32)
 
 import Runtime.Trap (Trap (..))
-import Syntax.Types (FuncType, Limits (..))
+import Syntax.Types (Limits (..))
+import Syntax.TypesIFC (LFuncType)
 import Validation.Shape (SomeFuncRef)
 
-type TableInst :: [FuncType] -> Type
+type TableInst :: [LFuncType] -> Type
 data TableInst fts = TableInst
     { limits :: !Limits
     , entries :: !(IntMap (SomeFuncRef fts))

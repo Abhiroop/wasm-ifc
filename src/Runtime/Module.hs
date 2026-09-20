@@ -34,6 +34,7 @@ import Syntax.Immediates (HostType)
 import Syntax.Indices (FunctionIdx (..), GlobalIdx (..))
 import Syntax.Module (Export (..), ExportDesc (..))
 import Syntax.Types
+import Syntax.TypesIFC
 import Validation.Reflect (SomeGlobalRef (..), declaredOrder, funcTypesSing, globalTypesSing, lookupFuncRef, lookupGlobalRef, stackOrder)
 import Validation.Shape (ModuleFuncs, ModuleShape, SomeFuncRef (..))
 
@@ -92,7 +93,7 @@ data SomeHostRequest where
         Sing (shape :: ModuleShape) ->
         FuncSpaceInst shape (ModuleFuncs shape) ->
         [Export] ->
-        Sing (rs :: [ValType]) ->
+        Sing (rs :: [LValType]) ->
         HostRequest shape rs ->
         SomeHostRequest
 
@@ -101,7 +102,7 @@ exportSignature :: SomeModuleInst -> Text -> Maybe FuncType
 exportSignature (SomeModuleInst shapeS _ exports) name = do
     FunctionIdx idx <- exportedFuncIndex name exports
     SomeFuncRef psS rsS _ <- lookupFuncRef (funcTypesSing shapeS) idx
-    pure (FuncType (declaredOrder (fromSing psS)) (declaredOrder (fromSing rsS)))
+    pure (FuncType (declaredOrder (unlabelledTypes psS)) (declaredOrder (unlabelledTypes rsS)))
 
 {- | Run an exported function on arguments given in declared order; results likewise. The
   module comes back with the globals and memories the call left behind, so a sequence of
@@ -111,7 +112,7 @@ invokeExport :: SomeModuleInst -> Text -> [Value] -> Either RunError Invocation
 invokeExport (SomeModuleInst shapeS inst exports) name args = do
     FunctionIdx idx <- note (NoSuchExport name) (exportedFuncIndex name exports)
     SomeFuncRef psS rsS funcIx <- note (NoSuchExport name) (lookupFuncRef (funcTypesSing shapeS) idx)
-    checkArguments (declaredOrder (fromSing psS)) args
+    checkArguments (declaredOrder (unlabelledTypes psS)) args
     argStack <- note (ArgumentCount 0 0) (buildStack psS (stackOrder args))
     outcome <- first Trapped (runFunction inst (getFunc funcIx inst.functions) argStack)
     pure $ case outcome of
@@ -125,7 +126,7 @@ continueWith ::
     Sing (shape :: ModuleShape) ->
     FuncSpaceInst shape (ModuleFuncs shape) ->
     [Export] ->
-    Sing (rs :: [ValType]) ->
+    Sing (rs :: [LValType]) ->
     Config shape rs ->
     Either RunError Invocation
 continueWith shapeS funcs exports rsS config = do
@@ -139,7 +140,7 @@ continueWith shapeS funcs exports rsS config = do
 readGlobalExport :: SomeModuleInst -> Text -> Either RunError Value
 readGlobalExport (SomeModuleInst shapeS inst exports) name = do
     GlobalIdx idx <- note (NoSuchExport name) (exportedGlobalIndex name exports)
-    SomeGlobalRef _ st globalIx <- note (NoSuchExport name) (lookupGlobalRef (globalTypesSing shapeS) idx)
+    SomeGlobalRef _ (st :%~ _) globalIx <- note (NoSuchExport name) (lookupGlobalRef (globalTypesSing shapeS) idx)
     Right (toValue st (getGlobal globalIx inst.globals))
 
 exportedFuncIndex :: Text -> [Export] -> Maybe FunctionIdx
@@ -167,9 +168,14 @@ checkArguments params args
 {- | Build the typed argument stack from values already in stack order. Total once
   'checkArguments' has passed; the 'Nothing' is only the count/type mismatch it rules out.
 -}
-buildStack :: Sing (ps :: [ValType]) -> [Value] -> Maybe (ValueStack ps)
+
+-- | The value types of a labelled stack: what the outside world, which knows no levels, sees.
+unlabelledTypes :: Sing (s :: [LValType]) -> [ValType]
+unlabelledTypes = map unlabelled . fromSing
+
+buildStack :: Sing (ps :: [LValType]) -> [Value] -> Maybe (ValueStack ps)
 buildStack SNil [] = Just VNil
-buildStack (SCons st rest) (v : vs) = (:#) <$> fromValue st v <*> buildStack rest vs
+buildStack (SCons (st :%~ _) rest) (v : vs) = (:#) <$> fromValue st v <*> buildStack rest vs
 buildStack _ _ = Nothing
 
 fromValue :: Sing (t :: ValType) -> Value -> Maybe (HostType t)
@@ -179,9 +185,9 @@ fromValue SF32 (F32Value f) = Just f
 fromValue SF64 (F64Value d) = Just d
 fromValue _ _ = Nothing
 
-toValues :: Sing (rs :: [ValType]) -> ValueStack rs -> [Value]
+toValues :: Sing (rs :: [LValType]) -> ValueStack rs -> [Value]
 toValues SNil VNil = []
-toValues (SCons st rest) (v :# vs) = toValue st v : toValues rest vs
+toValues (SCons (st :%~ _) rest) (v :# vs) = toValue st v : toValues rest vs
 
 toValue :: Sing (t :: ValType) -> HostType t -> Value
 toValue SI32 = I32Value

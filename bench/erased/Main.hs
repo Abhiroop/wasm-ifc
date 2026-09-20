@@ -93,6 +93,7 @@ import Syntax.Indices (FunctionIdx (..))
 import Syntax.Instructions (BitwiseOp, ConvertOp, CountOp, Expr (..), FloatBinOp, FloatUnOp, Instr (..), convertEnds)
 import Syntax.Module (Export (..), ExportDesc (..))
 import Syntax.Types
+import Syntax.TypesIFC (LGlobalType, LValType, SLValType (..), unlabelled)
 import Validation.Elaborate (elaborateModule)
 import Validation.Ref (localPosition, localType)
 import Validation.Shape (Append (..), Elem (..), MemShape, SModuleShape (..), SomeFuncRef (..))
@@ -680,7 +681,7 @@ eraseInstr instr = case instr of
     ILoad nt memArg -> ELoad (numType nt) memArg
     IStore nt memArg -> EStore (numType nt) memArg
     ICall witness ix -> ECall (widthOf witness) (positionOf ix)
-    ICallIndirect witness (SFuncType params results) -> ECallIndirect (widthOf witness) (FuncType (fromSing params) (fromSing results))
+    ICallIndirect witness (SFuncType params results) -> ECallIndirect (widthOf witness) (FuncType (unlabelledTypes params) (unlabelledTypes results))
     IBlock witness body -> EBlock (widthOf witness) (eraseExpr body)
     ILoop witness body -> ELoop (widthOf witness) (eraseExpr body)
     IIf witness thenArm elseArm -> EIf (widthOf witness) (eraseExpr thenArm) (eraseExpr elseArm)
@@ -714,12 +715,16 @@ signedType (FloatsHaveNoSign ft) = (floatType ft, Signed)
 
 eraseFunctions :: FuncSpaceInst mod fts -> Funcs
 eraseFunctions FsNil = NoFuncs
-eraseFunctions (FsCons (WasmFunc (Function _ declared body)) rest) = FuncCons (WasmFunction (fromSing declared) (eraseExpr body)) (eraseFunctions rest)
+eraseFunctions (FsCons (WasmFunc (Function _ declared body)) rest) = FuncCons (WasmFunction (unlabelledTypes declared) (eraseExpr body)) (eraseFunctions rest)
 eraseFunctions (FsCons (HostFunc _) rest) = FuncCons HostFunction (eraseFunctions rest)
 
-eraseGlobals :: Sing (gs :: [GlobalType]) -> GlobalSpaceInst gs -> Values
+-- | The twin knows no security levels: a labelled stack erases to its value types.
+unlabelledTypes :: Sing (s :: [LValType]) -> [ValType]
+unlabelledTypes = map unlabelled . fromSing
+
+eraseGlobals :: Sing (gs :: [LGlobalType]) -> GlobalSpaceInst gs -> Values
 eraseGlobals SNil GNil = Empty
-eraseGlobals (SCons (SGlobalType _ valTypeS) rest) (GCons v vs) = valueOf valTypeS v :> eraseGlobals rest vs
+eraseGlobals (SCons (SGlobalType _ (valTypeS :%~ _)) rest) (GCons v vs) = valueOf valTypeS v :> eraseGlobals rest vs
   where
     valueOf :: Sing (t :: ValType) -> HostType t -> Value
     valueOf SI32 = VI32
@@ -732,7 +737,7 @@ eraseTable TNil = Nothing
 eraseTable (TCons t _) = Just (Table n (IntMap.fromList [(fromIntegral i, erased ref) | n > 0, i <- [0 .. n - 1], Right ref <- [tableLookup t i]]))
   where
     n = tableSize t
-    erased (SomeFuncRef params results ix) = FuncRef (FuncType (fromSing params) (fromSing results)) (positionOf ix)
+    erased (SomeFuncRef params results ix) = FuncRef (FuncType (unlabelledTypes params) (unlabelledTypes results)) (positionOf ix)
 
 eraseSegments :: DataSpaceInst ds -> Segments
 eraseSegments DNil = NoSegments
