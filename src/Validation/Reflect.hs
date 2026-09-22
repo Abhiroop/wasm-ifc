@@ -28,6 +28,13 @@ module Validation.Reflect (
     mkLocalElem,
     mkLabelElem,
     matchPrefix,
+    SameLength (..),
+    sameLengthAs,
+    thenSameLength,
+    raiseAllSameLength,
+    joinEachSameLength,
+    SomeBranchTarget (..),
+    mkBranchTarget,
     -- module-signature witnesses
     SomeModuleShape (..),
     SomeGlobalRef (..),
@@ -140,6 +147,54 @@ matchPrefix (SCons p ps) (SCons f fs) = do
     SomeSplit s w <- matchPrefix ps fs
     Just (SomeSplit s (ACons w))
 matchPrefix (SCons _ _) SNil = Nothing
+
+{- *** The pc stack ***
+
+   Validation threads the pc stack ("Syntax.TypesIFC") through a function body. Every rule
+   keeps its length, and validation needs to know that: the stack has one entry per enclosing
+   block plus one for the function, so it is never empty where an instruction reads the pc, and
+   a block's body leaves at least the entries that were below it. 'SameLength' is that
+   knowledge as a witness, so none of it is an assumption.
+-}
+
+-- | Two lists have the same length.
+data SameLength (xs :: [k]) (ys :: [k]) where
+    BothEmpty :: SameLength '[] '[]
+    BothLonger :: SameLength xs ys -> SameLength (x ': xs) (y ': ys)
+
+sameLengthAs :: Sing (xs :: [k]) -> SameLength xs xs
+sameLengthAs SNil = BothEmpty
+sameLengthAs (SCons _ rest) = BothLonger (sameLengthAs rest)
+
+thenSameLength :: SameLength xs ys -> SameLength ys zs -> SameLength xs zs
+thenSameLength BothEmpty BothEmpty = BothEmpty
+thenSameLength (BothLonger a) (BothLonger b) = BothLonger (thenSameLength a b)
+
+raiseAllSameLength :: Sing (l :: SecLevel) -> Sing (pcs :: [SecLevel]) -> SameLength pcs (RaiseAll l pcs)
+raiseAllSameLength _ SNil = BothEmpty
+raiseAllSameLength l (SCons _ rest) = BothLonger (raiseAllSameLength l rest)
+
+joinEachSameLength :: SameLength (pcs :: [SecLevel]) as -> SameLength pcs bs -> SameLength pcs (JoinEach as bs)
+joinEachSameLength BothEmpty BothEmpty = BothEmpty
+joinEachSameLength (BothLonger a) (BothLonger b) = BothLonger (joinEachSameLength a b)
+
+{- | A branch target resolved against the label context and the pc stack: the label's result
+  type, the pc stack after the branch, and the witness that ties them together.
+-}
+data SomeBranchTarget (l :: SecLevel) (labels :: [LResultType]) (pcs :: [SecLevel]) where
+    SomeBranchTarget ::
+        Sing (rs :: LResultType) ->
+        Sing (pcs' :: [SecLevel]) ->
+        SameLength pcs pcs' ->
+        BranchTarget l rs labels pcs pcs' ->
+        SomeBranchTarget l labels pcs
+
+mkBranchTarget :: Sing (l :: SecLevel) -> Sing (labels :: [LResultType]) -> Sing (pcs :: [SecLevel]) -> Word32 -> Maybe (SomeBranchTarget l labels pcs)
+mkBranchTarget l (SCons rs _) (SCons p ps) 0 = Just (SomeBranchTarget rs (SCons (sJoin l p) ps) (BothLonger (sameLengthAs ps)) TargetHere)
+mkBranchTarget l (SCons _ labels) (SCons p ps) n =
+    (\(SomeBranchTarget rs ps' same target) -> SomeBranchTarget rs (SCons (sJoin l p) ps') (BothLonger same) (TargetThere target))
+        <$> mkBranchTarget l labels ps (n - 1)
+mkBranchTarget _ _ _ _ = Nothing
 
 {- *** Module-signature reflection ***
 

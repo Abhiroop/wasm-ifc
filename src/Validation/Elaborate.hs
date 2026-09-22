@@ -106,6 +106,10 @@ data ElabError
       DuplicateExport Text
     | -- | the start function is not of type @[] -> []@
       InvalidStartFunction
+    | {- | information may not flow this way: the instruction, the level it comes from, the level
+      it would flow into
+      -}
+      IllegalFlow Text SecLevel SecLevel
     deriving stock (Eq, Show)
 
 -- | The sub-category an instruction requires its operand type to belong to.
@@ -130,158 +134,194 @@ data ElabEnv (shape :: ModuleShape) (ret :: LResultType) (locals :: [LValType]) 
     , labels :: Sing labels
     }
 
-{- | The result of elaborating a whole instruction sequence that started from stack @stackIn@.
-  A sequence either runs to its end or leaves early through an unconditional branch, and the
-  two cases carry different evidence:
+{- | The result of elaborating a whole instruction sequence that started from pc stack @pcIn@
+  and stack @stackIn@. It always says where the pc stack ended up (and that it kept its length,
+  see 'SameLength'). A sequence either runs to its end or leaves early through an unconditional
+  branch, and the two cases carry different evidence:
 -}
-data ElaboratedExpr (shape :: ModuleShape) (ret :: LResultType) (locals :: [LValType]) (labels :: [LResultType]) (stackIn :: [LValType]) where
+data ElaboratedExpr (shape :: ModuleShape) (ret :: LResultType) (locals :: [LValType]) (labels :: [LResultType]) (pcIn :: PcStack) (stackIn :: [LValType]) where
     -- | Control reached the end of the sequence, leaving a concrete @stackOut@ on top.
-    Reachable :: Sing stackOut -> Expr shape ('FrameShape locals ret) labels stackIn stackOut -> ElaboratedExpr shape ret locals labels stackIn
+    Reachable ::
+        SameLength pcIn pcOut ->
+        Sing pcOut ->
+        Sing stackOut ->
+        Expr shape ('FrameShape locals ret) labels pcIn pcOut stackIn stackOut ->
+        ElaboratedExpr shape ret locals labels pcIn stackIn
     {- | The sequence ended in an unconditional transfer (@br@ / @return@ / @unreachable@), so
     control never falls out the bottom. Nothing constrains the output stack, so it is left
     universally quantified — exactly the spec's stack-polymorphism for dead code. The
     'PolyStack' is what the dead tail leaves, still to be checked against the expected result.
     -}
-    Diverged :: PolyStack -> (forall stackOut. Expr shape ('FrameShape locals ret) labels stackIn stackOut) -> ElaboratedExpr shape ret locals labels stackIn
+    Diverged ::
+        SameLength pcIn pcOut ->
+        Sing pcOut ->
+        PolyStack ->
+        (forall stackOut. Expr shape ('FrameShape locals ret) labels pcIn pcOut stackIn stackOut) ->
+        ElaboratedExpr shape ret locals labels pcIn stackIn
 
 {- | The result of elaborating a single instruction — the per-instruction version of
   'ElaboratedExpr', with the same two cases. 'elabSeq' folds these into an 'ElaboratedExpr'
   as it walks the sequence.
 -}
-data ElaboratedInstr (shape :: ModuleShape) (ret :: LResultType) (locals :: [LValType]) (labels :: [LResultType]) (stackIn :: [LValType]) where
+data ElaboratedInstr (shape :: ModuleShape) (ret :: LResultType) (locals :: [LValType]) (labels :: [LResultType]) (pcIn :: PcStack) (stackIn :: [LValType]) where
     {- | An ordinary instruction: it leaves a concrete @stackOut@ and elaboration continues
     from there (the analogue of 'Reachable').
     -}
-    Produces :: Sing stackOut -> Instr shape ('FrameShape locals ret) labels stackIn stackOut -> ElaboratedInstr shape ret locals labels stackIn
+    Produces ::
+        SameLength pcIn pcOut ->
+        Sing pcOut ->
+        Sing stackOut ->
+        Instr shape ('FrameShape locals ret) labels pcIn pcOut stackIn stackOut ->
+        ElaboratedInstr shape ret locals labels pcIn stackIn
     {- | An unconditional transfer (@br@ / @return@ / @unreachable@): control leaves here, so any
     instructions after it are dead code and the output stack is unconstrained (the analogue
     of 'Diverged').
     -}
-    Transfers :: (forall stackOut. Instr shape ('FrameShape locals ret) labels stackIn stackOut) -> ElaboratedInstr shape ret locals labels stackIn
+    Transfers ::
+        SameLength pcIn pcOut ->
+        Sing pcOut ->
+        (forall stackOut. Instr shape ('FrameShape locals ret) labels pcIn pcOut stackIn stackOut) ->
+        ElaboratedInstr shape ret locals labels pcIn stackIn
 
 note :: ElabError -> Maybe a -> Either ElabError a
 note e = maybe (Left e) Right
+
+-- | Require that level @from@ may flow into level @into@, or report the instruction.
+requireFlow :: Text -> Sing (from :: SecLevel) -> Sing (into :: SecLevel) -> Either ElabError (FlowsInto from into)
+requireFlow name from into = note (IllegalFlow name (fromSing from) (fromSing into)) (decideFlow from into)
+
+-- | Require that the values a branch carries are at least as secret as the decision to branch.
+requireCarried :: Text -> Sing (l :: SecLevel) -> Sing (rs :: [LValType]) -> Either ElabError (AllAtLeast l rs)
+requireCarried name l rs = note (IllegalFlow name (fromSing l) Low) (decideAllAtLeast l rs)
 
 -- *** Sequences ***
 
 elabSeq ::
     ElabEnv shape ret locals labels ->
+    Sing (pc ': pcs) ->
     Sing stackIn ->
     [RawInstr] ->
-    Either ElabError (ElaboratedExpr shape ret locals labels stackIn)
-elabSeq _ stackIn [] = Right (Reachable stackIn INil)
-elabSeq env stackIn (raw : rest) = do
-    elaboratedInstr <- elabInstr env stackIn raw
+    Either ElabError (ElaboratedExpr shape ret locals labels (pc ': pcs) stackIn)
+elabSeq _ pcs stackIn [] = Right (Reachable (sameLengthAs pcs) pcs stackIn INil)
+elabSeq env pcs stackIn (raw : rest) = do
+    elaboratedInstr <- elabInstr env pcs stackIn raw
     case elaboratedInstr of
-        Produces stackOut instr -> do
-            rest' <- elabSeq env stackOut rest
+        Produces same@(BothLonger _) pcs'@(SCons _ _) stackOut instr -> do
+            rest' <- elabSeq env pcs' stackOut rest
             pure $ case rest' of
-                Reachable stackOut' seq' -> Reachable stackOut' (instr :. seq')
-                Diverged final poly -> Diverged final (instr :. poly)
-        Transfers transfer -> do
-            final <- validateDead env rest
-            pure (Diverged final (transfer :. INil))
+                Reachable same' pcOut stackOut' seq' -> Reachable (thenSameLength same same') pcOut stackOut' (instr :. seq')
+                Diverged same' pcOut final poly -> Diverged (thenSameLength same same') pcOut final (instr :. poly)
+        Transfers same pcOut transfer -> do
+            final <- validateDead env pcs rest
+            pure (Diverged same pcOut final (transfer :. INil))
 
 -- *** Single instructions ***
 
 elabInstr ::
-    forall shape ret locals labels stackIn.
+    forall shape ret locals labels pc pcs stackIn.
     ElabEnv shape ret locals labels ->
+    Sing (pc ': pcs) ->
     Sing stackIn ->
     RawInstr ->
-    Either ElabError (ElaboratedInstr shape ret locals labels stackIn)
-elabInstr env stackIn instr = case instr of
+    Either ElabError (ElaboratedInstr shape ret locals labels (pc ': pcs) stackIn)
+elabInstr env pcsIn@(SCons pc _) stackIn instr = case instr of
     {- Constants -}
     Const st literal -> do
         isNum <- requireNum st
-        Right (Produces (SCons (st :%~ SLow) stackIn) (IConst isNum literal))
+        Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (st :%~ sJoin pc SLow) stackIn) (IConst @'Low isNum literal))
     {- Numeric (consume two of type t, produce one of type t) -}
     Add st -> do
         isNum <- requireNum st
-        consumeTwo st st stackIn (IAdd isNum)
+        consumeTwo st st pcsIn stackIn (IAdd isNum)
     Sub st -> do
         isNum <- requireNum st
-        consumeTwo st st stackIn (ISub isNum)
+        consumeTwo st st pcsIn stackIn (ISub isNum)
     Mul st -> do
         isNum <- requireNum st
-        consumeTwo st st stackIn (IMul isNum)
+        consumeTwo st st pcsIn stackIn (IMul isNum)
     Div st sign -> do
         sn <- requireNumWithSign st sign
-        consumeTwo st st stackIn (IDiv sn)
+        consumeTwo st st pcsIn stackIn (IDiv sn)
     Rem st sign -> do
         isInt <- requireInt st
-        consumeTwo st st stackIn (IRem isInt sign)
+        consumeTwo st st pcsIn stackIn (IRem isInt sign)
     {- Comparison (consume two of type t, produce one i32). @eqz@ is integer-only. -}
     Eq st -> do
         isNum <- requireNum st
-        consumeTwo st SI32 stackIn (IEq isNum)
+        consumeTwo st SI32 pcsIn stackIn (IEq isNum)
     Ne st -> do
         isNum <- requireNum st
-        consumeTwo st SI32 stackIn (INe isNum)
+        consumeTwo st SI32 pcsIn stackIn (INe isNum)
     Lt st sign -> do
         sn <- requireNumWithSign st sign
-        consumeTwo st SI32 stackIn (ILt sn)
+        consumeTwo st SI32 pcsIn stackIn (ILt sn)
     Gt st sign -> do
         sn <- requireNumWithSign st sign
-        consumeTwo st SI32 stackIn (IGt sn)
+        consumeTwo st SI32 pcsIn stackIn (IGt sn)
     Le st sign -> do
         sn <- requireNumWithSign st sign
-        consumeTwo st SI32 stackIn (ILe sn)
+        consumeTwo st SI32 pcsIn stackIn (ILe sn)
     Ge st sign -> do
         sn <- requireNumWithSign st sign
-        consumeTwo st SI32 stackIn (IGe sn)
+        consumeTwo st SI32 pcsIn stackIn (IGe sn)
     Eqz st -> case stackIn of
         SCons (sa :%~ la) rest -> do
             isInt <- requireInt st
             Refl <- note (OperandMismatch "eqz" (valTypeOf st) (valTypeOf sa)) (decideEquality sa st)
-            Right (Produces (SCons (SI32 :%~ la) rest) (IEqz isInt))
+            Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (SI32 :%~ sJoin pc la) rest) (IEqz isInt))
         _ -> Left (StackUnderflow "eqz")
     {- Stack management -}
     Drop -> case stackIn of
-        SCons _ rest -> Right (Produces rest IDrop)
+        SCons _ rest -> Right (Produces (sameLengthAs pcsIn) pcsIn rest IDrop)
         _ -> Left (StackUnderflow "drop")
-    Select -> elabSelect Nothing stackIn
-    SelectTyped [t] -> elabSelect (Just t) stackIn
+    Select -> elabSelect Nothing pcsIn stackIn
+    SelectTyped [t] -> elabSelect (Just t) pcsIn stackIn
     SelectTyped ts -> Left (InvalidSelectArity (length ts))
     {- Locals -}
     LocalGet (LocalIdx i) -> case mkLocalElem (env.locals) i of
-        Just (SomeElem sv@(_ :%~ _) ix) -> Right (Produces (SCons sv stackIn) (ILocalGet (resolveLocal sv ix)))
+        Just (SomeElem sv@(svt :%~ lvar) ix) -> Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (svt :%~ sJoin pc lvar) stackIn) (ILocalGet (resolveLocal sv ix)))
         Nothing -> Left (IndexOutOfRange Locals i)
     LocalSet (LocalIdx i) -> case mkLocalElem (env.locals) i of
-        Just (SomeElem sv@(_ :%~ _) ix) -> case stackIn of
-            SCons stop rest -> do
-                Refl <- note (OperandMismatch "local.set" (unlabelledTypeOf sv) (unlabelledTypeOf stop)) (decideEquality stop sv)
-                Right (Produces rest (ILocalSet (resolveLocal sv ix)))
+        Just (SomeElem sv@(svt :%~ lvar) ix) -> case stackIn of
+            SCons (stop :%~ lv) rest -> do
+                Refl <- note (OperandMismatch "local.set" (valTypeOf svt) (valTypeOf stop)) (decideEquality stop svt)
+                pcFlows <- requireFlow "local.set" pc lvar
+                valueFlows <- requireFlow "local.set" lv lvar
+                Right (Produces (sameLengthAs pcsIn) pcsIn rest (ILocalSet pcFlows valueFlows (resolveLocal sv ix)))
             _ -> Left (StackUnderflow "local.set")
         Nothing -> Left (IndexOutOfRange Locals i)
     LocalTee (LocalIdx i) -> case mkLocalElem (env.locals) i of
-        Just (SomeElem sv@(_ :%~ _) ix) -> case stackIn of
-            SCons stop _ -> do
-                Refl <- note (OperandMismatch "local.tee" (unlabelledTypeOf sv) (unlabelledTypeOf stop)) (decideEquality stop sv)
-                Right (Produces stackIn (ILocalTee (resolveLocal sv ix)))
+        Just (SomeElem sv@(svt :%~ lvar) ix) -> case stackIn of
+            SCons (stop :%~ lv) _ -> do
+                Refl <- note (OperandMismatch "local.tee" (valTypeOf svt) (valTypeOf stop)) (decideEquality stop svt)
+                pcFlows <- requireFlow "local.tee" pc lvar
+                valueFlows <- requireFlow "local.tee" lv lvar
+                Right (Produces (sameLengthAs pcsIn) pcsIn stackIn (ILocalTee pcFlows valueFlows (resolveLocal sv ix)))
             _ -> Left (StackUnderflow "local.tee")
         Nothing -> Left (IndexOutOfRange Locals i)
     {- Globals -}
     GlobalGet (GlobalIdx g) -> case lookupGlobalRef (globalTypesSing (env.shape)) g of
         Nothing -> Left (IndexOutOfRange Globals g)
-        Just (SomeGlobalRef _ st@(_ :%~ _) gix) -> Right (Produces (SCons st stackIn) (IGlobalGet gix))
+        Just (SomeGlobalRef _ (st :%~ lvar) gix) -> Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (st :%~ sJoin pc lvar) stackIn) (IGlobalGet gix))
     GlobalSet (GlobalIdx g) -> case lookupGlobalRef (globalTypesSing (env.shape)) g of
         Nothing -> Left (IndexOutOfRange Globals g)
-        Just (SomeGlobalRef smut st@(_ :%~ _) gix) -> case smut of
+        Just (SomeGlobalRef smut (st :%~ lvar) gix) -> case smut of
             SImmutable -> Left (ImmutableGlobal g)
             SMutable -> case stackIn of
-                SCons stop rest -> do
-                    Refl <- note (OperandMismatch "global.set" (unlabelledTypeOf st) (unlabelledTypeOf stop)) (decideEquality stop st)
-                    Right (Produces rest (IGlobalSet gix))
+                SCons (stop :%~ lv) rest -> do
+                    Refl <- note (OperandMismatch "global.set" (valTypeOf st) (valTypeOf stop)) (decideEquality stop st)
+                    pcFlows <- requireFlow "global.set" pc lvar
+                    valueFlows <- requireFlow "global.set" lv lvar
+                    Right (Produces (sameLengthAs pcsIn) pcsIn rest (IGlobalSet pcFlows valueFlows gix))
                 _ -> Left (StackUnderflow "global.set")
     {- Memory -}
     Load st memArg -> case stackIn of
-        SCons (sc :%~ _) rest -> do
+        SCons (sc :%~ la) rest -> do
             NonEmptyMems <- requireMemory env "load"
             isNum <- requireNum st
             Refl <- note (OperandMismatch "load" I32 (valTypeOf sc)) (decideEquality sc SI32)
             checkAlign memArg (numBytes isNum)
-            Right (Produces (SCons (st :%~ SLow) rest) (ILoad isNum memArg))
+            Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (st :%~ sJoin pc (sJoin la SLow)) rest) (ILoad @'Low isNum memArg))
         _ -> Left (StackUnderflow "load")
     Store st memArg -> case stackIn of
         SCons (sv :%~ _) (SCons (sc :%~ _) rest) -> do
@@ -290,15 +330,15 @@ elabInstr env stackIn instr = case instr of
             Refl <- note (OperandMismatch "store" (valTypeOf st) (valTypeOf sv)) (decideEquality sv st)
             Refl <- note (OperandMismatch "store" I32 (valTypeOf sc)) (decideEquality sc SI32)
             checkAlign memArg (numBytes isNum)
-            Right (Produces rest (IStore isNum memArg))
+            Right (Produces (sameLengthAs pcsIn) pcsIn rest (IStore isNum memArg))
         _ -> Left (StackUnderflow "store")
     LoadN st width sign memArg -> case stackIn of
-        SCons (sc :%~ _) rest -> do
+        SCons (sc :%~ la) rest -> do
             NonEmptyMems <- requireMemory env "load"
             nw <- requireNarrow st width
             Refl <- note (OperandMismatch "load" I32 (valTypeOf sc)) (decideEquality sc SI32)
             checkAlign memArg (narrowBytes nw)
-            Right (Produces (SCons (st :%~ SLow) rest) (ILoadN nw sign memArg))
+            Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (st :%~ sJoin pc (sJoin la SLow)) rest) (ILoadN @'Low nw sign memArg))
         _ -> Left (StackUnderflow "load")
     StoreN st width memArg -> case stackIn of
         SCons (sv :%~ _) (SCons (sc :%~ _) rest) -> do
@@ -307,161 +347,169 @@ elabInstr env stackIn instr = case instr of
             Refl <- note (OperandMismatch "store" (valTypeOf st) (valTypeOf sv)) (decideEquality sv st)
             Refl <- note (OperandMismatch "store" I32 (valTypeOf sc)) (decideEquality sc SI32)
             checkAlign memArg (narrowBytes nw)
-            Right (Produces rest (IStoreN nw memArg))
+            Right (Produces (sameLengthAs pcsIn) pcsIn rest (IStoreN nw memArg))
         _ -> Left (StackUnderflow "store")
     MemorySize -> do
         NonEmptyMems <- requireMemory env "memory.size"
-        Right (Produces (SCons (SI32 :%~ SLow) stackIn) IMemSize)
+        Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (SI32 :%~ sJoin pc SLow) stackIn) (IMemSize @'Low))
     MemoryCopy -> do
         NonEmptyMems <- requireMemory env "memory.copy"
-        threeAddresses "memory.copy" stackIn IMemCopy
+        threeAddresses "memory.copy" stackIn pcsIn IMemCopy
     MemoryFill -> do
         NonEmptyMems <- requireMemory env "memory.fill"
-        threeAddresses "memory.fill" stackIn IMemFill
+        threeAddresses "memory.fill" stackIn pcsIn IMemFill
     MemoryInit (DataIdx d) -> do
         NonEmptyMems <- requireMemory env "memory.init"
         segmentIx <- note (IndexOutOfRange DataSegments d) (mkDataElem (dataShapesSing (env.shape)) d)
-        threeAddresses "memory.init" stackIn (IMemInit segmentIx)
+        threeAddresses "memory.init" stackIn pcsIn (IMemInit segmentIx)
     DataDrop (DataIdx d) -> do
         segmentIx <- note (IndexOutOfRange DataSegments d) (mkDataElem (dataShapesSing (env.shape)) d)
-        Right (Produces stackIn (IDataDrop segmentIx))
+        Right (Produces (sameLengthAs pcsIn) pcsIn stackIn (IDataDrop segmentIx))
     MemoryGrow -> case stackIn of
         SCons (sc :%~ lc) rest -> do
             NonEmptyMems <- requireMemory env "memory.grow"
             Refl <- note (OperandMismatch "memory.grow" I32 (valTypeOf sc)) (decideEquality sc SI32)
-            Right (Produces (SCons (SI32 :%~ lc) rest) IMemGrow)
+            Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (SI32 :%~ sJoin pc lc) rest) IMemGrow)
         _ -> Left (StackUnderflow "memory.grow")
     {- Calls -}
     CallIndirect (TypeIdx t) -> case stackIn of
-        SCons (sc :%~ _) rest -> do
+        SCons (sc :%~ lidx) rest -> do
             NonEmptyTables <- requireTable env
             Refl <- note (OperandMismatch "call_indirect" I32 (valTypeOf sc)) (decideEquality sc SI32)
+            publicContext <- requireFlow "call_indirect" (sJoin pc lidx) SLow
             expected <- note (IndexOutOfRange Types t) (nth (env.types) t)
             case toSing (publicFuncType (stackOrderFuncType expected)) of
                 SomeSing (SFuncType psS rsS) -> case matchPrefix psS rest of
                     Nothing -> Left (StackMismatch "call_indirect" (stackToList psS) (stackToList rest))
-                    Just (SomeSplit sS witness) -> Right (Produces (rsS %++ sS) (ICallIndirect witness (SFuncType psS rsS)))
+                    Just (SomeSplit sS witness) -> Right (Produces (sameLengthAs pcsIn) pcsIn (rsS %++ sS) (ICallIndirect publicContext witness (SFuncType psS rsS)))
         _ -> Left (StackUnderflow "call_indirect")
     Call (FunctionIdx f) -> case lookupFuncRef (funcTypesSing (env.shape)) f of
         Nothing -> Left (IndexOutOfRange Functions f)
         Just (SomeFuncRef psS rsS fix) -> case matchPrefix psS stackIn of
             Nothing -> Left (StackMismatch "call" (stackToList psS) (stackToList stackIn))
-            Just (SomeSplit sS witness) -> Right (Produces (rsS %++ sS) (ICall witness fix))
+            Just (SomeSplit sS witness) -> do
+                publicContext <- requireFlow "call" pc SLow
+                Right (Produces (sameLengthAs pcsIn) pcsIn (rsS %++ sS) (ICall publicContext witness fix))
     {- Integer bitwise / shift / count (integer types only) -}
     And st -> do
         isInt <- requireInt st
-        sameTypeBinary st stackIn (IBitwise isInt BwAnd)
+        sameTypeBinary st pcsIn stackIn (IBitwise isInt BwAnd)
     Or st -> do
         isInt <- requireInt st
-        sameTypeBinary st stackIn (IBitwise isInt BwOr)
+        sameTypeBinary st pcsIn stackIn (IBitwise isInt BwOr)
     Xor st -> do
         isInt <- requireInt st
-        sameTypeBinary st stackIn (IBitwise isInt BwXor)
+        sameTypeBinary st pcsIn stackIn (IBitwise isInt BwXor)
     Shl st -> do
         isInt <- requireInt st
-        sameTypeBinary st stackIn (IBitwise isInt BwShl)
+        sameTypeBinary st pcsIn stackIn (IBitwise isInt BwShl)
     Shr st sign -> do
         isInt <- requireInt st
-        sameTypeBinary st stackIn (IBitwise isInt (BwShr sign))
+        sameTypeBinary st pcsIn stackIn (IBitwise isInt (BwShr sign))
     Rotl st -> do
         isInt <- requireInt st
-        sameTypeBinary st stackIn (IBitwise isInt BwRotl)
+        sameTypeBinary st pcsIn stackIn (IBitwise isInt BwRotl)
     Rotr st -> do
         isInt <- requireInt st
-        sameTypeBinary st stackIn (IBitwise isInt BwRotr)
+        sameTypeBinary st pcsIn stackIn (IBitwise isInt BwRotr)
     Clz st -> do
         isInt <- requireInt st
-        sameTypeUnary st stackIn (ICount isInt OpClz)
+        sameTypeUnary st pcsIn stackIn (ICount isInt OpClz)
     Ctz st -> do
         isInt <- requireInt st
-        sameTypeUnary st stackIn (ICount isInt OpCtz)
+        sameTypeUnary st pcsIn stackIn (ICount isInt OpCtz)
     Popcnt st -> do
         isInt <- requireInt st
-        sameTypeUnary st stackIn (ICount isInt OpPopcnt)
+        sameTypeUnary st pcsIn stackIn (ICount isInt OpPopcnt)
     {- Floating-point unary / binary (floating-point types only) -}
     Abs st -> do
         isFloat <- requireFloat st
-        sameTypeUnary st stackIn (IFloatUn isFloat FAbs)
+        sameTypeUnary st pcsIn stackIn (IFloatUn isFloat FAbs)
     Neg st -> do
         isFloat <- requireFloat st
-        sameTypeUnary st stackIn (IFloatUn isFloat FNeg)
+        sameTypeUnary st pcsIn stackIn (IFloatUn isFloat FNeg)
     Sqrt st -> do
         isFloat <- requireFloat st
-        sameTypeUnary st stackIn (IFloatUn isFloat FSqrt)
+        sameTypeUnary st pcsIn stackIn (IFloatUn isFloat FSqrt)
     Ceil st -> do
         isFloat <- requireFloat st
-        sameTypeUnary st stackIn (IFloatUn isFloat FCeil)
+        sameTypeUnary st pcsIn stackIn (IFloatUn isFloat FCeil)
     Floor st -> do
         isFloat <- requireFloat st
-        sameTypeUnary st stackIn (IFloatUn isFloat FFloor)
+        sameTypeUnary st pcsIn stackIn (IFloatUn isFloat FFloor)
     FloatTrunc st -> do
         isFloat <- requireFloat st
-        sameTypeUnary st stackIn (IFloatUn isFloat FTrunc)
+        sameTypeUnary st pcsIn stackIn (IFloatUn isFloat FTrunc)
     Nearest st -> do
         isFloat <- requireFloat st
-        sameTypeUnary st stackIn (IFloatUn isFloat FNearest)
+        sameTypeUnary st pcsIn stackIn (IFloatUn isFloat FNearest)
     Min st -> do
         isFloat <- requireFloat st
-        sameTypeBinary st stackIn (IFloatBin isFloat FMin)
+        sameTypeBinary st pcsIn stackIn (IFloatBin isFloat FMin)
     Max st -> do
         isFloat <- requireFloat st
-        sameTypeBinary st stackIn (IFloatBin isFloat FMax)
+        sameTypeBinary st pcsIn stackIn (IFloatBin isFloat FMax)
     Copysign st -> do
         isFloat <- requireFloat st
-        sameTypeBinary st stackIn (IFloatBin isFloat FCopysign)
+        sameTypeBinary st pcsIn stackIn (IFloatBin isFloat FCopysign)
     {- Conversions: the opcode's own type indices are the source/result -}
     Convert op ->
         let (nf, nt) = convertEnds op
          in case stackIn of
                 SCons (sa :%~ la) rest -> do
                     Refl <- note (OperandMismatch "conversion" (fromSing (numSing nf)) (valTypeOf sa)) (decideEquality sa (numSing nf))
-                    Right (Produces (SCons (numSing nt :%~ la) rest) (IConvert op))
+                    Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (numSing nt :%~ sJoin pc la) rest) (IConvert op))
                 _ -> Left (StackUnderflow "conversion")
     {- Inert -}
-    Nop -> Right (Produces stackIn INop)
+    Nop -> Right (Produces (sameLengthAs pcsIn) pcsIn stackIn INop)
     {- Structured control -}
     Block (FuncType psT rsT) body ->
         case (reflectStack (stackOrder psT), reflectStack (stackOrder rsT)) of
             (SomeStack psS, SomeStack rsS) -> case matchPrefix psS stackIn of
                 Nothing -> Left (StackMismatch "block" (stackToList psS) (stackToList stackIn))
                 Just (SomeSplit sS witness) ->
-                    elabBodyChecked (pushLabel rsS env) psS rsS body $ \bodySeq ->
-                        Right (Produces (rsS %++ sS) (IBlock witness bodySeq))
+                    elabBodyChecked (pushLabel rsS env) (SCons pc pcsIn) psS rsS body $ \(BodyResult (BothLonger same) (SCons _ pcsOut) bodySeq) ->
+                        Right (Produces same pcsOut (rsS %++ sS) (IBlock witness bodySeq))
     Loop (FuncType psT rsT) body ->
         case (reflectStack (stackOrder psT), reflectStack (stackOrder rsT)) of
             (SomeStack psS, SomeStack rsS) -> case matchPrefix psS stackIn of
                 Nothing -> Left (StackMismatch "loop" (stackToList psS) (stackToList stackIn))
-                Just (SomeSplit sS witness) ->
-                    elabBodyChecked (pushLabel psS env) psS rsS body $ \bodySeq ->
-                        Right (Produces (rsS %++ sS) (ILoop witness bodySeq))
+                Just (SomeSplit sS witness) -> loopAt pc $ \pcLoop entryFlows ->
+                    elabBodyChecked (pushLabel psS env) (SCons pcLoop pcsIn) psS rsS body $ \(BodyResult (BothLonger same) (SCons pcBody pcsOut) bodySeq) -> do
+                        backFlows <- requireFlow "loop" pcBody pcLoop
+                        Right (Produces same pcsOut (rsS %++ sS) (ILoop entryFlows backFlows witness bodySeq))
     If (FuncType psT rsT) thenBody elseBody -> case stackIn of
-        SCons (sc :%~ _) rest -> do
+        SCons (sc :%~ lc) rest -> do
             Refl <- note (OperandMismatch "if" I32 (valTypeOf sc)) (decideEquality sc SI32)
             case (reflectStack (stackOrder psT), reflectStack (stackOrder rsT)) of
                 (SomeStack psS, SomeStack rsS) -> case matchPrefix psS rest of
                     Nothing -> Left (StackMismatch "if" (stackToList psS) (stackToList rest))
                     Just (SomeSplit sS witness) ->
-                        elabBodyChecked (pushLabel rsS env) psS rsS thenBody $ \thenSeq ->
-                            elabBodyChecked (pushLabel rsS env) psS rsS elseBody $ \elseSeq ->
-                                Right (Produces (rsS %++ sS) (IIf witness thenSeq elseSeq))
+                        elabBodyChecked (pushLabel rsS env) (SCons (sJoin pc lc) pcsIn) psS rsS thenBody $ \(BodyResult (BothLonger sameThen) (SCons _ pcsThen) thenSeq) ->
+                            elabBodyChecked (pushLabel rsS env) (SCons (sJoin pc lc) pcsIn) psS rsS elseBody $ \(BodyResult (BothLonger sameElse) (SCons _ pcsElse) elseSeq) ->
+                                Right (Produces (joinEachSameLength sameThen sameElse) (sJoinEach pcsThen pcsElse) (rsS %++ sS) (IIf witness thenSeq elseSeq))
         _ -> Left (StackUnderflow "if")
     {- Branches (unconditional ones diverge) -}
-    Br (LabelIdx l) -> case mkLabelElem (env.labels) l of
+    Br (LabelIdx l) -> case mkBranchTarget pc (env.labels) pcsIn l of
         Nothing -> Left (IndexOutOfRange Labels l)
-        Just (SomeLabel rsS labelIx) -> case matchPrefix rsS stackIn of
+        Just (SomeBranchTarget rsS pcsOut same target) -> case matchPrefix rsS stackIn of
             Nothing -> Left (StackMismatch "br" (stackToList rsS) (stackToList stackIn))
-            Just (SomeSplit _ witness) -> Right (Transfers (IBr witness labelIx))
+            Just (SomeSplit _ witness) -> do
+                carried <- requireCarried "br" pc rsS
+                Right (Transfers same pcsOut (IBr carried witness target))
     BrIf (LabelIdx l) -> case stackIn of
-        SCons (sc :%~ _) rest -> do
+        SCons (sc :%~ lc) rest -> do
             Refl <- note (OperandMismatch "br_if" I32 (valTypeOf sc)) (decideEquality sc SI32)
-            case mkLabelElem (env.labels) l of
+            case mkBranchTarget (sJoin pc lc) (env.labels) pcsIn l of
                 Nothing -> Left (IndexOutOfRange Labels l)
-                Just (SomeLabel rsS labelIx) -> case matchPrefix rsS rest of
+                Just (SomeBranchTarget rsS pcsOut same target) -> case matchPrefix rsS rest of
                     Nothing -> Left (StackMismatch "br_if" (stackToList rsS) (stackToList rest))
-                    Just (SomeSplit _ witness) -> Right (Produces rest (IBrIf witness labelIx))
+                    Just (SomeSplit _ witness) -> do
+                        carried <- requireCarried "br_if" (sJoin pc lc) rsS
+                        Right (Produces same pcsOut rest (IBrIf carried witness target))
         _ -> Left (StackUnderflow "br_if")
     BrTable targets (LabelIdx d) -> case stackIn of
-        SCons (sc :%~ _) rest -> case decideEquality sc SI32 of
+        SCons (sc :%~ lc) rest -> case decideEquality sc SI32 of
             Nothing -> Left (OperandMismatch "br_table" I32 (valTypeOf sc))
             Just Refl -> case mkLabelElem (env.labels) d of
                 Nothing -> Left (IndexOutOfRange Labels d)
@@ -469,50 +517,75 @@ elabInstr env stackIn instr = case instr of
                     Left err -> Left err
                     Right targetIxs -> case matchPrefix rsS rest of
                         Nothing -> Left (StackMismatch "br_table" (stackToList rsS) (stackToList rest))
-                        Just (SomeSplit _ witness) -> Right (Transfers (IBrTable witness targetIxs defIx))
+                        Just (SomeSplit _ witness) -> do
+                            carried <- requireCarried "br_table" (sJoin pc lc) rsS
+                            Right (Transfers (raiseAllSameLength (sJoin pc lc) pcsIn) (sRaiseAll (sJoin pc lc) pcsIn) (IBrTable carried witness targetIxs defIx))
         _ -> Left (StackUnderflow "br_table")
     Return -> case matchPrefix (env.results) stackIn of
         Nothing -> Left (StackMismatch "return" (stackToList (env.results)) (stackToList stackIn))
-        Just (SomeSplit _ witness) -> Right (Transfers (IReturn witness))
-    Unreachable -> Right (Transfers IUnreachable)
+        Just (SomeSplit _ witness) -> do
+            carried <- requireCarried "return" pc (env.results)
+            Right (Transfers (raiseAllSameLength pc pcsIn) (sRaiseAll pc pcsIn) (IReturn carried witness))
+    Unreachable -> Right (Transfers (sameLengthAs pcsIn) pcsIn IUnreachable)
 
 -- | Push a label's result type onto the elaboration environment's label context.
 
 {- | @select@ takes a condition over two operands of one numeric type; the typed form also
   names that type, which the operands must have.
 -}
-elabSelect :: Maybe ValType -> Sing stackIn -> Either ElabError (ElaboratedInstr shape ret locals labels stackIn)
-elabSelect annotation stackIn = case stackIn of
+elabSelect :: Maybe ValType -> Sing (pc ': pcs) -> Sing stackIn -> Either ElabError (ElaboratedInstr shape ret locals labels (pc ': pcs) stackIn)
+elabSelect annotation pcsIn@(SCons pc _) stackIn = case stackIn of
     SCons (sc :%~ lc) (SCons (va :%~ l1) (SCons (vb :%~ l2) rest)) -> do
         Refl <- note (OperandMismatch "select" I32 (valTypeOf sc)) (decideEquality sc SI32)
         Refl <- note (OperandMismatch "select" (valTypeOf va) (valTypeOf vb)) (decideEquality va vb)
         mapM_ (\t -> if t == valTypeOf va then Right () else Left (OperandMismatch "select" t (valTypeOf va))) annotation
         isNum <- requireNum va
-        Right (Produces (SCons (va :%~ sJoin lc (sJoin l1 l2)) rest) (ISelect isNum))
+        Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (va :%~ sJoin pc (sJoin lc (sJoin l1 l2))) rest) (ISelect isNum))
     _ -> Left (StackUnderflow "select")
 
 pushLabel :: Sing rs -> ElabEnv shape ret locals labels -> ElabEnv shape ret locals (rs ': labels)
 pushLabel rsS env = env {labels = SCons rsS (env.labels)}
 
-{- | Elaborate a block/loop/if body (its label already pushed onto @env@), checking it
-  transforms @ps@ into @rs@, and hand the resulting typed sequence to the continuation.
+{- | What a body left behind: the pc stack (with the proof it kept its length) and the typed
+  sequence, which produces @rs@ from @ps@.
+-}
+data BodyResult shape locals ret labels pcIn ps rs where
+    BodyResult ::
+        SameLength pcIn pcOut ->
+        Sing pcOut ->
+        Expr shape ('FrameShape locals ret) labels pcIn pcOut ps rs ->
+        BodyResult shape locals ret labels pcIn ps rs
+
+{- | Elaborate a block/loop/if body (its label already pushed onto @env@, its pc entry pushed
+  onto the pc stack), checking it transforms @ps@ into @rs@, and hand the result to the
+  continuation.
 -}
 elabBodyChecked ::
     ElabEnv shape ret locals labels ->
+    Sing (pc ': pcs) ->
     Sing ps ->
     Sing rs ->
     [RawInstr] ->
-    (Expr shape ('FrameShape locals ret) labels ps rs -> Either ElabError a) ->
+    (BodyResult shape locals ret labels (pc ': pcs) ps rs -> Either ElabError a) ->
     Either ElabError a
-elabBodyChecked env psS rsS body k = do
-    body' <- elabSeq env psS body
+elabBodyChecked env pcsIn psS rsS body k = do
+    body' <- elabSeq env pcsIn psS body
     case body' of
-        Reachable soS seq' -> do
+        Reachable same pcsOut soS seq' -> do
             Refl <- note (ResultMismatch (stackToList rsS) (stackToList soS)) (decideEquality soS rsS)
-            k seq'
-        Diverged final poly -> do
+            k (BodyResult same pcsOut seq')
+        Diverged same pcsOut final poly -> do
             checkDeadResult final rsS
-            k poly
+            k (BodyResult same pcsOut poly)
+
+{- | The pc a loop body is checked at: the current pc if the body keeps it, and 'High if a
+  branch inside raises it, because the body may run again under what it left. With two levels
+  the second attempt always succeeds, so this is a fixed point in at most two steps.
+-}
+loopAt :: Sing (pc :: SecLevel) -> (forall pcLoop. Sing pcLoop -> FlowsInto pc pcLoop -> Either ElabError a) -> Either ElabError a
+loopAt pc k = case k pc (case pc of SLow -> LowFlowsAnywhere; SHigh -> HighFlowsToHigh) of
+    Right a -> Right a
+    Left _ -> k SHigh (case pc of SLow -> LowFlowsAnywhere; SHigh -> HighFlowsToHigh)
 
 -- | Resolve one @br_table@ target, checking it carries the same result type as the rest.
 resolveTarget :: ElabEnv shape ret locals labels -> Sing rs -> LabelIdx -> Either ElabError (Elem rs labels)
@@ -556,14 +629,15 @@ requireNarrow st width =
 threeAddresses ::
     Text ->
     Sing stackIn ->
-    (forall s ln lsrc ldst. Instr shape ('FrameShape locals ret) labels (('I32 ':~ ln) ': ('I32 ':~ lsrc) ': ('I32 ':~ ldst) ': s) s) ->
-    Either ElabError (ElaboratedInstr shape ret locals labels stackIn)
-threeAddresses name stackIn typed = case stackIn of
+    Sing (pc ': pcs) ->
+    (forall s ln lsrc ldst. Instr shape ('FrameShape locals ret) labels (pc ': pcs) (pc ': pcs) (('I32 ':~ ln) ': ('I32 ':~ lsrc) ': ('I32 ':~ ldst) ': s) s) ->
+    Either ElabError (ElaboratedInstr shape ret locals labels (pc ': pcs) stackIn)
+threeAddresses name stackIn pcsIn typed = case stackIn of
     SCons (a :%~ _) (SCons (b :%~ _) (SCons (c :%~ _) rest)) -> do
         Refl <- note (OperandMismatch name I32 (valTypeOf a)) (decideEquality a SI32)
         Refl <- note (OperandMismatch name I32 (valTypeOf b)) (decideEquality b SI32)
         Refl <- note (OperandMismatch name I32 (valTypeOf c)) (decideEquality c SI32)
-        Right (Produces rest typed)
+        Right (Produces (sameLengthAs pcsIn) pcsIn rest typed)
     _ -> Left (StackUnderflow name)
 
 -- | Require the module to declare a table, for @call_indirect@.
@@ -598,37 +672,40 @@ checkAlign memArg accessBytes
     align = fromIntegral memArg.alignment :: Int
 
 consumeTwo ::
-    forall t r shape ret locals labels stackIn.
+    forall t r shape ret locals labels pc pcs stackIn.
     Sing (t :: ValType) ->
     Sing (r :: ValType) ->
+    Sing (pc ': pcs) ->
     Sing stackIn ->
-    (forall s lv lv'. Instr shape ('FrameShape locals ret) labels ((t ':~ lv) ': (t ':~ lv') ': s) ((r ':~ Join lv lv') ': s)) ->
-    Either ElabError (ElaboratedInstr shape ret locals labels stackIn)
-consumeTwo st sr stackIn typed = case stackIn of
+    (forall s lv lv'. Instr shape ('FrameShape locals ret) labels (pc ': pcs) (pc ': pcs) ((t ':~ lv) ': (t ':~ lv') ': s) ((r ':~ Join pc (Join lv lv')) ': s)) ->
+    Either ElabError (ElaboratedInstr shape ret locals labels (pc ': pcs) stackIn)
+consumeTwo st sr pcsIn@(SCons pc _) stackIn typed = case stackIn of
     SCons (sa :%~ la) (SCons (sb :%~ lb) rest) -> do
         Refl <- note (OperandMismatch "binary operation" (valTypeOf st) (valTypeOf sa)) (decideEquality sa st)
         Refl <- note (OperandMismatch "binary operation" (valTypeOf st) (valTypeOf sb)) (decideEquality sb st)
-        Right (Produces (SCons (sr :%~ sJoin la lb) rest) typed)
+        Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (sr :%~ sJoin pc (sJoin la lb)) rest) typed)
     _ -> Left (StackUnderflow "binary operation")
 
 -- | A binary operation whose result has the same type as its (matching) operands.
 sameTypeBinary ::
     Sing (t :: ValType) ->
+    Sing (pc ': pcs) ->
     Sing stackIn ->
-    (forall s lv lv'. Instr shape ('FrameShape locals ret) labels ((t ':~ lv) ': (t ':~ lv') ': s) ((t ':~ Join lv lv') ': s)) ->
-    Either ElabError (ElaboratedInstr shape ret locals labels stackIn)
+    (forall s lv lv'. Instr shape ('FrameShape locals ret) labels (pc ': pcs) (pc ': pcs) ((t ':~ lv) ': (t ':~ lv') ': s) ((t ':~ Join pc (Join lv lv')) ': s)) ->
+    Either ElabError (ElaboratedInstr shape ret locals labels (pc ': pcs) stackIn)
 sameTypeBinary st = consumeTwo st st
 
 -- | A unary operation whose result has the same type as its operand.
 sameTypeUnary ::
     Sing (t :: ValType) ->
+    Sing (pc ': pcs) ->
     Sing stackIn ->
-    (forall s lv. Instr shape ('FrameShape locals ret) labels ((t ':~ lv) ': s) ((t ':~ lv) ': s)) ->
-    Either ElabError (ElaboratedInstr shape ret locals labels stackIn)
-sameTypeUnary st stackIn typed = case stackIn of
+    (forall s lv. Instr shape ('FrameShape locals ret) labels (pc ': pcs) (pc ': pcs) ((t ':~ lv) ': s) ((t ':~ Join pc lv) ': s)) ->
+    Either ElabError (ElaboratedInstr shape ret locals labels (pc ': pcs) stackIn)
+sameTypeUnary st pcsIn@(SCons pc _) stackIn typed = case stackIn of
     SCons (sa :%~ la) rest -> do
         Refl <- note (OperandMismatch "unary operation" (valTypeOf st) (valTypeOf sa)) (decideEquality sa st)
-        Right (Produces (SCons (st :%~ la) rest) typed)
+        Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (st :%~ sJoin pc la) rest) typed)
     _ -> Left (StackUnderflow "unary operation")
 
 {- *** Unreachable code (full unreachable typing) ***
@@ -655,11 +732,11 @@ popKnown t s = case popAny s of
         | v == t -> Right s'
         | otherwise -> Left (DeadCodeMismatch t v)
 
-validateDead :: ElabEnv shape ret locals labels -> [RawInstr] -> Either ElabError PolyStack
-validateDead env = go (PolyStack [])
+validateDead :: ElabEnv shape ret locals labels -> Sing ((pc :: SecLevel) ': pcs) -> [RawInstr] -> Either ElabError PolyStack
+validateDead env pcsIn = go (PolyStack [])
   where
     go s [] = Right s
-    go s (i : is) = stepDead env s i >>= \s' -> go s' is
+    go s (i : is) = stepDead env pcsIn s i >>= \s' -> go s' is
 
 {- | A dead tail must still end with the block's result type: each expected type is popped
   (a known entry must match, an unknown one may be anything) and nothing may be left above the
@@ -672,8 +749,8 @@ checkDeadResult final rsS = do
         [] -> Right ()
         _ -> Left DeadCodeLeftovers
 
-stepDead :: ElabEnv shape ret locals labels -> PolyStack -> RawInstr -> Either ElabError PolyStack
-stepDead env s instr = case instr of
+stepDead :: ElabEnv shape ret locals labels -> Sing ((pc :: SecLevel) ': pcs) -> PolyStack -> RawInstr -> Either ElabError PolyStack
+stepDead env pcsIn s instr = case instr of
     Const t _ -> Right (pushKnown (valTypeOf t) s)
     Add t -> arith t
     Sub t -> arith t
@@ -746,13 +823,13 @@ stepDead env s instr = case instr of
         afterFrame (stackOrder ps) (stackOrder rs) s1
     Nop -> Right s
     Block (FuncType psT rsT) body ->
-        validateFrame env rsT psT rsT body >> afterFrame (stackOrder psT) (stackOrder rsT) s
+        validateFrame env pcsIn rsT psT rsT body >> afterFrame (stackOrder psT) (stackOrder rsT) s
     Loop (FuncType psT rsT) body ->
-        validateFrame env psT psT rsT body >> afterFrame (stackOrder psT) (stackOrder rsT) s
+        validateFrame env pcsIn psT psT rsT body >> afterFrame (stackOrder psT) (stackOrder rsT) s
     If (FuncType psT rsT) thenB elseB -> do
         s1 <- popKnown I32 s
-        validateFrame env rsT psT rsT thenB
-        validateFrame env rsT psT rsT elseB
+        validateFrame env pcsIn rsT psT rsT thenB
+        validateFrame env pcsIn rsT psT rsT elseB
         afterFrame (stackOrder psT) (stackOrder rsT) s1
     {- The transfers follow the spec's validation algorithm: pop what the target expects
        (checking the known entries), and after an unconditional one the stack is polymorphic
@@ -800,15 +877,20 @@ convertSig op = let (nf, nt) = convertEnds op in (fromSing (numSing nf), fromSin
 -}
 validateFrame ::
     ElabEnv shape ret locals labels ->
+    Sing ((pc :: SecLevel) ': pcs) ->
     [ValType] ->
     [ValType] ->
     [ValType] ->
     [RawInstr] ->
     Either ElabError ()
-validateFrame env labelT psT rsT body =
+validateFrame env pcsIn@(SCons pc _) labelT psT rsT body =
     case (reflectStack (stackOrder labelT), reflectStack (stackOrder psT), reflectStack (stackOrder rsT)) of
         (SomeStack labS, SomeStack psS, SomeStack rsS) ->
-            elabBodyChecked (pushLabel labS env) psS rsS body (\_ -> Right ())
+            elabBodyChecked (pushLabel labS env) (SCons SHigh pcsIn) psS rsS body (\_ -> Right ()) `orElseTry` elabBodyChecked (pushLabel labS env) (SCons pc pcsIn) psS rsS body (\_ -> Right ())
+  where
+    -- Dead code is never run, so its pc does not matter for security; it is still checked as
+    -- code, at the pc it would have had, and at 'High for a loop that would raise its own.
+    orElseTry a b = either (const b) Right a
 
 {- | The polymorphic stack after a frame (block/loop/if/call) in dead code: its parameters are
   popped and its results pushed. Both lists are in stack order (top first).
@@ -879,14 +961,14 @@ unStack (PolyStack xs) = xs
   address and the value); for a load, 'Low, so that reading a secret byte without an annotation
   traps and points at the place that needs one.
 
-  TODO(ifc P1): once levels differ, validation has three more jobs. (1) Choose the pc of each
-  block before checking its body (step 5 of the TODO on 'Syntax.Instructions.IBlock'). (2)
-  Build the 'FlowsInto' witnesses that the writes, branches and calls will ask for, with
-  'decideFlow', and report a failed one through a new 'ElabError' constructor that names the
-  instruction and the two levels. (3) Raise a value's level where a higher one is expected (call
-  arguments, block results) by inserting the relabelling instruction described at
-  'Syntax.Instructions.ICall'. Today the stack comparisons in this module demand /equal/
-  levels, which is only right while everything is 'Low.
+  Validation already threads the pc stack through every body and builds the flow witnesses
+  ('requireFlow', 'requireCarried'), so a module with secret levels would be checked by the
+  same code; a failed check is an 'IllegalFlow'.
+
+  TODO(ifc P2): the stack comparisons in this module demand /equal/ levels (a call's arguments,
+  a block's results, the two arms of an @if@). SecWasm allows a lower level where a higher one
+  is expected. To accept that, insert the relabelling instruction described at
+  'Syntax.Instructions.ICall' where the levels differ but flow.
 -}
 elaborateModule :: RawModule -> Either ElabError SomeModule
 elaborateModule m = do
@@ -973,12 +1055,12 @@ elaborateFunctionIn ctxS types (SFuncType psS rsS) (RawFunction _ declaredT body
         SomeStack declS ->
             let env = ElabEnv ctxS types rsS (sReverseOnto psS declS) (SCons rsS SNil)
              in do
-                    elaborated <- elabSeq env SNil body
+                    elaborated <- elabSeq env (SCons SLow SNil) SNil body
                     case elaborated of
-                        Reachable soS bodySeq -> do
+                        Reachable _ _ soS bodySeq -> do
                             Refl <- note (ResultMismatch (stackToList rsS) (stackToList soS)) (decideEquality soS rsS)
                             Right (Function psS declS bodySeq)
-                        Diverged final poly -> do
+                        Diverged _ _ final poly -> do
                             checkDeadResult final rsS
                             Right (Function psS declS poly)
 

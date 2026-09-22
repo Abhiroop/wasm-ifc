@@ -96,7 +96,7 @@ import Syntax.Types
 import Syntax.TypesIFC (LGlobalType, LValType, SLValType (..), unlabelled)
 import Validation.Elaborate (elaborateModule)
 import Validation.Ref (localPosition, localType)
-import Validation.Shape (Append (..), Elem (..), MemShape, SModuleShape (..), SomeFuncRef (..))
+import Validation.Shape (Append (..), BranchTarget (..), Elem (..), MemShape, SModuleShape (..), SomeFuncRef (..))
 
 -- *** Values, indices, the erased program ***
 
@@ -639,11 +639,11 @@ run funcs config = case step funcs config of
 
 -- *** Erasure ***
 
-eraseExpr :: Expr m f l s o -> [Instruction]
+eraseExpr :: Expr m f l p q s o -> [Instruction]
 eraseExpr INil = []
 eraseExpr (instr :. rest) = eraseInstr instr : eraseExpr rest
 
-eraseInstr :: Instr m f l s o -> Instruction
+eraseInstr :: Instr m f l p q s o -> Instruction
 eraseInstr instr = case instr of
     IConst nt v -> EConst (tagged nt v)
     IAdd nt -> EAdd (numType nt)
@@ -674,21 +674,21 @@ eraseInstr instr = case instr of
     IDrop -> EDrop
     ISelect _ -> ESelect
     ILocalGet ref -> ELocalGet (localPosition ref) (fromSing (localType ref))
-    ILocalSet ref -> ELocalSet (localPosition ref) (fromSing (localType ref))
-    ILocalTee ref -> ELocalTee (localPosition ref) (fromSing (localType ref))
+    ILocalSet _ _ ref -> ELocalSet (localPosition ref) (fromSing (localType ref))
+    ILocalTee _ _ ref -> ELocalTee (localPosition ref) (fromSing (localType ref))
     IGlobalGet ix -> EGlobalGet (positionOf ix)
-    IGlobalSet ix -> EGlobalSet (positionOf ix)
+    IGlobalSet _ _ ix -> EGlobalSet (positionOf ix)
     ILoad nt memArg -> ELoad (numType nt) memArg
     IStore nt memArg -> EStore (numType nt) memArg
-    ICall witness ix -> ECall (widthOf witness) (positionOf ix)
-    ICallIndirect witness (SFuncType params results) -> ECallIndirect (widthOf witness) (FuncType (unlabelledTypes params) (unlabelledTypes results))
+    ICall _ witness ix -> ECall (widthOf witness) (positionOf ix)
+    ICallIndirect _ witness (SFuncType params results) -> ECallIndirect (widthOf witness) (FuncType (unlabelledTypes params) (unlabelledTypes results))
     IBlock witness body -> EBlock (widthOf witness) (eraseExpr body)
-    ILoop witness body -> ELoop (widthOf witness) (eraseExpr body)
+    ILoop _ _ witness body -> ELoop (widthOf witness) (eraseExpr body)
     IIf witness thenArm elseArm -> EIf (widthOf witness) (eraseExpr thenArm) (eraseExpr elseArm)
-    IBr witness ix -> EBr (widthOf witness) (positionOf ix)
-    IBrIf witness ix -> EBrIf (widthOf witness) (positionOf ix)
-    IBrTable witness targets def -> EBrTable (widthOf witness) (map positionOf targets) (positionOf def)
-    IReturn witness -> EReturn (widthOf witness)
+    IBr _ witness target -> EBr (widthOf witness) (targetIndex target)
+    IBrIf _ witness target -> EBrIf (widthOf witness) (targetIndex target)
+    IBrTable _ witness targets def -> EBrTable (widthOf witness) (map positionOf targets) (positionOf def)
+    IReturn _ witness -> EReturn (widthOf witness)
     INop -> ENop
     IUnreachable -> EUnreachable
 
@@ -712,6 +712,11 @@ floatType ft = case ft of F32IsFloat -> F32; F64IsFloat -> F64
 signedType :: NumWithSign t -> (ValType, Signedness)
 signedType (IntsHaveSign it sign) = (intType it, sign)
 signedType (FloatsHaveNoSign ft) = (floatType ft, Signed)
+
+-- | The label a branch target names, as a position (its pc bookkeeping is erased).
+targetIndex :: BranchTarget l rs labels pcs pcs' -> Nat
+targetIndex TargetHere = Z
+targetIndex (TargetThere rest) = S (targetIndex rest)
 
 eraseFunctions :: FuncSpaceInst mod fts -> Funcs
 eraseFunctions FsNil = NoFuncs

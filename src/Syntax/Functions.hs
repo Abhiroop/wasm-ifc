@@ -21,7 +21,7 @@ import Data.Text (Text)
 
 import Syntax.Instructions (Expr, RawExpr)
 import Syntax.Types
-import Syntax.TypesIFC (LFuncType, LValType)
+import Syntax.TypesIFC (LFuncType, LValType, SecLevel (..))
 import Validation.Shape (FrameShape (..), ModuleShape, ReverseOnto)
 
 -- *** As decoded ***
@@ -37,9 +37,11 @@ data RawFunction = RawFunction
 {- | The type an 'Expr' must have to be a function body: from the empty operand stack it
   produces the function's results @rs@; its frame binds @locals@ and return type @rs@; and it
   runs under exactly one enclosing label — the function's own result — which is what @return@
-  and falling off the end both target.
+  and falling off the end both target. It starts at a public pc, which is why a call is only
+  allowed at one ('Syntax.Instructions.ICall'); where its pc stack ends up does not matter to
+  anyone, since the caller carries on with its own.
 -}
-type FunctionBody mod locals rs = Expr mod ('FrameShape locals rs) '[rs] '[] rs
+type FunctionBody mod locals rs pcOut = Expr mod ('FrameShape locals rs) '[rs] '[ 'Low] pcOut '[] rs
 
 {- | A function as validated: the types of its parameters and of the locals it declares, and
   its body. The frame's locals are the parameters — reversed, since the argument segment lists
@@ -51,7 +53,7 @@ data Function (mod :: ModuleShape) (ft :: LFuncType) where
     Function ::
         Sing (ps :: [LValType]) ->
         Sing (declared :: [LValType]) ->
-        FunctionBody mod (ReverseOnto ps declared) rs ->
+        FunctionBody mod (ReverseOnto ps declared) rs pcOut ->
         Function mod ('FuncType ps rs)
 
 -- | A module's function index space: one entry per function type in the shape.

@@ -133,7 +133,7 @@ import Syntax.Instructions (
 import Syntax.Types
 import Syntax.TypesIFC
 import Validation.Reflect (appendNil)
-import Validation.Shape (Append, DataShape (..), Elem (..), FrameShape (..), ModuleData, ModuleFuncs, ModuleGlobals, ModuleMems, ModuleShape, ModuleTables, SomeFuncRef (..), appendFromSing)
+import Validation.Shape (Append, BranchTarget (..), DataShape (..), Elem (..), FrameShape (..), ModuleData, ModuleFuncs, ModuleGlobals, ModuleMems, ModuleShape, ModuleTables, SomeFuncRef (..), appendFromSing)
 
 -- *** Module and runtime state ***
 
@@ -193,12 +193,14 @@ data ModuleInst (mod :: ModuleShape) = ModuleInst
    An @Elem rs labels@ branch target therefore selects an entry directly, and unwinding it
    stays type-correct without any coercion.
 
+   The pc stack is a static index: it is threaded through every 'Expr' but no entry of this
+   control stack holds it, and no rule of 'step' reads it.
+
    TODO(ifc P1): SecWasm checks most flows during validation, but not memory reads: those are
    checked at run time, so 'step' has work to do. A load joins the levels of the bytes it reads
    and traps if the result exceeds the level written in the instruction; a store marks the bytes
    it writes with its level; @memory.grow@ marks the new pages public. The byte levels live in
-   'Runtime.MemInst.MemInst'. Nothing else in 'step' changes: the levels of the value stack,
-   the locals and the globals exist only in the types, and this control stack needs none.
+   'Runtime.MemInst.MemInst'.
 -}
 data
     Control
@@ -218,7 +220,7 @@ data
     -}
     BlockLabel ::
         !(ValueStack below) ->
-        Expr mod ('FrameShape locals ret) labels (rs ++ below) contOut ->
+        Expr mod ('FrameShape locals ret) labels pcA1 pcB1 (rs ++ below) contOut ->
         Control mod res ret locals labels contOut ->
         Control mod res ret locals (rs ': labels) rs
     {- | A @loop@ label. A branch to it (carrying the loop's parameters) restarts the body;
@@ -226,8 +228,8 @@ data
     -}
     LoopLabel ::
         !(ValueStack below) ->
-        Expr mod ('FrameShape locals ret) (ps ': labels) ps rs ->
-        Expr mod ('FrameShape locals ret) labels (rs ++ below) contOut ->
+        Expr mod ('FrameShape locals ret) (ps ': labels) pcA2 pcB2 ps rs ->
+        Expr mod ('FrameShape locals ret) labels pcA3 pcB3 (rs ++ below) contOut ->
         Control mod res ret locals labels contOut ->
         Control mod res ret locals (ps ': labels) rs
     {- | A call boundary: the callee's bottom frame. When the callee finishes (or returns),
@@ -239,7 +241,7 @@ data
         !Word ->
         !(ValueStack below) ->
         !(LocalSpaceInst callerLocals) ->
-        Expr mod ('FrameShape callerLocals callerRet) callerLabels (rs ++ below) contOut ->
+        Expr mod ('FrameShape callerLocals callerRet) callerLabels pcA4 pcB4 (rs ++ below) contOut ->
         Control mod res callerRet callerLocals callerLabels contOut ->
         Control mod res rs calleeLocals '[rs] rs
 
@@ -252,7 +254,7 @@ data Config (mod :: ModuleShape) (res :: LResultType) where
         !(Store mod) ->
         !(LocalSpaceInst locals) ->
         !(ValueStack cur) ->
-        Expr mod ('FrameShape locals ret) labels cur out ->
+        Expr mod ('FrameShape locals ret) labels pcA5 pcB5 cur out ->
         Control mod res ret locals labels out ->
         Config mod res
 
@@ -294,7 +296,7 @@ data Suspended (mod :: ModuleShape) (res :: LResultType) (rs :: LResultType) whe
         Append rs below full ->
         LocalSpaceInst locals ->
         ValueStack below ->
-        Expr mod ('FrameShape locals ret) labels full contOut ->
+        Expr mod ('FrameShape locals ret) labels pcA6 pcB6 full contOut ->
         Control mod res ret locals labels contOut ->
         Suspended mod res rs
 
@@ -397,10 +399,10 @@ step funcs (Config store locals stack code control) = case code of
                 stepped store locals ((if cond /= 0 then first else second) :# r) rest control
         {- Locals & globals -}
         ILocalGet ix -> stepped store locals (getLocal ix locals :# stack) rest control
-        ILocalSet ix -> case stack of v :# r -> stepped store (setLocal ix v locals) r rest control
-        ILocalTee ix -> case stack of v :# _ -> stepped store (setLocal ix v locals) stack rest control
+        ILocalSet _ _ ix -> case stack of v :# r -> stepped store (setLocal ix v locals) r rest control
+        ILocalTee _ _ ix -> case stack of v :# _ -> stepped store (setLocal ix v locals) stack rest control
         IGlobalGet ix -> stepped store locals (getGlobal ix (store.globals) :# stack) rest control
-        IGlobalSet ix -> case stack of
+        IGlobalSet _ _ ix -> case stack of
             v :# r -> stepped (storeSetGlobal ix v store) locals r rest control
         {- Memory -}
         ILoad nt memArg -> case stack of
@@ -415,8 +417,8 @@ step funcs (Config store locals stack code control) = case code of
                     Nothing -> Left OutOfBoundsMemoryAccess
         {- Calls: enter the callee (see 'enterCall'); an indirect call first reads the table entry
            and checks its type against the expected one, trapping if they differ -}
-        ICall witness ix -> enterCall funcs store locals witness ix stack rest control
-        ICallIndirect witness (SFuncType expectedParams expectedResults) -> case stack of
+        ICall _ witness ix -> enterCall funcs store locals witness ix stack rest control
+        ICallIndirect _ witness (SFuncType expectedParams expectedResults) -> case stack of
             index :# below' -> case tableLookup (firstTable store.tables) index of
                 Left trap -> Left trap
                 Right (SomeFuncRef paramsS resultsS ix) ->
@@ -427,28 +429,30 @@ step funcs (Config store locals stack code control) = case code of
         IBlock witness body ->
             let (params, below) = splitStack witness stack
              in Right (Stepped (Config store locals params body (BlockLabel below rest control)))
-        ILoop witness body ->
+        ILoop _ _ witness body ->
             let (params, below) = splitStack witness stack
              in Right (Stepped (Config store locals params body (LoopLabel below body rest control)))
         IIf witness thenArm elseArm -> case stack of
             cond :# below' ->
                 let (params, below) = splitStack witness below'
-                    arm = if cond /= 0 then thenArm else elseArm
-                 in Right (Stepped (Config store locals params arm (BlockLabel below rest control)))
+                 in Right . Stepped $
+                        if cond /= 0
+                            then Config store locals params thenArm (BlockLabel below rest control)
+                            else Config store locals params elseArm (BlockLabel below rest control)
         {- Branches: unwind the control stack to the targeted frame -}
-        IBr witness ix -> let (vs, _) = splitStack witness stack in Right (unwind store locals ix vs control)
-        IBrIf witness ix -> case stack of
+        IBr _ witness target -> let (vs, _) = splitStack witness stack in Right (unwind store locals target vs control)
+        IBrIf _ witness target -> case stack of
             cond :# below'
                 | cond /= 0 ->
                     let (vs, _) = splitStack witness below'
-                     in Right (unwind store locals ix vs control)
+                     in Right (unwind store locals target vs control)
                 | otherwise -> stepped store locals below' rest control
-        IBrTable witness targets def -> case stack of
+        IBrTable _ witness targets def -> case stack of
             idx :# below' ->
                 let target = case drop (fromIntegral idx) targets of t : _ -> t; [] -> def
                     (vs, _) = splitStack witness below'
-                 in Right (unwind store locals target vs control)
-        IReturn witness ->
+                 in Right (unwindTo store locals target vs control)
+        IReturn _ witness ->
             let (vs, _) = splitStack witness stack in Right (returnUnwind store locals vs control)
         {- Inert -}
         INop -> stepped store locals stack rest control
@@ -465,7 +469,7 @@ enterCall ::
     Append ps s full ->
     Elem ('FuncType ps rs) (ModuleFuncs mod) ->
     ValueStack full ->
-    Expr mod ('FrameShape locals ret) labels (rs ++ s) out ->
+    Expr mod ('FrameShape locals ret) labels pcA7 pcB7 (rs ++ s) out ->
     Control mod res ret locals labels out ->
     Either Trap (StepResult mod res)
 enterCall funcs store locals witness ix stack rest control = case getFunc ix funcs of
@@ -507,7 +511,7 @@ stepped ::
     Store mod ->
     LocalSpaceInst locals ->
     ValueStack si ->
-    Expr mod ('FrameShape locals ret) labels si out ->
+    Expr mod ('FrameShape locals ret) labels pcA8 pcB8 si out ->
     Control mod res ret locals labels out ->
     Either Trap (StepResult mod res)
 stepped store locals stack code control = Right (Stepped (Config store locals stack code control))
@@ -518,7 +522,7 @@ stepBin ::
     LocalSpaceInst locals ->
     ValueStack ((x ':~ lb) ': (x ':~ la) ': s) ->
     (HostType x -> HostType x -> HostType z) ->
-    Expr mod ('FrameShape locals ret) labels ((z ':~ l) ': s) out ->
+    Expr mod ('FrameShape locals ret) labels pcX pcY ((z ':~ l) ': s) out ->
     Control mod res ret locals labels out ->
     Either Trap (StepResult mod res)
 stepBin store locals (b :# a :# r) op = stepped store locals (op a b :# r)
@@ -529,7 +533,7 @@ stepUn ::
     LocalSpaceInst locals ->
     ValueStack ((x ':~ la) ': s) ->
     (HostType x -> HostType z) ->
-    Expr mod ('FrameShape locals ret) labels ((z ':~ l) ': s) out ->
+    Expr mod ('FrameShape locals ret) labels pcX pcY ((z ':~ l) ': s) out ->
     Control mod res ret locals labels out ->
     Either Trap (StepResult mod res)
 stepUn store locals (a :# r) op = stepped store locals (op a :# r)
@@ -573,7 +577,7 @@ resume ::
     LocalSpaceInst locals ->
     ValueStack rs ->
     ValueStack below ->
-    Expr mod ('FrameShape locals ret) labels (rs ++ below) contOut ->
+    Expr mod ('FrameShape locals ret) labels pcA9 pcB9 (rs ++ below) contOut ->
     Control mod res ret locals labels contOut ->
     StepResult mod res
 resume store locals vs below cont rest = Stepped (Config store locals (appendStack vs below) cont rest)
@@ -597,19 +601,37 @@ popControl store _ vs (CallBoundary _ below cl cont cf) = resume store cl vs bel
 unwind ::
     Store mod ->
     LocalSpaceInst locals ->
+    BranchTarget l rs labels pcs pcs' ->
+    ValueStack rs ->
+    Control mod res ret locals labels cur ->
+    StepResult mod res
+unwind store _ TargetHere vs EntryBoundary = Done store vs
+unwind store locals TargetHere vs (BlockLabel below cont rest) = resume store locals vs below cont rest
+unwind store locals TargetHere vs (LoopLabel below body cont rest) =
+    Stepped (Config store locals vs body (LoopLabel below body cont rest))
+unwind store _ TargetHere vs (CallBoundary _ below cl cont cf) = resume store cl vs below cont cf
+unwind store locals (TargetThere ix') vs (BlockLabel _ _ rest) = unwind store locals ix' vs rest
+unwind store locals (TargetThere ix') vs (LoopLabel _ _ _ rest) = unwind store locals ix' vs rest
+unwind _ _ (TargetThere ix') _ (CallBoundary {}) = case ix' of {}
+unwind _ _ (TargetThere ix') _ EntryBoundary = case ix' of {}
+
+-- | 'unwind' for @br_table@, whose targets are plain label indices.
+unwindTo ::
+    Store mod ->
+    LocalSpaceInst locals ->
     Elem rs labels ->
     ValueStack rs ->
     Control mod res ret locals labels cur ->
     StepResult mod res
-unwind store _ Here vs EntryBoundary = Done store vs
-unwind store locals Here vs (BlockLabel below cont rest) = resume store locals vs below cont rest
-unwind store locals Here vs (LoopLabel below body cont rest) =
+unwindTo store _ Here vs EntryBoundary = Done store vs
+unwindTo store locals Here vs (BlockLabel below cont rest) = resume store locals vs below cont rest
+unwindTo store locals Here vs (LoopLabel below body cont rest) =
     Stepped (Config store locals vs body (LoopLabel below body cont rest))
-unwind store _ Here vs (CallBoundary _ below cl cont cf) = resume store cl vs below cont cf
-unwind store locals (There ix') vs (BlockLabel _ _ rest) = unwind store locals ix' vs rest
-unwind store locals (There ix') vs (LoopLabel _ _ _ rest) = unwind store locals ix' vs rest
-unwind _ _ (There ix') _ (CallBoundary {}) = case ix' of {}
-unwind _ _ (There ix') _ EntryBoundary = case ix' of {}
+unwindTo store _ Here vs (CallBoundary _ below cl cont cf) = resume store cl vs below cont cf
+unwindTo store locals (There ix') vs (BlockLabel _ _ rest) = unwindTo store locals ix' vs rest
+unwindTo store locals (There ix') vs (LoopLabel _ _ _ rest) = unwindTo store locals ix' vs rest
+unwindTo _ _ (There ix') _ (CallBoundary {}) = case ix' of {}
+unwindTo _ _ (There ix') _ EntryBoundary = case ix' of {}
 
 -- | @return@: unwind past every label frame in the current activation to the call boundary.
 returnUnwind ::

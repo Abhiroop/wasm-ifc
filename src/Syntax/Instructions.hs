@@ -48,6 +48,7 @@ import Syntax.TypesIFC
 import Validation.Ref (LocalRef)
 import Validation.Shape (
     Append (..),
+    BranchTarget,
     DataShape (..),
     Elem,
     FrameLocals,
@@ -234,24 +235,26 @@ data FloatBinOp = FMin | FMax | FCopysign deriving stock (Eq, Show)
   operand it was computed from, which the signatures below write as @Join l l'@. The levels
   exist only in the types. At run time a value is a bare machine word, exactly as before.
 
-  We follow SecWasm (see "Syntax.TypesIFC"), and the instructions are at three stages:
+  Two more indices, @pcIn@ and @pcOut@, are the stack of program counter labels before and
+  after the instruction ('PcStack' in "Syntax.TypesIFC" explains it). The top entry, written
+  @pc@ below, is the level of the decisions that led control here. Three rules use it, all taken
+  from the @ifc@ branch, which follows SecWasm:
 
-    * /Done/: the numeric, comparison, conversion and @select@ instructions have their final
-      signatures.
-    * /Placeholder/: a few instructions produce a value whose level nothing constrains yet (a
-      constant, a load, @memory.size@). The signature leaves that level free, so whoever builds
-      the instruction chooses it. The validator always chooses 'Low today.
-    * /Missing check/: the instructions that write somewhere (@local.set@, @global.set@, the
-      stores) or that transfer control (@if@, the branches, the calls) do not yet check that the
-      flow is allowed. Each has a @TODO(ifc …)@ beside it that says what the final signature
-      needs. @grep -rn 'TODO(ifc' src test@ lists them all; P0 is a decision to take first, P1
-      is needed for a sound system, P2 for real modules, and P3 is polish.
+    * a value pushed under @pc@ is at least as secret as @pc@, so every result is joined with it;
+    * a write to a variable needs both the value and @pc@ to flow into the variable's level,
+      because a write inside a secret branch reveals the branch condition even when the value
+      written is public;
+    * a branch raises the pc entries of the blocks it may leave ('BranchTarget'), and the
+      values it carries must be at least as secret as the decision to branch ('AllAtLeast').
 
-  The largest missing piece is the /program counter label/, written @pc@ in the TODOs. It is
-  the level of the decisions that led control to the current instruction. Inside
-  @(if (secret) …)@ the pc is 'High, and a write to a public variable there would reveal the
-  secret, so every write has to check the pc as well as the value. The pc is not an index of
-  this type yet (see the TODO on 'IBlock').
+  Each side condition is a witness the instruction carries ('FlowsInto', 'AllAtLeast'), which
+  the validator builds with a decision procedure and a hand-written program states directly.
+
+  What is still unfinished has a @TODO(ifc …)@ beside it (@grep -rn 'TODO(ifc' src test@ lists
+  them; P0 is a decision to take first, P1 is needed for a sound system, P2 for real modules,
+  P3 is polish). The two large ones are memory, which has no levels yet, and function types,
+  which have no bound on the pc they may be called from, so calls are only allowed at a public
+  pc for now.
 -}
 
 -- TODO: organize instructions into groups: data, mem, ctrl and admin
@@ -261,186 +264,210 @@ data
         (mod :: ModuleShape)
         (frame :: FrameShape)
         (labels :: [LResultType])
+        (pcIn :: PcStack)
+        (pcOut :: PcStack)
         (stackIn :: [LValType])
         (stackOut :: [LValType])
     where
-    {- Constants.
-       TODO(ifc P2): the level of a constant is free (a placeholder). A literal is public, so
-       the final signature is @t ':~ pc@ once the pc exists: public, but no less secret than the
-       context that pushed it. -}
-    IConst :: IsNum t -> HostType t -> Instr m f l s ((t ':~ lv) ': s)
+    {- Constants. The level @lv@ is free: whoever builds the instruction says how secret the
+       literal is, and the validator says 'Low. -}
+    IConst :: forall lv t m f l pc pcs s. IsNum t -> HostType t -> Instr m f l (pc ': pcs) (pc ': pcs) s ((t ':~ Join pc lv) ': s)
     {- Numeric: both operands and the result share the value type, and the result is as secret
-       as the more secret operand. Final. -}
-    IAdd :: IsNum t -> Instr m f l ((t ':~ lv) ': (t ':~ lv') ': s) ((t ':~ Join lv lv') ': s)
-    ISub :: IsNum t -> Instr m f l ((t ':~ lv) ': (t ':~ lv') ': s) ((t ':~ Join lv lv') ': s)
-    IMul :: IsNum t -> Instr m f l ((t ':~ lv) ': (t ':~ lv') ': s) ((t ':~ Join lv lv') ': s)
-    IDiv :: NumWithSign t -> Instr m f l ((t ':~ lv) ': (t ':~ lv') ': s) ((t ':~ Join lv lv') ': s)
-    IRem :: IsInt t -> Signedness -> Instr m f l ((t ':~ lv) ': (t ':~ lv') ': s) ((t ':~ Join lv lv') ': s)
+       as the more secret operand (and the pc). -}
+    IAdd :: IsNum t -> Instr m f l (pc ': pcs) (pc ': pcs) ((t ':~ lv) ': (t ':~ lv') ': s) ((t ':~ Join pc (Join lv lv')) ': s)
+    ISub :: IsNum t -> Instr m f l (pc ': pcs) (pc ': pcs) ((t ':~ lv) ': (t ':~ lv') ': s) ((t ':~ Join pc (Join lv lv')) ': s)
+    IMul :: IsNum t -> Instr m f l (pc ': pcs) (pc ': pcs) ((t ':~ lv) ': (t ':~ lv') ': s) ((t ':~ Join pc (Join lv lv')) ': s)
+    IDiv :: NumWithSign t -> Instr m f l (pc ': pcs) (pc ': pcs) ((t ':~ lv) ': (t ':~ lv') ': s) ((t ':~ Join pc (Join lv lv')) ': s)
+    IRem :: IsInt t -> Signedness -> Instr m f l (pc ': pcs) (pc ': pcs) ((t ':~ lv) ': (t ':~ lv') ': s) ((t ':~ Join pc (Join lv lv')) ': s)
     {- Comparison (consume two @t@, produce an i32 boolean as secret as the operands). @eqz@ is
        integer-only; @eq@/@ne@ have no signedness; the ordered comparisons carry a 'NumWithSign'
-       (signed on ints only). Final. -}
-    IEqz :: IsInt t -> Instr m f l ((t ':~ lv) ': s) (('I32 ':~ lv) ': s)
-    IEq :: IsNum t -> Instr m f l ((t ':~ lv) ': (t ':~ lv') ': s) (('I32 ':~ Join lv lv') ': s)
-    INe :: IsNum t -> Instr m f l ((t ':~ lv) ': (t ':~ lv') ': s) (('I32 ':~ Join lv lv') ': s)
-    ILt :: NumWithSign t -> Instr m f l ((t ':~ lv) ': (t ':~ lv') ': s) (('I32 ':~ Join lv lv') ': s)
-    IGt :: NumWithSign t -> Instr m f l ((t ':~ lv) ': (t ':~ lv') ': s) (('I32 ':~ Join lv lv') ': s)
-    ILe :: NumWithSign t -> Instr m f l ((t ':~ lv) ': (t ':~ lv') ': s) (('I32 ':~ Join lv lv') ': s)
-    IGe :: NumWithSign t -> Instr m f l ((t ':~ lv) ': (t ':~ lv') ': s) (('I32 ':~ Join lv lv') ': s)
-    {- Integer bitwise / shift / count, and floating-point unary / binary (all same-type). A
-       binary one joins the levels; a unary one keeps the operand's level. Final. -}
-    IBitwise :: IsInt t -> BitwiseOp -> Instr m f l ((t ':~ lv) ': (t ':~ lv') ': s) ((t ':~ Join lv lv') ': s)
-    ICount :: IsInt t -> CountOp -> Instr m f l ((t ':~ lv) ': s) ((t ':~ lv) ': s)
-    IFloatUn :: IsFloat t -> FloatUnOp -> Instr m f l ((t ':~ lv) ': s) ((t ':~ lv) ': s)
-    IFloatBin :: IsFloat t -> FloatBinOp -> Instr m f l ((t ':~ lv) ': (t ':~ lv') ': s) ((t ':~ Join lv lv') ': s)
+       (signed on ints only). -}
+    IEqz :: IsInt t -> Instr m f l (pc ': pcs) (pc ': pcs) ((t ':~ lv) ': s) (('I32 ':~ Join pc lv) ': s)
+    IEq :: IsNum t -> Instr m f l (pc ': pcs) (pc ': pcs) ((t ':~ lv) ': (t ':~ lv') ': s) (('I32 ':~ Join pc (Join lv lv')) ': s)
+    INe :: IsNum t -> Instr m f l (pc ': pcs) (pc ': pcs) ((t ':~ lv) ': (t ':~ lv') ': s) (('I32 ':~ Join pc (Join lv lv')) ': s)
+    ILt :: NumWithSign t -> Instr m f l (pc ': pcs) (pc ': pcs) ((t ':~ lv) ': (t ':~ lv') ': s) (('I32 ':~ Join pc (Join lv lv')) ': s)
+    IGt :: NumWithSign t -> Instr m f l (pc ': pcs) (pc ': pcs) ((t ':~ lv) ': (t ':~ lv') ': s) (('I32 ':~ Join pc (Join lv lv')) ': s)
+    ILe :: NumWithSign t -> Instr m f l (pc ': pcs) (pc ': pcs) ((t ':~ lv) ': (t ':~ lv') ': s) (('I32 ':~ Join pc (Join lv lv')) ': s)
+    IGe :: NumWithSign t -> Instr m f l (pc ': pcs) (pc ': pcs) ((t ':~ lv) ': (t ':~ lv') ': s) (('I32 ':~ Join pc (Join lv lv')) ': s)
+    {- Integer bitwise / shift / count, and floating-point unary / binary (all same-type). -}
+    IBitwise :: IsInt t -> BitwiseOp -> Instr m f l (pc ': pcs) (pc ': pcs) ((t ':~ lv) ': (t ':~ lv') ': s) ((t ':~ Join pc (Join lv lv')) ': s)
+    ICount :: IsInt t -> CountOp -> Instr m f l (pc ': pcs) (pc ': pcs) ((t ':~ lv) ': s) ((t ':~ Join pc lv) ': s)
+    IFloatUn :: IsFloat t -> FloatUnOp -> Instr m f l (pc ': pcs) (pc ': pcs) ((t ':~ lv) ': s) ((t ':~ Join pc lv) ': s)
+    IFloatBin :: IsFloat t -> FloatBinOp -> Instr m f l (pc ': pcs) (pc ': pcs) ((t ':~ lv) ': (t ':~ lv') ': s) ((t ':~ Join pc (Join lv lv')) ': s)
     {- Conversions: pop one @from@, push one @to@ at the same level. The 'ConvertOp' is indexed
-       by exactly those types, so the operand/result and the opcode cannot disagree. Final. -}
-    IConvert :: ConvertOp from to -> Instr m f l ((from ':~ lv) ': s) ((to ':~ lv) ': s)
+       by exactly those types, so the operand/result and the opcode cannot disagree. -}
+    IConvert :: ConvertOp from to -> Instr m f l (pc ': pcs) (pc ': pcs) ((from ':~ lv) ': s) ((to ':~ Join pc lv) ': s)
     {- Memory size / grow and narrow load/store.
-       TODO(ifc P1): memory has no levels yet, so the level of a loaded value and of
-       @memory.size@ is free (a placeholder), and a store checks nothing. SecWasm keeps a level
-       for every byte of memory at run time, and gives each load and store a level @ℓ@ written
-       in the instruction:
-         * A load at address level @la@ yields a value at @Join la (Join ℓ pc)@. At run time it
-           checks that every byte it reads is at most @ℓ@, and traps otherwise. The final
-           signature takes a @Sing ℓ@ so the interpreter can do that check.
-         * A store of a value at @lv@ to an address at @la@ is allowed when
-           @Join pc (Join la lv)@ flows into @ℓ@, which is a static check: the final signature
-           takes a @Sing ℓ@ and a 'FlowsInto' witness. At run time it marks the bytes it writes
-           with @ℓ@.
-         * @memory.grow@ is allowed only in a public context with a public argument, and the
-           new bytes are public. So its final signature fixes both levels, and the pc, to 'Low,
-           and @memory.size@ yields a public value.
+       TODO(ifc P1): memory has no levels yet. A load says its result is as secret as the
+       address, the pc, and a level @lv@ that stands for the bytes read, which is free, so a
+       program can claim that secret bytes are public. A store checks nothing. The @ifc@ branch
+       stopped at the same point (its store notes that the value's level cannot be recorded).
+       SecWasm keeps a level for every byte of memory at run time, and writes a level @ℓ@ in
+       each load and store:
+         * a load takes a @Sing ℓ@ in place of the free @lv@, and at run time traps unless every
+           byte it reads is at most @ℓ@;
+         * a store takes a @Sing ℓ@ and a @FlowsInto (Join pc (Join la lv)) ℓ@ witness, and at
+           run time marks the bytes it writes with @ℓ@;
+         * @memory.grow@ is allowed only at a public pc with a public argument, and the new
+           bytes are public, so @memory.size@ is public too.
        The run-time half is described in "Runtime.MemInst". -}
-    IMemSize :: (ModuleMems m ~ (mem ': mems)) => Instr m f l s (('I32 ':~ lv) ': s)
-    IMemGrow :: (ModuleMems m ~ (mem ': mems)) => Instr m f l (('I32 ':~ lv) ': s) (('I32 ':~ lv) ': s)
+    IMemSize :: forall lv m f l pc pcs s mem mems. (ModuleMems m ~ (mem ': mems)) => Instr m f l (pc ': pcs) (pc ': pcs) s (('I32 ':~ Join pc lv) ': s)
+    IMemGrow :: (ModuleMems m ~ (mem ': mems)) => Instr m f l (pc ': pcs) (pc ': pcs) (('I32 ':~ lv) ': s) (('I32 ':~ Join pc lv) ': s)
     ILoadN ::
+        forall lv t m f l pc pcs la s mem mems.
         (ModuleMems m ~ (mem ': mems)) =>
         NarrowWidth t ->
         Signedness ->
         MemArg ->
-        Instr m f l (('I32 ':~ la) ': s) ((t ':~ lv) ': s)
+        Instr m f l (pc ': pcs) (pc ': pcs) (('I32 ':~ la) ': s) ((t ':~ Join pc (Join la lv)) ': s)
     IStoreN ::
         (ModuleMems m ~ (mem ': mems)) =>
         NarrowWidth t ->
         MemArg ->
-        Instr m f l ((t ':~ lv) ': ('I32 ':~ la) ': s) s
+        Instr m f l p p ((t ':~ lv) ': ('I32 ':~ la) ': s) s
     {- Bulk memory. Operands, top first: the byte count, then the source (an address, a fill
        value, or an offset into the segment), then the destination address. A segment is named
        by an 'Elem' into the module's data index space, so it exists.
        TODO(ifc P2): SecWasm covers WebAssembly 1.0, which has no bulk memory, so these rules
-       are ours to write. With a level per byte they need no static check beyond the pc: a
-       copied byte keeps the level of its source joined with the levels of the three operands
-       and the pc, a filled byte takes the level of the fill value joined with the same, and an
-       initialised byte (a data segment is public) takes the operands' levels and the pc. -}
-    IMemCopy :: (ModuleMems m ~ (mem ': mems)) => Instr m f l (('I32 ':~ ln) ': ('I32 ':~ lsrc) ': ('I32 ':~ ldst) ': s) s
-    IMemFill :: (ModuleMems m ~ (mem ': mems)) => Instr m f l (('I32 ':~ ln) ': ('I32 ':~ lsrc) ': ('I32 ':~ ldst) ': s) s
+       are ours to write once memory has levels. They need no static check: a copied byte keeps
+       the level of its source joined with the levels of the three operands and the pc, a
+       filled byte takes the fill value's level joined with the same, and an initialised byte
+       (a data segment is public) takes the operands' levels and the pc. -}
+    IMemCopy :: (ModuleMems m ~ (mem ': mems)) => Instr m f l p p (('I32 ':~ ln) ': ('I32 ':~ lsrc) ': ('I32 ':~ ldst) ': s) s
+    IMemFill :: (ModuleMems m ~ (mem ': mems)) => Instr m f l p p (('I32 ':~ ln) ': ('I32 ':~ lsrc) ': ('I32 ':~ ldst) ': s) s
     IMemInit ::
         (ModuleMems m ~ (mem ': mems)) =>
         Elem 'DataShape (ModuleData m) ->
-        Instr m f l (('I32 ':~ ln) ': ('I32 ':~ lsrc) ': ('I32 ':~ ldst) ': s) s
-    IDataDrop :: Elem 'DataShape (ModuleData m) -> Instr m f l s s
+        Instr m f l p p (('I32 ':~ ln) ': ('I32 ':~ lsrc) ': ('I32 ':~ ldst) ': s) s
+    IDataDrop :: Elem 'DataShape (ModuleData m) -> Instr m f l p p s s
     {- Stack management. @drop@ works on any value type; @select@ (0x1B) on numeric operands and
        keeps the first operand when the condition is non-zero, the second otherwise. Its result
-       depends on all three operands, so it is as secret as the most secret of them. Final. -}
-    IDrop :: Instr m f l (t ': s) s
+       depends on all three operands, so it is as secret as the most secret of them. -}
+    IDrop :: Instr m f l p p (t ': s) s
     ISelect ::
         IsNum t ->
-        Instr m f l (('I32 ':~ lc) ': (t ':~ l1) ': (t ':~ l2) ': s) ((t ':~ Join lc (Join l1 l2)) ': s)
-    {- Locals (from the @frame@) & globals (from the @mod@). A local or global has one level,
-       declared with it and fixed for good; a read yields a value at that level.
-       TODO(ifc P1): the writes demand a value at exactly the variable's level. They should
-       accept any value that may flow into it: for a variable at @l@ and a value at @lv@, take a
-       @FlowsInto (Join pc lv) l@ witness. The pc is part of the check because a write inside a
-       secret branch reveals the branch condition even when the value written is public. -}
-    ILocalGet :: LocalRef (t ':~ lv) (FrameLocals f) -> Instr m f l s ((t ':~ lv) ': s)
-    ILocalSet :: LocalRef (t ':~ lv) (FrameLocals f) -> Instr m f l ((t ':~ lv) ': s) s
-    ILocalTee :: LocalRef (t ':~ lv) (FrameLocals f) -> Instr m f l ((t ':~ lv) ': s) ((t ':~ lv) ': s)
-    IGlobalGet :: Elem ('GlobalType mut (t ':~ lv)) (ModuleGlobals m) -> Instr m f l s ((t ':~ lv) ': s)
-    IGlobalSet :: Elem ('GlobalType 'Mutable (t ':~ lv)) (ModuleGlobals m) -> Instr m f l ((t ':~ lv) ': s) s
+        Instr m f l (pc ': pcs) (pc ': pcs) (('I32 ':~ lc) ': (t ':~ l1) ': (t ':~ l2) ': s) ((t ':~ Join pc (Join lc (Join l1 l2))) ': s)
+    {- Locals (from the @frame@) & globals (from the @mod@). A variable has one level, declared
+       with it and fixed for good. A read yields a value at that level (and the pc). A write
+       takes two witnesses: the pc flows into the variable's level, and so does the value. -}
+    ILocalGet :: LocalRef (t ':~ lv) (FrameLocals f) -> Instr m f l (pc ': pcs) (pc ': pcs) s ((t ':~ Join pc lv) ': s)
+    ILocalSet ::
+        FlowsInto pc lvar ->
+        FlowsInto lv lvar ->
+        LocalRef (t ':~ lvar) (FrameLocals f) ->
+        Instr m f l (pc ': pcs) (pc ': pcs) ((t ':~ lv) ': s) s
+    ILocalTee ::
+        FlowsInto pc lvar ->
+        FlowsInto lv lvar ->
+        LocalRef (t ':~ lvar) (FrameLocals f) ->
+        Instr m f l (pc ': pcs) (pc ': pcs) ((t ':~ lv) ': s) ((t ':~ lv) ': s)
+    IGlobalGet :: Elem ('GlobalType mut (t ':~ lv)) (ModuleGlobals m) -> Instr m f l (pc ': pcs) (pc ': pcs) s ((t ':~ Join pc lv) ': s)
+    IGlobalSet ::
+        FlowsInto pc lvar ->
+        FlowsInto lv lvar ->
+        Elem ('GlobalType 'Mutable (t ':~ lvar)) (ModuleGlobals m) ->
+        Instr m f l (pc ': pcs) (pc ': pcs) ((t ':~ lv) ': s) s
     {- Memory (requires the module to declare a memory). The TODO(ifc P1) on the narrow forms
        above covers these as well. -}
     ILoad ::
+        forall lv t m f l pc pcs la s mem mems.
         (ModuleMems m ~ (mem ': mems)) =>
         IsNum t ->
         MemArg ->
-        Instr m f l (('I32 ':~ la) ': s) ((t ':~ lv) ': s)
+        Instr m f l (pc ': pcs) (pc ': pcs) (('I32 ':~ la) ': s) ((t ':~ Join pc (Join la lv)) ': s)
     IStore ::
         (ModuleMems m ~ (mem ': mems)) =>
         IsNum t ->
         MemArg ->
-        Instr m f l ((t ':~ lv) ': ('I32 ':~ la) ': s) s
+        Instr m f l p p ((t ':~ lv) ': ('I32 ':~ la) ': s) s
     {- Calls. The 'Append' witness lets the interpreter peel the arguments off the stack. The
        arguments must be at exactly the levels the function declares, and the results come back
-       at the levels it declares.
-       TODO(ifc P1): a call inside a secret branch runs the whole callee in a secret context.
-       SecWasm therefore gives a function type a third part, a bound on the pc it may be called
-       from, and the callee's body is checked under that bound. The final signature takes a
-       @FlowsInto pc bound@ witness; for an indirect call the table index decides which function
-       runs, so its level joins the pc in that check. The bound is missing from
-       'Syntax.Types.FuncTypeOf'.
+       at the levels it declares. A function body is checked at a public pc
+       ('Syntax.Functions.FunctionBody'), so a call is only allowed where the pc is public:
+       called from a secret branch, the callee's writes would reveal the branch. For an indirect
+       call the table index decides which function runs, so its level counts as well.
+       TODO(ifc P1): SecWasm gives a function type a third part, a bound on the pc it may be
+       called from; the body is checked at that bound and the witness here becomes
+       @FlowsInto pc bound@. The field is missing from 'Syntax.Types.FuncTypeOf' (the @ifc@
+       branch has no labelled calls either).
        TODO(ifc P2): arguments at a lower level than declared should be accepted. SecWasm does
        this by subtyping. An intrinsically-typed AST has no subtyping, so add an instruction that
        raises the level of the value on top of the stack (it takes a 'FlowsInto' witness and
        does nothing at run time), and have the validator insert it where needed. -}
     ICall ::
+        FlowsInto pc 'Low ->
         Append ps s full ->
         Elem ('FuncType ps rs) (ModuleFuncs m) ->
-        Instr m f l full (rs ++ s)
+        Instr m f l (pc ': pcs) (pc ': pcs) full (rs ++ s)
     {- Indirect calls: the callee is an entry of the module's table, checked at run time against
        the expected type (a trap if it differs); the module must declare a table. The expected
        type is labelled, so the run-time check compares the levels too. -}
     ICallIndirect ::
         (ModuleTables m ~ (table ': tables)) =>
+        FlowsInto (Join pc lv) 'Low ->
         Append ps s full ->
         Sing ('FuncType ps rs) ->
-        Instr m f l (('I32 ':~ lv) ': full) (rs ++ s)
+        Instr m f l (pc ': pcs) (pc ': pcs) (('I32 ':~ lv) ': full) (rs ++ s)
     {- Structured control. Bodies are typed in isolation (@ps -> rs@) within the same frame,
        framed over a polymorphic @s@. A block/if label carries its results; a loop its params.
-       TODO(ifc P0): nothing tracks the pc, so a program can leak through control flow: after
-       @(if (secret) (then (local.set $public 1)))@ the public local reveals the secret. The
-       plan, in the order to do it:
-         1. Add a @pc :: SecLevel@ index to 'Instr' and 'Expr', and a pc to every label (the
-            level its block's body runs at).
-         2. 'IIf' checks its two bodies at @Join pc lv@, where @lv@ is the condition's level.
-         3. A block's results must be at least as secret as the pc of its body, because which
-            values come out depends on the decisions taken inside.
-         4. A branch is allowed only to a label whose pc is at least @Join pc lv@ (just @pc@ for
-            an unconditional branch), and 'IReturn' only when the function's bound is.
-         5. The validator picks each block's pc before checking its body: the pc of the
-            enclosing block, joined with the level of every condition that can make control
-            leave the block early. With two levels this takes at most two passes.
-       SecWasm is more permissive here: it lets the pc rise part-way through a block, at the
-       branch. That needs the label context to change from one instruction to the next, which
-       this type does not support, so we start with one pc per block. -}
+       A body starts with one more pc entry than its surroundings: the current pc for a block,
+       the current pc joined with the condition's level for an @if@. When the body ends its own
+       entry is dropped, and the instruction's @pcOut@ is what the body left of the entries
+       below, which a branch inside may have raised. After an @if@ either arm may have run, so
+       the two results are joined entry by entry.
+       A loop's body can run again, so it must be checked at a pc that still holds when control
+       comes back: the entry it starts at, @pcLoop@, is at least the current pc and at least
+       the entry the body ends with. (The @ifc@ branch asks for the same as an annotation.)
+       TODO(ifc P2): SecWasm also raises the levels of the values already on the stack of the
+       blocks a branch leaves, which its proof uses. Neither the @ifc@ branch nor this does.
+       TODO(ifc P2): the two arms of an @if@ must produce exactly the same labelled types.
+       Accepting arms at different levels needs the relabelling instruction (see 'ICall'). -}
     IBlock ::
         Append ps s full ->
-        Expr m f (rs ': l) ps rs ->
-        Instr m f l full (rs ++ s)
+        Expr m f (rs ': l) (pc ': pc ': pcs) (pcBody ': pcs') ps rs ->
+        Instr m f l (pc ': pcs) pcs' full (rs ++ s)
     ILoop ::
+        FlowsInto pc pcLoop ->
+        FlowsInto pcBody pcLoop ->
         Append ps s full ->
-        Expr m f (ps ': l) ps rs ->
-        Instr m f l full (rs ++ s)
+        Expr m f (ps ': l) (pcLoop ': pc ': pcs) (pcBody ': pcs') ps rs ->
+        Instr m f l (pc ': pcs) pcs' full (rs ++ s)
     IIf ::
         Append ps s full ->
-        Expr m f (rs ': l) ps rs ->
-        Expr m f (rs ': l) ps rs ->
-        Instr m f l (('I32 ':~ lv) ': full) (rs ++ s)
-    {- Branches. The witness gives the branch width; the output (and the stack below the
-       operands) is otherwise free. The condition's level is ignored for now: see the
-       TODO(ifc P0) on 'IBlock', step 4. -}
-    IBr :: Append rs s full -> Elem rs labels -> Instr m f labels full anyOut
-    IBrIf :: Append rs s full -> Elem rs labels -> Instr m f labels (('I32 ':~ lv) ': full) full
+        Expr m f (rs ': l) (Join pc lv ': pc ': pcs) (pcThen ': pcsThen) ps rs ->
+        Expr m f (rs ': l) (Join pc lv ': pc ': pcs) (pcElse ': pcsElse) ps rs ->
+        Instr m f l (pc ': pcs) (JoinEach pcsThen pcsElse) (('I32 ':~ lv) ': full) (rs ++ s)
+    {- Branches. The 'Append' witness gives the branch width; the output (and the stack below
+       the operands) is otherwise free. The decision to branch is as secret as the pc, joined
+       with the condition's level if there is one. The values carried must be at least that
+       secret ('AllAtLeast'), and the pc entries of the blocks the branch may leave are raised
+       by it ('BranchTarget'). @br_table@ and @return@ raise every entry, which is more than
+       needed for @br_table@ when all its targets are near. -}
+    IBr ::
+        AllAtLeast pc rs ->
+        Append rs s full ->
+        BranchTarget pc rs labels (pc ': pcs) pcs' ->
+        Instr m f labels (pc ': pcs) pcs' full anyOut
+    IBrIf ::
+        AllAtLeast (Join pc lv) rs ->
+        Append rs s full ->
+        BranchTarget (Join pc lv) rs labels (pc ': pcs) pcs' ->
+        Instr m f labels (pc ': pcs) pcs' (('I32 ':~ lv) ': full) full
     IBrTable ::
+        AllAtLeast (Join pc lv) rs ->
         Append rs s full ->
         [Elem rs labels] ->
         Elem rs labels ->
-        Instr m f labels (('I32 ':~ lv) ': full) anyOut
-    IReturn :: Append (FrameReturn f) s full -> Instr m f l full anyOut
+        Instr m f labels (pc ': pcs) (RaiseAll (Join pc lv) (pc ': pcs)) (('I32 ':~ lv) ': full) anyOut
+    IReturn ::
+        AllAtLeast pc (FrameReturn f) ->
+        Append (FrameReturn f) s full ->
+        Instr m f l (pc ': pcs) (RaiseAll pc (pc ': pcs)) full anyOut
     {- Inert. A trap ends the run, which an observer can see, so @unreachable@ under a secret pc
        reveals something. SecWasm accepts this (its guarantee only covers runs that finish), and
        so do we: no check here. -}
-    INop :: Instr m f l s s
-    IUnreachable :: Instr m f l s anyOut
+    INop :: Instr m f l p p s s
+    IUnreachable :: Instr m f l p p s anyOut
 
 {- | A typed instruction sequence (a WebAssembly expression): the output shape of each
   instruction is the input of the next. Same context indices as 'Instr'.
@@ -450,14 +477,16 @@ data
         (mod :: ModuleShape)
         (frame :: FrameShape)
         (labels :: [LResultType])
+        (pcIn :: PcStack)
+        (pcOut :: PcStack)
         (stackIn :: [LValType])
         (stackOut :: [LValType])
     where
-    INil :: Expr m f l s s
+    INil :: Expr m f l p p s s
     (:.) ::
-        Instr m f l s1 s2 ->
-        Expr m f l s2 s3 ->
-        Expr m f l s1 s3
+        Instr m f l p1 p2 s1 s2 ->
+        Expr m f l p2 p3 s2 s3 ->
+        Expr m f l p1 p3 s1 s3
 
 infixr 5 :.
 
@@ -467,23 +496,24 @@ infixr 5 :.
   more as needed.)
 -}
 call ::
-    forall ps rs s m f l.
+    forall ps rs s m f l pcs.
     SingI ps =>
-    Elem ('FuncType ps rs) (ModuleFuncs m) -> Instr m f l (ps ++ s) (rs ++ s)
-call = ICall (appendFromSing @ps @s (sing @ps))
+    Elem ('FuncType ps rs) (ModuleFuncs m) -> Instr m f l ('Low ': pcs) ('Low ': pcs) (ps ++ s) (rs ++ s)
+call = ICall LowFlowsAnywhere (appendFromSing @ps @s (sing @ps))
 
 {- | Specialised forms for the common case of an empty-result block/loop and a branch to
   an empty-result label. With @rs ~ '[]@ fixed, @rs ++ s@ reduces to @s@, so these infer
-  cleanly — no @++@ for GHC to invert and no type applications needed at call sites.
+  cleanly — no @++@ for GHC to invert and no type applications needed at call sites. The loop
+  form is for a public pc, where its two flow witnesses are trivial.
 -}
-block_ :: Expr m f ('[] ': l) '[] '[] -> Instr m f l s s
+block_ :: Expr m f ('[] ': l) (pc ': pc ': pcs) (pcBody ': pcs') '[] '[] -> Instr m f l (pc ': pcs) pcs' s s
 block_ = IBlock ANil
 
-loop_ :: Expr m f ('[] ': l) '[] '[] -> Instr m f l s s
-loop_ = ILoop ANil
+loop_ :: Expr m f ('[] ': l) ('Low ': 'Low ': pcs) ('Low ': pcs') '[] '[] -> Instr m f l ('Low ': pcs) pcs' s s
+loop_ = ILoop LowFlowsAnywhere LowFlowsAnywhere ANil
 
-br_ :: Elem '[] labels -> Instr m f labels s anyOut
-br_ = IBr ANil
+br_ :: BranchTarget pc '[] labels (pc ': pcs) pcs' -> Instr m f labels (pc ': pcs) pcs' s anyOut
+br_ = IBr NothingCarried ANil
 
-brIf_ :: Elem '[] labels -> Instr m f labels (('I32 ':~ lv) ': s) s
-brIf_ = IBrIf ANil
+brIf_ :: BranchTarget (Join pc lv) '[] labels (pc ': pcs) pcs' -> Instr m f labels (pc ': pcs) pcs' (('I32 ':~ lv) ': s) s
+brIf_ = IBrIf NothingCarried ANil

@@ -1,5 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE TypeApplications #-}
 -- GHC's coverage checker spuriously flags the single-equation 'factorial' binding as a
 -- redundant pattern match — a known false positive for GADT values whose field types pass
 -- through a type family (here 'HostType'). The program is well-typed and runs, so we silence
@@ -16,6 +17,7 @@ module Examples (
     runIncrement,
     runSpinFor,
     labelledSumLength,
+    leakLength,
 ) where
 
 import Data.Word (Word32)
@@ -35,9 +37,9 @@ import Syntax.Types (
     SValType (..),
     ValType (..),
  )
-import Syntax.TypesIFC (LValType (..), SLValType (..), SSecLevel (..), SecLevel (..))
+import Syntax.TypesIFC (FlowsInto (..), LValType (..), SLValType (..), SSecLevel (..), SecLevel (..))
 import Validation.Ref (LocalRef, resolveLocal)
-import Validation.Shape (Elem (..), ModuleShape (..))
+import Validation.Shape (Append (..), BranchTarget (..), Elem (..), FrameLocals, FrameShape (..), ModuleShape (..))
 
 {- | The single i32 a completed run produced. (These modules import nothing, so a call into
 the host cannot arise; the case is still spelled out because the type admits it.)
@@ -56,8 +58,14 @@ publicI32 = SI32 :%~ SLow
 {- | The constant one, public. A constant's level is free in its type (see 'IConst'), so an
   example has to say which level it means wherever nothing else decides it.
 -}
-one :: Instr mod frame labels s (PublicI32 ': s)
-one = IConst I32IsNum 1
+one :: Instr mod frame labels ('Low ': pcs) ('Low ': pcs) s (PublicI32 ': s)
+one = IConst @'Low I32IsNum 1
+
+{- | Writing a public value to a public local at a public pc: both flow witnesses are the
+  trivial one. Every example here runs at a public pc.
+-}
+setPublic :: LocalRef PublicI32 (FrameLocals frame) -> Instr mod frame labels ('Low ': pcs) ('Low ': pcs) (PublicI32 ': s) s
+setPublic = ILocalSet LowFlowsAnywhere LowFlowsAnywhere
 
 completedI32 :: Outcome mod '[PublicI32] -> Either String Word32
 completedI32 (Completed _ (x :# VNil)) = Right x
@@ -74,7 +82,7 @@ factorial :: FuncInst shape ('FuncType '[PublicI32] '[PublicI32])
 factorial =
     WasmFunc . Function (SCons publicI32 SNil) (SCons publicI32 SNil) $
         ( one
-            :. ILocalSet acc
+            :. setPublic acc
             :. block_
                 ( loop_
                     ( ILocalGet n
@@ -84,11 +92,11 @@ factorial =
                         :. ILocalGet acc
                         :. ILocalGet n
                         :. IMul I32IsNum
-                        :. ILocalSet acc
+                        :. setPublic acc
                         :. ILocalGet n
                         :. one
                         :. ISub I32IsNum
-                        :. ILocalSet n
+                        :. setPublic n
                         :. br_ toContinue
                         :. INil
                     )
@@ -101,10 +109,12 @@ factorial =
     n, acc :: LocalRef PublicI32 '[PublicI32, PublicI32]
     n = resolveLocal publicI32 Here
     acc = resolveLocal publicI32 (There Here)
-    -- Inside the loop the labels are: 0 = loop, 1 = block, 2 = function.
-    toContinue, toDone :: Elem '[] '[ '[], '[], '[PublicI32]]
-    toContinue = Here -- branch to the loop header (restarts it)
-    toDone = There Here -- branch out of the block (exits the loop)
+    -- Inside the loop the labels are: 0 = loop, 1 = block, 2 = function; the pc stack has one
+    -- public entry for each. A branch at a public pc raises nothing, so the stack is unchanged.
+    toContinue :: BranchTarget 'Low '[] '[ '[], '[], '[PublicI32]] '[ 'Low, 'Low, 'Low] '[ 'Low, 'Low, 'Low]
+    toContinue = TargetHere -- branch to the loop header (restarts it)
+    toDone :: BranchTarget 'Low '[] '[ '[], '[], '[PublicI32]] '[ 'Low, 'Low, 'Low] '[ 'Low, 'Low, 'Low]
+    toDone = TargetThere TargetHere -- branch out of the block (exits the loop)
 
 {- *** a loop that never ends *** -
 
@@ -112,8 +122,8 @@ factorial =
    reports the spent budget, which is how termination becomes a testable property.
 -}
 
-spinForever :: FunctionBody shape '[] '[]
-spinForever = loop_ (br_ Here :. INil) :. INil
+spinForever :: FunctionBody shape '[] '[] '[ 'Low]
+spinForever = loop_ (br_ TargetHere :. INil) :. INil
 
 -- | Whether the loop is still running after the given number of steps (it always is).
 runSpinFor :: Int -> Either String Bool
@@ -169,7 +179,7 @@ increment =
         ( IGlobalGet Here
             :. one
             :. IAdd I32IsNum
-            :. IGlobalSet Here
+            :. IGlobalSet LowFlowsAnywhere LowFlowsAnywhere Here
             :. IGlobalGet Here
             :. INil
         )
@@ -198,22 +208,37 @@ runIncrement initial = either (Left . show) completedI32 (runFunction globalModu
 {- | A secret plus a public value. The type is the assertion: the sum is 'High, because a
   result is as secret as its most secret operand. Writing 'Low in the signature instead is a
   compile error. The test only counts the instructions, since the levels exist in types alone.
-
-  TODO(ifc P2): examples to add as the checks land. A secret @if@ around a public @local.set@
-  should not compile once the program counter label exists; keep it here as a commented
-  program with the error GHC gives, as @broken@ above does for an ill-typed stack. A public
-  value stored into a secret local should compile once the writes take a flow witness.
 -}
-secretPlusPublic :: Expr mod frame labels '[] '[SecretI32]
+secretPlusPublic :: Expr mod frame labels ('Low ': pcs) ('Low ': pcs) '[] '[SecretI32]
 secretPlusPublic = secret :. one :. IAdd I32IsNum :. INil
   where
-    secret :: Instr mod frame labels s (SecretI32 ': s)
-    secret = IConst I32IsNum 42
+    secret :: Instr mod frame labels ('Low ': pcs) ('Low ': pcs) s (SecretI32 ': s)
+    secret = IConst @'High I32IsNum 42
 
--- | The instruction count of 'secretPlusPublic'.
-labelledSumLength :: Int
-labelledSumLength = count secretPlusPublic
+{- | The leak the program counter label exists to stop. Under a secret condition, writing to a
+  public local reveals the condition, even though the value written is public. Inside the
+  @if@ the pc is 'High, so 'ILocalSet' asks for a proof that 'High flows into 'Low, which does
+  not exist: the only way to write the body below is with a hole where that proof should go.
+
+  TODO(ifc P2): with the writes to memory and the calls still unchecked, the same leak through
+  a store or a call still compiles; see the TODOs on 'IStore' and 'ICall'.
+-}
+leakThroughControl :: Expr mod ('FrameShape '[PublicI32] '[]) '[ '[]] '[ 'Low] '[ 'Low] '[SecretI32] '[]
+leakThroughControl =
+    IIf ANil (IConst @'Low I32IsNum 1 :. ILocalSet noSuchProof noSuchProof (resolveLocal publicI32 Here) :. INil) INil :. INil
   where
-    count :: Expr mod frame labels s s' -> Int
-    count INil = 0
-    count (_ :. rest) = 1 + count rest
+    -- There is no closed term of this type; the program compiles only because this one is left
+    -- undefined. Replace it with a constructor of 'FlowsInto' and GHC refuses. (Even the public
+    -- constant counts as secret inside the arm, since a value pushed under a secret pc is
+    -- secret, so the second witness is impossible too.)
+    noSuchProof :: FlowsInto 'High 'Low
+    noSuchProof = error "unreachable: a secret pc never flows into a public local"
+
+-- | The instruction counts of 'secretPlusPublic' and 'leakThroughControl'.
+labelledSumLength, leakLength :: Int
+labelledSumLength = exprLength secretPlusPublic
+leakLength = exprLength leakThroughControl
+
+exprLength :: Expr mod frame labels p q s s' -> Int
+exprLength INil = 0
+exprLength (_ :. rest) = 1 + exprLength rest

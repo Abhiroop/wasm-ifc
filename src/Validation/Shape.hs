@@ -30,7 +30,7 @@ import Data.Singletons.Base.TH (SList (SCons, SNil), Sing, genSingletons)
 import Numeric.Natural (Natural)
 
 import Syntax.Types (AddrType, FuncTypeOf (..), GlobalTypeOf)
-import Syntax.TypesIFC (LValType)
+import Syntax.TypesIFC (Join, LValType, SecLevel)
 
 {- *** Stack order ***
 
@@ -89,6 +89,17 @@ type Elem :: k -> [k] -> Type
 data Elem x xs where
     Here :: Elem x (x ': xs)
     There :: Elem x xs -> Elem x (y ': xs)
+
+{- | A branch target: like an 'Elem' into the label context, it names the label at a position
+  and proves its result type is @rs@. It also says what the branch does to the pc stack
+  ("Syntax.TypesIFC"): the entries of the blocks the branch may leave, the target's included,
+  are raised by @l@, the level of the decision to branch, and the entries below are untouched.
+  One witness for both facts, so the position and the raise cannot disagree.
+-}
+type BranchTarget :: SecLevel -> [LValType] -> [[LValType]] -> [SecLevel] -> [SecLevel] -> Type
+data BranchTarget l rs labels pcs pcs' where
+    TargetHere :: BranchTarget l rs (rs ': labels) (p ': pcs) (Join l p ': pcs)
+    TargetThere :: BranchTarget l rs labels pcs pcs' -> BranchTarget l rs (other ': labels) (p ': pcs) (Join l p ': pcs')
 
 {- | @∃ps rs. (Sing ps, Sing rs, Elem ('FuncType ps rs) fts)@ — a function reference resolved
   against the signature, carrying its parameter and result shapes: what a table entry, an
