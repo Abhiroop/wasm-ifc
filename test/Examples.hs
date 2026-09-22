@@ -39,7 +39,7 @@ import Syntax.Types (
     SValType (..),
     ValType (..),
  )
-import Syntax.TypesIFC (FlowsInto (..), LabelledValType (..), SLabelledValType (..), SSecLevel (..), SecLevel (..))
+import Syntax.TypesIFC (FlowsInto (..), LabelledValType (..), SLabelledValType (..), SSecLevel (..), SecLevel (..), SegmentFlows (..))
 import Validation.Ref (LocalRef, resolveLocal)
 import Validation.Shape (Append (..), BranchTarget (..), Elem (..), FrameLocals, FrameShape (..), MemShape (..), ModuleShape (..))
 
@@ -228,7 +228,7 @@ secretPlusPublic = secret :. one :. IAdd I32IsNum :. INil
 -}
 leakThroughControl :: Expr mod ('FrameShape '[PublicI32] '[]) '[ '[]] '[ 'Low] '[ 'Low] '[SecretI32] '[]
 leakThroughControl =
-    IIf ANil (IConst @'Low I32IsNum 1 :. ILocalSet noSuchProof noSuchProof (resolveLocal publicI32 Here) :. INil) INil :. INil
+    IIf NoValuesFlow ANil (IConst @'Low I32IsNum 1 :. ILocalSet noSuchProof noSuchProof (resolveLocal publicI32 Here) :. INil) INil :. INil
   where
     -- There is no closed term of this type; the program compiles only because this one is left
     -- undefined. Replace it with a constructor of 'FlowsInto' and GHC refuses. (Even the public

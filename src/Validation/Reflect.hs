@@ -28,6 +28,11 @@ module Validation.Reflect (
     mkLocalElem,
     mkLabelElem,
     matchPrefix,
+    SomeCoercion (..),
+    matchPrefixFlows,
+    SomePrefix (..),
+    takePrefix,
+    reflectStackAt,
     SameLength (..),
     sameLengthAs,
     thenSameLength,
@@ -143,6 +148,35 @@ matchPrefix (SCons p ps) (SCons f fs) = do
     SomeSplit s w <- matchPrefix ps fs
     Just (SomeSplit s (ACons w))
 matchPrefix (SCons _ _) SNil = Nothing
+
+{- | @∃args s. (Sing s, SegmentFlows args ps, Append args s full)@: the top of @full@ is a
+  segment whose values may flow into @ps@ (SecWasm's subtyping on stacks), with the suffix and
+  the split witness. What a call, a branch or a return needs of the stack.
+-}
+data SomeCoercion (ps :: [LabelledValType]) (full :: [LabelledValType]) where
+    SomeCoercion :: Sing (s :: [LabelledValType]) -> SegmentFlows args ps -> Append args s full -> SomeCoercion ps full
+
+matchPrefixFlows :: Sing (ps :: [LabelledValType]) -> Sing (full :: [LabelledValType]) -> Maybe (SomeCoercion ps full)
+matchPrefixFlows SNil sfull = Just (SomeCoercion sfull NoValuesFlow ANil)
+matchPrefixFlows (SCons (p :%~ lp) ps) (SCons (f :%~ lf) fs) = do
+    Refl <- decideEquality p f
+    flow <- decideFlow lf lp
+    SomeCoercion s flows w <- matchPrefixFlows ps fs
+    Just (SomeCoercion s (ValueFlows flow flows) (ACons w))
+matchPrefixFlows (SCons _ _) SNil = Nothing
+
+-- | The top @n@ entries of a stack, whatever they are, with the suffix and the split witness.
+data SomePrefix (full :: [LabelledValType]) where
+    SomePrefix :: Sing (ps :: [LabelledValType]) -> Sing (s :: [LabelledValType]) -> Append ps s full -> SomePrefix full
+
+takePrefix :: Int -> Sing (full :: [LabelledValType]) -> Maybe (SomePrefix full)
+takePrefix 0 sfull = Just (SomePrefix SNil sfull ANil)
+takePrefix n (SCons x xs) = (\(SomePrefix ps s w) -> SomePrefix (SCons x ps) s (ACons w)) <$> takePrefix (n - 1) xs
+takePrefix _ SNil = Nothing
+
+-- | Reflect value types with every level the given one.
+reflectStackAt :: SecLevel -> [ValType] -> SomeStack
+reflectStackAt level vs = withSomeSing (map (:~ level) vs) SomeStack
 
 {- *** The pc stack ***
 

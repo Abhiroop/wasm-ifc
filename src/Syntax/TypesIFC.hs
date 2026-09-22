@@ -24,6 +24,7 @@ module Syntax.TypesIFC where
 import Data.List.Singletons (MapSym0, sMap)
 import Data.Singletons.Base.TH
 
+import Data.Singletons.Decide (decideEquality)
 import Syntax.Types
 
 $( singletons
@@ -155,3 +156,24 @@ decideFlow :: Sing (l :: SecLevel) -> Sing (l' :: SecLevel) -> Maybe (FlowsInto 
 decideFlow SLow _ = Just LowFlowsAnywhere
 decideFlow SHigh SHigh = Just HighFlowsToHigh
 decideFlow SHigh SLow = Nothing
+
+{- | Evidence that a stack segment may be used where another is expected: the same value
+  types, each level flowing into its counterpart. This is SecWasm's subtyping on type stacks
+  (@st ⊑ st'@, used at calls, branches, returns and block results) as a witness the instruction
+  carries; at run time the words are unchanged and only the type changes.
+-}
+data SegmentFlows (from :: [LabelledValType]) (to :: [LabelledValType]) where
+    NoValuesFlow :: SegmentFlows '[] '[]
+    ValueFlows :: FlowsInto l l' -> SegmentFlows from to -> SegmentFlows ((t ':~ l) ': from) ((t ':~ l') ': to)
+
+decideSegmentFlows :: Sing (from :: [LabelledValType]) -> Sing (to :: [LabelledValType]) -> Maybe (SegmentFlows from to)
+decideSegmentFlows SNil SNil = Just NoValuesFlow
+decideSegmentFlows (SCons (t :%~ l) rest) (SCons (t' :%~ l') rest') = do
+    Refl <- decideEquality t t'
+    ValueFlows <$> decideFlow l l' <*> decideSegmentFlows rest rest'
+decideSegmentFlows _ _ = Nothing
+
+-- | A segment flows into itself: what a hand-written program with matching levels supplies.
+segmentSelf :: Sing (s :: [LabelledValType]) -> SegmentFlows s s
+segmentSelf SNil = NoValuesFlow
+segmentSelf (SCons (_ :%~ l) rest) = ValueFlows (flowsSelf l) (segmentSelf rest)

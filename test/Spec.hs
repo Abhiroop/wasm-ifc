@@ -175,7 +175,7 @@ spec = do
             elabRunWithPolicy "export g : -> " (singleFunctionModule [] [] [] [] []) [] `shouldSatisfy` errorContaining "PolicyUnknown \"export g\""
         it "a secret parameter cannot be returned by a public function" $
             elabRunWithPolicy "export f : H -> L" (singleFunctionModule [] [I32] [I32] [] [LocalGet (LocalIdx 0)]) [1]
-                `shouldSatisfy` errorContaining "ResultMismatch"
+                `shouldSatisfy` errorContaining "IllegalFlow \"result\" High Low"
         it "a secret parameter cannot decide a write to a public local" $
             elabRunWithPolicy "export f : H -> L" (singleFunctionModule [] [I32] [I32] [I32] [LocalGet (LocalIdx 0), If (FuncType [] []) [Const SI32 1, LocalSet (LocalIdx 1)] [], LocalGet (LocalIdx 1)]) [1]
                 `shouldSatisfy` errorContaining "IllegalFlow \"local.set\" High Low"
@@ -187,8 +187,17 @@ spec = do
         it "a region declares the bytes behind constant addresses" $
             elabRunWithPolicy "region 0 4 : H" (withMemory [I32] [I32] [] [Const SI32 0, Const SI32 7, Store SI32 (MemArg 0 0), LocalGet (LocalIdx 0), Load SI32 (MemArg 0 0)]) [0]
                 `shouldSatisfy` trapContaining "InformationFlowViolation"
+        it "a public result is relabelled where a secret one is declared" $
+            elabRunWithPolicy "export f : -> H" (singleFunctionModule [] [] [I32] [] [Const SI32 1]) [] `shouldBe` Right ["1"]
+        it "a block may produce a secret result, and arms at different levels meet at the higher" $ do
+            elabRunWithPolicy "export f : H -> H" (singleFunctionModule [] [I32] [I32] [] [LocalGet (LocalIdx 0), If (FuncType [] [I32]) [Const SI32 1] [Const SI32 0]]) [1] `shouldBe` Right ["1"]
+            elabRunWithPolicy "export f : H -> H" (singleFunctionModule [] [I32] [I32] [] [Const SI32 1, If (FuncType [] [I32]) [LocalGet (LocalIdx 0)] [Const SI32 0]]) [7] `shouldBe` Right ["7"]
+        it "a public argument may be passed where a secret parameter is declared" $
+            elabRunWithPolicy "func 0 : H -> H\nexport f : -> H" (twoFunctions (FuncType [I32] [I32]) [LocalGet (LocalIdx 0)] (FuncType [] [I32]) [Const SI32 5, Call (FunctionIdx 0)]) [] `shouldBe` Right ["5"]
+        it "a loop whose back edge carries a secret raises its parameter" $
+            elabRunWithPolicy "export f : H -> H" (singleFunctionModule [] [I32] [I32] [] [Const SI32 0, Loop (FuncType [I32] [I32]) [Drop, LocalGet (LocalIdx 0), Const SI32 0, BrIf (LabelIdx 0)]]) [3] `shouldBe` Right ["3"]
         it "the load default makes every unannotated load secret" $
-            elabRunWithPolicy "load-default : H" (withMemory [] [I32] [] [Const SI32 0, Load SI32 (MemArg 0 0)]) [] `shouldSatisfy` errorContaining "ResultMismatch"
+            elabRunWithPolicy "load-default : H" (withMemory [] [I32] [] [Const SI32 0, Load SI32 (MemArg 0 0)]) [] `shouldSatisfy` errorContaining "IllegalFlow \"result\""
         it "a module without functions assembles (the index space is empty, not wrapped around)" $
             void (elaborateModule (singleFunctionModule [] [] [] [] []) {functions = [], exports = []}) `shouldSatisfy` isRight
         it "the module's own ifc section carries a policy" $ do
@@ -207,7 +216,7 @@ spec = do
                 `shouldSatisfy` trapContaining "InformationFlowViolation"
         it "a load through the ghost is secret, so it needs declassification to come out" $ do
             elabRunModule (withGhosts [storeSecret, loadSecret] [Const SI32 0, Const SI32 7, Call (FunctionIdx 0), Const SI32 0, Call (FunctionIdx 1)]) []
-                `shouldSatisfy` errorContaining "ResultMismatch"
+                `shouldSatisfy` errorContaining "IllegalFlow \"result\""
             elabRunModule ((withGhosts [storeSecret, loadSecret, declassify] [Const SI32 0, Const SI32 7, Call (FunctionIdx 0), Const SI32 0, Call (FunctionIdx 1), Call (FunctionIdx 2)]) {customSections = [("ifc", "allow-declassify")]}) []
                 `shouldBe` Right ["7"]
         it "a ghost must have the type its name says" $

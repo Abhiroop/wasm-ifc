@@ -404,9 +404,14 @@ data
        leak except through the declassifications". Neither does anything at run time. -}
     IRelabel :: FlowsInto lv lv' -> Instr m f l p p ((t ':~ lv) ': s) ((t ':~ lv') ': s)
     IDeclassify :: Instr m f l p p ((t ':~ lv) ': s) ((t ':~ lv') ': s)
+    {- The whole stack relabelled at once, each value to a level it may flow into: what the
+       validator appends to a body that produced its results at lower levels than its block or
+       function declares. -}
+    IRelabelResults :: SegmentFlows from to -> Instr m f l p p from to
     {- Calls. The 'Append' witness lets the interpreter peel the arguments off the stack. The
-       arguments must be at exactly the levels the function declares, and the results come back
-       at the levels it declares. A function body is checked at a public pc
+       arguments may be at lower levels than the function declares ('SegmentFlows', SecWasm's
+       subtyping premise), and the results come back at the levels it declares. A function body
+       is checked at a public pc
        ('Syntax.Functions.FunctionBody'), so a call is only allowed where the pc is public:
        called from a secret branch, the callee's writes would reveal the branch. For an indirect
        call the table index decides which function runs, so its level counts as well.
@@ -414,11 +419,11 @@ data
        called from; the body is checked at that bound and the witness here becomes
        @FlowsInto pc bound@. The field is missing from 'Syntax.Types.FuncTypeOf' (the @ifc@
        branch has no labelled calls either).
-       TODO(ifc P2): arguments at a lower level than declared should be accepted, by inserting
-       'IRelabel' before the call; today the levels must match exactly. -}
+       -}
     ICall ::
         FlowsInto pc 'Low ->
-        Append ps s full ->
+        SegmentFlows args ps ->
+        Append args s full ->
         Elem ('FuncType ps rs) (ModuleFuncs m) ->
         Instr m f l (pc ': pcs) (pc ': pcs) full (rs ++ s)
     {- Indirect calls: the callee is an entry of the module's table, checked at run time against
@@ -427,7 +432,8 @@ data
     ICallIndirect ::
         (ModuleTables m ~ (table ': tables)) =>
         FlowsInto (Join pc lv) 'Low ->
-        Append ps s full ->
+        SegmentFlows args ps ->
+        Append args s full ->
         Sing ('FuncType ps rs) ->
         Instr m f l (pc ': pcs) (pc ': pcs) (('I32 ':~ lv) ': full) (rs ++ s)
     {- Structured control. Bodies are typed in isolation (@ps -> rs@) within the same frame,
@@ -442,48 +448,58 @@ data
        the entry the body ends with. (The @ifc@ branch asks for the same as an annotation.)
        TODO(ifc P2): SecWasm also raises the levels of the values already on the stack of the
        blocks a branch leaves, which its proof uses. Neither the @ifc@ branch nor this does.
-       TODO(ifc P2): the two arms of an @if@ must produce exactly the same labelled types.
-       Accepting arms at different levels needs the relabelling instruction (see 'ICall'). -}
+       A body may produce its results at lower levels than the block declares: the validator
+       then ends it with an 'IRelabelResults', which is also how the two arms of an @if@ meet at
+       one type. The validator chooses a block's result levels itself, since a decoded block type
+       has none: it tries the pc the body runs at, then secret. -}
     IBlock ::
-        Append ps s full ->
+        SegmentFlows psIn ps ->
+        Append psIn s full ->
         Expr m f (rs ': l) (pc ': pc ': pcs) (pcBody ': pcs') ps rs ->
         Instr m f l (pc ': pcs) pcs' full (rs ++ s)
     ILoop ::
         FlowsInto pc pcLoop ->
         FlowsInto pcBody pcLoop ->
-        Append ps s full ->
+        SegmentFlows psIn ps ->
+        Append psIn s full ->
         Expr m f (ps ': l) (pcLoop ': pc ': pcs) (pcBody ': pcs') ps rs ->
         Instr m f l (pc ': pcs) pcs' full (rs ++ s)
     IIf ::
-        Append ps s full ->
+        SegmentFlows psIn ps ->
+        Append psIn s full ->
         Expr m f (rs ': l) (Join pc lv ': pc ': pcs) (pcThen ': pcsThen) ps rs ->
         Expr m f (rs ': l) (Join pc lv ': pc ': pcs) (pcElse ': pcsElse) ps rs ->
         Instr m f l (pc ': pcs) (JoinEach pcsThen pcsElse) (('I32 ':~ lv) ': full) (rs ++ s)
     {- Branches. The 'Append' witness gives the branch width; the output (and the stack below
        the operands) is otherwise free. The decision to branch is as secret as the pc, joined
        with the condition's level if there is one. The values carried must be at least that
-       secret ('AllAtLeast'), and the pc entries of the blocks the branch may leave are raised
-       by it ('BranchTarget'). @br_table@ and @return@ raise every entry, which is more than
-       needed for @br_table@ when all its targets are near. -}
+       secret ('AllAtLeast'), may be lower than the label's types ('SegmentFlows'), and the pc
+       entries of the blocks the branch may leave are raised by it ('BranchTarget'). @br_table@
+       and @return@ raise every entry, which is more than needed for @br_table@ when all its
+       targets are near. -}
     IBr ::
         AllAtLeast pc rs ->
-        Append rs s full ->
+        SegmentFlows carried rs ->
+        Append carried s full ->
         BranchTarget pc rs labels (pc ': pcs) pcs' ->
         Instr m f labels (pc ': pcs) pcs' full anyOut
     IBrIf ::
         AllAtLeast (Join pc lv) rs ->
-        Append rs s full ->
+        SegmentFlows carried rs ->
+        Append carried s full ->
         BranchTarget (Join pc lv) rs labels (pc ': pcs) pcs' ->
         Instr m f labels (pc ': pcs) pcs' (('I32 ':~ lv) ': full) full
     IBrTable ::
         AllAtLeast (Join pc lv) rs ->
-        Append rs s full ->
+        SegmentFlows carried rs ->
+        Append carried s full ->
         [Elem rs labels] ->
         Elem rs labels ->
         Instr m f labels (pc ': pcs) (RaiseAll (Join pc lv) (pc ': pcs)) (('I32 ':~ lv) ': full) anyOut
     IReturn ::
         AllAtLeast pc (FrameReturn f) ->
-        Append (FrameReturn f) s full ->
+        SegmentFlows carried (FrameReturn f) ->
+        Append carried s full ->
         Instr m f l (pc ': pcs) (RaiseAll pc (pc ': pcs)) full anyOut
     {- Inert. A trap ends the run, which an observer can see, so @unreachable@ under a secret pc
        reveals something. SecWasm accepts this (its guarantee only covers runs that finish), and
@@ -521,7 +537,7 @@ call ::
     forall ps rs s m f l pcs.
     SingI ps =>
     Elem ('FuncType ps rs) (ModuleFuncs m) -> Instr m f l ('Low ': pcs) ('Low ': pcs) (ps ++ s) (rs ++ s)
-call = ICall LowFlowsAnywhere (appendFromSing @ps @s (sing @ps))
+call = ICall LowFlowsAnywhere (segmentSelf (sing @ps)) (appendFromSing @ps @s (sing @ps))
 
 {- | Specialised forms for the common case of an empty-result block/loop and a branch to
   an empty-result label. With @rs ~ '[]@ fixed, @rs ++ s@ reduces to @s@, so these infer
@@ -529,13 +545,13 @@ call = ICall LowFlowsAnywhere (appendFromSing @ps @s (sing @ps))
   form is for a public pc, where its two flow witnesses are trivial.
 -}
 block_ :: Expr m f ('[] ': l) (pc ': pc ': pcs) (pcBody ': pcs') '[] '[] -> Instr m f l (pc ': pcs) pcs' s s
-block_ = IBlock ANil
+block_ = IBlock NoValuesFlow ANil
 
 loop_ :: Expr m f ('[] ': l) ('Low ': 'Low ': pcs) ('Low ': pcs') '[] '[] -> Instr m f l ('Low ': pcs) pcs' s s
-loop_ = ILoop LowFlowsAnywhere LowFlowsAnywhere ANil
+loop_ = ILoop LowFlowsAnywhere LowFlowsAnywhere NoValuesFlow ANil
 
 br_ :: BranchTarget pc '[] labels (pc ': pcs) pcs' -> Instr m f labels (pc ': pcs) pcs' s anyOut
-br_ = IBr NothingCarried ANil
+br_ = IBr NothingCarried NoValuesFlow ANil
 
 brIf_ :: BranchTarget (Join pc lv) '[] labels (pc ': pcs) pcs' -> Instr m f labels (pc ': pcs) pcs' (('I32 ':~ lv) ': s) s
-brIf_ = IBrIf NothingCarried ANil
+brIf_ = IBrIf NothingCarried NoValuesFlow ANil

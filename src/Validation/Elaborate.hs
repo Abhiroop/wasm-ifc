@@ -375,17 +375,16 @@ elabInstr env pcsIn@(SCons pc _) stackIn instr = case instr of
             publicContext <- requireFlow "call_indirect" (sJoin pc lidx) SLow
             expected <- note (IndexOutOfRange Types t) (nth (env.types) t)
             case toSing (publicFuncType (stackOrderFuncType expected)) of
-                SomeSing (SFuncType psS rsS) -> case matchPrefix psS rest of
-                    Nothing -> Left (StackMismatch "call_indirect" (stackToList psS) (stackToList rest))
-                    Just (SomeSplit sS witness) -> Right (Produces (sameLengthAs pcsIn) pcsIn (rsS %++ sS) (ICallIndirect publicContext witness (SFuncType psS rsS)))
+                SomeSing (SFuncType psS rsS) -> do
+                    SomeCoercion sS flows witness <- prefixFlows "call_indirect" psS rest
+                    Right (Produces (sameLengthAs pcsIn) pcsIn (rsS %++ sS) (ICallIndirect publicContext flows witness (SFuncType psS rsS)))
         _ -> Left (StackUnderflow "call_indirect")
     Call (FunctionIdx f) -> case lookupFuncRef (funcTypesSing (env.shape)) f of
         Nothing -> Left (IndexOutOfRange Functions f)
-        Just (SomeFuncRef psS rsS fix) -> case matchPrefix psS stackIn of
-            Nothing -> Left (StackMismatch "call" (stackToList psS) (stackToList stackIn))
-            Just (SomeSplit sS witness) -> do
-                publicContext <- requireFlow "call" pc SLow
-                Right (Produces (sameLengthAs pcsIn) pcsIn (rsS %++ sS) (ICall publicContext witness fix))
+        Just (SomeFuncRef psS rsS fix) -> do
+            SomeCoercion sS flows witness <- prefixFlows "call" psS stackIn
+            publicContext <- requireFlow "call" pc SLow
+            Right (Produces (sameLengthAs pcsIn) pcsIn (rsS %++ sS) (ICall publicContext flows witness fix))
     {- Integer bitwise / shift / count (integer types only) -}
     And st -> do
         isInt <- requireInt st
@@ -460,49 +459,44 @@ elabInstr env pcsIn@(SCons pc _) stackIn instr = case instr of
     Nop -> Right (Produces (sameLengthAs pcsIn) pcsIn stackIn INop)
     {- Structured control -}
     Block (FuncType psT rsT) body ->
-        case (reflectStack (stackOrder psT), reflectStack (stackOrder rsT)) of
-            (SomeStack psS, SomeStack rsS) -> case matchPrefix psS stackIn of
-                Nothing -> Left (StackMismatch "block" (stackToList psS) (stackToList stackIn))
-                Just (SomeSplit sS witness) ->
-                    elabBodyChecked (pushLabel rsS env) (SCons pc pcsIn) psS rsS body $ \(BodyResult (BothLonger same) (SCons _ pcsOut) bodySeq) ->
-                        Right (Produces same pcsOut (rsS %++ sS) (IBlock witness bodySeq))
+        blockParams "block" psT stackIn $ \psS sS witness ->
+            inferResults rsT pc $ \rsS ->
+                elabBodyChecked (pushLabel rsS env) (SCons pc pcsIn) psS rsS body $ \(BodyResult (BothLonger same) (SCons _ pcsOut) bodySeq) ->
+                    Right (Produces same pcsOut (rsS %++ sS) (IBlock (segmentSelf psS) witness bodySeq))
     Loop (FuncType psT rsT) body ->
-        case (reflectStack (stackOrder psT), reflectStack (stackOrder rsT)) of
-            (SomeStack psS, SomeStack rsS) -> case matchPrefix psS stackIn of
-                Nothing -> Left (StackMismatch "loop" (stackToList psS) (stackToList stackIn))
-                Just (SomeSplit sS witness) -> loopAt pc $ \pcLoop entryFlows ->
-                    elabBodyChecked (pushLabel psS env) (SCons pcLoop pcsIn) psS rsS body $ \(BodyResult (BothLonger same) (SCons pcBody pcsOut) bodySeq) -> do
-                        backFlows <- requireFlow "loop" pcBody pcLoop
-                        Right (Produces same pcsOut (rsS %++ sS) (ILoop entryFlows backFlows witness bodySeq))
+        blockParams "loop" psT stackIn $ \psIn sS witness ->
+            loopParams psIn $ \psS entry ->
+                loopAt pc $ \pcLoop entryFlows ->
+                    inferResults rsT pcLoop $ \rsS ->
+                        elabBodyChecked (pushLabel psS env) (SCons pcLoop pcsIn) psS rsS body $ \(BodyResult (BothLonger same) (SCons pcBody pcsOut) bodySeq) -> do
+                            backFlows <- requireFlow "loop" pcBody pcLoop
+                            Right (Produces same pcsOut (rsS %++ sS) (ILoop entryFlows backFlows entry witness bodySeq))
     If (FuncType psT rsT) thenBody elseBody -> case stackIn of
         SCons (sc :%~ lc) rest -> do
             Refl <- note (OperandMismatch "if" I32 (valTypeOf sc)) (decideEquality sc SI32)
-            case (reflectStack (stackOrder psT), reflectStack (stackOrder rsT)) of
-                (SomeStack psS, SomeStack rsS) -> case matchPrefix psS rest of
-                    Nothing -> Left (StackMismatch "if" (stackToList psS) (stackToList rest))
-                    Just (SomeSplit sS witness) ->
-                        elabBodyChecked (pushLabel rsS env) (SCons (sJoin pc lc) pcsIn) psS rsS thenBody $ \(BodyResult (BothLonger sameThen) (SCons _ pcsThen) thenSeq) ->
-                            elabBodyChecked (pushLabel rsS env) (SCons (sJoin pc lc) pcsIn) psS rsS elseBody $ \(BodyResult (BothLonger sameElse) (SCons _ pcsElse) elseSeq) ->
-                                Right (Produces (joinEachSameLength sameThen sameElse) (sJoinEach pcsThen pcsElse) (rsS %++ sS) (IIf witness thenSeq elseSeq))
+            blockParams "if" psT rest $ \psS sS witness ->
+                inferResults rsT (sJoin pc lc) $ \rsS ->
+                    elabBodyChecked (pushLabel rsS env) (SCons (sJoin pc lc) pcsIn) psS rsS thenBody $ \(BodyResult (BothLonger sameThen) (SCons _ pcsThen) thenSeq) ->
+                        elabBodyChecked (pushLabel rsS env) (SCons (sJoin pc lc) pcsIn) psS rsS elseBody $ \(BodyResult (BothLonger sameElse) (SCons _ pcsElse) elseSeq) ->
+                            Right (Produces (joinEachSameLength sameThen sameElse) (sJoinEach pcsThen pcsElse) (rsS %++ sS) (IIf (segmentSelf psS) witness thenSeq elseSeq))
         _ -> Left (StackUnderflow "if")
-    {- Branches (unconditional ones diverge) -}
+    {- Branches (unconditional ones diverge). What a branch carries may be lower than the label's
+       types; the witness relabels it on the way. -}
     Br (LabelIdx l) -> case mkBranchTarget pc (env.labels) pcsIn l of
         Nothing -> Left (IndexOutOfRange Labels l)
-        Just (SomeBranchTarget rsS pcsOut same target) -> case matchPrefix rsS stackIn of
-            Nothing -> Left (StackMismatch "br" (stackToList rsS) (stackToList stackIn))
-            Just (SomeSplit _ witness) -> do
-                carried <- requireCarried "br" pc rsS
-                Right (Transfers same pcsOut (IBr carried witness target))
+        Just (SomeBranchTarget rsS pcsOut same target) -> do
+            SomeCoercion _ flows witness <- prefixFlows "br" rsS stackIn
+            carried <- requireCarried "br" pc rsS
+            Right (Transfers same pcsOut (IBr carried flows witness target))
     BrIf (LabelIdx l) -> case stackIn of
         SCons (sc :%~ lc) rest -> do
             Refl <- note (OperandMismatch "br_if" I32 (valTypeOf sc)) (decideEquality sc SI32)
             case mkBranchTarget (sJoin pc lc) (env.labels) pcsIn l of
                 Nothing -> Left (IndexOutOfRange Labels l)
-                Just (SomeBranchTarget rsS pcsOut same target) -> case matchPrefix rsS rest of
-                    Nothing -> Left (StackMismatch "br_if" (stackToList rsS) (stackToList rest))
-                    Just (SomeSplit _ witness) -> do
-                        carried <- requireCarried "br_if" (sJoin pc lc) rsS
-                        Right (Produces same pcsOut rest (IBrIf carried witness target))
+                Just (SomeBranchTarget rsS pcsOut same target) -> do
+                    SomeCoercion _ flows witness <- prefixFlows "br_if" rsS rest
+                    carried <- requireCarried "br_if" (sJoin pc lc) rsS
+                    Right (Produces same pcsOut rest (IBrIf carried flows witness target))
         _ -> Left (StackUnderflow "br_if")
     BrTable targets (LabelIdx d) -> case stackIn of
         SCons (sc :%~ lc) rest -> case decideEquality sc SI32 of
@@ -511,17 +505,15 @@ elabInstr env pcsIn@(SCons pc _) stackIn instr = case instr of
                 Nothing -> Left (IndexOutOfRange Labels d)
                 Just (SomeLabel rsS defIx) -> case mapM (resolveTarget env rsS) targets of
                     Left err -> Left err
-                    Right targetIxs -> case matchPrefix rsS rest of
-                        Nothing -> Left (StackMismatch "br_table" (stackToList rsS) (stackToList rest))
-                        Just (SomeSplit _ witness) -> do
-                            carried <- requireCarried "br_table" (sJoin pc lc) rsS
-                            Right (Transfers (raiseAllSameLength (sJoin pc lc) pcsIn) (sRaiseAll (sJoin pc lc) pcsIn) (IBrTable carried witness targetIxs defIx))
+                    Right targetIxs -> do
+                        SomeCoercion _ flows witness <- prefixFlows "br_table" rsS rest
+                        carried <- requireCarried "br_table" (sJoin pc lc) rsS
+                        Right (Transfers (raiseAllSameLength (sJoin pc lc) pcsIn) (sRaiseAll (sJoin pc lc) pcsIn) (IBrTable carried flows witness targetIxs defIx))
         _ -> Left (StackUnderflow "br_table")
-    Return -> case matchPrefix (env.results) stackIn of
-        Nothing -> Left (StackMismatch "return" (stackToList (env.results)) (stackToList stackIn))
-        Just (SomeSplit _ witness) -> do
-            carried <- requireCarried "return" pc (env.results)
-            Right (Transfers (raiseAllSameLength pc pcsIn) (sRaiseAll pc pcsIn) (IReturn carried witness))
+    Return -> do
+        SomeCoercion _ flows witness <- prefixFlows "return" (env.results) stackIn
+        carried <- requireCarried "return" pc (env.results)
+        Right (Transfers (raiseAllSameLength pc pcsIn) (sRaiseAll pc pcsIn) (IReturn carried flows witness))
     Unreachable -> Right (Transfers (sameLengthAs pcsIn) pcsIn IUnreachable)
 
 -- | Push a label's result type onto the elaboration environment's label context.
@@ -568,11 +560,94 @@ elabBodyChecked env pcsIn psS rsS body k = do
     body' <- elabSeq env pcsIn psS body
     case body' of
         Reachable same pcsOut soS seq' -> do
-            Refl <- note (ResultMismatch (stackToList rsS) (stackToList soS)) (decideEquality soS rsS)
-            k (BodyResult same pcsOut seq')
+            ended <- endAt "block result" soS rsS seq'
+            k (BodyResult same pcsOut ended)
         Diverged same pcsOut final poly -> do
             checkDeadResult final rsS
             k (BodyResult same pcsOut poly)
+
+{- | A body that ended with stack @produced@ where @expected@ is required: unchanged when they
+  agree, otherwise ended with a relabelling of its results to the levels expected, which they
+  must flow into.
+-}
+endAt ::
+    Text ->
+    Sing (produced :: [LabelledValType]) ->
+    Sing (expected :: [LabelledValType]) ->
+    Expr shape frame labels pcIn pcOut stackIn produced ->
+    Either ElabError (Expr shape frame labels pcIn pcOut stackIn expected)
+endAt what produced expected body = case decideEquality produced expected of
+    Just Refl -> Right body
+    Nothing -> case decideSegmentFlows produced expected of
+        Just flows -> Right (appendExpr body (IRelabelResults flows :. INil))
+        Nothing
+            | stackToList produced == stackToList expected -> Left (IllegalFlow what High Low)
+            | otherwise -> Left (ResultMismatch (stackToList expected) (stackToList produced))
+
+appendExpr :: Expr m f l p1 p2 s1 s2 -> Expr m f l p2 p3 s2 s3 -> Expr m f l p1 p3 s1 s3
+appendExpr INil ys = ys
+appendExpr (x :. xs) ys = x :. appendExpr xs ys
+
+{- | The top of the stack as the segment a call, branch or return consumes: the value types
+  must be the ones expected, and each level must flow into the one expected. With two levels
+  the only flow that can fail is secret into public, which is what the error names.
+-}
+prefixFlows :: Text -> Sing (ps :: [LabelledValType]) -> Sing (full :: [LabelledValType]) -> Either ElabError (SomeCoercion ps full)
+prefixFlows name psS stackS = case matchPrefixFlows psS stackS of
+    Just coercion -> Right coercion
+    Nothing
+        | take (length expected) (stackToList stackS) == expected -> Left (IllegalFlow name High Low)
+        | otherwise -> Left (StackMismatch name expected (stackToList stackS))
+  where
+    expected = stackToList psS
+
+{- | The parameters a block takes off the stack: the top entries, whose value types must be
+  the block type's. Their levels are whatever the stack holds; a decoded block type has none.
+-}
+blockParams ::
+    Text ->
+    [ValType] ->
+    Sing (stackIn :: [LabelledValType]) ->
+    (forall ps s. Sing ps -> Sing s -> Append ps s stackIn -> Either ElabError a) ->
+    Either ElabError a
+blockParams name psT stackIn k = case takePrefix (length psT) stackIn of
+    Just (SomePrefix psS sS witness)
+        | stackToList psS == stackOrder psT -> k psS sS witness
+        | otherwise -> Left (StackMismatch name (stackOrder psT) (stackToList psS))
+    Nothing -> Left (StackUnderflow name)
+
+{- | The levels of a block's results, which a decoded block type does not say: the pc the body
+  runs at first, since everything it pushes is at least that, and secret if the body turns out
+  to produce or branch out with something more secret. Over two levels these are all the
+  candidates, so this is a fixed point in at most two attempts.
+-}
+inferResults :: [ValType] -> Sing (pc :: SecLevel) -> (forall rs. Sing (rs :: [LabelledValType]) -> Either ElabError a) -> Either ElabError a
+inferResults rsT pc k = case pc of
+    SHigh -> attempt High
+    SLow -> case attempt Low of
+        Left e | levelOnly e -> attempt High
+        result -> result
+  where
+    attempt level = case reflectStackAt level (stackOrder rsT) of
+        SomeStack rsS -> k rsS
+
+{- | The levels of a loop's parameters, which its label carries and a branch back must meet:
+  the levels the entry values have, or secret if a branch back brings something more secret.
+-}
+loopParams ::
+    Sing (psIn :: [LabelledValType]) ->
+    (forall ps. Sing ps -> SegmentFlows psIn ps -> Either ElabError a) ->
+    Either ElabError a
+loopParams psIn k = case k psIn (segmentSelf psIn) of
+    Left e | levelOnly e -> case reflectStackAt High (stackToList psIn) of
+        SomeStack psHigh -> maybe (Left e) (k psHigh) (decideSegmentFlows psIn psHigh)
+    result -> result
+
+-- | Whether an error is about levels alone, so that trying higher ones may resolve it.
+levelOnly :: ElabError -> Bool
+levelOnly e = case e of
+    IllegalFlow {} -> True
+    _ -> False
 
 {- | The pc a loop body is checked at: the current pc if the body keeps it, and 'High if a
   branch inside raises it, because the body may run again under what it left. With two levels
@@ -1112,8 +1187,8 @@ elaborateFunctionIn ctxS types loadDefault declassify (SFuncType psS rsS) (RawFu
                     elaborated <- elabSeq env (SCons SLow SNil) SNil body
                     case elaborated of
                         Reachable _ _ soS bodySeq -> do
-                            Refl <- note (ResultMismatch (stackToList rsS) (stackToList soS)) (decideEquality soS rsS)
-                            Right (Function psS declS bodySeq)
+                            ended <- endAt "result" soS rsS bodySeq
+                            Right (Function psS declS ended)
                         Diverged _ _ final poly -> do
                             checkDeadResult final rsS
                             Right (Function psS declS poly)

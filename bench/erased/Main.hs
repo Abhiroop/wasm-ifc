@@ -680,17 +680,18 @@ eraseInstr instr = case instr of
     IGlobalSet _ _ ix -> EGlobalSet (positionOf ix)
     ILoad _ nt memArg -> ELoad (numType nt) memArg
     IRelabel _ -> ENop
+    IRelabelResults _ -> ENop
     IDeclassify -> ENop
     IStore _ _ nt memArg -> EStore (numType nt) memArg
-    ICall _ witness ix -> ECall (widthOf witness) (positionOf ix)
-    ICallIndirect _ witness (SFuncType params results) -> ECallIndirect (widthOf witness) (FuncType (unlabelledTypes params) (unlabelledTypes results))
-    IBlock witness body -> EBlock (widthOf witness) (eraseExpr body)
-    ILoop _ _ witness body -> ELoop (widthOf witness) (eraseExpr body)
-    IIf witness thenArm elseArm -> EIf (widthOf witness) (eraseExpr thenArm) (eraseExpr elseArm)
-    IBr _ witness target -> EBr (widthOf witness) (targetIndex target)
-    IBrIf _ witness target -> EBrIf (widthOf witness) (targetIndex target)
-    IBrTable _ witness targets def -> EBrTable (widthOf witness) (map positionOf targets) (positionOf def)
-    IReturn _ witness -> EReturn (widthOf witness)
+    ICall _ _ witness ix -> ECall (widthOf witness) (positionOf ix)
+    ICallIndirect _ _ witness (SFuncType params results) -> ECallIndirect (widthOf witness) (FuncType (unlabelledTypes params) (unlabelledTypes results))
+    IBlock _ witness body -> EBlock (widthOf witness) (eraseExpr body)
+    ILoop _ _ _ witness body -> ELoop (widthOf witness) (eraseExpr body)
+    IIf _ witness thenArm elseArm -> EIf (widthOf witness) (eraseExpr thenArm) (eraseExpr elseArm)
+    IBr _ _ witness target -> EBr (widthOf witness) (targetIndex target)
+    IBrIf _ _ witness target -> EBrIf (widthOf witness) (targetIndex target)
+    IBrTable _ _ witness targets def -> EBrTable (widthOf witness) (map positionOf targets) (positionOf def)
+    IReturn _ _ witness -> EReturn (widthOf witness)
     INop -> ENop
     IUnreachable -> EUnreachable
 

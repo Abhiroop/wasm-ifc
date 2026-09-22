@@ -33,6 +33,7 @@ module Runtime.Stack (
     getSegment,
     dropSegment,
     appendStack,
+    relabelStack,
     appendWith,
     splitStack,
     seedLocals,
@@ -105,6 +106,13 @@ type GlobalSpaceInst :: [LabelledGlobalType] -> Type
 data GlobalSpaceInst gs where
     GNil :: GlobalSpaceInst '[]
     GCons :: !(HostType t) -> !(GlobalSpaceInst gs) -> GlobalSpaceInst ('GlobalType mut (t ':~ l) ': gs)
+
+{- | Give a stack the levels a 'SegmentFlows' witness allows: the same words, rebuilt under
+  the new index. Linear in the segment, like every operation on the value stack.
+-}
+relabelStack :: SegmentFlows from to -> ValueStack from -> ValueStack to
+relabelStack NoValuesFlow VNil = VNil
+relabelStack (ValueFlows _ rest) (v :# vs) = v :# relabelStack rest vs
 
 -- | Concatenate two stacks; the upper one ends up on top. Purely structural.
 appendStack :: ValueStack a -> ValueStack b -> ValueStack (a ++ b)

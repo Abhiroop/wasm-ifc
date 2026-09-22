@@ -425,45 +425,46 @@ step funcs (Config store locals stack code control) = case code of
             v :# r -> stepped store locals (v :# r) rest control
         IDeclassify -> case stack of
             v :# r -> stepped store locals (v :# r) rest control
+        IRelabelResults flows -> stepped store locals (relabelStack flows stack) rest control
         {- Calls: enter the callee (see 'enterCall'); an indirect call first reads the table entry
            and checks its type against the expected one, trapping if they differ -}
-        ICall _ witness ix -> enterCall funcs store locals witness ix stack rest control
-        ICallIndirect _ witness (SFuncType expectedParams expectedResults) -> case stack of
+        ICall _ flows witness ix -> enterCall funcs store locals flows witness ix stack rest control
+        ICallIndirect _ flows witness (SFuncType expectedParams expectedResults) -> case stack of
             index :# below' -> case tableLookup (firstTable store.tables) index of
                 Left trap -> Left trap
                 Right (SomeFuncRef paramsS resultsS ix) ->
                     case (decideEquality paramsS expectedParams, decideEquality resultsS expectedResults) of
-                        (Just Refl, Just Refl) -> enterCall funcs store locals witness ix below' rest control
+                        (Just Refl, Just Refl) -> enterCall funcs store locals flows witness ix below' rest control
                         _ -> Left IndirectCallTypeMismatch
         {- Structured control: push the matching frame and run the body -}
-        IBlock witness body ->
+        IBlock flows witness body ->
             let (params, below) = splitStack witness stack
-             in Right (Stepped (Config store locals params body (BlockLabel below rest control)))
-        ILoop _ _ witness body ->
+             in Right (Stepped (Config store locals (relabelStack flows params) body (BlockLabel below rest control)))
+        ILoop _ _ flows witness body ->
             let (params, below) = splitStack witness stack
-             in Right (Stepped (Config store locals params body (LoopLabel below body rest control)))
-        IIf witness thenArm elseArm -> case stack of
+             in Right (Stepped (Config store locals (relabelStack flows params) body (LoopLabel below body rest control)))
+        IIf flows witness thenArm elseArm -> case stack of
             cond :# below' ->
                 let (params, below) = splitStack witness below'
                  in Right . Stepped $
                         if cond /= 0
-                            then Config store locals params thenArm (BlockLabel below rest control)
-                            else Config store locals params elseArm (BlockLabel below rest control)
+                            then Config store locals (relabelStack flows params) thenArm (BlockLabel below rest control)
+                            else Config store locals (relabelStack flows params) elseArm (BlockLabel below rest control)
         {- Branches: unwind the control stack to the targeted frame -}
-        IBr _ witness target -> let (vs, _) = splitStack witness stack in Right (unwind store locals target vs control)
-        IBrIf _ witness target -> case stack of
+        IBr _ flows witness target -> let (vs, _) = splitStack witness stack in Right (unwind store locals target (relabelStack flows vs) control)
+        IBrIf _ flows witness target -> case stack of
             cond :# below'
                 | cond /= 0 ->
                     let (vs, _) = splitStack witness below'
-                     in Right (unwind store locals target vs control)
+                     in Right (unwind store locals target (relabelStack flows vs) control)
                 | otherwise -> stepped store locals below' rest control
-        IBrTable _ witness targets def -> case stack of
+        IBrTable _ flows witness targets def -> case stack of
             idx :# below' ->
                 let target = case drop (fromIntegral idx) targets of t : _ -> t; [] -> def
                     (vs, _) = splitStack witness below'
-                 in Right (unwindTo store locals target vs control)
-        IReturn _ witness ->
-            let (vs, _) = splitStack witness stack in Right (returnUnwind store locals vs control)
+                 in Right (unwindTo store locals target (relabelStack flows vs) control)
+        IReturn _ flows witness ->
+            let (vs, _) = splitStack witness stack in Right (returnUnwind store locals (relabelStack flows vs) control)
         {- Inert -}
         INop -> stepped store locals stack rest control
         IUnreachable -> Left UnreachableExecuted
@@ -476,24 +477,25 @@ enterCall ::
     FuncSpaceInst mod (ModuleFuncs mod) ->
     Store mod ->
     LocalSpaceInst locals ->
-    Append ps s full ->
+    SegmentFlows args ps ->
+    Append args s full ->
     Elem ('FuncType ps rs) (ModuleFuncs mod) ->
     ValueStack full ->
     Expr mod ('FrameShape locals ret) labels pcA7 pcB7 (rs ++ s) out ->
     Control mod res ret locals labels out ->
     Either Trap (StepResult mod res)
-enterCall funcs store locals witness ix stack rest control = case getFunc ix funcs of
+enterCall funcs store locals flows witness ix stack rest control = case getFunc ix funcs of
     WasmFunc (Function params declared body)
         | depth > callDepthBound -> Left CallStackExhausted
         | otherwise ->
             let (args, below) = splitStack witness stack
-                calleeLocals = seedLocals params declared args
+                calleeLocals = seedLocals params declared (relabelStack flows args)
              in Right (Stepped (Config store calleeLocals VNil body (CallBoundary depth below locals rest control)))
     HostFunc wasiFunc -> case wasiFuncType wasiFunc of
         SFuncType _ resultsS ->
             let (args, below) = splitStack witness stack
                 suspended = Suspended (appendFromSing resultsS) locals below rest control
-             in Right (HostCall (HostRequest wasiFunc args store suspended))
+             in Right (HostCall (HostRequest wasiFunc (relabelStack flows args) store suspended))
     GhostFunc -> Left InformationFlowViolation
   where
     depth = activationDepth control + 1
