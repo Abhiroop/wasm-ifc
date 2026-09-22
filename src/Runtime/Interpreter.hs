@@ -54,6 +54,7 @@ module Runtime.Interpreter (
     Config (..),
     Control (..),
     StepResult (..),
+    SomeStepResult (..),
     HostRequest (..),
     Suspended (..),
     resumeWith,
@@ -259,15 +260,30 @@ data Config (mod :: ModuleShape) (res :: LResultType) where
         Control mod res ret locals labels out ->
         Config mod res
 
-{- | The result of one 'step': a successor configuration; the final value stack together with
-  the store as the computation left it; or a call into the host, which the pure machine
-  cannot perform and so hands out as a request.
+{- | The result of stepping one instruction: a successor configuration; the final value stack
+  together with the store as the computation left it; or a call into the host, which the pure
+  machine cannot perform and so hands out as a request.
+
+  The first index is the dynamic check of the instruction that was stepped, and a successor
+  has to carry the evidence for it ('CheckPassed'). It is what makes a forgotten check a type
+  error: the clause of 'stepInstr' for a load has to produce a @StepResult ('BytesBelow lm)@,
+  and 'stepped', which every other instruction continues with, produces a
+  @StepResult 'NoDynamicCheck@. Before the index existed the evidence was hidden inside
+  'Stepped', and GHC accepted a load that continued with 'stepped', or that compared the bytes
+  against the wrong level: the evidence was well-typed on its own, only not about the right
+  instruction. A computation finishes, or calls out, only after an instruction with nothing
+  to check, which is why the other two results are fixed at 'NoDynamicCheck.
 -}
-data StepResult (mod :: ModuleShape) (res :: LResultType) where
-    -- | A successor, with the evidence for the check the instruction just run demanded.
-    Stepped :: CheckPassed check -> !(Config mod res) -> StepResult mod res
-    Done :: !(Store mod) -> !(ValueStack res) -> StepResult mod res
-    HostCall :: HostRequest mod res -> StepResult mod res
+data StepResult (check :: DynamicCheck) (mod :: ModuleShape) (res :: LResultType) where
+    Stepped :: CheckPassed check -> !(Config mod res) -> StepResult check mod res
+    Done :: !(Store mod) -> !(ValueStack res) -> StepResult 'NoDynamicCheck mod res
+    HostCall :: HostRequest mod res -> StepResult 'NoDynamicCheck mod res
+
+{- | A step's result with the check it discharged forgotten: what 'step' returns, since the
+  instruction at the head of a 'Config' is hidden, and all the drivers look at.
+-}
+data SomeStepResult (mod :: ModuleShape) (res :: LResultType) where
+    SomeStepResult :: StepResult check mod res -> SomeStepResult mod res
 
 {- | A call into the host, suspended: which function, its arguments (a stack of exactly its
   parameter shape), the store to perform it against, and how to continue once the results
@@ -309,150 +325,181 @@ resumeWith store results (Suspended witness locals below cont control) =
 
 -- *** The step relation ***
 
--- Inlined into the drivers ('run', 'runFor'), which take its result apart at once. As a call,
--- every step allocated the @Right (Stepped NothingToCheck (Config …))@ it returns only for the driver to
--- discard it: bench/'s erased machine, where GHC inlines its 'step' because it has one caller,
--- showed that to be the whole of this machine's extra allocation (TODO.md §I, E1). A pragma
--- changes the code GHC emits, not the meaning: 'step' is the same total function.
+-- Inlined, like 'stepInstr', into whoever takes its result apart at once. As a call, every
+-- step allocated the @Right (Stepped (Config …))@ it returns only for the driver to discard
+-- it: bench/'s erased machine, where GHC inlines its 'step' because it has one caller, showed
+-- that to be the whole of this machine's extra allocation (TODO.md §I, E1). A pragma changes
+-- the code GHC emits, not the meaning: 'step' is the same total function.
 {-# INLINE step #-}
 
 {- | Advance one configuration. Total over every well-typed configuration: see the module
   header for how this constitutes the progress half of type soundness.
+
+  The drivers below do not call this; they loop over 'stepInstr' and 'popControl' themselves,
+  with the same three alternatives written inside the branch that matched the instruction.
+  Written against 'step', those alternatives were pushed into the inlined body as a join
+  point abstracted over the instruction's hidden check, which SpecConstr then left alone, and
+  every step built its 'Stepped' and 'Config' after all: two to three times the base's
+  allocation (bench/tripwire.py, 2026-09-22). Inside the branch the check is in scope, no
+  abstraction is needed, and the figures return to the base's.
 -}
-step :: FuncSpaceInst mod (ModuleFuncs mod) -> Config mod res -> Either Trap (StepResult mod res)
+step :: FuncSpaceInst mod (ModuleFuncs mod) -> Config mod res -> Either Trap (SomeStepResult mod res)
 step funcs (Config store locals stack code control) = case code of
-    INil -> Right (popControl store locals stack control)
-    instr :. rest -> case instr of
-        {- Constants & numeric -}
-        IConst _ literal -> stepped store locals (literal :# stack) rest control
-        IAdd nt -> stepBin store locals stack (numBinary nt (+)) rest control
-        ISub nt -> stepBin store locals stack (numBinary nt (-)) rest control
-        IMul nt -> stepBin store locals stack (numBinary nt (*)) rest control
-        IDiv sn -> case stack of
-            b :# a :# r -> case numDiv sn a b of
-                Right v -> stepped store locals (v :# r) rest control
-                Left t -> Left t
-        IRem nt sign -> case stack of
-            b :# a :# r -> case numRem nt sign a b of
-                Right v -> stepped store locals (v :# r) rest control
-                Left t -> Left t
-        {- Comparison -}
-        IEqz nt -> stepUn store locals stack (numEqz nt) rest control
-        IEq nt -> stepBin store locals stack (numEqNe (==) nt) rest control
-        INe nt -> stepBin store locals stack (numEqNe (/=) nt) rest control
-        ILt sn -> stepBin store locals stack (numCompare (<) sn) rest control
-        IGt sn -> stepBin store locals stack (numCompare (>) sn) rest control
-        ILe sn -> stepBin store locals stack (numCompare (<=) sn) rest control
-        IGe sn -> stepBin store locals stack (numCompare (>=) sn) rest control
-        {- Conversions -}
-        IConvert op -> case stack of
-            v :# r -> case convertVal op v of
-                Right result -> stepped store locals (result :# r) rest control
-                Left t -> Left t
-        {- Integer bitwise / shift / count, floating-point unary / binary -}
-        IBitwise nt op -> stepBin store locals stack (bitwiseT nt op) rest control
-        ICount nt op -> stepUn store locals stack (countT nt op) rest control
-        IFloatUn nt op -> stepUn store locals stack (floatUnT nt op) rest control
-        IFloatBin nt op -> stepBin store locals stack (floatBinT nt op) rest control
-        {- Memory size / grow & narrow access -}
-        IMemSize -> stepped store locals (memoryPages (currentMem store) :# stack) rest control
-        IMemGrow -> case stack of
-            delta :# r ->
-                let mem = currentMem store
-                 in case growMemory delta mem of
-                        Just grown -> stepped (storeMem grown store) locals (memoryPages mem :# r) rest control
-                        Nothing -> stepped store locals (growFailed :# r) rest control
-        ILoadN lm nw sign memArg -> case stack of
-            addr :# r -> loadStepped lm (narrowLoadT nw sign) (effectiveAddr addr memArg) (narrowBytes nw) store locals r rest control
-        IStoreN nw memArg -> case stack of
-            value :# addr :# r ->
-                case storeWord (currentMem store) (effectiveAddr addr memArg) (narrowBytes nw) (narrowStoreT nw value) of
-                    Just mem' -> stepped (storeMem mem' store) locals r rest control
-                    Nothing -> Left OutOfBoundsMemoryAccess
-        {- Bulk memory: each checks both ranges before writing anything -}
-        IMemCopy -> case stack of
-            count :# src :# dst :# r ->
-                case copyWithin (fromIntegral dst) (fromIntegral src) (fromIntegral count) (currentMem store) of
-                    Just mem' -> stepped (storeMem mem' store) locals r rest control
-                    Nothing -> Left OutOfBoundsMemoryAccess
-        IMemFill -> case stack of
-            count :# value :# dst :# r ->
-                case fillBytes (fromIntegral dst) (fromIntegral value) (fromIntegral count) (currentMem store) of
-                    Just mem' -> stepped (storeMem mem' store) locals r rest control
-                    Nothing -> Left OutOfBoundsMemoryAccess
-        IMemInit segmentIx -> case stack of
-            count :# srcOffset :# dst :# r ->
-                let segment = fromMaybe BS.empty (getSegment segmentIx store.dataSegments)
-                    n = fromIntegral count
-                    src = fromIntegral srcOffset
-                    inSegment = src + n <= BS.length segment
-                    written = writeBytes (currentMem store) (fromIntegral dst) (BS.unpack (BS.take n (BS.drop src segment)))
-                 in case (inSegment, written) of
-                        (True, Just mem') -> stepped (storeMem mem' store) locals r rest control
-                        _ -> Left OutOfBoundsMemoryAccess
-        IDataDrop segmentIx -> stepped (storeDropSegment segmentIx store) locals stack rest control
-        {- Stack management -}
-        IDrop -> case stack of _ :# r -> stepped store locals r rest control
-        ISelect _ -> case stack of
-            cond :# second :# first :# r ->
-                stepped store locals ((if cond /= 0 then first else second) :# r) rest control
-        {- Locals & globals -}
-        ILocalGet ix -> stepped store locals (getLocal ix locals :# stack) rest control
-        ILocalSet ix -> case stack of v :# r -> stepped store (setLocal ix v locals) r rest control
-        ILocalTee ix -> case stack of v :# _ -> stepped store (setLocal ix v locals) stack rest control
-        IGlobalGet ix -> stepped store locals (getGlobal ix (store.globals) :# stack) rest control
-        IGlobalSet ix -> case stack of
-            v :# r -> stepped (storeSetGlobal ix v store) locals r rest control
-        {- Memory. A load is the one instruction whose rule has a premise the validator cannot
-           decide, so it is the one whose step needs evidence ('loadStepped'); the store's
-           premises are all static, and it steps like everything else. -}
-        ILoad lm nt memArg -> case stack of
-            addr :# r -> loadStepped lm (loadValue nt) (effectiveAddr addr memArg) (numBytes nt) store locals r rest control
-        IStore nt memArg -> case stack of
-            value :# addr :# r ->
-                case storeWord (currentMem store) (effectiveAddr addr memArg) (numBytes nt) (storedWord nt value) of
-                    Just mem' -> stepped (storeMem mem' store) locals r rest control
-                    Nothing -> Left OutOfBoundsMemoryAccess
-        {- Calls: enter the callee (see 'enterCall'); an indirect call first reads the table entry
-           and checks its type against the expected one, trapping if they differ -}
-        ICall witness ix -> enterCall funcs store locals witness ix stack rest control
-        ICallIndirect witness (SFuncType expectedParams expectedResults) -> case stack of
-            index :# below' -> case tableLookup (firstTable store.tables) index of
-                Left trap -> Left trap
-                Right (SomeFuncRef paramsS resultsS ix) ->
-                    case (decideEquality paramsS expectedParams, decideEquality resultsS expectedResults) of
-                        (Just Refl, Just Refl) -> enterCall funcs store locals witness ix below' rest control
-                        _ -> Left IndirectCallTypeMismatch
-        {- Structured control: push the matching frame and run the body -}
-        IBlock witness body ->
-            let (params, below) = splitStack witness stack
-             in Right (Stepped NothingToCheck (Config store locals params body (BlockLabel below rest control)))
-        ILoop witness body ->
-            let (params, below) = splitStack witness stack
-             in Right (Stepped NothingToCheck (Config store locals params body (LoopLabel below body rest control)))
-        IIf witness thenArm elseArm -> case stack of
-            cond :# below' ->
-                let (params, below) = splitStack witness below'
-                    arm = if cond /= 0 then thenArm else elseArm
-                 in Right (Stepped NothingToCheck (Config store locals params arm (BlockLabel below rest control)))
-        {- Branches: unwind the control stack to the targeted frame -}
-        IBr witness ix -> let (vs, _) = splitStack witness stack in Right (unwind store locals ix vs control)
-        IBrIf witness ix -> case stack of
-            cond :# below'
-                | cond /= 0 ->
-                    let (vs, _) = splitStack witness below'
-                     in Right (unwind store locals ix vs control)
-                | otherwise -> stepped store locals below' rest control
-        IBrTable witness targets def -> case stack of
-            idx :# below' ->
-                let target = case drop (fromIntegral idx) targets of t : _ -> t; [] -> def
-                    (vs, _) = splitStack witness below'
-                 in Right (unwind store locals target vs control)
-        IReturn witness ->
-            let (vs, _) = splitStack witness stack in Right (returnUnwind store locals vs control)
-        {- Inert -}
-        INop -> stepped store locals stack rest control
-        IUnreachable -> Left UnreachableExecuted
+    INil -> Right (SomeStepResult (popControl store locals stack control))
+    instr :. rest -> case stepInstr funcs store locals stack instr rest control of
+        Left trap -> Left trap
+        Right result -> Right (SomeStepResult result)
+
+-- Inlined into 'step' for the same reason 'step' is inlined into the drivers.
+{-# INLINE stepInstr #-}
+
+{- | Step the instruction at the head of the code. The result is indexed by the instruction's
+  dynamic check, so each clause has to produce the evidence its instruction demands.
+-}
+stepInstr ::
+    FuncSpaceInst mod (ModuleFuncs mod) ->
+    Store mod ->
+    LocalSpaceInst locals ->
+    ValueStack cur ->
+    Instr mod ('FrameShape locals ret) labels check cur next ->
+    Expr mod ('FrameShape locals ret) labels next out ->
+    Control mod res ret locals labels out ->
+    Either Trap (StepResult check mod res)
+stepInstr funcs store locals stack instr rest control = case instr of
+    {- Constants & numeric -}
+    IConst _ literal -> stepped NothingToCheck store locals (literal :# stack) rest control
+    IAdd nt -> stepBin NothingToCheck store locals stack (numBinary nt (+)) rest control
+    ISub nt -> stepBin NothingToCheck store locals stack (numBinary nt (-)) rest control
+    IMul nt -> stepBin NothingToCheck store locals stack (numBinary nt (*)) rest control
+    IDiv sn -> case stack of
+        b :# a :# r -> case numDiv sn a b of
+            Right v -> stepped NothingToCheck store locals (v :# r) rest control
+            Left t -> Left t
+    IRem nt sign -> case stack of
+        b :# a :# r -> case numRem nt sign a b of
+            Right v -> stepped NothingToCheck store locals (v :# r) rest control
+            Left t -> Left t
+    {- Comparison -}
+    IEqz nt -> stepUn NothingToCheck store locals stack (numEqz nt) rest control
+    IEq nt -> stepBin NothingToCheck store locals stack (numEqNe (==) nt) rest control
+    INe nt -> stepBin NothingToCheck store locals stack (numEqNe (/=) nt) rest control
+    ILt sn -> stepBin NothingToCheck store locals stack (numCompare (<) sn) rest control
+    IGt sn -> stepBin NothingToCheck store locals stack (numCompare (>) sn) rest control
+    ILe sn -> stepBin NothingToCheck store locals stack (numCompare (<=) sn) rest control
+    IGe sn -> stepBin NothingToCheck store locals stack (numCompare (>=) sn) rest control
+    {- Conversions -}
+    IConvert op -> case stack of
+        v :# r -> case convertVal op v of
+            Right result -> stepped NothingToCheck store locals (result :# r) rest control
+            Left t -> Left t
+    {- Integer bitwise / shift / count, floating-point unary / binary -}
+    IBitwise nt op -> stepBin NothingToCheck store locals stack (bitwiseT nt op) rest control
+    ICount nt op -> stepUn NothingToCheck store locals stack (countT nt op) rest control
+    IFloatUn nt op -> stepUn NothingToCheck store locals stack (floatUnT nt op) rest control
+    IFloatBin nt op -> stepBin NothingToCheck store locals stack (floatBinT nt op) rest control
+    {- Memory size / grow & narrow access -}
+    IMemSize -> stepped NothingToCheck store locals (memoryPages (currentMem store) :# stack) rest control
+    IMemGrow -> case stack of
+        delta :# r ->
+            let mem = currentMem store
+             in case growMemory delta mem of
+                    Just grown -> stepped NothingToCheck (storeMem grown store) locals (memoryPages mem :# r) rest control
+                    Nothing -> stepped NothingToCheck store locals (growFailed :# r) rest control
+    ILoadN lm nw sign memArg -> case stack of
+        addr :# r -> case readBelow lm store (effectiveAddr addr memArg) (narrowBytes nw) of
+            Left trap -> Left trap
+            Right (word, checked) -> stepped checked store locals (narrowLoadT nw sign word :# r) rest control
+    IStoreN nw memArg -> case stack of
+        value :# addr :# r ->
+            case storeWord (currentMem store) (effectiveAddr addr memArg) (narrowBytes nw) (narrowStoreT nw value) of
+                Just mem' -> stepped NothingToCheck (storeMem mem' store) locals r rest control
+                Nothing -> Left OutOfBoundsMemoryAccess
+    {- Bulk memory: each checks both ranges before writing anything -}
+    IMemCopy -> case stack of
+        count :# src :# dst :# r ->
+            case copyWithin (fromIntegral dst) (fromIntegral src) (fromIntegral count) (currentMem store) of
+                Just mem' -> stepped NothingToCheck (storeMem mem' store) locals r rest control
+                Nothing -> Left OutOfBoundsMemoryAccess
+    IMemFill -> case stack of
+        count :# value :# dst :# r ->
+            case fillBytes (fromIntegral dst) (fromIntegral value) (fromIntegral count) (currentMem store) of
+                Just mem' -> stepped NothingToCheck (storeMem mem' store) locals r rest control
+                Nothing -> Left OutOfBoundsMemoryAccess
+    IMemInit segmentIx -> case stack of
+        count :# srcOffset :# dst :# r ->
+            let segment = fromMaybe BS.empty (getSegment segmentIx store.dataSegments)
+                n = fromIntegral count
+                src = fromIntegral srcOffset
+                inSegment = src + n <= BS.length segment
+                written = writeBytes (currentMem store) (fromIntegral dst) (BS.unpack (BS.take n (BS.drop src segment)))
+             in case (inSegment, written) of
+                    (True, Just mem') -> stepped NothingToCheck (storeMem mem' store) locals r rest control
+                    _ -> Left OutOfBoundsMemoryAccess
+    IDataDrop segmentIx -> stepped NothingToCheck (storeDropSegment segmentIx store) locals stack rest control
+    {- Stack management -}
+    IDrop -> case stack of _ :# r -> stepped NothingToCheck store locals r rest control
+    ISelect _ -> case stack of
+        cond :# second :# first :# r ->
+            stepped NothingToCheck store locals ((if cond /= 0 then first else second) :# r) rest control
+    {- Locals & globals -}
+    ILocalGet ix -> stepped NothingToCheck store locals (getLocal ix locals :# stack) rest control
+    ILocalSet ix -> case stack of v :# r -> stepped NothingToCheck store (setLocal ix v locals) r rest control
+    ILocalTee ix -> case stack of v :# _ -> stepped NothingToCheck store (setLocal ix v locals) stack rest control
+    IGlobalGet ix -> stepped NothingToCheck store locals (getGlobal ix (store.globals) :# stack) rest control
+    IGlobalSet ix -> case stack of
+        v :# r -> stepped NothingToCheck (storeSetGlobal ix v store) locals r rest control
+    {- Memory. A load is the one instruction whose rule has a premise the validator cannot
+       decide, so it is the one whose step needs evidence ('readBelow'); the store's premises
+       are all static, and it steps like everything else. -}
+    ILoad lm nt memArg -> case stack of
+        addr :# r -> case readBelow lm store (effectiveAddr addr memArg) (numBytes nt) of
+            Left trap -> Left trap
+            Right (word, checked) -> stepped checked store locals (loadValue nt word :# r) rest control
+    IStore nt memArg -> case stack of
+        value :# addr :# r ->
+            case storeWord (currentMem store) (effectiveAddr addr memArg) (numBytes nt) (storedWord nt value) of
+                Just mem' -> stepped NothingToCheck (storeMem mem' store) locals r rest control
+                Nothing -> Left OutOfBoundsMemoryAccess
+    {- Calls: enter the callee (see 'enterCall'); an indirect call first reads the table entry
+       and checks its type against the expected one, trapping if they differ -}
+    ICall witness ix -> enterCall funcs store locals witness ix stack rest control
+    ICallIndirect witness (SFuncType expectedParams expectedResults) -> case stack of
+        index :# below' -> case tableLookup (firstTable store.tables) index of
+            Left trap -> Left trap
+            Right (SomeFuncRef paramsS resultsS ix) ->
+                case (decideEquality paramsS expectedParams, decideEquality resultsS expectedResults) of
+                    (Just Refl, Just Refl) -> enterCall funcs store locals witness ix below' rest control
+                    _ -> Left IndirectCallTypeMismatch
+    {- Structured control: push the matching frame and run the body -}
+    IBlock witness body ->
+        let (params, below) = splitStack witness stack
+         in Right (Stepped NothingToCheck (Config store locals params body (BlockLabel below rest control)))
+    ILoop witness body ->
+        let (params, below) = splitStack witness stack
+         in Right (Stepped NothingToCheck (Config store locals params body (LoopLabel below body rest control)))
+    IIf witness thenArm elseArm -> case stack of
+        cond :# below' ->
+            let (params, below) = splitStack witness below'
+                arm = if cond /= 0 then thenArm else elseArm
+             in Right (Stepped NothingToCheck (Config store locals params arm (BlockLabel below rest control)))
+    {- Branches: unwind the control stack to the targeted frame -}
+    IBr witness ix -> let (vs, _) = splitStack witness stack in Right (unwind store locals ix vs control)
+    IBrIf witness ix -> case stack of
+        cond :# below'
+            | cond /= 0 ->
+                let (vs, _) = splitStack witness below'
+                 in Right (unwind store locals ix vs control)
+            | otherwise -> stepped NothingToCheck store locals below' rest control
+    IBrTable witness targets def -> case stack of
+        idx :# below' ->
+            let target = case drop (fromIntegral idx) targets of t : _ -> t; [] -> def
+                (vs, _) = splitStack witness below'
+             in Right (unwind store locals target vs control)
+    IReturn witness ->
+        let (vs, _) = splitStack witness stack in Right (returnUnwind store locals vs control)
+    {- Inert -}
+    INop -> stepped NothingToCheck store locals stack rest control
+    IUnreachable -> Left UnreachableExecuted
 
 {- | Enter a function: for a WebAssembly function, push a call boundary and start its body over
   an empty stack; for a host function, hand the call out as a request with the caller suspended
@@ -467,7 +514,7 @@ enterCall ::
     ValueStack full ->
     Expr mod ('FrameShape locals ret) labels (rs ++ s) out ->
     Control mod res ret locals labels out ->
-    Either Trap (StepResult mod res)
+    Either Trap (StepResult 'NoDynamicCheck mod res)
 enterCall funcs store locals witness ix stack rest control = case getFunc ix funcs of
     WasmFunc (Function params declared body)
         | depth > callDepthBound -> Left CallStackExhausted
@@ -502,74 +549,81 @@ activationDepth control = case control of
     BlockLabel _ _ rest -> activationDepth rest
     LoopLabel _ _ _ rest -> activationDepth rest
 
--- | The "continue in the current frame" case: wrap a successor configuration.
+{- | The "continue in the current frame" case: wrap a successor configuration, with the
+  evidence for the instruction's check. The evidence is an argument, and not fixed to
+  'NothingToCheck' here with the loads wrapping their own, for GHC's sake: a clause of
+  'stepInstr' has to produce a @StepResult check@, and when a helper produces a
+  @StepResult 'NoDynamicCheck@ instead, the clause's result is that value under a coercion.
+  SpecConstr does not see the constructor through the coercion, so the driver's continuation
+  stopped being specialised and every step built its 'Stepped' and 'Config' after all: two to
+  three times the allocation of the base (bench/tripwire.py, 2026-09-22). With the coercion
+  on the evidence, which is a static closure, the result is a bare constructor application.
+-}
 stepped ::
+    CheckPassed check ->
     Store mod ->
     LocalSpaceInst locals ->
     ValueStack si ->
     Expr mod ('FrameShape locals ret) labels si out ->
     Control mod res ret locals labels out ->
-    Either Trap (StepResult mod res)
-stepped store locals stack code control = Right (Stepped NothingToCheck (Config store locals stack code control))
+    Either Trap (StepResult check mod res)
+stepped evidence store locals stack code control = Right (Stepped evidence (Config store locals stack code control))
 
 -- | Pop two same-typed operands (@a@ below, @b@ on top), push @op a b@, and continue.
 stepBin ::
+    CheckPassed check ->
     Store mod ->
     LocalSpaceInst locals ->
     ValueStack ((x ':~ lb) ': (x ':~ la) ': s) ->
     (HostType x -> HostType x -> HostType z) ->
     Expr mod ('FrameShape locals ret) labels ((z ':~ l) ': s) out ->
     Control mod res ret locals labels out ->
-    Either Trap (StepResult mod res)
-stepBin store locals (b :# a :# r) op = stepped store locals (op a b :# r)
+    Either Trap (StepResult check mod res)
+stepBin evidence store locals (b :# a :# r) op = stepped evidence store locals (op a b :# r)
 
 -- | Pop one operand, push @op a@, and continue.
 stepUn ::
+    CheckPassed check ->
     Store mod ->
     LocalSpaceInst locals ->
     ValueStack ((x ':~ la) ': s) ->
     (HostType x -> HostType z) ->
     Expr mod ('FrameShape locals ret) labels ((z ':~ l) ': s) out ->
     Control mod res ret locals labels out ->
-    Either Trap (StepResult mod res)
-stepUn store locals (a :# r) op = stepped store locals (op a :# r)
+    Either Trap (StepResult check mod res)
+stepUn evidence store locals (a :# r) op = stepped evidence store locals (op a :# r)
 
-{- | Step a load: read the word at @addr@, and continue only with the evidence that the bytes
+{- | The read a load makes: the word at @addr@, together with the evidence that the bytes
   read were no more secret than the level @lm@ written in the load. 'loadChecked' says what
   labels the bytes had, 'decideFlow' compares them with @lm@, and the 'BytesWereBelow' that
   the instruction's check demands can be built from nothing else. A failed comparison is
-  SecWasm's E-LOAD trap. Inlined for the same reason 'step' is: the result is taken apart at
-  once by the driver.
+  SecWasm's E-LOAD trap. Inlined so that the pair is taken apart where it is made.
 
-  Each way of getting this wrong is a type error, tried once (2026-09-22):
+  Each way of getting this wrong is a type error, each tried once (2026-09-22):
 
-    * Forgetting the check — continuing with 'stepped', as every other instruction does:
-      accepted by GHC while 'StepResult' hid the check (see the note on 'SomeStepResult').
-    * The wrong level — @decideFlow (labelJoinOfRead labels) SLow@ instead of @lm@:
-      likewise, and both are why the result type now names the check.
+    * Forgetting the check — the 'ILoad' clause continuing with @stepped NothingToCheck@, as
+      every other instruction does: "Couldn't match type ‘NoDynamicCheck’ with ‘BytesBelow lm’".
+    * The wrong level — @decideFlow (labelJoinOfRead labels) SLow@ here instead of @lm@:
+      "Could not deduce ‘lm ~ Low’".
     * Fabricated evidence — @BytesWereBelow labels LowFlowsAnywhere@ with no comparison:
-      "Couldn't match type ‘b’ with ‘'Low’", because @b@ is the level the read produced and
-      only 'loadChecked' knows it; and @LabelsOfRead@ has no constructor in scope to make one.
+      "Could not deduce ‘b ~ Low’", because @b@ is the level the read produced and only
+      'loadChecked' knows it; and 'LabelsOfRead' exports no constructor, so there is no other
+      way to make one.
 -}
-loadStepped ::
+readBelow ::
     (ModuleMems mod ~ (mem ': mems)) =>
     Sing (lm :: SecLevel) ->
-    (Word64 -> HostType t) ->
-    Int ->
-    Int ->
     Store mod ->
-    LocalSpaceInst locals ->
-    ValueStack r ->
-    Expr mod ('FrameShape locals ret) labels ((t ':~ l) ': r) out ->
-    Control mod res ret locals labels out ->
-    Either Trap (StepResult mod res)
-loadStepped lm marshal addr count store locals r rest control =
+    Int ->
+    Int ->
+    Either Trap (Word64, CheckPassed ('BytesBelow lm))
+readBelow lm store addr count =
     case loadChecked (currentMem store) addr count of
         Nothing -> Left OutOfBoundsMemoryAccess
         Just (word, SomeLabelsOfRead labels) -> case decideFlow (labelJoinOfRead labels) lm of
             Nothing -> Left SecretRead
-            Just flows -> Right (Stepped (BytesWereBelow labels flows) (Config store locals (marshal word :# r) rest control))
-{-# INLINE loadStepped #-}
+            Just flows -> Right (word, BytesWereBelow labels flows)
+{-# INLINE readBelow #-}
 
 {- | The module's single memory, and a store update for it. The @ModuleMems mod ~ (m ': ms)@
   constraint every memory instruction carries makes both total.
@@ -612,7 +666,7 @@ resume ::
     ValueStack below ->
     Expr mod ('FrameShape locals ret) labels (rs ++ below) contOut ->
     Control mod res ret locals labels contOut ->
-    StepResult mod res
+    StepResult 'NoDynamicCheck mod res
 resume store locals vs below cont rest = Stepped NothingToCheck (Config store locals (appendStack vs below) cont rest)
 
 -- | The current sequence reached its end (left @cur@): hand control to the top frame.
@@ -621,7 +675,7 @@ popControl ::
     LocalSpaceInst locals ->
     ValueStack cur ->
     Control mod res ret locals labels cur ->
-    StepResult mod res
+    StepResult 'NoDynamicCheck mod res
 popControl store _ vs EntryBoundary = Done store vs
 popControl store locals vs (BlockLabel below cont rest) = resume store locals vs below cont rest
 popControl store locals vs (LoopLabel below _ cont rest) = resume store locals vs below cont rest
@@ -637,7 +691,7 @@ unwind ::
     Elem rs labels ->
     ValueStack rs ->
     Control mod res ret locals labels cur ->
-    StepResult mod res
+    StepResult 'NoDynamicCheck mod res
 unwind store _ Here vs EntryBoundary = Done store vs
 unwind store locals Here vs (BlockLabel below cont rest) = resume store locals vs below cont rest
 unwind store locals Here vs (LoopLabel below body cont rest) =
@@ -654,7 +708,7 @@ returnUnwind ::
     LocalSpaceInst locals ->
     ValueStack ret ->
     Control mod res ret locals labels cur ->
-    StepResult mod res
+    StepResult 'NoDynamicCheck mod res
 returnUnwind store _ vs EntryBoundary = Done store vs
 returnUnwind store _ vs (CallBoundary _ below cl cont cf) = resume store cl vs below cont cf
 returnUnwind store locals vs (BlockLabel _ _ rest) = returnUnwind store locals vs rest
@@ -678,11 +732,16 @@ data Halt (mod :: ModuleShape) (res :: LResultType) where
   preservation that 'step' carries.)
 -}
 run :: FuncSpaceInst mod (ModuleFuncs mod) -> Config mod res -> Either Trap (Halt mod res)
-run funcs config = case step funcs config of
-    Left t -> Left t
-    Right (Done store vs) -> Right (Finished store vs)
-    Right (HostCall request) -> Right (AwaitingHost request)
-    Right (Stepped _ next) -> run funcs next
+run funcs (Config store locals stack code control) = case code of
+    INil -> case popControl store locals stack control of
+        Done store' vs -> Right (Finished store' vs)
+        HostCall request -> Right (AwaitingHost request)
+        Stepped _ next -> run funcs next
+    instr :. rest -> case stepInstr funcs store locals stack instr rest control of
+        Left t -> Left t
+        Right (Done store' vs) -> Right (Finished store' vs)
+        Right (HostCall request) -> Right (AwaitingHost request)
+        Right (Stepped _ next) -> run funcs next
 
 -- | How a fuel-bounded run ends: halted like 'run', or stopped with the budget spent.
 data Fuelled (mod :: ModuleShape) (res :: LResultType) where
@@ -693,13 +752,18 @@ data Fuelled (mod :: ModuleShape) (res :: LResultType) where
   not) within it; unlike 'run' this is total.
 -}
 runFor :: Int -> FuncSpaceInst mod (ModuleFuncs mod) -> Config mod res -> Either Trap (Fuelled mod res)
-runFor fuel funcs config
+runFor fuel funcs config@(Config store locals stack code control)
     | fuel <= 0 = Right (OutOfFuel config)
-    | otherwise = case step funcs config of
-        Left t -> Left t
-        Right (Done store vs) -> Right (Halted (Finished store vs))
-        Right (HostCall request) -> Right (Halted (AwaitingHost request))
-        Right (Stepped _ next) -> runFor (fuel - 1) funcs next
+    | otherwise = case code of
+        INil -> case popControl store locals stack control of
+            Done store' vs -> Right (Halted (Finished store' vs))
+            HostCall request -> Right (Halted (AwaitingHost request))
+            Stepped _ next -> runFor (fuel - 1) funcs next
+        instr :. rest -> case stepInstr funcs store locals stack instr rest control of
+            Left t -> Left t
+            Right (Done store' vs) -> Right (Halted (Finished store' vs))
+            Right (HostCall request) -> Right (Halted (AwaitingHost request))
+            Right (Stepped _ next) -> runFor (fuel - 1) funcs next
 
 -- | How a function invocation ends: with the module as the call left it, or needing the host.
 data Outcome (mod :: ModuleShape) (rs :: LResultType) where
