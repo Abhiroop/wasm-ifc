@@ -952,14 +952,32 @@ unStack (PolyStack xs) = xs
 
   TODO(ifc P0): every security level in a validated module is 'Low today, because a decoded
   module says nothing about levels and "Validation.Reflect" labels everything public. So this
-  accepts exactly the modules it accepted before labels existed. To make the levels mean
-  something, decide where they come from. In SecWasm the developer annotates three things: the
-  function types, the globals, and each load and store; the rest follows from the rules. A
-  custom section of the module could carry those annotations: it travels with the module, and
-  other tools ignore it. Sensible defaults keep unannotated modules working: 'Low for function
-  types and globals; for a store, the lowest level the rule allows (the join of the pc, the
-  address and the value); for a load, 'Low, so that reading a secret byte without an annotation
-  traps and points at the place that needs one.
+  accepts exactly the modules it accepted before labels existed. Where the levels come from is
+  decided in principle (Daniel, 2026-09-22) and not yet built:
+    * Everything SecWasm lets the developer annotate stays expressible: the levels of a
+      function's parameters and results and its arrow label (the pc it may be called from),
+      the level of a global, and a level on every load and store. The carrier is a custom
+      section of the module, keyed by function index, global index and code offset, since only
+      that can name one instruction in a binary; a policy file written by hand compiles to it,
+      and every other tool ignores it, so the module stays ordinary WebAssembly.
+    * Inference is the default wherever it is sound and unambiguous: the types and arrow
+      labels of functions that are neither imported nor exported, from the call graph (a fixed
+      point, cheap over two levels); a store's level, as the join of the pc, the address and
+      the value, which is the most precise labelling of memory the rule allows. An explicit
+      annotation always wins over an inferred one, and a disagreement is reported: someone
+      who wrote the annotation wants to know that the code does not meet it.
+    * The interface cannot be inferred: an import's results and an exported global's level
+      say what is on the other side of the module. They are declared, or default to public.
+    * Convenience goes where annotations are common. Loads are the one thing nothing can
+      infer (the level is what the site expects to read), so they get the easy paths: a
+      per-module or per-function default ('Low while developing, since the run-time trap then
+      points at the site that needs an annotation), declared address ranges for the statics a
+      compiler places at fixed addresses, and an @ifc@ import namespace whose functions a plain
+      runtime implements as identities or plain loads and this validator reads as
+      relabellings and annotated loads, so the annotations live in the source program.
+      Stores are the opposite case and may stay awkward to annotate.
+    * Open: whether declassification (a trusted relabelling downwards) is in scope, since it
+      changes the theorem; and whether load annotations are per site or per function.
 
   Validation already threads the pc stack through every body and builds the flow witnesses
   ('requireFlow', 'requireCarried'), so a module with secret levels would be checked by the
