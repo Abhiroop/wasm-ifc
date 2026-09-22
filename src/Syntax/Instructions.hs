@@ -227,6 +227,11 @@ data FloatBinOp = FMin | FMax | FCopysign deriving stock (Eq, Show)
     * @frame@  — function-scoped: the current function's locals and result type.
     * @labels@ — block-scoped: the result types of the enclosing branch targets.
 
+  Between them, @check@ names the premise of the instruction's rule that only the machine
+  can decide, if it has one ('DynamicCheck'). The interpreter has to present evidence for
+  it in order to step past the instruction, so a check that the rule demands cannot be
+  left out of 'Runtime.Interpreter.step' by mistake: see 'Runtime.Obligation.CheckPassed'.
+
   Every type on the stack, in the frame and in a label is a /labelled/ value type
   (@t ':~ l@, from "Syntax.TypesIFC"): a value type together with a security level, 'Low for
   public data and 'High for secret data. So this one type tracks information flow as well as
@@ -261,6 +266,7 @@ data
         (mod :: ModuleShape)
         (frame :: FrameShape)
         (labels :: [LResultType])
+        (check :: DynamicCheck)
         (stackIn :: [LValType])
         (stackOut :: [LValType])
     where
@@ -268,41 +274,44 @@ data
        TODO(ifc P2): the level of a constant is free (a placeholder). A literal is public, so
        the final signature is @t ':~ pc@ once the pc exists: public, but no less secret than the
        context that pushed it. -}
-    IConst :: IsNum t -> HostType t -> Instr m f l s ((t ':~ lv) ': s)
+    IConst :: IsNum t -> HostType t -> Instr m f l 'NoDynamicCheck s ((t ':~ lv) ': s)
     {- Numeric: both operands and the result share the value type, and the result is as secret
        as the more secret operand. Final. -}
-    IAdd :: IsNum t -> Instr m f l ((t ':~ lv) ': (t ':~ lv') ': s) ((t ':~ Join lv lv') ': s)
-    ISub :: IsNum t -> Instr m f l ((t ':~ lv) ': (t ':~ lv') ': s) ((t ':~ Join lv lv') ': s)
-    IMul :: IsNum t -> Instr m f l ((t ':~ lv) ': (t ':~ lv') ': s) ((t ':~ Join lv lv') ': s)
-    IDiv :: NumWithSign t -> Instr m f l ((t ':~ lv) ': (t ':~ lv') ': s) ((t ':~ Join lv lv') ': s)
-    IRem :: IsInt t -> Signedness -> Instr m f l ((t ':~ lv) ': (t ':~ lv') ': s) ((t ':~ Join lv lv') ': s)
+    IAdd :: IsNum t -> Instr m f l 'NoDynamicCheck ((t ':~ lv) ': (t ':~ lv') ': s) ((t ':~ Join lv lv') ': s)
+    ISub :: IsNum t -> Instr m f l 'NoDynamicCheck ((t ':~ lv) ': (t ':~ lv') ': s) ((t ':~ Join lv lv') ': s)
+    IMul :: IsNum t -> Instr m f l 'NoDynamicCheck ((t ':~ lv) ': (t ':~ lv') ': s) ((t ':~ Join lv lv') ': s)
+    IDiv :: NumWithSign t -> Instr m f l 'NoDynamicCheck ((t ':~ lv) ': (t ':~ lv') ': s) ((t ':~ Join lv lv') ': s)
+    IRem :: IsInt t -> Signedness -> Instr m f l 'NoDynamicCheck ((t ':~ lv) ': (t ':~ lv') ': s) ((t ':~ Join lv lv') ': s)
     {- Comparison (consume two @t@, produce an i32 boolean as secret as the operands). @eqz@ is
        integer-only; @eq@/@ne@ have no signedness; the ordered comparisons carry a 'NumWithSign'
        (signed on ints only). Final. -}
-    IEqz :: IsInt t -> Instr m f l ((t ':~ lv) ': s) (('I32 ':~ lv) ': s)
-    IEq :: IsNum t -> Instr m f l ((t ':~ lv) ': (t ':~ lv') ': s) (('I32 ':~ Join lv lv') ': s)
-    INe :: IsNum t -> Instr m f l ((t ':~ lv) ': (t ':~ lv') ': s) (('I32 ':~ Join lv lv') ': s)
-    ILt :: NumWithSign t -> Instr m f l ((t ':~ lv) ': (t ':~ lv') ': s) (('I32 ':~ Join lv lv') ': s)
-    IGt :: NumWithSign t -> Instr m f l ((t ':~ lv) ': (t ':~ lv') ': s) (('I32 ':~ Join lv lv') ': s)
-    ILe :: NumWithSign t -> Instr m f l ((t ':~ lv) ': (t ':~ lv') ': s) (('I32 ':~ Join lv lv') ': s)
-    IGe :: NumWithSign t -> Instr m f l ((t ':~ lv) ': (t ':~ lv') ': s) (('I32 ':~ Join lv lv') ': s)
+    IEqz :: IsInt t -> Instr m f l 'NoDynamicCheck ((t ':~ lv) ': s) (('I32 ':~ lv) ': s)
+    IEq :: IsNum t -> Instr m f l 'NoDynamicCheck ((t ':~ lv) ': (t ':~ lv') ': s) (('I32 ':~ Join lv lv') ': s)
+    INe :: IsNum t -> Instr m f l 'NoDynamicCheck ((t ':~ lv) ': (t ':~ lv') ': s) (('I32 ':~ Join lv lv') ': s)
+    ILt :: NumWithSign t -> Instr m f l 'NoDynamicCheck ((t ':~ lv) ': (t ':~ lv') ': s) (('I32 ':~ Join lv lv') ': s)
+    IGt :: NumWithSign t -> Instr m f l 'NoDynamicCheck ((t ':~ lv) ': (t ':~ lv') ': s) (('I32 ':~ Join lv lv') ': s)
+    ILe :: NumWithSign t -> Instr m f l 'NoDynamicCheck ((t ':~ lv) ': (t ':~ lv') ': s) (('I32 ':~ Join lv lv') ': s)
+    IGe :: NumWithSign t -> Instr m f l 'NoDynamicCheck ((t ':~ lv) ': (t ':~ lv') ': s) (('I32 ':~ Join lv lv') ': s)
     {- Integer bitwise / shift / count, and floating-point unary / binary (all same-type). A
        binary one joins the levels; a unary one keeps the operand's level. Final. -}
-    IBitwise :: IsInt t -> BitwiseOp -> Instr m f l ((t ':~ lv) ': (t ':~ lv') ': s) ((t ':~ Join lv lv') ': s)
-    ICount :: IsInt t -> CountOp -> Instr m f l ((t ':~ lv) ': s) ((t ':~ lv) ': s)
-    IFloatUn :: IsFloat t -> FloatUnOp -> Instr m f l ((t ':~ lv) ': s) ((t ':~ lv) ': s)
-    IFloatBin :: IsFloat t -> FloatBinOp -> Instr m f l ((t ':~ lv) ': (t ':~ lv') ': s) ((t ':~ Join lv lv') ': s)
+    IBitwise :: IsInt t -> BitwiseOp -> Instr m f l 'NoDynamicCheck ((t ':~ lv) ': (t ':~ lv') ': s) ((t ':~ Join lv lv') ': s)
+    ICount :: IsInt t -> CountOp -> Instr m f l 'NoDynamicCheck ((t ':~ lv) ': s) ((t ':~ lv) ': s)
+    IFloatUn :: IsFloat t -> FloatUnOp -> Instr m f l 'NoDynamicCheck ((t ':~ lv) ': s) ((t ':~ lv) ': s)
+    IFloatBin :: IsFloat t -> FloatBinOp -> Instr m f l 'NoDynamicCheck ((t ':~ lv) ': (t ':~ lv') ': s) ((t ':~ Join lv lv') ': s)
     {- Conversions: pop one @from@, push one @to@ at the same level. The 'ConvertOp' is indexed
        by exactly those types, so the operand/result and the opcode cannot disagree. Final. -}
-    IConvert :: ConvertOp from to -> Instr m f l ((from ':~ lv) ': s) ((to ':~ lv) ': s)
-    {- Memory size / grow and narrow load/store.
-       TODO(ifc P1): memory has no levels yet, so the level of a loaded value and of
-       @memory.size@ is free (a placeholder), and a store checks nothing. SecWasm keeps a level
-       for every byte of memory at run time, and gives each load and store a level @ℓ@ written
-       in the instruction:
-         * A load at address level @la@ yields a value at @Join la (Join ℓ pc)@. At run time it
-           checks that every byte it reads is at most @ℓ@, and traps otherwise. The final
-           signature takes a @Sing ℓ@ so the interpreter can do that check.
+    IConvert :: ConvertOp from to -> Instr m f l 'NoDynamicCheck ((from ':~ lv) ': s) ((to ':~ lv) ': s)
+    {- Memory size / grow and narrow load/store. SecWasm keeps a level for every byte of
+       memory at run time, and gives each load and store a level @ℓ@ written in the
+       instruction (the @Sing lm@ the loads carry):
+         * A load at address level @la@ yields a value at @Join la ℓ@. At run time it checks
+           that every byte it reads is at most @ℓ@, and traps otherwise; that is the
+           @'BytesBelow lm@ premise in its type, which the interpreter discharges through
+           'Runtime.MemInst.loadChecked'. Every load is elaborated at 'Low until a policy
+           section says otherwise.
+           TODO(ifc P0): the result should be @Join la (Join ℓ pc)@ once the pc index exists.
+       TODO(ifc P1): memory levels are read but never written yet, so the level of
+       @memory.size@ is free (a placeholder), and a store checks nothing:
          * A store of a value at @lv@ to an address at @la@ is allowed when
            @Join pc (Join la lv)@ flows into @ℓ@, which is a static check: the final signature
            takes a @Sing ℓ@ and a 'FlowsInto' witness. At run time it marks the bytes it writes
@@ -311,19 +320,20 @@ data
            new bytes are public. So its final signature fixes both levels, and the pc, to 'Low,
            and @memory.size@ yields a public value.
        The run-time half is described in "Runtime.MemInst". -}
-    IMemSize :: (ModuleMems m ~ (mem ': mems)) => Instr m f l s (('I32 ':~ lv) ': s)
-    IMemGrow :: (ModuleMems m ~ (mem ': mems)) => Instr m f l (('I32 ':~ lv) ': s) (('I32 ':~ lv) ': s)
+    IMemSize :: (ModuleMems m ~ (mem ': mems)) => Instr m f l 'NoDynamicCheck s (('I32 ':~ lv) ': s)
+    IMemGrow :: (ModuleMems m ~ (mem ': mems)) => Instr m f l 'NoDynamicCheck (('I32 ':~ lv) ': s) (('I32 ':~ lv) ': s)
     ILoadN ::
         (ModuleMems m ~ (mem ': mems)) =>
+        Sing lm ->
         NarrowWidth t ->
         Signedness ->
         MemArg ->
-        Instr m f l (('I32 ':~ la) ': s) ((t ':~ lv) ': s)
+        Instr m f l ('BytesBelow lm) (('I32 ':~ la) ': s) ((t ':~ Join la lm) ': s)
     IStoreN ::
         (ModuleMems m ~ (mem ': mems)) =>
         NarrowWidth t ->
         MemArg ->
-        Instr m f l ((t ':~ lv) ': ('I32 ':~ la) ': s) s
+        Instr m f l 'NoDynamicCheck ((t ':~ lv) ': ('I32 ':~ la) ': s) s
     {- Bulk memory. Operands, top first: the byte count, then the source (an address, a fill
        value, or an offset into the segment), then the destination address. A segment is named
        by an 'Elem' into the module's data index space, so it exists.
@@ -332,43 +342,44 @@ data
        copied byte keeps the level of its source joined with the levels of the three operands
        and the pc, a filled byte takes the level of the fill value joined with the same, and an
        initialised byte (a data segment is public) takes the operands' levels and the pc. -}
-    IMemCopy :: (ModuleMems m ~ (mem ': mems)) => Instr m f l (('I32 ':~ ln) ': ('I32 ':~ lsrc) ': ('I32 ':~ ldst) ': s) s
-    IMemFill :: (ModuleMems m ~ (mem ': mems)) => Instr m f l (('I32 ':~ ln) ': ('I32 ':~ lsrc) ': ('I32 ':~ ldst) ': s) s
+    IMemCopy :: (ModuleMems m ~ (mem ': mems)) => Instr m f l 'NoDynamicCheck (('I32 ':~ ln) ': ('I32 ':~ lsrc) ': ('I32 ':~ ldst) ': s) s
+    IMemFill :: (ModuleMems m ~ (mem ': mems)) => Instr m f l 'NoDynamicCheck (('I32 ':~ ln) ': ('I32 ':~ lsrc) ': ('I32 ':~ ldst) ': s) s
     IMemInit ::
         (ModuleMems m ~ (mem ': mems)) =>
         Elem 'DataShape (ModuleData m) ->
-        Instr m f l (('I32 ':~ ln) ': ('I32 ':~ lsrc) ': ('I32 ':~ ldst) ': s) s
-    IDataDrop :: Elem 'DataShape (ModuleData m) -> Instr m f l s s
+        Instr m f l 'NoDynamicCheck (('I32 ':~ ln) ': ('I32 ':~ lsrc) ': ('I32 ':~ ldst) ': s) s
+    IDataDrop :: Elem 'DataShape (ModuleData m) -> Instr m f l 'NoDynamicCheck s s
     {- Stack management. @drop@ works on any value type; @select@ (0x1B) on numeric operands and
        keeps the first operand when the condition is non-zero, the second otherwise. Its result
        depends on all three operands, so it is as secret as the most secret of them. Final. -}
-    IDrop :: Instr m f l (t ': s) s
+    IDrop :: Instr m f l 'NoDynamicCheck (t ': s) s
     ISelect ::
         IsNum t ->
-        Instr m f l (('I32 ':~ lc) ': (t ':~ l1) ': (t ':~ l2) ': s) ((t ':~ Join lc (Join l1 l2)) ': s)
+        Instr m f l 'NoDynamicCheck (('I32 ':~ lc) ': (t ':~ l1) ': (t ':~ l2) ': s) ((t ':~ Join lc (Join l1 l2)) ': s)
     {- Locals (from the @frame@) & globals (from the @mod@). A local or global has one level,
        declared with it and fixed for good; a read yields a value at that level.
        TODO(ifc P1): the writes demand a value at exactly the variable's level. They should
        accept any value that may flow into it: for a variable at @l@ and a value at @lv@, take a
        @FlowsInto (Join pc lv) l@ witness. The pc is part of the check because a write inside a
        secret branch reveals the branch condition even when the value written is public. -}
-    ILocalGet :: LocalRef (t ':~ lv) (FrameLocals f) -> Instr m f l s ((t ':~ lv) ': s)
-    ILocalSet :: LocalRef (t ':~ lv) (FrameLocals f) -> Instr m f l ((t ':~ lv) ': s) s
-    ILocalTee :: LocalRef (t ':~ lv) (FrameLocals f) -> Instr m f l ((t ':~ lv) ': s) ((t ':~ lv) ': s)
-    IGlobalGet :: Elem ('GlobalType mut (t ':~ lv)) (ModuleGlobals m) -> Instr m f l s ((t ':~ lv) ': s)
-    IGlobalSet :: Elem ('GlobalType 'Mutable (t ':~ lv)) (ModuleGlobals m) -> Instr m f l ((t ':~ lv) ': s) s
-    {- Memory (requires the module to declare a memory). The TODO(ifc P1) on the narrow forms
+    ILocalGet :: LocalRef (t ':~ lv) (FrameLocals f) -> Instr m f l 'NoDynamicCheck s ((t ':~ lv) ': s)
+    ILocalSet :: LocalRef (t ':~ lv) (FrameLocals f) -> Instr m f l 'NoDynamicCheck ((t ':~ lv) ': s) s
+    ILocalTee :: LocalRef (t ':~ lv) (FrameLocals f) -> Instr m f l 'NoDynamicCheck ((t ':~ lv) ': s) ((t ':~ lv) ': s)
+    IGlobalGet :: Elem ('GlobalType mut (t ':~ lv)) (ModuleGlobals m) -> Instr m f l 'NoDynamicCheck s ((t ':~ lv) ': s)
+    IGlobalSet :: Elem ('GlobalType 'Mutable (t ':~ lv)) (ModuleGlobals m) -> Instr m f l 'NoDynamicCheck ((t ':~ lv) ': s) s
+    {- Memory (requires the module to declare a memory). The comment on the narrow forms
        above covers these as well. -}
     ILoad ::
         (ModuleMems m ~ (mem ': mems)) =>
+        Sing lm ->
         IsNum t ->
         MemArg ->
-        Instr m f l (('I32 ':~ la) ': s) ((t ':~ lv) ': s)
+        Instr m f l ('BytesBelow lm) (('I32 ':~ la) ': s) ((t ':~ Join la lm) ': s)
     IStore ::
         (ModuleMems m ~ (mem ': mems)) =>
         IsNum t ->
         MemArg ->
-        Instr m f l ((t ':~ lv) ': ('I32 ':~ la) ': s) s
+        Instr m f l 'NoDynamicCheck ((t ':~ lv) ': ('I32 ':~ la) ': s) s
     {- Calls. The 'Append' witness lets the interpreter peel the arguments off the stack. The
        arguments must be at exactly the levels the function declares, and the results come back
        at the levels it declares.
@@ -385,7 +396,7 @@ data
     ICall ::
         Append ps s full ->
         Elem ('FuncType ps rs) (ModuleFuncs m) ->
-        Instr m f l full (rs ++ s)
+        Instr m f l 'NoDynamicCheck full (rs ++ s)
     {- Indirect calls: the callee is an entry of the module's table, checked at run time against
        the expected type (a trap if it differs); the module must declare a table. The expected
        type is labelled, so the run-time check compares the levels too. -}
@@ -393,7 +404,7 @@ data
         (ModuleTables m ~ (table ': tables)) =>
         Append ps s full ->
         Sing ('FuncType ps rs) ->
-        Instr m f l (('I32 ':~ lv) ': full) (rs ++ s)
+        Instr m f l 'NoDynamicCheck (('I32 ':~ lv) ': full) (rs ++ s)
     {- Structured control. Bodies are typed in isolation (@ps -> rs@) within the same frame,
        framed over a polymorphic @s@. A block/if label carries its results; a loop its params.
        TODO(ifc P0): nothing tracks the pc, so a program can leak through control flow: after
@@ -415,32 +426,32 @@ data
     IBlock ::
         Append ps s full ->
         Expr m f (rs ': l) ps rs ->
-        Instr m f l full (rs ++ s)
+        Instr m f l 'NoDynamicCheck full (rs ++ s)
     ILoop ::
         Append ps s full ->
         Expr m f (ps ': l) ps rs ->
-        Instr m f l full (rs ++ s)
+        Instr m f l 'NoDynamicCheck full (rs ++ s)
     IIf ::
         Append ps s full ->
         Expr m f (rs ': l) ps rs ->
         Expr m f (rs ': l) ps rs ->
-        Instr m f l (('I32 ':~ lv) ': full) (rs ++ s)
+        Instr m f l 'NoDynamicCheck (('I32 ':~ lv) ': full) (rs ++ s)
     {- Branches. The witness gives the branch width; the output (and the stack below the
        operands) is otherwise free. The condition's level is ignored for now: see the
        TODO(ifc P0) on 'IBlock', step 4. -}
-    IBr :: Append rs s full -> Elem rs labels -> Instr m f labels full anyOut
-    IBrIf :: Append rs s full -> Elem rs labels -> Instr m f labels (('I32 ':~ lv) ': full) full
+    IBr :: Append rs s full -> Elem rs labels -> Instr m f labels 'NoDynamicCheck full anyOut
+    IBrIf :: Append rs s full -> Elem rs labels -> Instr m f labels 'NoDynamicCheck (('I32 ':~ lv) ': full) full
     IBrTable ::
         Append rs s full ->
         [Elem rs labels] ->
         Elem rs labels ->
-        Instr m f labels (('I32 ':~ lv) ': full) anyOut
-    IReturn :: Append (FrameReturn f) s full -> Instr m f l full anyOut
+        Instr m f labels 'NoDynamicCheck (('I32 ':~ lv) ': full) anyOut
+    IReturn :: Append (FrameReturn f) s full -> Instr m f l 'NoDynamicCheck full anyOut
     {- Inert. A trap ends the run, which an observer can see, so @unreachable@ under a secret pc
        reveals something. SecWasm accepts this (its guarantee only covers runs that finish), and
        so do we: no check here. -}
-    INop :: Instr m f l s s
-    IUnreachable :: Instr m f l s anyOut
+    INop :: Instr m f l 'NoDynamicCheck s s
+    IUnreachable :: Instr m f l 'NoDynamicCheck s anyOut
 
 {- | A typed instruction sequence (a WebAssembly expression): the output shape of each
   instruction is the input of the next. Same context indices as 'Instr'.
@@ -455,7 +466,7 @@ data
     where
     INil :: Expr m f l s s
     (:.) ::
-        Instr m f l s1 s2 ->
+        Instr m f l check s1 s2 ->
         Expr m f l s2 s3 ->
         Expr m f l s1 s3
 
@@ -469,21 +480,21 @@ infixr 5 :.
 call ::
     forall ps rs s m f l.
     SingI ps =>
-    Elem ('FuncType ps rs) (ModuleFuncs m) -> Instr m f l (ps ++ s) (rs ++ s)
+    Elem ('FuncType ps rs) (ModuleFuncs m) -> Instr m f l 'NoDynamicCheck (ps ++ s) (rs ++ s)
 call = ICall (appendFromSing @ps @s (sing @ps))
 
 {- | Specialised forms for the common case of an empty-result block/loop and a branch to
   an empty-result label. With @rs ~ '[]@ fixed, @rs ++ s@ reduces to @s@, so these infer
   cleanly — no @++@ for GHC to invert and no type applications needed at call sites.
 -}
-block_ :: Expr m f ('[] ': l) '[] '[] -> Instr m f l s s
+block_ :: Expr m f ('[] ': l) '[] '[] -> Instr m f l 'NoDynamicCheck s s
 block_ = IBlock ANil
 
-loop_ :: Expr m f ('[] ': l) '[] '[] -> Instr m f l s s
+loop_ :: Expr m f ('[] ': l) '[] '[] -> Instr m f l 'NoDynamicCheck s s
 loop_ = ILoop ANil
 
-br_ :: Elem '[] labels -> Instr m f labels s anyOut
+br_ :: Elem '[] labels -> Instr m f labels 'NoDynamicCheck s anyOut
 br_ = IBr ANil
 
-brIf_ :: Elem '[] labels -> Instr m f labels (('I32 ':~ lv) ': s) s
+brIf_ :: Elem '[] labels -> Instr m f labels 'NoDynamicCheck (('I32 ':~ lv) ': s) s
 brIf_ = IBrIf ANil

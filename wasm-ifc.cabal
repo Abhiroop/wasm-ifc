@@ -93,6 +93,7 @@ library
       , Runtime.Numeric
       , Runtime.Convert
       , Runtime.Stack
+      , Runtime.Obligation
       , Runtime.Interpreter
       , Runtime.Module
       , Runtime.Instantiate

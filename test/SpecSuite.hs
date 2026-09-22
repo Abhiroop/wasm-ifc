@@ -374,6 +374,8 @@ trapText UndefinedElement = "undefined element"
 trapText UninitializedElement = "uninitialized element"
 trapText IndirectCallTypeMismatch = "indirect call type mismatch"
 trapText CallStackExhausted = "call stack exhausted"
+-- not a spec trap: no script expects it, so the wording is ours
+trapText SecretRead = "secret read"
 
 numericTypes :: [Text]
 numericTypes = ["i32", "i64", "f32", "f64"]

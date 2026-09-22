@@ -146,18 +146,19 @@ data ElaboratedExpr (shape :: ModuleShape) (ret :: LResultType) (locals :: [LVal
 
 {- | The result of elaborating a single instruction — the per-instruction version of
   'ElaboratedExpr', with the same two cases. 'elabSeq' folds these into an 'ElaboratedExpr'
-  as it walks the sequence.
+  as it walks the sequence. The instruction's dynamic check is hidden here, as 'Expr' hides it:
+  it is the interpreter's business, not the sequence's.
 -}
 data ElaboratedInstr (shape :: ModuleShape) (ret :: LResultType) (locals :: [LValType]) (labels :: [LResultType]) (stackIn :: [LValType]) where
     {- | An ordinary instruction: it leaves a concrete @stackOut@ and elaboration continues
     from there (the analogue of 'Reachable').
     -}
-    Produces :: Sing stackOut -> Instr shape ('FrameShape locals ret) labels stackIn stackOut -> ElaboratedInstr shape ret locals labels stackIn
+    Produces :: Sing stackOut -> Instr shape ('FrameShape locals ret) labels check stackIn stackOut -> ElaboratedInstr shape ret locals labels stackIn
     {- | An unconditional transfer (@br@ / @return@ / @unreachable@): control leaves here, so any
     instructions after it are dead code and the output stack is unconstrained (the analogue
     of 'Diverged').
     -}
-    Transfers :: (forall stackOut. Instr shape ('FrameShape locals ret) labels stackIn stackOut) -> ElaboratedInstr shape ret locals labels stackIn
+    Transfers :: (forall stackOut. Instr shape ('FrameShape locals ret) labels check stackIn stackOut) -> ElaboratedInstr shape ret locals labels stackIn
 
 note :: ElabError -> Maybe a -> Either ElabError a
 note e = maybe (Left e) Right
@@ -276,12 +277,12 @@ elabInstr env stackIn instr = case instr of
                 _ -> Left (StackUnderflow "global.set")
     {- Memory -}
     Load st memArg -> case stackIn of
-        SCons (sc :%~ _) rest -> do
+        SCons (sc :%~ la) rest -> do
             NonEmptyMems <- requireMemory env "load"
             isNum <- requireNum st
             Refl <- note (OperandMismatch "load" I32 (valTypeOf sc)) (decideEquality sc SI32)
             checkAlign memArg (numBytes isNum)
-            Right (Produces (SCons (st :%~ SLow) rest) (ILoad isNum memArg))
+            Right (Produces (SCons (st :%~ sJoin la policyLoadLevel) rest) (ILoad policyLoadLevel isNum memArg))
         _ -> Left (StackUnderflow "load")
     Store st memArg -> case stackIn of
         SCons (sv :%~ _) (SCons (sc :%~ _) rest) -> do
@@ -293,12 +294,12 @@ elabInstr env stackIn instr = case instr of
             Right (Produces rest (IStore isNum memArg))
         _ -> Left (StackUnderflow "store")
     LoadN st width sign memArg -> case stackIn of
-        SCons (sc :%~ _) rest -> do
+        SCons (sc :%~ la) rest -> do
             NonEmptyMems <- requireMemory env "load"
             nw <- requireNarrow st width
             Refl <- note (OperandMismatch "load" I32 (valTypeOf sc)) (decideEquality sc SI32)
             checkAlign memArg (narrowBytes nw)
-            Right (Produces (SCons (st :%~ SLow) rest) (ILoadN nw sign memArg))
+            Right (Produces (SCons (st :%~ sJoin la policyLoadLevel) rest) (ILoadN policyLoadLevel nw sign memArg))
         _ -> Left (StackUnderflow "load")
     StoreN st width memArg -> case stackIn of
         SCons (sv :%~ _) (SCons (sc :%~ _) rest) -> do
@@ -491,6 +492,13 @@ elabSelect annotation stackIn = case stackIn of
         Right (Produces (SCons (va :%~ sJoin lc (sJoin l1 l2)) rest) (ISelect isNum))
     _ -> Left (StackUnderflow "select")
 
+{- | The level written in every load. Public, so that a load of a byte that a store marked
+  secret traps and points at the load that needs an annotation.
+  TODO(ifc P0): read it from the module's policy section once there is one.
+-}
+policyLoadLevel :: Sing 'Low
+policyLoadLevel = SLow
+
 pushLabel :: Sing rs -> ElabEnv shape ret locals labels -> ElabEnv shape ret locals (rs ': labels)
 pushLabel rsS env = env {labels = SCons rsS (env.labels)}
 
@@ -556,7 +564,7 @@ requireNarrow st width =
 threeAddresses ::
     Text ->
     Sing stackIn ->
-    (forall s ln lsrc ldst. Instr shape ('FrameShape locals ret) labels (('I32 ':~ ln) ': ('I32 ':~ lsrc) ': ('I32 ':~ ldst) ': s) s) ->
+    (forall s ln lsrc ldst. Instr shape ('FrameShape locals ret) labels check (('I32 ':~ ln) ': ('I32 ':~ lsrc) ': ('I32 ':~ ldst) ': s) s) ->
     Either ElabError (ElaboratedInstr shape ret locals labels stackIn)
 threeAddresses name stackIn typed = case stackIn of
     SCons (a :%~ _) (SCons (b :%~ _) (SCons (c :%~ _) rest)) -> do
@@ -598,11 +606,11 @@ checkAlign memArg accessBytes
     align = fromIntegral memArg.alignment :: Int
 
 consumeTwo ::
-    forall t r shape ret locals labels stackIn.
+    forall t r shape ret locals labels stackIn check.
     Sing (t :: ValType) ->
     Sing (r :: ValType) ->
     Sing stackIn ->
-    (forall s lv lv'. Instr shape ('FrameShape locals ret) labels ((t ':~ lv) ': (t ':~ lv') ': s) ((r ':~ Join lv lv') ': s)) ->
+    (forall s lv lv'. Instr shape ('FrameShape locals ret) labels check ((t ':~ lv) ': (t ':~ lv') ': s) ((r ':~ Join lv lv') ': s)) ->
     Either ElabError (ElaboratedInstr shape ret locals labels stackIn)
 consumeTwo st sr stackIn typed = case stackIn of
     SCons (sa :%~ la) (SCons (sb :%~ lb) rest) -> do
@@ -615,7 +623,7 @@ consumeTwo st sr stackIn typed = case stackIn of
 sameTypeBinary ::
     Sing (t :: ValType) ->
     Sing stackIn ->
-    (forall s lv lv'. Instr shape ('FrameShape locals ret) labels ((t ':~ lv) ': (t ':~ lv') ': s) ((t ':~ Join lv lv') ': s)) ->
+    (forall s lv lv'. Instr shape ('FrameShape locals ret) labels check ((t ':~ lv) ': (t ':~ lv') ': s) ((t ':~ Join lv lv') ': s)) ->
     Either ElabError (ElaboratedInstr shape ret locals labels stackIn)
 sameTypeBinary st = consumeTwo st st
 
@@ -623,7 +631,7 @@ sameTypeBinary st = consumeTwo st st
 sameTypeUnary ::
     Sing (t :: ValType) ->
     Sing stackIn ->
-    (forall s lv. Instr shape ('FrameShape locals ret) labels ((t ':~ lv) ': s) ((t ':~ lv) ': s)) ->
+    (forall s lv. Instr shape ('FrameShape locals ret) labels check ((t ':~ lv) ': s) ((t ':~ lv) ': s)) ->
     Either ElabError (ElaboratedInstr shape ret locals labels stackIn)
 sameTypeUnary st stackIn typed = case stackIn of
     SCons (sa :%~ la) rest -> do

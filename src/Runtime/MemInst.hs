@@ -1,4 +1,5 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 
@@ -22,6 +23,13 @@
 
   Loads and stores of a whole value go through 'loadWord' and 'storeWord', a little-endian word
   at a time; the byte-list functions serve the bulk operations, data segments and the WASI host.
+
+  Beside the bytes, a memory keeps a security level for each of them ('labels'), as SecWasm
+  does: a load reads the levels of the bytes it reads and must not yield anything more secret
+  than the level written in the instruction, which is what 'loadChecked' returns the evidence
+  for. Nothing writes the levels yet (TODO(ifc P1): the stores and the bulk operations mark
+  the bytes they write), so every byte is public today; the representation is in place so
+  that they can.
 -}
 module Runtime.MemInst (
     MemInst,
@@ -30,6 +38,10 @@ module Runtime.MemInst (
     memoryPages,
     maxMemoryPages,
     loadWord,
+    LabelsOfRead,
+    SomeLabelsOfRead (..),
+    labelJoinOfRead,
+    loadChecked,
     storeWord,
     readBytes,
     writeBytes,
@@ -38,7 +50,7 @@ module Runtime.MemInst (
 ) where
 
 import Control.Monad (forM_)
-import Data.Bits (shiftL, shiftR, (.|.))
+import Data.Bits (shiftL, shiftR, testBit, (.&.), (.|.))
 import Data.IntMap.Strict (IntMap)
 import Data.IntMap.Strict qualified as IntMap
 import Data.Kind (Type)
@@ -47,21 +59,21 @@ import Data.Vector.Unboxed qualified as UV
 import Data.Vector.Unboxed.Mutable qualified as MV
 import Data.Word (Word32, Word64, Word8)
 
+import Data.Singletons (Sing)
 import Syntax.Types (Limits (..))
+import Syntax.TypesIFC (SSecLevel (..), SecLevel)
 import Validation.Shape (MemShape)
 
 -- *** Linear memory ***
 
-{- | A linear memory: its declared limits, its current size in pages, and the written pages.
+{- | A linear memory: its declared limits, its current size in pages, the written chunks, and
+  the security level of every byte.
 
-  TODO(ifc P1): SecWasm keeps a security level for every byte of memory, at run time, and
-  updates it on every store. So this record needs a second map next to 'pages' that holds the
-  levels. It can be sparse in the same way: a missing page means "all public", just as a
-  missing page of bytes means "all zero", so @memory.grow@ labels new pages public for free and
-  only pages that once held a secret cost anything. The operations change as follows. A load
-  also returns the join of the levels it read, and the interpreter compares it with the
-  instruction's level. A store also sets the levels of the bytes it writes. The bulk operations
-  compute a level per byte (see the TODO on 'Syntax.Instructions.IMemCopy').
+  The levels are sparse in the same way as the bytes: a missing chunk of levels means "all
+  public", just as a missing chunk of bytes means "all zero", so @memory.grow@ labels new pages
+  public for free and only a chunk that once held a secret costs anything. With two levels a
+  byte's level is one bit, so a chunk of levels is an eighth of a chunk of bytes, which keeps
+  the copy a labelled store will have to make small (TODO.md §I).
 -}
 type MemInst :: MemShape -> Type
 data MemInst m = MemInst
@@ -69,6 +81,10 @@ data MemInst m = MemInst
     , pageCount :: !Word32
     , chunks :: !(IntMap (UV.Vector Word8))
     -- ^ by chunk index; an absent chunk is all zeros, a present one is 'chunkSize' bytes long
+    , labels :: !(IntMap (UV.Vector Word8))
+    {- ^ by the same chunk index, one bit per byte, set for 'High; an absent chunk is all 'Low,
+    a present one is an eighth of 'chunkSize' long
+    -}
     }
 
 -- | Bytes per WebAssembly page.
@@ -93,7 +109,7 @@ maxMemoryPages = 65536
 
 -- | Allocate a memory at its declared minimum size, zero-initialised.
 allocMemory :: Limits -> MemInst m
-allocMemory declared = MemInst declared declared.min IntMap.empty
+allocMemory declared = MemInst declared declared.min IntMap.empty IntMap.empty
 
 -- | Size of a memory in whole pages.
 memoryPages :: MemInst m -> Word32
@@ -136,6 +152,51 @@ loadWord mem addr count
         go !i !acc
             | i == count = acc
             | otherwise = go (i + 1) (acc .|. (fromIntegral (fromMaybe 0 (stored UV.!? (offset + i))) `shiftL` (8 * i)))
+
+{- | "The bytes that a read returned had labels joining to @b@." Only 'loadChecked' makes one,
+  and it makes it for the same bytes it returns, so the evidence is about that read: the
+  constructor stays in this module so that nothing else can claim it.
+-}
+newtype LabelsOfRead (b :: SecLevel) = LabelsOfRead (Sing b)
+
+-- | The evidence of a read whose join is not known until the bytes have been looked at.
+data SomeLabelsOfRead where
+    SomeLabelsOfRead :: !(LabelsOfRead b) -> SomeLabelsOfRead
+
+labelJoinOfRead :: LabelsOfRead b -> Sing b
+labelJoinOfRead (LabelsOfRead level) = level
+
+{- | 'loadWord' together with the join of the levels of the bytes it read, for the check a
+  load must make before it may push the value. Inlined so that the pair it returns is taken
+  apart where it is made and never allocated.
+-}
+loadChecked :: MemInst m -> Int -> Int -> Maybe (Word64, SomeLabelsOfRead)
+loadChecked mem addr count = case loadWord mem addr count of
+    Nothing -> Nothing
+    Just word -> Just (word, labelsOfRange mem addr count)
+{-# INLINE loadChecked #-}
+
+{- | The join of the levels of an in-bounds byte range: 'High if any byte is secret. The first
+  guard is the whole cost while no byte has ever been secret; the walk below it is a byte at a
+  time, which is fine until stores set bits (then it should read a chunk at a time, as
+  'loadWord' does).
+-}
+labelsOfRange :: MemInst m -> Int -> Int -> SomeLabelsOfRead
+labelsOfRange mem addr count
+    | IntMap.null mem.labels = allLow
+    | any secretAt [addr .. addr + count - 1] = allHigh
+    | otherwise = allLow
+  where
+    secretAt a =
+        let (chunkIx, offset) = a `quotRem` chunkSize
+         in case IntMap.lookup chunkIx mem.labels of
+                Nothing -> False
+                Just bits -> testBit (fromMaybe 0 (bits UV.!? (offset `shiftR` 3))) (offset .&. 7)
+
+-- Shared constants, so that the common answer is a pointer to a static closure and not a fresh one.
+allLow, allHigh :: SomeLabelsOfRead
+allLow = SomeLabelsOfRead (LabelsOfRead SLow)
+allHigh = SomeLabelsOfRead (LabelsOfRead SHigh)
 
 {- | Write the low @count@ bytes (1 to 8) of @word@, little-endian, at @addr@; 'Nothing' if the
   range falls outside the memory. A word inside one chunk copies that chunk once; a word

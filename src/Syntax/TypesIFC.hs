@@ -41,6 +41,17 @@ $( singletons
 deriving stock instance Eq SecLevel
 deriving stock instance Show SecLevel
 
+{- | The dynamic premises a rule may have. Every instruction names one; most name none.
+
+  Most of SecWasm's premises are decided once, by the validator, and leave no trace in the
+  instruction beyond its type. A few cannot be, because they are about run-time state: the
+  labels of the bytes a load reads, or the callee a table lookup produces. An instruction
+  whose rule has such a premise names it in its type, so that the machine has to show
+  evidence for it before it may step (see "Runtime.Obligation"). 'CalleeWithin' is declared
+  for @call_indirect@ but nothing uses it yet.
+-}
+data DynamicCheck = NoDynamicCheck | BytesBelow SecLevel | CalleeWithin SecLevel
+
 infix 6 :~
 
 {- | A value type together with the security level of the values it classifies: SecWasm's
@@ -105,8 +116,9 @@ type PublicFunc ps rs = 'FuncType (PublicAll ps) (PublicAll rs)
   a class because validation of a decoded module has to construct it at run time, from
   singletons, with 'decideFlow'.
 
-  TODO(ifc P1): no instruction carries this yet. It is the premise of every SecWasm rule with a
-  @⊑@ in it: @local.set@, @global.set@, the stores, the branches and the calls.
+  TODO(ifc P1): only the loads carry this so far, and they carry it at run time (see
+  'Runtime.Obligation.CheckPassed'). It is the premise of every SecWasm rule with a @⊑@ in
+  it: @local.set@, @global.set@, the stores, the branches and the calls.
 -}
 data FlowsInto (l :: SecLevel) (l' :: SecLevel) where
     LowFlowsAnywhere :: FlowsInto 'Low l

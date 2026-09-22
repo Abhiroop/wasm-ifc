@@ -35,7 +35,7 @@ import Syntax.Types (
     SValType (..),
     ValType (..),
  )
-import Syntax.TypesIFC (LValType (..), SLValType (..), SSecLevel (..), SecLevel (..))
+import Syntax.TypesIFC (DynamicCheck (..), LValType (..), SLValType (..), SSecLevel (..), SecLevel (..))
 import Validation.Ref (LocalRef, resolveLocal)
 import Validation.Shape (Elem (..), ModuleShape (..))
 
@@ -56,7 +56,7 @@ publicI32 = SI32 :%~ SLow
 {- | The constant one, public. A constant's level is free in its type (see 'IConst'), so an
   example has to say which level it means wherever nothing else decides it.
 -}
-one :: Instr mod frame labels s (PublicI32 ': s)
+one :: Instr mod frame labels 'NoDynamicCheck s (PublicI32 ': s)
 one = IConst I32IsNum 1
 
 completedI32 :: Outcome mod '[PublicI32] -> Either String Word32
@@ -207,7 +207,7 @@ runIncrement initial = either (Left . show) completedI32 (runFunction globalModu
 secretPlusPublic :: Expr mod frame labels '[] '[SecretI32]
 secretPlusPublic = secret :. one :. IAdd I32IsNum :. INil
   where
-    secret :: Instr mod frame labels s (SecretI32 ': s)
+    secret :: Instr mod frame labels 'NoDynamicCheck s (SecretI32 ': s)
     secret = IConst I32IsNum 42
 
 -- | The instruction count of 'secretPlusPublic'.
