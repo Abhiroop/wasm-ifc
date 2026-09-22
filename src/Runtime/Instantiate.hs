@@ -30,6 +30,7 @@ import Runtime.Trap (Trap)
 import Syntax.Functions (FunctionSpace (..))
 import Syntax.Module (DataSegment (..), ElementSegment (..), Module (..), SomeModule (..))
 import Syntax.Types
+import Validation.Policy (ghostModuleName)
 import Validation.Reflect (NonEmptyMems (..), memsNonEmpty)
 import Validation.Shape
 
@@ -68,6 +69,7 @@ link :: Maybe (NonEmptyMems (ModuleMems shape)) -> Sing fts -> FunctionSpace sha
 link _ SNil NoFunctions = Right FsNil
 link mems (SCons _ rest) (Defined f more) = FsCons (WasmFunc f) <$> link mems rest more
 link mems (SCons (SFuncType psS rsS) rest) (Imported moduleName fieldName more)
+    | moduleName == ghostModuleName = FsCons GhostFunc <$> link mems rest more
     | moduleName /= wasiModuleName = Left (UnsupportedImport moduleName fieldName)
     | otherwise = case resolveWasiImport fieldName of
         Nothing -> Left (UnsupportedImport moduleName fieldName)

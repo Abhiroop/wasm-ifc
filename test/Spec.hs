@@ -192,6 +192,25 @@ spec = do
             elabRunModule declassifying [] `shouldBe` Right ["1"]
             elabRunModule (declassifying {customSections = []}) [] `shouldSatisfy` errorContaining "DeclassifyNotAllowed"
 
+    describe "the ifc import namespace (annotations as calls)" $ do
+        let ghost name ft = RawImport "ifc" name (ImportFunc ft)
+            loadSecret = ghost "load_secret_i32" (FuncType [I32] [I32])
+            storeSecret = ghost "store_secret_i32" (FuncType [I32, I32] [])
+            declassify = ghost "declassify_i32" (FuncType [I32] [I32])
+            withGhosts imports = ghostModule imports [I32]
+        it "a store through the ghost is a secret store: a plain load then traps" $
+            elabRunModule (withGhosts [storeSecret] [Const SI32 0, Const SI32 7, Call (FunctionIdx 0), Const SI32 0, Load SI32 (MemArg 0 0)]) []
+                `shouldSatisfy` trapContaining "InformationFlowViolation"
+        it "a load through the ghost is secret, so it needs declassification to come out" $ do
+            elabRunModule (withGhosts [storeSecret, loadSecret] [Const SI32 0, Const SI32 7, Call (FunctionIdx 0), Const SI32 0, Call (FunctionIdx 1)]) []
+                `shouldSatisfy` errorContaining "ResultMismatch"
+            elabRunModule ((withGhosts [storeSecret, loadSecret, declassify] [Const SI32 0, Const SI32 7, Call (FunctionIdx 0), Const SI32 0, Call (FunctionIdx 1), Call (FunctionIdx 2)]) {customSections = [("ifc", "allow-declassify")]}) []
+                `shouldBe` Right ["7"]
+        it "a ghost must have the type its name says" $
+            elabRunModule (withGhosts [ghost "load_secret_i32" (FuncType [I32] [I64])] [Const SI32 1]) [] `shouldSatisfy` errorContaining "PolicyGhostType"
+        it "a ghost may not be exported" $
+            elabRunModule ((withGhosts [declassify] [Const SI32 1]) {exports = [Export "f" (ExportFunc (FunctionIdx 0))]}) [] `shouldSatisfy` errorContaining "PolicyGhostReferenced"
+
     describe "indirect calls" $ do
         it "go through the table entry, typed" $
             elabRunModule (tableModule [Const SI32 0, CallIndirect (TypeIdx 0)]) [] `shouldBe` Right ["42"]
@@ -528,6 +547,16 @@ singleFunctionModule memories params results locals body =
 twoFunctions :: FuncType -> [RawInstr] -> FuncType -> [RawInstr] -> RawModule
 twoFunctions calleeType callee mainType mainBody =
     moduleOf [] [RawFunction calleeType [] callee, RawFunction mainType [] mainBody] (FunctionIdx 1)
+
+{- | A module with a memory, the given imports first in the function index space, and one
+  function of type @[] -> results@ with the given body, exported as @f@.
+-}
+ghostModule :: [RawImport] -> [ValType] -> [RawInstr] -> RawModule
+ghostModule imports results body =
+    (moduleOf [onePageMemory] [RawFunction (FuncType [] results) [] body] (FunctionIdx (fromIntegral (length imports))))
+        { imports = imports
+        , types = [ft | RawImport _ _ (ImportFunc ft) <- imports] ++ [FuncType [] results]
+        }
 
 -- | A module of the given functions (no globals), exporting one of them as @f@.
 moduleOf :: [RawMemory] -> [RawFunction] -> FunctionIdx -> RawModule

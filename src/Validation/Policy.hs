@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TupleSections #-}
 
 {- | The security policy of a module: where the levels that "Validation.Elaborate" checks come
   from. A decoded module says nothing about levels, so without a policy everything is public
@@ -42,9 +43,19 @@
   TODO(ifc P1): the arrow label (SecWasm's bound on the pc a function may be called from) is
   parsed but only @L@ is accepted, because function types have no such field yet (see
   'Syntax.Instructions.ICall').
-  TODO(ifc P2): the @ifc@ import namespace, whose calls a plain runtime runs through a shim and
-  this stage rewrites into 'Syntax.Instructions.Annotated', 'Relabel' and 'Declassify', so that
-  annotations can live in the source program.
+  Annotations can also live in the source program, as calls to an import module named @ifc@
+  (the /ghost/ functions): a plain runtime runs them through a shim of identities and plain
+  accesses, and this stage rewrites every call to one into the instruction it stands for, so
+  the interpreter never pays the call and a source language needs no new syntax:
+
+  > (import "ifc" "secret_i32"      (func (param i32) (result i32)))  ;; relabel to secret
+  > (import "ifc" "declassify_i32"  (func (param i32) (result i32)))  ;; trusted, needs allow-declassify
+  > (import "ifc" "load_secret_i32" (func (param i32) (result i32)))  ;; a load declared secret
+  > (import "ifc" "store_secret_i32" (func (param i32 i32)))          ;; a store declared secret
+
+  with @i64@, @f32@ and @f64@ likewise, and @public@ in place of @secret@ for the accesses. A
+  ghost keeps its place in the function index space, so nothing else moves; it may not be
+  exported, started, or put in a table, since it exists to be rewritten, not entered.
   TODO(ifc P2): inference of internal function levels from the call graph; today an
   undeclared function is public throughout.
 -}
@@ -59,6 +70,7 @@ module Validation.Policy (
     Assembled (..),
     assemble,
     labelFuncType,
+    ghostModuleName,
 ) where
 
 import Control.Applicative ((<|>))
@@ -73,13 +85,14 @@ import Data.Text.Encoding (decodeUtf8')
 import Data.Word (Word32)
 import Numeric (readHex)
 
+import Data.Singletons (withSomeSing)
 import Syntax.Functions (RawFunction (..))
 import Syntax.Globals (RawGlobal (..))
 import Syntax.Immediates (MemArg (..))
 import Syntax.Indices (FunctionIdx (..), GlobalIdx (..))
 import Syntax.Instructions (RawInstr (..))
 import Syntax.Module
-import Syntax.Types (FuncType, FuncTypeOf (..), GlobalTypeOf (..), SValType (..))
+import Syntax.Types (FuncType, FuncTypeOf (..), GlobalTypeOf (..), SValType (..), ValType (..))
 import Syntax.TypesIFC (LFuncType, LGlobalType, LValType (..), SecLevel (..))
 
 -- | The levels of a function's parameters and results, in declared order.
@@ -124,6 +137,10 @@ data PolicyError
       PolicySectionNotText
     | -- | an arrow label other than @L@ (not supported yet)
       PolicyArrowNotSupported
+    | -- | an @ifc@ import with a name this stage does not know, or the wrong type for it
+      PolicyGhostType Text
+    | -- | an @ifc@ import that is exported, started or placed in a table
+      PolicyGhostReferenced Text
     deriving stock (Eq, Show)
 
 -- *** Parsing ***
@@ -260,9 +277,56 @@ data Assembled = Assembled
     , annotated :: RawModule
     }
 
+-- | The import module whose functions are annotations in disguise.
+ghostModuleName :: Text
+ghostModuleName = "ifc"
+
+-- | What a ghost function stands for.
+data Ghost
+    = GhostLoad SecLevel ValType
+    | GhostStore SecLevel ValType
+    | GhostRelabel SecLevel ValType
+    | GhostDeclassify SecLevel ValType
+
+-- | The ghost an import name denotes, if any (see the module header for the names).
+ghostByName :: Text -> Maybe Ghost
+ghostByName name = case T.splitOn "_" name of
+    ["secret", t] -> GhostRelabel High <$> valueType t
+    ["declassify", t] -> GhostDeclassify Low <$> valueType t
+    ["load", l, t] -> GhostLoad <$> level l <*> valueType t
+    ["store", l, t] -> GhostStore <$> level l <*> valueType t
+    _ -> Nothing
+  where
+    level "secret" = Just High
+    level "public" = Just Low
+    level _ = Nothing
+    valueType "i32" = Just I32
+    valueType "i64" = Just I64
+    valueType "f32" = Just F32
+    valueType "f64" = Just F64
+    valueType _ = Nothing
+
+-- | The type a ghost must be imported at.
+ghostType :: Ghost -> FuncType
+ghostType ghost = case ghost of
+    GhostLoad _ t -> FuncType [I32] [t]
+    GhostStore _ t -> FuncType [I32, t] []
+    GhostRelabel _ t -> FuncType [t] [t]
+    GhostDeclassify _ t -> FuncType [t] [t]
+
+-- | The instruction a call to a ghost stands for.
+ghostInstruction :: Ghost -> RawInstr
+ghostInstruction ghost = case ghost of
+    GhostLoad l t -> Annotated l (withSomeSing t (\st -> Load st (MemArg 0 0)))
+    GhostStore l t -> Annotated l (withSomeSing t (\st -> Store st (MemArg 0 0)))
+    GhostRelabel l _ -> Relabel l
+    GhostDeclassify l _ -> Declassify l
+
 -- | Resolve a policy against a module (see the module header for the order of precedence).
 assemble :: Policy -> RawModule -> Either PolicyError Assembled
 assemble policy m = do
+    ghosts <- Map.fromList <$> sequence [(i,) <$> ghostOf imp | (i, imp) <- zip [0 ..] m.imports, imp.moduleName == ghostModuleName]
+    mapM_ (notAGhost ghosts) ([(e.name, i) | e <- m.exports, ExportFunc (FunctionIdx i) <- [e.desc]] ++ [("start", i) | Just (FunctionIdx i) <- [m.start]] ++ [("elem", i) | seg <- m.elementSegments, FunctionIdx i <- seg.functions])
     mapM_ (knownFunction . fst) (Map.toList policy.functionsByIndex)
     mapM_ (knownFunction . fst) (Map.toList policy.loadDefaultsByIndex)
     mapM_ (knownExport . fst) (Map.toList policy.exportedFunctions)
@@ -279,9 +343,14 @@ assemble policy m = do
             , globalTypes
             , loadDefaults
             , declassify = policy.declassifyAllowed
-            , annotated = withFunctions (zipWith annotateFunction [fromIntegral (length m.imports) ..] m.functions)
+            , annotated = withFunctions (zipWith (annotateFunction ghosts) [fromIntegral (length m.imports) ..] m.functions)
             }
   where
+    ghostOf (RawImport _ name (ImportFunc declared)) = case ghostByName name of
+        Just ghost | declared == ghostType ghost -> Right ghost
+        _ -> Left (PolicyGhostType name)
+    notAGhost :: Map Word32 Ghost -> (Text, Word32) -> Either PolicyError ()
+    notAGhost ghosts (what, i) = when (Map.member i ghosts) (Left (PolicyGhostReferenced what))
     -- The module with its bodies replaced (a construction, since the field name is shared).
     withFunctions fs =
         RawModule
@@ -336,7 +405,19 @@ assemble policy m = do
     -- Write the site declarations into a body: each memory access, in code order, takes the
     -- level declared for its position, else the level of the region a constant address
     -- falls in.
-    annotateFunction i (RawFunction sig locals body) = RawFunction sig locals (fst (annotateSeq i 0 body))
+    annotateFunction ghosts i (RawFunction sig locals body) = RawFunction sig locals (lowerGhosts ghosts (fst (annotateSeq i 0 body)))
+    -- Rewrite every call to a ghost into the instruction it stands for; after the site
+    -- annotation, so the accesses it introduces do not shift the positions a tool computed
+    -- from the module as written.
+    lowerGhosts :: Map Word32 Ghost -> [RawInstr] -> [RawInstr]
+    lowerGhosts ghosts = map lower
+      where
+        lower instr = case instr of
+            Call (FunctionIdx f) | Just ghost <- Map.lookup f ghosts -> ghostInstruction ghost
+            Block bt b -> Block bt (map lower b)
+            Loop bt b -> Loop bt (map lower b)
+            If bt t e -> If bt (map lower t) (map lower e)
+            other -> other
     annotateSeq :: Word32 -> Word32 -> [RawInstr] -> ([RawInstr], Word32)
     annotateSeq _ n [] = ([], n)
     -- A load whose address is a constant: @i32.const k; load@.

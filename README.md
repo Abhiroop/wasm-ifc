@@ -34,7 +34,9 @@ The three layers follow one naming convention (with `Raw` for the decoder's unty
   dynamic check). Where the levels come from is the module's *policy* (`Validation.Policy`): a
   text format, carried in the module's `ifc` custom section or in a file given with
   `--policy`, that declares the interface and memory accesses; everything undeclared is public
-  or inferred. The checks still missing are marked `TODO(ifc …)` beside the code they belong to.
+  or inferred. Annotations can also be written in the source program as calls to an import
+  module `ifc` (`load_secret_i32`, `secret_i32`, `declassify_i32`, …), which a plain runtime
+  serves with a shim and this one rewrites into the instructions they stand for. The checks still missing are marked `TODO(ifc …)` beside the code they belong to.
 * **Validation** (`Validation.*`): the type-level *shapes* the syntax is indexed by
   (`Validation.Shape`: `ModuleShape`, `MemShape`, `Append`, `Elem`), the singleton witnesses
   and decidable equality (`Validation.Reflect`), and the elaborator (`Validation.Elaborate`),

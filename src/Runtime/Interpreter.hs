@@ -144,6 +144,12 @@ import Validation.Shape (Append, BranchTarget (..), DataShape (..), Elem (..), F
 -}
 data FuncInst (mod :: ModuleShape) (ft :: LFuncType) where
     WasmFunc :: Function mod ft -> FuncInst mod ft
+    {- | An import from the @ifc@ module: an annotation in the shape of a function
+    ("Validation.Policy"). Assembly rewrote every call to it and refused to export it, start
+    it or put it in a table, so it is never entered; it still has to occupy its place in the
+    index space, and entering it is the one defined outcome left, a trap.
+    -}
+    GhostFunc :: FuncInst mod ft
     HostFunc :: (ModuleMems mod ~ (mem ': mems)) => WasiFunc ft -> FuncInst mod ft
 
 -- | The instance of a module's function index space: one 'FuncInst' per type in 'ModuleFuncs'.
@@ -490,6 +496,7 @@ enterCall funcs store locals witness ix stack rest control = case getFunc ix fun
             let (args, below) = splitStack witness stack
                 suspended = Suspended (appendFromSing resultsS) locals below rest control
              in Right (HostCall (HostRequest wasiFunc args store suspended))
+    GhostFunc -> Left InformationFlowViolation
   where
     depth = activationDepth control + 1
 
@@ -733,6 +740,7 @@ runFunction tm (HostFunc wasiFunc) args = case wasiFuncType wasiFunc of
     SFuncType _ resultsS ->
         let store = moduleToStore tm
          in Right (NeedsHost (HostRequest wasiFunc args store (Suspended (appendNil resultsS) noLocals VNil INil EntryBoundary)))
+runFunction _ GhostFunc _ = Left InformationFlowViolation
 
 {- *** Numeric dispatch ***
 
