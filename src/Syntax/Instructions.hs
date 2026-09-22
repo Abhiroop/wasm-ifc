@@ -446,8 +446,17 @@ data
        A loop's body can run again, so it must be checked at a pc that still holds when control
        comes back: the entry it starts at, @pcLoop@, is at least the current pc and at least
        the entry the body ends with. (The @ifc@ branch asks for the same as an annotation.)
-       TODO(ifc P2): SecWasm also raises the levels of the values already on the stack of the
-       blocks a branch leaves, which its proof uses. Neither the @ifc@ branch nor this does.
+       SecWasm also raises the levels of the values already on the stack of the blocks a
+       conditional branch leaves (its @lift@ on the type stack), because its confinement lemma
+       needs the whole top of the stack to be secret after a secret decision. This system does
+       not, and does not need to for soundness, because every place a value can be observed
+       also checks the pc: a write to a local, a global or memory, a call, @memory.grow@, and
+       the values a branch or @return@ carries ('AllAtLeast'), while a block's results are
+       forced up by any carrying branch into it and relabelled at its end. A public value left
+       on the stack across a secret branch therefore cannot reach anything public while the pc
+       is raised, and once the pc has fallen back the decision no longer determines whether
+       the value is there. The difference matters for the proof, which cannot reuse the paper's
+       lemma as stated, and for nothing the validator accepts or rejects.
        A body may produce its results at lower levels than the block declares: the validator
        then ends it with an 'IRelabelResults', which is also how the two arms of an @if@ meet at
        one type. The validator chooses a block's result levels itself, since a decoded block type

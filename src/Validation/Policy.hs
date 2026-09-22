@@ -56,8 +56,15 @@
   with @i64@, @f32@ and @f64@ likewise, and @public@ in place of @secret@ for the accesses. A
   ghost keeps its place in the function index space, so nothing else moves; it may not be
   exported, started, or put in a table, since it exists to be rewritten, not entered.
-  TODO(ifc P2): inference of internal function levels from the call graph; today an
-  undeclared function is public throughout.
+  TODO(ifc P2): inference of the levels of undeclared internal functions; today they are
+  public throughout, so a helper that receives a secret must be declared by index. Two ways to
+  build it, and the choice is Daniel's: (a) re-run elaboration with the levels raised whenever
+  it fails on a level at a call or a result, which reuses the typed rules unchanged and is sound
+  by construction, but re-elaborates the whole module once per raised level and needs the
+  error to name the function and position; (b) a separate level-flow analysis over the raw
+  instructions, one pass with a fixpoint, which is fast but a second copy of the rules that
+  can drift from the typed ones. The arrow label should come first either way, since an
+  inferred function is only useful if it can also be called from a secret context.
 -}
 module Validation.Policy (
     Policy (..),
