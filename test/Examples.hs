@@ -222,8 +222,9 @@ secretPlusPublic = secret :. one :. IAdd I32IsNum :. INil
   @if@ the pc is 'High, so 'ILocalSet' asks for a proof that 'High flows into 'Low, which does
   not exist: the only way to write the body below is with a hole where that proof should go.
 
-  TODO(ifc P2): with the writes to memory and the calls still unchecked, the same leak through
-  a store or a call still compiles; see the TODOs on 'IStore' and 'ICall'.
+  A store under the same condition is checked the same way ('secretStore' below shows the
+  store rules); a call is not yet, since calls are only allowed at a public pc until function
+  types carry a bound (see the TODO on 'ICall').
 -}
 leakThroughControl :: Expr mod ('FrameShape '[PublicI32] '[]) '[ '[]] '[ 'Low] '[ 'Low] '[SecretI32] '[]
 leakThroughControl =

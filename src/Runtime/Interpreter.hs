@@ -203,11 +203,9 @@ data ModuleInst (mod :: ModuleShape) = ModuleInst
    The pc stack is a static index: it is threaded through every 'Expr' but no entry of this
    control stack holds it, and no rule of 'step' reads it.
 
-   TODO(ifc P1): SecWasm checks most flows during validation, but not memory reads: those are
-   checked at run time, so 'step' has work to do. A load joins the levels of the bytes it reads
-   and traps if the result exceeds the level written in the instruction; a store marks the bytes
-   it writes with its level; @memory.grow@ marks the new pages public. The byte levels live in
-   'Runtime.MemInst.MemInst'.
+   SecWasm checks most flows during validation, but not memory reads: those are checked at
+   run time ('checkedLoad'), a store marks the bytes it writes with its level, and
+   @memory.grow@ leaves new pages public. The byte levels live in 'Runtime.MemInst.MemInst'.
 -}
 data
     Control
