@@ -34,7 +34,7 @@
   > export global key : H
   > load 3 5 : H               ; the sixth memory access of function 3
   > store 3 2 : H
-  > region 0x1000 0x1400 : H   ; addresses in [0x1000, 0x1400) hold secrets
+  > region 0x1000 0x1400 : H   ; addresses in [0x1000, 0x1400) hold secrets; overlapping regions must agree
   > load-default : L
   > load-default func 3 : H
   > load-default export check : H
@@ -325,6 +325,7 @@ ghostInstruction ghost = case ghost of
 -- | Resolve a policy against a module (see the module header for the order of precedence).
 assemble :: Policy -> RawModule -> Either PolicyError Assembled
 assemble policy m = do
+    unless (null [() | (lo, hi, l) <- policy.regions, (lo', hi', l') <- policy.regions, l /= l', lo < hi', lo' < hi]) (Left (PolicyConflict "region"))
     ghosts <- Map.fromList <$> sequence [(i,) <$> ghostOf imp | (i, imp) <- zip [0 ..] m.imports, imp.moduleName == ghostModuleName]
     mapM_ (notAGhost ghosts) ([(e.name, i) | e <- m.exports, ExportFunc (FunctionIdx i) <- [e.desc]] ++ [("start", i) | Just (FunctionIdx i) <- [m.start]] ++ [("elem", i) | seg <- m.elementSegments, FunctionIdx i <- seg.functions])
     mapM_ (knownFunction . fst) (Map.toList policy.functionsByIndex)

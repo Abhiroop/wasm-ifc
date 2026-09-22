@@ -18,6 +18,7 @@ module Examples (
     runSpinFor,
     labelledSumLength,
     leakLength,
+    secretStoreLength,
 ) where
 
 import Data.Word (Word32)
@@ -26,9 +27,10 @@ import Data.Singletons.Base.TH (SList (SCons, SNil))
 import Runtime.Interpreter
 import Runtime.Stack
 import Syntax.Functions (Function (..), FunctionBody)
-import Syntax.Immediates (NumWithSign (..), Signedness (..))
+import Syntax.Immediates (MemArg (..), NumWithSign (..), Signedness (..))
 import Syntax.Instructions
 import Syntax.Types (
+    AddrType (..),
     FuncTypeOf (..),
     GlobalTypeOf (..),
     IsInt (..),
@@ -39,7 +41,7 @@ import Syntax.Types (
  )
 import Syntax.TypesIFC (FlowsInto (..), LValType (..), SLValType (..), SSecLevel (..), SecLevel (..))
 import Validation.Ref (LocalRef, resolveLocal)
-import Validation.Shape (Append (..), BranchTarget (..), Elem (..), FrameLocals, FrameShape (..), ModuleShape (..))
+import Validation.Shape (Append (..), BranchTarget (..), Elem (..), FrameLocals, FrameShape (..), MemShape (..), ModuleShape (..))
 
 {- | The single i32 a completed run produced. (These modules import nothing, so a call into
 the host cannot arise; the case is still spelled out because the type admits it.)
@@ -234,10 +236,41 @@ leakThroughControl =
     noSuchProof :: FlowsInto 'High 'Low
     noSuchProof = error "unreachable: a secret pc never flows into a public local"
 
--- | The instruction counts of 'secretPlusPublic' and 'leakThroughControl'.
-labelledSumLength, leakLength :: Int
+-- | A module shape with one memory, which is all the load and store rules ask of the module.
+type ExampleShape = 'ModuleShape '[] '[] '[ 'MemShape 'AddrI32 1 'Nothing] '[] '[]
+
+{- | Writing a secret into memory. The store declares the level its bytes get ('High here) and
+  carries the proof that what flows into it may: the pc, the address and the value joined,
+  which is 'High because the value is. At run time the bytes are marked secret, and a later
+  load that declares 'Low traps on them.
+
+  The program this rejects is the explicit leak: the same store declaring its bytes public.
+  The proof it would need, that 'High flows into 'Low, has no constructor, and the only
+  constructor whose source is 'High pins the target to 'High, so GHC refuses the declared level:
+
+  >     store = IStore SLow HighFlowsToHigh I32IsNum (MemArg 2 0)
+  >
+  >     • Couldn't match type ‘Low’ with ‘High’
+  >       Expected: Sing High
+  >         Actual: SSecLevel Low
+  >     • In the first argument of ‘IStore’, namely ‘SLow’
+
+  (Taken from the experiment on the @refactor-pcc@ branch, which modelled memory as declared
+  spans with static labels; the example carries over to the per-byte model, the verdict with it.)
+-}
+secretStore :: Expr ExampleShape frame labels ('Low ': pcs) ('Low ': pcs) '[] '[]
+secretStore = one :. secretValue :. store :. INil
+  where
+    secretValue :: Instr ExampleShape frame labels ('Low ': pcs) ('Low ': pcs) s (SecretI32 ': s)
+    secretValue = IConst @'High I32IsNum 7
+    store :: Instr ExampleShape frame labels ('Low ': pcs) ('Low ': pcs) (SecretI32 ': PublicI32 ': s) s
+    store = IStore SHigh HighFlowsToHigh I32IsNum (MemArg 2 0)
+
+-- | The instruction counts of 'secretPlusPublic', 'leakThroughControl' and 'secretStore'.
+labelledSumLength, leakLength, secretStoreLength :: Int
 labelledSumLength = exprLength secretPlusPublic
 leakLength = exprLength leakThroughControl
+secretStoreLength = exprLength secretStore
 
 exprLength :: Expr mod frame labels p q s s' -> Int
 exprLength INil = 0

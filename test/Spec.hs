@@ -23,7 +23,7 @@ import Test.Hspec.Hedgehog (forAll, hedgehog, (===))
 
 import Codec.Wasm (decodeModule)
 import Data.Map.Strict qualified as Map
-import Examples (labelledSumLength, leakLength, runFactorial, runIncrement, runSpinFor, runSquare)
+import Examples (labelledSumLength, leakLength, runFactorial, runIncrement, runSpinFor, runSquare, secretStoreLength)
 import Runtime.Bytes (bytesOfWord32, bytesOfWord64, word32OfBytes, word64OfBytes)
 import Runtime.Convert (convertVal)
 import Runtime.Host (WasiFunc (..))
@@ -59,6 +59,7 @@ spec = do
         it "increment 41 = 42" $ runIncrement 41 `shouldBe` Right 42
         it "a secret plus a public value is typed secret (the first labelled program)" $ labelledSumLength `shouldBe` 3
         it "a public write under a secret condition needs a proof that does not exist" $ leakLength `shouldBe` 1
+        it "a secret stored into memory declares its bytes secret, statically" $ secretStoreLength `shouldBe` 3
 
     describe "elaborate + run (built from RawModule)" $ do
         it "adds two i32 parameters" $
@@ -167,6 +168,9 @@ spec = do
         it "two sources may speak about the same item only if they agree" $ do
             mergePolicies (policy "global 0 : H") (policy "global 0 : L") `shouldBe` Left (PolicyConflict "global 0")
             fmap (.globalsByIndex) (mergePolicies (policy "global 0 : H") (policy "global 0 : H\nload-default : H")) `shouldBe` Right (Map.fromList [(0, High)])
+        it "regions that overlap must agree" $ do
+            elabRunWithPolicy "region 0 8 : H\nregion 4 12 : L" (withMemory [] [] [] []) [] `shouldSatisfy` errorContaining "PolicyConflict \"region\""
+            elabRunWithPolicy "region 0 8 : H\nregion 4 12 : H" (withMemory [] [] [] []) [] `shouldBe` Right []
         it "a declaration must name something the module has" $
             elabRunWithPolicy "export g : -> " (singleFunctionModule [] [] [] [] []) [] `shouldSatisfy` errorContaining "PolicyUnknown \"export g\""
         it "a secret parameter cannot be returned by a public function" $

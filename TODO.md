@@ -377,6 +377,21 @@ Open P0/P1 correctness items live in the plan above (section **P0**); the list b
   functions; P2 the `ifc` import namespace lowered to annotations, inference of internal function
   levels, relabelling inserted for call arguments and block results, raising stack values on a
   branch, the two-run property test; P3 naming.
+  **A finished experiment (branch `refactor-pcc`, Abhiroop, 2026-09-22; not merged).** The same
+  pc and witness machinery on the old parallel GADT, plus a different memory model: a module
+  declares a `MemPolicy`, consecutive labelled spans laid end to end (a span's base is the sum
+  of the lengths before it, so overlapping spans cannot be written down), and every load and
+  store carries a `SpanAt` proof naming its span, which computes the base as it walks. A span's
+  label is then immutable, so T-LOAD's check becomes static, nothing about labels survives to
+  run time, and the only dynamic obligation is a bounds check against the span. What it costs
+  is what made us keep SecWasm's per-byte memory: no relabelling store, so a public store over
+  secret bytes stays secret; a layout every program must declare, where compiled code puts
+  secrets and public data in one heap and stack; and no writes at computed addresses across
+  spans. What we took: overlapping regions with different levels are now a policy conflict
+  instead of being joined, the labelled memory example with GHC's verdict on the leaking store,
+  and this record. Worth revisiting as an optimisation, not a model: a region a policy marks
+  as fixed could let the validator elide the run-time check and the label store for accesses it
+  can prove stay inside it.
   References (folded in from the old `discussions/READING_LIST.md`):
   - SecWasm — the IFC model we follow: <https://plas2022.github.io/files/pdf/SecWasm.pdf>
     Full version with every rule (T-IF, T-LOOP, T-SELECT, the sets, E-*-TRAP):
