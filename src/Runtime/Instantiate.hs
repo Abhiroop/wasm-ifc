@@ -16,9 +16,7 @@ import Data.Bifunctor (first)
 import Data.ByteString qualified as BS
 import Data.Singletons (Sing, fromSing)
 import Data.Singletons.Base.TH (SList (SCons, SNil))
-import Data.Singletons.Decide (decideEquality)
 import Data.Text (Text)
-import Data.Type.Equality ((:~:) (Refl))
 
 import Runtime.Host (SomeWasiFunc (..), resolveWasiImport, wasiFuncType, wasiModuleName)
 import Runtime.Interpreter (FuncInst (..), FuncSpaceInst (..), ModuleInst (..), Outcome (..), getFunc, runFunction)
@@ -30,6 +28,7 @@ import Runtime.Trap (Trap)
 import Syntax.Functions (FunctionSpace (..))
 import Syntax.Module (DataSegment (..), ElementSegment (..), Module (..), SomeModule (..))
 import Syntax.Types
+import Syntax.TypesIFC (decideSameValueTypes)
 import Validation.Policy (ghostModuleName)
 import Validation.Reflect (NonEmptyMems (..), memsNonEmpty)
 import Validation.Shape
@@ -75,10 +74,10 @@ link mems (SCons (SFuncType psS rsS) rest) (Imported moduleName fieldName more)
         Nothing -> Left (UnsupportedImport moduleName fieldName)
         Just (SomeWasiFunc wasiFunc) -> case wasiFuncType wasiFunc of
             SFuncType hostPsS hostRsS -> do
-                Refl <- note (ImportTypeMismatch fieldName) (decideEquality psS hostPsS)
-                Refl <- note (ImportTypeMismatch fieldName) (decideEquality rsS hostRsS)
+                argsAgree <- note (ImportTypeMismatch fieldName) (decideSameValueTypes psS hostPsS)
+                resultsAgree <- note (ImportTypeMismatch fieldName) (decideSameValueTypes hostRsS rsS)
                 NonEmptyMems <- note WasiNeedsMemory mems
-                FsCons (HostFunc wasiFunc) <$> link mems rest more
+                FsCons (HostFunc wasiFunc argsAgree resultsAgree) <$> link mems rest more
 
 -- | Every memory at its declared minimum size, from the shape.
 allocateMemories :: Sing (ms :: [MemShape]) -> MemSpaceInst ms

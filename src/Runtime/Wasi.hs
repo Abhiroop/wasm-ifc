@@ -104,7 +104,7 @@ import Runtime.Interpreter (HostRequest (..), currentMem, resumeWith, storeMem)
 import Runtime.MemInst (MemInst, readBytes, writeBytes)
 import Runtime.Module (Invocation (..), RunError, SomeHostRequest (..), SomeModuleInst, Value, continueWith, invokeExport)
 import Runtime.Numeric (toSigned64)
-import Runtime.Stack (ValueStack (..))
+import Runtime.Stack (ValueStack (..), retagStack)
 import Syntax.Types (FuncTypeOf (..), ValType (..))
 import Syntax.TypesIFC (LabelledValType, Public)
 import Validation.Shape (MemShape)
@@ -955,10 +955,10 @@ runWithWasi cfg wasmModule name args = do
     let serve :: Either RunError Invocation -> IO (Either RunError Completion)
         serve (Left err) = pure (Left err)
         serve (Right (Returned finished results)) = pure (Right (Ran finished results))
-        serve (Right (CalledHost (SomeHostRequest shapeS funcs exports rsS (HostRequest wasiFunc callArgs store suspended)))) = do
+        serve (Right (CalledHost (SomeHostRequest shapeS funcs exports rsS (HostRequest wasiFunc callArgs store resultsAgree suspended)))) = do
             outcome <- runWasiCall host wasiFunc callArgs (currentMem store)
             case outcome of
                 WasiExit code -> pure (Right (Exited code))
                 WasiReturn results mem' ->
-                    serve (continueWith shapeS funcs exports rsS (resumeWith (storeMem mem' store) results suspended))
+                    serve (continueWith shapeS funcs exports rsS (resumeWith (storeMem mem' store) (retagStack resultsAgree results) suspended))
     serve (invokeExport wasmModule name args)

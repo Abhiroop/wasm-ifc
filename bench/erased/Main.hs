@@ -724,7 +724,7 @@ targetIndex (TargetThere rest) = S (targetIndex rest)
 eraseFunctions :: FuncSpaceInst mod fts -> Funcs
 eraseFunctions FsNil = NoFuncs
 eraseFunctions (FsCons (WasmFunc (Function _ declared body)) rest) = FuncCons (WasmFunction (unlabelledTypes declared) (eraseExpr body)) (eraseFunctions rest)
-eraseFunctions (FsCons (HostFunc _) rest) = FuncCons HostFunction (eraseFunctions rest)
+eraseFunctions (FsCons HostFunc {} rest) = FuncCons HostFunction (eraseFunctions rest)
 eraseFunctions (FsCons GhostFunc rest) = FuncCons HostFunction (eraseFunctions rest)
 
 -- | The twin knows no security levels: a labelled stack erases to its value types.

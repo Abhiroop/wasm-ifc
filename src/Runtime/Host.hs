@@ -30,16 +30,19 @@ import Syntax.TypesIFC (LabelledFuncType, PublicFunc)
 wasiModuleName :: Text
 wasiModuleName = "wasi_snapshot_preview1"
 
-{- TODO(ifc P1): every host function is declared public throughout ('PublicFunc'), which says
-   nothing useful yet. Each needs a real labelled type. Some are sources of secrets: @fd_read@
-   from a secret file yields secret bytes. Some are sinks: @fd_write@ to a public descriptor
-   must only see public bytes, and must not happen inside a secret branch at all, because the
-   write itself reveals the branch. Most are neither (@args_get@, @clock_time_get@). The
-   difficulty is that a file descriptor is a run-time number, so its level cannot appear in a
-   static type. One way out: give each preopened directory a level in
-   'Runtime.Wasi.WasiConfig', let opened files inherit it, and have the driver check buffers
-   against it at run time, byte by byte (see 'Runtime.Interpreter.HostRequest'). SecWasm leaves
-   host functions out of scope, so there is no rule to copy here. -}
+{- Every host function has the public type here, since a host implementation knows nothing of
+   levels; the type a module imports it at comes from the policy (@import
+   wasi_snapshot_preview1.fd_read : … -> H@), and 'Runtime.Instantiate' links the two when the
+   value types agree, retagging the words at the boundary. That covers the scalar arguments
+   and results.
+   TODO(ifc P1): the buffers are the open half. @fd_read@ writes bytes into memory and
+   @fd_write@ reads them, and their level is the file descriptor's, a run-time number: one way
+   is a level per preopened directory in 'Runtime.Wasi.WasiConfig', inherited through
+   @path_open@, with the driver labelling the bytes a read delivers and checking the bytes a
+   write takes against it, byte by byte, at 'Runtime.Interpreter.HostRequest'. Whether that
+   is the attacker model wanted (SecWasm's attacker sees only public globals, and leaves host
+   imports out) is the decision still to take. Until then a host read delivers public bytes
+   and a host write checks nothing. -}
 data WasiFunc (ft :: LabelledFuncType) where
     -- | @args_get(argv, argv_buf)@
     ArgsGet :: WasiFunc (PublicFunc '[ 'I32, 'I32] '[ 'I32])

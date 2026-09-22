@@ -34,6 +34,7 @@ module Runtime.Stack (
     dropSegment,
     appendStack,
     relabelStack,
+    retagStack,
     appendWith,
     splitStack,
     seedLocals,
@@ -113,6 +114,11 @@ data GlobalSpaceInst gs where
 relabelStack :: SegmentFlows from to -> ValueStack from -> ValueStack to
 relabelStack NoValuesFlow VNil = VNil
 relabelStack (ValueFlows _ rest) (v :# vs) = v :# relabelStack rest vs
+
+-- | Re-index a stack under other levels for the same value types: the host boundary's retagging.
+retagStack :: SameValueTypes from to -> ValueStack from -> ValueStack to
+retagStack NoValues VNil = VNil
+retagStack (SameValue rest) (v :# vs) = v :# retagStack rest vs
 
 -- | Concatenate two stacks; the upper one ends up on top. Purely structural.
 appendStack :: ValueStack a -> ValueStack b -> ValueStack (a ++ b)

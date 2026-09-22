@@ -133,8 +133,7 @@ import Syntax.Instructions (
  )
 import Syntax.Types
 import Syntax.TypesIFC
-import Validation.Reflect (appendNil)
-import Validation.Shape (Append, BranchTarget (..), DataShape (..), Elem (..), FrameShape (..), ModuleData, ModuleFuncs, ModuleGlobals, ModuleMems, ModuleShape, ModuleTables, SomeFuncRef (..), appendFromSing)
+import Validation.Shape (Append (..), BranchTarget (..), DataShape (..), Elem (..), FrameShape (..), ModuleData, ModuleFuncs, ModuleGlobals, ModuleMems, ModuleShape, ModuleTables, SomeFuncRef (..))
 
 -- *** Module and runtime state ***
 
@@ -150,7 +149,16 @@ data FuncInst (mod :: ModuleShape) (ft :: LabelledFuncType) where
     index space, and entering it is the one defined outcome left, a trap.
     -}
     GhostFunc :: FuncInst mod ft
-    HostFunc :: (ModuleMems mod ~ (mem ': mems)) => WasiFunc ft -> FuncInst mod ft
+    {- | A host function, which the module imports at a type its policy labels while the host's
+    own type is public throughout: the two witnesses say the value types agree, and the
+    boundary retags the words each way.
+    -}
+    HostFunc ::
+        (ModuleMems mod ~ (mem ': mems)) =>
+        WasiFunc ('FuncType hostParams hostResults) ->
+        SameValueTypes ps hostParams ->
+        SameValueTypes hostResults rs ->
+        FuncInst mod ('FuncType ps rs)
 
 -- | The instance of a module's function index space: one 'FuncInst' per type in 'ModuleFuncs'.
 data FuncSpaceInst (mod :: ModuleShape) (fts :: [LabelledFuncType]) where
@@ -286,9 +294,10 @@ data StepResult (mod :: ModuleShape) (res :: LabelledResultType) where
 data HostRequest (mod :: ModuleShape) (res :: LabelledResultType) where
     HostRequest ::
         (ModuleMems mod ~ (mem ': mems)) =>
-        WasiFunc ('FuncType ps rs) ->
-        ValueStack ps ->
+        WasiFunc ('FuncType hostParams hostResults) ->
+        ValueStack hostParams ->
         Store mod ->
+        SameValueTypes hostResults rs ->
         Suspended mod res rs ->
         HostRequest mod res
 
@@ -491,14 +500,23 @@ enterCall funcs store locals flows witness ix stack rest control = case getFunc 
             let (args, below) = splitStack witness stack
                 calleeLocals = seedLocals flows params declared args
              in Right (Stepped (Config store calleeLocals VNil body (CallBoundary depth below locals rest control)))
-    HostFunc wasiFunc -> case wasiFuncType wasiFunc of
-        SFuncType _ resultsS ->
+    HostFunc wasiFunc argsAgree resultsAgree -> case wasiFuncType wasiFunc of
+        SFuncType _ _ ->
             let (args, below) = splitStack witness stack
-                suspended = Suspended (appendFromSing resultsS) locals below rest control
-             in Right (HostCall (HostRequest wasiFunc (relabelStack flows args) store suspended))
+                suspended = Suspended (appendFromSameValues resultsAgree) locals below rest control
+             in Right (HostCall (HostRequest wasiFunc (retagStack argsAgree (relabelStack flows args)) store resultsAgree suspended))
     GhostFunc -> Left InformationFlowViolation
   where
     depth = activationDepth control + 1
+
+-- | The 'Append' witness for a result segment whose shape a 'SameValueTypes' witness gives.
+appendFromSameValues :: SameValueTypes hostResults rs -> Append rs below (rs ++ below)
+appendFromSameValues NoValues = ANil
+appendFromSameValues (SameValue rest) = ACons (appendFromSameValues rest)
+
+appendNilSameValues :: SameValueTypes hostResults rs -> Append rs '[] rs
+appendNilSameValues NoValues = ANil
+appendNilSameValues (SameValue rest) = ACons (appendNilSameValues rest)
 
 {- | The most activations the machine allows on the control stack at once; a call that would
   open one more traps with 'CallStackExhausted'. The spec leaves the bound to the implementation
@@ -736,10 +754,9 @@ runFunction tm (WasmFunc (Function params declared body)) args = do
   where
     store = moduleToStore tm
     locals = seedLocals (segmentSelf params) params declared args
-runFunction tm (HostFunc wasiFunc) args = case wasiFuncType wasiFunc of
-    SFuncType _ resultsS ->
-        let store = moduleToStore tm
-         in Right (NeedsHost (HostRequest wasiFunc args store (Suspended (appendNil resultsS) noLocals VNil INil EntryBoundary)))
+runFunction tm (HostFunc wasiFunc argsAgree resultsAgree) args =
+    let store = moduleToStore tm
+     in Right (NeedsHost (HostRequest wasiFunc (retagStack argsAgree args) store resultsAgree (Suspended (appendNilSameValues resultsAgree) noLocals VNil INil EntryBoundary)))
 runFunction _ GhostFunc _ = Left InformationFlowViolation
 
 {- *** Numeric dispatch ***

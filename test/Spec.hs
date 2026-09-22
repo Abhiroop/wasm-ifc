@@ -31,7 +31,7 @@ import Runtime.Instantiate (InstantiationError (..), instantiate)
 import Runtime.Interpreter (HostRequest (..), callDepthBound, resumeWith)
 import Runtime.Module (Invocation (..), RunError (..), SomeHostRequest (..), SomeModuleInst, Value (..), continueWith, exportSignature, invokeExport, readGlobalExport, renderValue)
 import Runtime.Numeric (intDiv32)
-import Runtime.Stack (ValueStack (..))
+import Runtime.Stack (ValueStack (..), retagStack)
 import Runtime.Trap (Trap (..))
 import Runtime.Wasi (Completion (..), WasiConfig (..), runWithWasi)
 import Syntax.Functions (RawFunction (..))
@@ -171,6 +171,11 @@ spec = do
         it "regions that overlap must agree" $ do
             elabRunWithPolicy "region 0 8 : H\nregion 4 12 : L" (withMemory [] [] [] []) [] `shouldSatisfy` errorContaining "PolicyConflict \"region\""
             elabRunWithPolicy "region 0 8 : H\nregion 4 12 : H" (withMemory [] [] [] []) [] `shouldBe` Right []
+        it "an import may be declared at levels of the policy's choosing; the host stays public" $ do
+            elabRunWithPolicy "import wasi_snapshot_preview1.fd_write : L L L L -> H" (wasiModule fdWriteImport [Const SI32 1, Const SI32 0, Const SI32 0, Const SI32 8, Call (FunctionIdx 0)] [I32]) []
+                `shouldSatisfy` errorContaining "IllegalFlow \"result\""
+            elabRunWithPolicy "import wasi_snapshot_preview1.fd_write : L L L L -> H" (wasiModule fdWriteImport [Const SI32 1, Const SI32 0, Const SI32 0, Const SI32 8, Call (FunctionIdx 0), Drop, Const SI32 0] [I32]) []
+                `shouldSatisfy` errorContaining "called into the host"
         it "a declaration must name something the module has" $
             elabRunWithPolicy "export g : -> " (singleFunctionModule [] [] [] [] []) [] `shouldSatisfy` errorContaining "PolicyUnknown \"export g\""
         it "a secret parameter cannot be returned by a public function" $
@@ -254,8 +259,8 @@ spec = do
             case load (wasiModule fdWriteImport [Const SI32 1, Const SI32 0, Const SI32 0, Const SI32 8, Call (FunctionIdx 0)] [I32]) of
                 Left err -> expectationFailure (show err)
                 Right sm -> case invokeExport sm "f" [] of
-                    Right (CalledHost (SomeHostRequest shapeS funcs exports rsS (HostRequest FdWrite _ store suspended))) ->
-                        case continueWith shapeS funcs exports rsS (resumeWith store (99 :# VNil) suspended) of
+                    Right (CalledHost (SomeHostRequest shapeS funcs exports rsS (HostRequest FdWrite _ store resultsAgree suspended))) ->
+                        case continueWith shapeS funcs exports rsS (resumeWith store (retagStack resultsAgree (99 :# VNil)) suspended) of
                             Right (Returned _ results) -> results `shouldBe` [I32Value 99]
                             _ -> expectationFailure "expected the module to return the fake errno"
                     _ -> expectationFailure "expected a suspended fd_write call"

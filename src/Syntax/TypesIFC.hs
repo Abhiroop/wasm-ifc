@@ -177,3 +177,20 @@ decideSegmentFlows _ _ = Nothing
 segmentSelf :: Sing (s :: [LabelledValType]) -> SegmentFlows s s
 segmentSelf SNil = NoValuesFlow
 segmentSelf (SCons (_ :%~ l) rest) = ValueFlows (flowsSelf l) (segmentSelf rest)
+
+{- | Evidence that two stack segments have the same value types, whatever their levels: what a
+  host function's own type (public throughout, since a host implementation knows nothing of
+  levels) shares with the type the module's policy declares for the import. At the host
+  boundary the words cross under the declared levels on the module's side and under public
+  ones on the host's; nothing about them changes.
+-}
+data SameValueTypes (a :: [LabelledValType]) (b :: [LabelledValType]) where
+    NoValues :: SameValueTypes '[] '[]
+    SameValue :: SameValueTypes as bs -> SameValueTypes ((t ':~ l) ': as) ((t ':~ l') ': bs)
+
+decideSameValueTypes :: Sing (a :: [LabelledValType]) -> Sing (b :: [LabelledValType]) -> Maybe (SameValueTypes a b)
+decideSameValueTypes SNil SNil = Just NoValues
+decideSameValueTypes (SCons (t :%~ _) rest) (SCons (t' :%~ _) rest') = do
+    Refl <- decideEquality t t'
+    SameValue <$> decideSameValueTypes rest rest'
+decideSameValueTypes _ _ = Nothing
