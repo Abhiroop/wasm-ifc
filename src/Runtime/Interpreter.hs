@@ -489,7 +489,7 @@ enterCall funcs store locals flows witness ix stack rest control = case getFunc 
         | depth > callDepthBound -> Left CallStackExhausted
         | otherwise ->
             let (args, below) = splitStack witness stack
-                calleeLocals = seedLocals params declared (relabelStack flows args)
+                calleeLocals = seedLocals flows params declared args
              in Right (Stepped (Config store calleeLocals VNil body (CallBoundary depth below locals rest control)))
     HostFunc wasiFunc -> case wasiFuncType wasiFunc of
         SFuncType _ resultsS ->
@@ -735,7 +735,7 @@ runFunction tm (WasmFunc (Function params declared body)) args = do
         AwaitingHost request -> NeedsHost request
   where
     store = moduleToStore tm
-    locals = seedLocals params declared args
+    locals = seedLocals (segmentSelf params) params declared args
 runFunction tm (HostFunc wasiFunc) args = case wasiFuncType wasiFunc of
     SFuncType _ resultsS ->
         let store = moduleToStore tm

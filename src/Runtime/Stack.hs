@@ -135,25 +135,26 @@ splitStack (ACons w) (x :# vs) = let (upper, lower) = splitStack w vs in (x :# u
   which is 'ReverseOnto', done in place. One allocation per call: calls are the hottest path
   there is, and building the frame through intermediate lists cost @fib@ a third more heap.
 -}
-seedLocals :: Sing ps -> Sing declared -> ValueStack ps -> LocalSpaceInst (ReverseOnto ps declared)
-seedLocals paramTypes declaredTypes args =
+seedLocals :: SegmentFlows args ps -> Sing ps -> Sing declared -> ValueStack args -> LocalSpaceInst (ReverseOnto ps declared)
+seedLocals flows paramTypes declaredTypes args =
     LocalSpaceInst (UV.create frame)
   where
     arity = lengthOf paramTypes
     frame :: ST s (MV.MVector s Word64)
     frame = do
         slots <- MV.replicate (arity + lengthOf declaredTypes) 0
-        writeArguments slots (arity - 1) paramTypes args
+        writeArguments slots (arity - 1) flows paramTypes args
         pure slots
 
 {- | Write a stack's values into consecutive slots, the top one at @slot@ and each deeper one
-  just below it.
+  just below it. The arguments arrive at the levels the caller had ('SegmentFlows' says they
+  may flow into the parameters'); a level is nothing at run time, so the words go in as they are.
 -}
-writeArguments :: MV.MVector s Word64 -> Int -> Sing (xs :: [LabelledValType]) -> ValueStack xs -> ST s ()
-writeArguments _ _ SNil VNil = pure ()
-writeArguments slots slot (SCons (st :%~ _) rest) (x :# xs) = do
+writeArguments :: MV.MVector s Word64 -> Int -> SegmentFlows args ps -> Sing (ps :: [LabelledValType]) -> ValueStack args -> ST s ()
+writeArguments _ _ NoValuesFlow SNil VNil = pure ()
+writeArguments slots slot (ValueFlows _ flows) (SCons (st :%~ _) rest) (x :# xs) = do
     MV.unsafeWrite slots slot (packValue st x)
-    writeArguments slots (slot - 1) rest xs
+    writeArguments slots (slot - 1) flows rest xs
 
 {- | A locals frame of the given shape, every slot zero (how declared locals start a call).
   Zero is the all-zero word at every value type, the floats' @+0.0@ included.
