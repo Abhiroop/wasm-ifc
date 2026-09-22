@@ -53,17 +53,19 @@ import Validation.Shape (MemShape)
 -- *** Linear memory ***
 
 {- | A linear memory: its declared limits, its current size in pages, and the written chunks.
-  TODO(ifc P1): SecWasm's memory is labelled per byte, flow-sensitively, at run time (§3.2:
-  each location is a pair @(byte, ℓ)@), so this record grows a label store. Recommended shape:
-  a second sparse chunk map next to 'chunks', @labels :: IntMap (UV.Vector Word8)@ (or a bit
-  vector while the lattice has two points), where an absent chunk is all-'Low exactly as an
-  absent chunk is all-zero; @memory.grow@ then labels new pages 'Low for free (E-MEMORY-GROW),
-  and only chunks that ever held a secret are materialised. Operations: a load returns the bytes
-  and the join of their labels (the caller compares it with the instruction's @ℓ@ and traps,
-  E-LOAD); a store writes bytes and sets their labels to its @ℓ@ (E-STORE, no check); the bulk
-  operations compute labels per byte (see the bulk TODO in "Syntax.InstructionsIFC"); a WASI
-  read writes the descriptor's label, a WASI write joins the labels it reads (see
-  "Runtime.Host"). Copy-on-write per chunk carries over unchanged.
+  TODO(ifc P1): __this record does not grow a label store.__ SecWasm labels memory per byte,
+  flow-sensitively, at run time (§3.2: each location is a pair @(byte, ℓ)@), which would mean a
+  second sparse chunk map here and a label join on every read. The IFC layer takes the other
+  road: a module /declares/ the labelled layout of its memory as a
+  'Syntax.TypesIFC.MemPolicy' of consecutive spans, and each load and store carries a
+  'Syntax.TypesIFC.SpanAt' proof of the span it targets (see the memory section of
+  "Syntax.InstructionsIFC"). Because a span's label is then fixed for the module's lifetime,
+  every label check is static and nothing about labels survives to run time: this record stays
+  exactly as it is, and the only new run-time obligation is to bounds-check an access against
+  the span its proof names ('Syntax.TypesIFC.spanBounds' gives the two numbers) instead of
+  against the whole memory. If the declared layout ever proves too rigid for a case study — the
+  paper's worry about compiled code mixing secret and public data — the per-byte store
+  described above is the fallback, and it is additive to what is here.
 -}
 type MemInst :: MemShape -> Type
 data MemInst m = MemInst

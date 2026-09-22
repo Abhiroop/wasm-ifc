@@ -16,18 +16,21 @@ module Examples (
     runIncrement,
     runSpinFor,
     labelledSumLength,
+    labelledLoadLength,
+    labelledStoreLength,
 ) where
 
 import Data.Word (Word32)
 
-import Data.Singletons.Base.TH (SList (SCons, SNil))
+import Data.Singletons.Base.TH (SList (SCons, SNil), sing)
 import Runtime.Interpreter
 import Runtime.Stack
 import Syntax.Functions (Function (..), FunctionBody)
-import Syntax.Immediates (NumWithSign (..), Signedness (..))
+import Syntax.Immediates (MemArg (..), NumWithSign (..), Signedness (..))
 import Syntax.Instructions
 import Syntax.InstructionsIFC qualified as IFC
 import Syntax.Types (
+    AddrType (..),
     FuncType (..),
     GlobalType (..),
     IsInt (..),
@@ -36,9 +39,15 @@ import Syntax.Types (
     SValType (..),
     ValType (..),
  )
-import Syntax.TypesIFC (LValType (..), SecLevel (..))
+import Syntax.TypesIFC (
+    FlowsInto (..),
+    LValType (..),
+    SecLevel (..),
+    SpanAt (..),
+    SpanShape (..),
+ )
 import Validation.Ref (LocalRef, resolveLocal)
-import Validation.Shape (Elem (..), ModuleShape (..))
+import Validation.Shape (Elem (..), MemShape (..), ModuleShape (..))
 
 {- | The single i32 a completed run produced. (These modules import nothing, so a call into
 the host cannot arise; the case is still spelled out because the type admits it.)
@@ -190,18 +199,114 @@ runIncrement initial = either (Left . show) completedI32 (runFunction globalModu
   'ISelect' fix; a store of a public value into a secret local through the flow witness. When
   the P0 structure decision lands, these become runnable through 'runFunction' too.
 -}
-secretPlusPublic :: IFC.Expr shape ret locals labels '[] (('I32 ':~ 'High) ': '[])
+secretPlusPublic :: IFC.Expr shape policy ret locals 'Low labels '[] (('I32 ':~ 'High) ': '[])
 secretPlusPublic = secret IFC.:. public IFC.:. IFC.IAdd I32IsNum IFC.:. IFC.INil
   where
-    secret :: IFC.Instr shape ret locals labels s (('I32 ':~ 'High) ': s)
-    secret = IFC.IConst I32IsNum 42
-    public :: IFC.Instr shape ret locals labels s (('I32 ':~ 'Low) ': s)
-    public = IFC.IConst I32IsNum 1
+    secret :: IFC.Instr shape policy ret locals 'Low labels s (('I32 ':~ 'High) ': s)
+    secret = IFC.IConst LowFlowsAnywhere I32IsNum 42
+    public :: IFC.Instr shape policy ret locals 'Low labels s (('I32 ':~ 'Low) ': s)
+    public = IFC.IConst LowFlowsAnywhere I32IsNum 1
 
--- | The instruction count of 'secretPlusPublic': the one thing a labelled program can do so far.
-labelledSumLength :: Int
-labelledSumLength = count secretPlusPublic
+{- | A two-span memory policy for the labelled memory examples: 64 public bytes from address
+  0, then 64 secret ones. Spans are laid end to end, so a span's base is derived from the
+  lengths before it rather than declared — which is what makes overlapping spans with
+  disagreeing labels unrepresentable.
+-}
+type ExamplePolicy = '[ 'SpanShape 64 'Low, 'SpanShape 64 'High]
+
+-- | A module shape with one memory, which is all the load and store rules ask of the module.
+type ExampleShape = 'ModuleShape '[] '[] '[ 'MemShape 'AddrI32 1 'Nothing] '[] '[]
+
+{- | The proof that the public span begins at address 0 and runs for 64 bytes. The witness is
+  the policy's first entry, so its base is 0.
+-}
+publicSpan :: SpanAt ExamplePolicy 0 64 'Low
+publicSpan = SpanHere (sing @64)
+
+{- | The proof for the secret span: one step past a 64-byte span, so the witness /computes/ 64
+  as the base address. Stepping over a span is what adds its length to the base.
+-}
+secretSpan :: SpanAt ExamplePolicy 64 64 'High
+secretSpan = SpanThere (sing @64) (SpanHere (sing @64))
+
+{- | Reading the public span at a public address in a public context yields a public value,
+  and — the point of the whole memory design — there is no run-time label check behind it:
+  the span's label is declared, so @ℓspan ⊔ ℓa ⊔ pc@ is settled statically. All that is left
+  at run time is the bounds check plain WebAssembly already does.
+-}
+publicLoad :: IFC.Expr ExampleShape ExamplePolicy ret locals 'Low labels '[] (('I32 ':~ 'Low) ': '[])
+publicLoad = address IFC.:. load IFC.:. IFC.INil
   where
-    count :: IFC.Expr shape ret locals labels s s' -> Int
-    count IFC.INil = 0
-    count (_ IFC.:. rest) = 1 + count rest
+    address :: IFC.Instr ExampleShape ExamplePolicy ret locals 'Low labels s (('I32 ':~ 'Low) ': s)
+    address = IFC.IConst LowFlowsAnywhere I32IsNum 0
+    load ::
+        IFC.Instr ExampleShape ExamplePolicy ret locals 'Low labels (('I32 ':~ 'Low) ': s) (('I32 ':~ 'Low) ': s)
+    load = IFC.ILoad publicSpan I32IsNum (MemArg 2 0)
+
+{- | Writing a secret value into the secret span. The 'HighFlowsToHigh' field is T-STORE's
+  premise @pc ⊔ ℓa ⊔ ℓv ⊑ ℓspan@, discharged statically; there is no dynamic counterpart.
+
+  The two programs this rejects are the interesting half, and neither is representable. Both
+  were compiled to capture GHC's verdict, then commented out.
+
+  Writing the same secret value into the /public/ span instead — the explicit leak — asks for
+  a witness of an uninhabited type:
+
+  >     store = IFC.IStore publicSpan HighFlowsToHigh I32IsNum (MemArg 2 0)
+
+  >     • Couldn't match type ‘High’ with ‘Low’
+  >       Expected: FlowsInto
+  >                   ((Low Syntax.TypesIFC.:/\ Low) Syntax.TypesIFC.:/\ High) Low
+  >         Actual: FlowsInto High High
+
+  And the implicit leak the pc index was added for — a public local written from a secret
+  context, which is what @(if (secret) (then (local.set $public 1)))@ becomes once 'IFC.IIf'
+  has raised the body's pc to @'High@:
+
+  >     set = IFC.ILocalSet LowFlowsAnywhere Here   -- locals '[ 'I32 ':~ 'Low], pc 'High
+
+  >     • Couldn't match type ‘Low’ with ‘High’
+  >       Expected: FlowsInto (High Syntax.TypesIFC.:/\ High) Low
+  >         Actual: FlowsInto Low Low
+
+  Before the pc existed that second program type-checked, which is precisely what it was
+  added to stop.
+-}
+secretStore :: IFC.Expr ExampleShape ExamplePolicy ret locals 'Low labels '[] '[]
+secretStore = address IFC.:. secretValue IFC.:. store IFC.:. IFC.INil
+  where
+    address :: IFC.Instr ExampleShape ExamplePolicy ret locals 'Low labels s (('I32 ':~ 'Low) ': s)
+    address = IFC.IConst LowFlowsAnywhere I32IsNum 64
+    secretValue :: IFC.Instr ExampleShape ExamplePolicy ret locals 'Low labels s (('I32 ':~ 'High) ': s)
+    secretValue = IFC.IConst LowFlowsAnywhere I32IsNum 7
+    store ::
+        IFC.Instr
+            ExampleShape
+            ExamplePolicy
+            ret
+            locals
+            'Low
+            labels
+            (('I32 ':~ 'High) ': ('I32 ':~ 'Low) ': s)
+            s
+    store = IFC.IStore secretSpan HighFlowsToHigh I32IsNum (MemArg 2 0)
+
+{- | The instruction count of a labelled program. These programs cannot run yet (nothing
+  interprets the labelled GADT), so counting them is only a way to make the test suite
+  /use/ them; that they compile at all is the actual assertion.
+-}
+labelledLength :: IFC.Expr shape policy ret locals pc labels s s' -> Int
+labelledLength IFC.INil = 0
+labelledLength (_ IFC.:. rest) = 1 + labelledLength rest
+
+-- | The instruction count of 'secretPlusPublic'.
+labelledSumLength :: Int
+labelledSumLength = labelledLength secretPlusPublic
+
+-- | The instruction count of 'publicLoad'.
+labelledLoadLength :: Int
+labelledLoadLength = labelledLength publicLoad
+
+-- | The instruction count of 'secretStore'.
+labelledStoreLength :: Int
+labelledStoreLength = labelledLength secretStore

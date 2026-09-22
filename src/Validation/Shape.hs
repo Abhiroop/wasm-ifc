@@ -107,8 +107,9 @@ data SomeFuncRef (fts :: [FuncType]) where
   attaches free labels to global reads and cannot type calls. The labelled shape follows
   SecWasm's Fig. 8: function types @τ* →ℓ τ*@ (labelled parameters and results plus the pc
   bound @ℓ@, with "results @⊒ ℓ@" as a well-formedness condition), global types @mut? τ@, and
-  memories unchanged (SecWasm labels bytes at run time and instructions with immediates, not
-  the memory as a whole; see the memory TODO in "Syntax.InstructionsIFC"). Either a second
+  memories carrying the labelled layout the IFC layer declares for them — a
+  'Syntax.TypesIFC.MemPolicy', which "Syntax.InstructionsIFC" currently threads as an index of
+  its own precisely because this shape has nowhere to put it. Either a second
   shape with its own projections, or this one made polymorphic in its value-type kind so the
   plain layer is the instance at 'ValType' and the IFC layer the one at
   'Syntax.TypesIFC.LValType'. Same fork as the P0 TODO on 'Syntax.InstructionsIFC.Instr';

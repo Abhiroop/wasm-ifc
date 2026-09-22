@@ -23,10 +23,14 @@ data Trap
     | -- | @call_indirect@ through a function of another type than expected
       IndirectCallTypeMismatch
     | {- TODO(ifc P1): SecWasm's dynamic checks trap (§4.2: "failure to satisfy the additional
-         security checks also leads to a trap", rules E-*-TRAP in the technical report). Add one
-         constructor for it, say @InformationFlowViolation@, raised by the load check
-         (@⨆ ℓ of the bytes read ⋢ ℓ@ of the instruction) and by the host boundary's sink check;
-         it is a defined outcome like every other trap, and TINI puts it outside the theorem. -}
+         security checks also leads to a trap", rules E-*-TRAP in the technical report), but the
+         IFC layer's memory has no dynamic label check to fail: a load's label is settled
+         statically by the span its 'Syntax.TypesIFC.SpanAt' proof names, and an access that
+         misses that span is an ordinary 'OutOfBoundsMemoryAccess' (a tighter bound than the
+         memory's, raised the same way). What may still want a constructor of its own — say
+         @InformationFlowViolation@ — is the host boundary's sink check, the one place where a
+         label is compared at run time (see "Runtime.Host"). Either way it is a defined outcome
+         like every other trap, and TINI puts it outside the theorem. -}
 
       {- | a @call@ or @call_indirect@ that would nest activations past the interpreter's bound
       ('callDepthBound' in "Runtime.Interpreter")

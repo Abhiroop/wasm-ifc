@@ -184,10 +184,13 @@ data ModuleInst (mod :: ModuleShape) = ModuleInst
    An @Elem rs labels@ branch target therefore selects an entry directly, and unwinding it
    stays type-correct without any coercion.
 
-   TODO(ifc P1): SecWasm is hybrid, so 'step' takes part: the load check (E-LOAD's premise
-   @⨆ ℓ ⊑ ℓm@ over the bytes read, a trap when it fails), the relabelling of bytes on a store
-   (E-STORE), 'Low labels for the pages @memory.grow@ adds, and the per-byte computations of
-   the bulk operations, all against the label store in 'Runtime.MemInst.MemInst'. Nothing else
+   TODO(ifc P1): SecWasm is hybrid, so its 'step' would take part: the load check (E-LOAD's
+   premise @⨆ ℓ ⊑ ℓm@ over the bytes read, a trap when it fails), the relabelling of bytes on a
+   store (E-STORE), and the per-byte computations of the bulk operations, all against a label
+   store in 'Runtime.MemInst.MemInst'. The IFC layer's declared memory policy removes all of
+   that (see the memory section of "Syntax.InstructionsIFC"): the only run-time obligation left
+   is to bounds-check a load or store against the span its proof names, which is the bounds
+   check this machine already does, with a tighter bound. Nothing else
    is dynamic: the pc is static, so this control stack needs no label for the /checks/. It is,
    however, where the proof lives: SecWasm's confinement lemma (Lemma 1, Fig. 11) says a
    high-context execution changes only the entries above the lowest entry whose pc is high,

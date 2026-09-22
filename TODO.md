@@ -381,6 +381,28 @@ Open P0/P1 correctness items live in the plan above (section **P0**); the list b
   labelled WASI signatures (our extension). P2 — singletons for `SecLevel`; explicit relabel;
   bulk-memory label rules; the noninterference property test; next examples. P3 — naming, the
   lattice, the termination channel, the flow-sensitive upgrade.
+
+  **The pc and a static memory (2026-09-22, Abhiroop).** Landed in the parallel GADT, still not
+  executed by anything. `Instr`/`Expr` gained the `pc :: SecLevel` index and a `labels ::
+  [LabelShape]` context carrying each block's pc, so implicit flows are typed: blocks, `if`,
+  every branch and `return` carry their `FlowsInto`/`StackAtLeast` premises, locals took
+  SecWasm's flow-insensitive get/set rules, `select` no longer drops its condition's label,
+  `CanFlowInto` became the `FlowsInto` witness GADT (with `decideFlow`), `SecLevel` got library
+  singletons, and `IRelabel` replaced the paper's subtyping. **Memory deliberately departs from
+  SecWasm:** instead of per-byte flow-sensitive labels with a dynamic load check, a module
+  declares a `MemPolicy` — consecutive labelled spans, so a span's base is derived and
+  overlapping spans are unrepresentable — and `ILoad`/`IStore` carry a `SpanAt` proof naming the
+  span they target. A span's label is then immutable, so T-LOAD's dynamic premise becomes static
+  (`ℓspan ⊔ ℓa ⊔ pc`, nothing to check at run time) and T-STORE's check is against the declared
+  label; all that stays dynamic is a bounds check against the span, which is the bounds check
+  Wasm already does. The trade is the paper's relabelling store (a public store can no longer
+  make secret bytes public) and a declared layout, for no run-time label state at all — which
+  also makes the P0 "generalise the one `Instr`" option cheaper than it looked, since `step`
+  then needs no label machinery. The knock-on TODOs in `Runtime.MemInst`, `Runtime.Trap`,
+  `Runtime.Interpreter`, `Validation.Shape` and `Validation.Elaborate` are updated to match.
+  Still open and unchanged: globals (now the only store with no label of its own), calls, and
+  the bulk-memory operations — all three blocked on the same P0 question of a labelled
+  `ModuleShape`, and the bulk ones are the one remaining way to write memory without a proof.
   References (folded in from the old `discussions/READING_LIST.md`):
   - SecWasm — the IFC model we follow: <https://plas2022.github.io/files/pdf/SecWasm.pdf>
     Full version with every rule (T-IF, T-LOOP, T-SELECT, the sets, E-*-TRAP):

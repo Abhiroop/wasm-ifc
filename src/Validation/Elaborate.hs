@@ -865,17 +865,20 @@ unStack (PolyStack xs) = xs
   format has no place for them. SecWasm's answer (§6, Usability): "the developer would have to
   manually annotate the function types and the load and store operations with security labels";
   everything else is derived. So the /policy/ is exactly: (1) per function type, the labels of
-  parameters and results and the pc bound (@τ* →ℓ τ*@); (2) per global, its label; (3) per
-  @load@/@store@ site, the immediate @ℓ@; and, our extension, (4) per host function, its
-  labelled type (see "Runtime.Host"). Recommended carrier: a WebAssembly /custom section/
+  parameters and results and the pc bound (@τ* →ℓ τ*@); (2) per global, its label; (3) the
+  memory's labelled layout — a 'Syntax.TypesIFC.MemPolicy', one list of spans for the module,
+  plus which span each @load@/@store@ site targets, which is the same per-site annotation
+  SecWasm spends on its @ℓ@ immediate and buys a static check instead of a dynamic one; and,
+  our extension, (4) per host function, its labelled type (see "Runtime.Host"). Recommended
+  carrier: a WebAssembly /custom section/
   (say @"ifc"@), which travels with the module, keeps it valid for every other tool (wabt and
   wasmtime preserve custom sections; the decoder already skips them, @custom.wast@ passes), and
   is keyed by function index, global index and code offset. Recommended defaults so unannotated
-  modules still elaborate: a store's immediate is /inferred/ as @pc ⊔ ℓa ⊔ ℓv@, the least label
-  that satisfies T-STORE and the most precise labelling of memory (no annotation ever needed for
-  stores); a load's immediate defaults to 'Low ("I expect public bytes"), which is precise and
-  traps at run time exactly where a secret is read unannotated (SecWasm's Example 1), so the
-  trap tells you where an annotation belongs; function types and globals default to 'Low with
+  modules still elaborate: an unannotated module gets a single 'Low span covering its whole
+  memory, which every load and store then targets — exactly today's behaviour, and the
+  all-'Low instance the spec testsuite regression-tests. A module that declares spans must say
+  which one each site targets, and a site whose static address already falls inside exactly one
+  span can have that filled in for it; function types and globals default to 'Low with
   pc bound 'Low, i.e. today's behaviour. Everything inside a function body is then determined:
   explicit flows are joins, the block pcs come from the pre-pass described at
   'Syntax.InstructionsIFC.IBlock' (a joint fixpoint of label propagation and pc assignment,
