@@ -365,19 +365,18 @@ Open P0/P1 correctness items live in the plan above (section **P0**); the list b
 
 - [ ] **[P2·epic·ifc]** **Information-flow control — the actual goal.** Security-level typing on
   the typed layer (labels on value types / the stack; a noninterference argument).
-  **Status (2026-09-22):** one instruction type tracks value types, security levels and the
-  program counter. Every stack, local, global and function type is over `LValType`; `Instr` and
-  `Expr` carry a pc stack in and out (SecWasm's, as on the `ifc` branch: one entry per enclosing
-  block; a branch raises the entries of the blocks it may leave through the `BranchTarget`
-  witness, `if` joins its arms' stacks, a loop's entry is a fixed point). Writes to locals and
-  globals, branches and returns carry `FlowsInto`/`AllAtLeast` witnesses; calls are allowed at a
-  public pc only. Validation threads the pc stack and builds the witnesses (`IllegalFlow` when
-  one is missing); a decoded module is still labelled `Low` throughout, so it accepts what it
-  always did. `test/Examples.hs` has the first positive and negative labelled programs. The
-  remaining `TODO(ifc Pn)` comments (`grep -rn 'TODO(ifc' src test`): P0 where levels come from;
-  P1 memory levels with the run-time load check and its trap, the pc bound on function types,
-  labelled host functions; P2 a relabelling instruction, raising stack values on a branch,
-  bulk-memory rules, the two-run property test; P3 naming.
+  **Status (2026-09-22, evening):** the single instruction type tracks value types, security
+  levels and the pc stack; writes, branches, returns, `memory.grow` and calls carry flow
+  witnesses; memory keeps a level per byte at run time and a load traps on a byte more secret
+  than it declares (`InformationFlowViolation`); `IRelabel`/`IDeclassify` exist. Levels come from
+  a policy (`Validation.Policy`): one text format for the module's `ifc` custom section (by index
+  and access position) and for a `--policy` file (by name); merged, conflicts rejected,
+  everything undeclared public, stores inferred, loads by site, region, function default, module
+  default. Remaining `TODO(ifc Pn)` (`grep -rn 'TODO(ifc' src test`): P1 the arrow label on
+  function types (parsed, only `L` accepted; calls allowed at a public pc only), labelled host
+  functions; P2 the `ifc` import namespace lowered to annotations, inference of internal function
+  levels, relabelling inserted for call arguments and block results, raising stack values on a
+  branch, the two-run property test; P3 naming.
   References (folded in from the old `discussions/READING_LIST.md`):
   - SecWasm — the IFC model we follow: <https://plas2022.github.io/files/pdf/SecWasm.pdf>
     Full version with every rule (T-IF, T-LOOP, T-SELECT, the sets, E-*-TRAP):

@@ -453,10 +453,11 @@ data Sections = Sections
     , dataSection :: [RawDataSegment]
     , dataCountSection :: Maybe Word32
     -- ^ the data count section, which must agree with the data section
+    , customs :: [(Text, BL.ByteString)]
     }
 
 emptySections :: Sections
-emptySections = Sections [] [] [] [] [] [] [] [] [] Nothing [] Nothing
+emptySections = Sections [] [] [] [] [] [] [] [] [] Nothing [] Nothing []
 
 getModule :: Get RawModule
 getModule = do
@@ -495,7 +496,7 @@ sectionRank sectionId = (+ 1) <$> elemIndex sectionId [1, 2, 3, 4, 5, 6, 7, 8, 9
 
 parseSection :: Word8 -> Sections -> Get Sections
 parseSection sectionId acc = case sectionId of
-    0 -> getName >> getRemainingLazyByteString >> pure acc -- a custom section: a name, then anything
+    0 -> (\name bytes -> acc {customs = acc.customs ++ [(name, bytes)]}) <$> getName <*> getRemainingLazyByteString
     1 -> (\ts -> acc {typeSection = ts}) <$> getVec getFuncType
     2 -> (\is -> acc {importSection = is}) <$> getVec (getImport (acc.typeSection))
     3 -> (\is -> acc {functionSection = is}) <$> getVec getULEB128
@@ -643,6 +644,7 @@ assemble secs = do
             , dataSegments = secs.dataSection
             , exports = secs.exportSection
             , start = secs.startSection
+            , customSections = secs.customs
             }
   where
     toFunction (typeIdx, (locals, body)) =

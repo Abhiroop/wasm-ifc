@@ -22,6 +22,7 @@ import Test.Hspec
 import Test.Hspec.Hedgehog (forAll, hedgehog, (===))
 
 import Codec.Wasm (decodeModule)
+import Data.Map.Strict qualified as Map
 import Examples (labelledSumLength, leakLength, runFactorial, runIncrement, runSpinFor, runSquare)
 import Runtime.Bytes (bytesOfWord32, bytesOfWord64, word32OfBytes, word64OfBytes)
 import Runtime.Convert (convertVal)
@@ -41,7 +42,8 @@ import Syntax.Instructions
 import Syntax.Module (DataMode (..), Export (..), ExportDesc (..), ImportDesc (..), RawDataSegment (..), RawElementSegment (..), RawImport (..), RawMemory (..), RawModule (..), RawTable (..))
 import Syntax.Types
 import Syntax.TypesIFC (SecLevel (..))
-import Validation.Elaborate (ElabError (..), IndexSpace (..), elaborateModule)
+import Validation.Elaborate (ElabError (..), IndexSpace (..), elaborateModule, elaborateModuleWith)
+import Validation.Policy (FunctionLevels (..), Policy (..), PolicyError (..), mergePolicies, parsePolicy)
 
 main :: IO ()
 main = hspec spec
@@ -147,6 +149,48 @@ spec = do
             elabError [] [I32] [] [Const SI32 1, Relabel High, Declassify Low] `shouldBe` Left DeclassifyNotAllowed
         it "an annotation belongs on a memory access only" $
             elabError [] [] [] [Annotated High Nop] `shouldBe` Left AnnotationMisplaced
+
+    describe "security policies (Validation.Policy)" $ do
+        let policy text = either (error . show) id (parsePolicy text)
+            withMemory = singleFunctionModule [onePageMemory]
+        it "parses every kind of statement" $ do
+            let parsed = policy "func 3 : H L -> H\nexport check : H -> L ; a comment\nimport env.read : L L -> H\nglobal 0 : H\nexport global key : H\nload 3 5 : H\nstore 3 2 : L\nregion 0x1000 0x1400 : H\nload-default : H\nload-default func 3 : L\nload-default export check : H\nallow-declassify\n"
+            Map.lookup 3 parsed.functionsByIndex `shouldBe` Just (FunctionLevels [High, Low] [High])
+            Map.lookup ("env", "read") parsed.importedFunctions `shouldBe` Just (FunctionLevels [Low, Low] [High])
+            Map.lookup (3, 5) parsed.loads `shouldBe` Just High
+            parsed.regions `shouldBe` [(0x1000, 0x1400, High)]
+            parsed.loadDefault `shouldBe` Just High
+            parsed.declassifyAllowed `shouldBe` True
+        it "rejects a line that is not a statement, and an arrow label it cannot honour yet" $ do
+            parsePolicy "global zero : H" `shouldSatisfy` isLeft
+            parsePolicy "export f : H -{H}-> L" `shouldBe` Left PolicyArrowNotSupported
+        it "two sources may speak about the same item only if they agree" $ do
+            mergePolicies (policy "global 0 : H") (policy "global 0 : L") `shouldBe` Left (PolicyConflict "global 0")
+            fmap (.globalsByIndex) (mergePolicies (policy "global 0 : H") (policy "global 0 : H\nload-default : H")) `shouldBe` Right (Map.fromList [(0, High)])
+        it "a declaration must name something the module has" $
+            elabRunWithPolicy "export g : -> " (singleFunctionModule [] [] [] [] []) [] `shouldSatisfy` errorContaining "PolicyUnknown \"export g\""
+        it "a secret parameter cannot be returned by a public function" $
+            elabRunWithPolicy "export f : H -> L" (singleFunctionModule [] [I32] [I32] [] [LocalGet (LocalIdx 0)]) [1]
+                `shouldSatisfy` errorContaining "ResultMismatch"
+        it "a secret parameter cannot decide a write to a public local" $
+            elabRunWithPolicy "export f : H -> L" (singleFunctionModule [] [I32] [I32] [I32] [LocalGet (LocalIdx 0), If (FuncType [] []) [Const SI32 1, LocalSet (LocalIdx 1)] [], LocalGet (LocalIdx 1)]) [1]
+                `shouldSatisfy` errorContaining "IllegalFlow \"local.set\" High Low"
+        it "a secret parameter may be dropped" $
+            elabRunWithPolicy "export f : H -> L" (singleFunctionModule [] [I32] [I32] [] [LocalGet (LocalIdx 0), Drop, Const SI32 1]) [1] `shouldBe` Right ["1"]
+        it "a store declared secret by position makes a later public read trap" $
+            elabRunWithPolicy "store 0 0 : H" (withMemory [] [I32] [] [Const SI32 0, Const SI32 7, Store SI32 (MemArg 0 0), Const SI32 0, Load SI32 (MemArg 0 0)]) []
+                `shouldSatisfy` trapContaining "InformationFlowViolation"
+        it "a region declares the bytes behind constant addresses" $
+            elabRunWithPolicy "region 0 4 : H" (withMemory [I32] [I32] [] [Const SI32 0, Const SI32 7, Store SI32 (MemArg 0 0), LocalGet (LocalIdx 0), Load SI32 (MemArg 0 0)]) [0]
+                `shouldSatisfy` trapContaining "InformationFlowViolation"
+        it "the load default makes every unannotated load secret" $
+            elabRunWithPolicy "load-default : H" (withMemory [] [I32] [] [Const SI32 0, Load SI32 (MemArg 0 0)]) [] `shouldSatisfy` errorContaining "ResultMismatch"
+        it "a module without functions assembles (the index space is empty, not wrapped around)" $
+            void (elaborateModule (singleFunctionModule [] [] [] [] []) {functions = [], exports = []}) `shouldSatisfy` isRight
+        it "the module's own ifc section carries a policy" $ do
+            let declassifying = (singleFunctionModule [] [] [I32] [] [Const SI32 1, Relabel High, Declassify Low]) {customSections = [("ifc", "allow-declassify")]}
+            elabRunModule declassifying [] `shouldBe` Right ["1"]
+            elabRunModule (declassifying {customSections = []}) [] `shouldSatisfy` errorContaining "DeclassifyNotAllowed"
 
     describe "indirect calls" $ do
         it "go through the table entry, typed" $
@@ -499,6 +543,7 @@ moduleOf memories funcs exported =
         , dataSegments = []
         , exports = [Export "f" (ExportFunc exported)]
         , start = Nothing
+        , customSections = []
         }
 
 {- | Validate and instantiate a module and run its export @f@ on integer arguments.
@@ -508,6 +553,17 @@ readExportedGlobal :: RawModule -> Text -> Either String String
 readExportedGlobal m name = case load m of
     Left err -> Left (show err)
     Right inst -> either (Left . show) (Right . renderValue) (readGlobalExport inst name)
+
+-- | 'elabRunModule' under a policy given as text.
+elabRunWithPolicy :: Text -> RawModule -> [Integer] -> Either String [String]
+elabRunWithPolicy text m args = do
+    policy <- first show (parsePolicy text)
+    validated <- first show (elaborateModuleWith policy m)
+    inst <- first show (instantiate validated)
+    invokeWithIntegers inst args
+
+errorContaining :: String -> Either String [String] -> Bool
+errorContaining needle = either (needle `isInfixOf`) (const False)
 
 elabRunModule :: RawModule -> [Integer] -> Either String [String]
 elabRunModule m args = case load m of
@@ -587,6 +643,7 @@ startModule startBody =
     (twoFunctions (FuncType [] []) startBody (FuncType [] [I32]) [GlobalGet (GlobalIdx 0)])
         { globals = [RawGlobal (GlobalType Mutable I32) [Const SI32 0]]
         , start = Just (FunctionIdx 0)
+        , customSections = []
         }
 
 withData :: [RawDataSegment] -> RawModule -> RawModule

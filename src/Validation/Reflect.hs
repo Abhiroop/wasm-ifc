@@ -74,13 +74,9 @@ import Validation.Shape
 data SomeStack where
     SomeStack :: Sing (s :: [LValType]) -> SomeStack
 
-{- | Reflect decoded value types, labelling each one public: a decoded module says nothing about
-  security levels.
-
-  TODO(ifc P0): this is where a policy would enter. Decide where the levels of a module's
-  function types, globals and memory accesses come from (SecWasm has the developer annotate
-  them; a custom section of the module could carry them), and label accordingly here and in
-  'reflectCtx'.
+{- | Reflect a function's declared locals, labelling each one public. (Function types and
+  globals get their levels from the policy, see "Validation.Policy"; a declared local has no
+  declaration and is public.)
 -}
 reflectStack :: [ValType] -> SomeStack
 reflectStack vs = withSomeSing (publicAll vs) SomeStack
@@ -96,7 +92,7 @@ declaredOrder :: [a] -> [a]
 declaredOrder = reverse
 
 -- | A decoded function type with its parameter and result lists in stack order.
-stackOrderFuncType :: FuncType -> FuncType
+stackOrderFuncType :: FuncTypeOf v -> FuncTypeOf v
 stackOrderFuncType (FuncType params results) = FuncType (stackOrder params) (stackOrder results)
 
 -- | The witness that appending nothing changes nothing, for a stack whose singleton we hold.
@@ -218,12 +214,12 @@ tableShapeOf (Limits lo hi) = TableShape (fromIntegral lo) (fmap fromIntegral hi
   to a runtime witness with the type-level signature hidden existentially. The function types
   are given in declared order (as decoded) and stored in stack order.
 -}
-reflectCtx :: [FuncType] -> [GlobalType] -> [MemType] -> [Limits] -> Int -> SomeModuleShape
+reflectCtx :: [LFuncType] -> [LGlobalType] -> [MemType] -> [Limits] -> Int -> SomeModuleShape
 reflectCtx funcTypes globalTypes memTypes tableLimits dataCount =
     withSomeSing
         ( ModuleShape
-            (map (publicFuncType . stackOrderFuncType) funcTypes)
-            (map publicGlobalType globalTypes)
+            (map stackOrderFuncType funcTypes)
+            globalTypes
             (map memShapeOf memTypes)
             (map tableShapeOf tableLimits)
             (replicate dataCount DataShape)

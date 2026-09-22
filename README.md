@@ -29,8 +29,12 @@ The three layers follow one naming convention (with `Raw` for the decoder's unty
   `ValType :~ SecLevel`, public or secret), so the same `Instr` tracks information flow: a
   computed value is as secret as its most secret operand, and a stack of program-counter labels
   (one per enclosing block) makes a write inside a secret branch to a public place a type
-  error. The levels exist only in types. A decoded module is labelled public throughout for now,
-  and the checks still missing are marked `TODO(ifc …)` beside the instructions they belong to.
+  error. The levels exist only in types, except in linear memory, where every byte carries one
+  at run time and a load traps if it reads a byte more secret than it declares (SecWasm's one
+  dynamic check). Where the levels come from is the module's *policy* (`Validation.Policy`): a
+  text format, carried in the module's `ifc` custom section or in a file given with
+  `--policy`, that declares the interface and memory accesses; everything undeclared is public
+  or inferred. The checks still missing are marked `TODO(ifc …)` beside the code they belong to.
 * **Validation** (`Validation.*`): the type-level *shapes* the syntax is indexed by
   (`Validation.Shape`: `ModuleShape`, `MemShape`, `Append`, `Elem`), the singleton witnesses
   and decidable equality (`Validation.Reflect`), and the elaborator (`Validation.Elaborate`),
@@ -68,7 +72,7 @@ Naming: `Foo` is the static syntax (in `Syntax`); `FooShape` is its type-level a
 ```sh
 cabal build
 cabal run wasm-ifc -- invoke <file.wasm> <export> [args...]   # decode → validate → instantiate → run
-cabal run wasm-ifc -- check <file.wasm>                        # decode → validate only
+cabal run wasm-ifc -- check [--policy P] <file.wasm>           # decode → validate only, under a security policy
 cabal run wasm-ifc -- run [--dir D[::G]]... [--env K=V]... <file.wasm> [args...]   # a WASI program
 
 samples/build.sh    # compile every sample .wat to .wasm  (needs wabt's wat2wasm)

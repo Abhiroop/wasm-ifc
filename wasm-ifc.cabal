@@ -86,6 +86,7 @@ library
       , Validation.Reflect
       , Validation.Ref
       , Validation.Elaborate
+      , Validation.Policy
       , Runtime.MemInst
       , Runtime.TableInst
       , Runtime.Trap
@@ -135,6 +136,7 @@ test-suite wasm-ifc-test
         base
       , wasm-ifc
       , bytestring
+      , containers
       , text
       , hspec          ^>=2.11
       , hedgehog       ^>=1.5

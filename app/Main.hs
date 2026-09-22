@@ -13,31 +13,37 @@ import System.Exit (ExitCode (..), die, exitSuccess, exitWith)
 import Text.Read (readMaybe)
 
 import Codec.Wasm (decodeModule)
+import Data.Text.IO qualified as TIO
 import Runtime.Instantiate (instantiate)
 import Runtime.Module (RunError (..), SomeModuleInst, Value (..), exportSignature, readGlobalExport, renderValue)
 import Runtime.Wasi (Completion (..), Preopen (..), WasiConfig (..), runWithWasi)
 import Syntax.Module (SomeModule)
 import Syntax.Types (FuncTypeOf (..), ValType (..))
 import System.FilePath (takeFileName)
-import Validation.Elaborate (elaborateModule)
+import Validation.Elaborate (elaborateModuleWith)
+import Validation.Policy (emptyPolicy, parsePolicy)
 
 main :: IO ()
 main = do
     args <- getArgs
     case args of
-        ["check", path] -> withValidated path (\_ -> putStrLn "ok")
-        ["get", path, name] -> withModule path $ \wasmModule ->
-            either (die . describeRunError) (putStrLn . renderValue) (readGlobalExport wasmModule (T.pack name))
+        ("check" : rest) -> case parseOptions rest of
+            Right (options, [path]) -> withValidated options path (\_ -> putStrLn "ok")
+            _ -> die usage
+        ("get" : rest) -> case parseOptions rest of
+            Right (options, [path, name]) -> withModule options path $ \wasmModule ->
+                either (die . describeRunError) (putStrLn . renderValue) (readGlobalExport wasmModule (T.pack name))
+            _ -> die usage
         ("invoke" : rest) -> case parseOptions rest of
             Right (options, path : name : rawArgs) ->
-                withModule path $ \wasmModule ->
+                withModule options path $ \wasmModule ->
                     case parseArguments wasmModule (T.pack name) (map T.pack rawArgs) of
                         Left err -> die err
                         Right values -> runUnderWasi (configFor options path []) wasmModule (T.pack name) values (mapM_ (putStrLn . renderValue))
             _ -> die usage
         ("run" : rest) -> case parseOptions rest of
             Right (options, path : programArgs) ->
-                withModule path $ \wasmModule -> case exportSignature wasmModule "_start" of
+                withModule options path $ \wasmModule -> case exportSignature wasmModule "_start" of
                     Nothing -> die "the module has no _start export"
                     Just (FuncType [] []) -> runUnderWasi (configFor options path programArgs) wasmModule "_start" [] (\_ -> pure ())
                     Just _ -> die "_start must take no parameters and return nothing"
@@ -48,12 +54,14 @@ usage :: String
 usage =
     unlines
         [ "Usage:"
-        , "  wasm-ifc check  <file.wasm>                              decode and validate (no instantiation)"
+        , "  wasm-ifc check  [options] <file.wasm>                    decode and validate (no instantiation)"
         , "  wasm-ifc invoke [options] <file.wasm> <export> [args...] run an exported function"
-        , "  wasm-ifc get    <file.wasm> <global>                     print an exported global"
+        , "  wasm-ifc get    [options] <file.wasm> <global>           print an exported global"
         , "  wasm-ifc run    [options] <file.wasm> [program args...]  run a WASI program (its _start export)"
         , ""
-        , "Options:  --dir HOST[::GUEST]   preopen a host directory under the guest name (default: the same)"
+        , "Options:  --policy FILE         the module's security policy (levels of its interface, memory"
+        , "                                accesses and regions); merged with the module's own ifc section"
+        , "          --dir HOST[::GUEST]   preopen a host directory under the guest name (default: the same)"
         , "          --env NAME=VALUE      an environment variable for the program"
         , ""
         , "Arguments to invoke are typed by the export: integers (decimal or 0x…) for i32/i64;"
@@ -65,11 +73,13 @@ usage =
 data Options = Options
     { dirs :: [Preopen]
     , vars :: [(Text, Text)]
+    , policyFile :: Maybe FilePath
     }
 
 parseOptions :: [String] -> Either String (Options, [String])
-parseOptions = go (Options [] [])
+parseOptions = go (Options [] [] Nothing)
   where
+    go options ("--policy" : file : rest) = go options {policyFile = Just file} rest
     go options ("--dir" : spec : rest) =
         let (host, guest) = case T.splitOn "::" (T.pack spec) of
                 [h, g] -> (T.unpack h, g)
@@ -102,22 +112,29 @@ runUnderWasi cfg wasmModule name args printResults = do
   work is a pure @Either String@; IO is only reading the file and printing. Any failure is
   reported and exits non-zero (via 'die').
 -}
-withValidated :: FilePath -> (SomeModule -> IO ()) -> IO ()
-withValidated path action = do
+withValidated :: Options -> FilePath -> (SomeModule -> IO ()) -> IO ()
+withValidated options path action = do
+    policy <- case options.policyFile of
+        Nothing -> pure emptyPolicy
+        Just file -> do
+            policyText <- try (TIO.readFile file) :: IO (Either IOException Text)
+            case policyText of
+                Left ioErr -> die ("Cannot read " ++ file ++ ": " ++ show ioErr)
+                Right text -> either (\e -> die ("Policy error: " ++ show e)) pure (parsePolicy text)
     readResult <- try (BL.readFile path) :: IO (Either IOException BL.ByteString)
     case readResult of
         Left ioErr -> die ("Cannot read " ++ path ++ ": " ++ show ioErr)
-        Right bytes -> case pipeline bytes of
+        Right bytes -> case pipeline policy bytes of
             Left err -> die err
             Right validated -> action validated
   where
-    pipeline bytes = do
+    pipeline policy bytes = do
         raw <- first ("Decode error: " ++) (decodeModule bytes)
-        first (\e -> "Validation error: " ++ show e) (elaborateModule raw)
+        first (\e -> "Validation error: " ++ show e) (elaborateModuleWith policy raw)
 
 -- | 'withValidated', then instantiate: the module ready to have an export invoked.
-withModule :: FilePath -> (SomeModuleInst -> IO ()) -> IO ()
-withModule path action = withValidated path $ \validated ->
+withModule :: Options -> FilePath -> (SomeModuleInst -> IO ()) -> IO ()
+withModule options path action = withValidated options path $ \validated ->
     case instantiate validated of
         Left err -> die ("Instantiation error: " ++ show err)
         Right wasmModule -> action wasmModule

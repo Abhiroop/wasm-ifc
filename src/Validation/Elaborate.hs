@@ -19,9 +19,11 @@ module Validation.Elaborate (
     OperandKind (..),
     IndexSpace (..),
     elaborateModule,
+    elaborateModuleWith,
 ) where
 
 import Control.Monad (foldM, when)
+import Data.Bifunctor (first)
 import Data.Text (Text)
 import Data.Type.Equality ((:~:) (Refl))
 import Data.Word (Word32)
@@ -50,6 +52,7 @@ import Syntax.Instructions (
 import Syntax.Module
 import Syntax.Types
 import Syntax.TypesIFC
+import Validation.Policy (Assembled (..), Policy, PolicyError, assemble, emptyPolicy, mergePolicies, sectionPolicy)
 import Validation.Ref (resolveLocal)
 import Validation.Reflect
 import Validation.Shape
@@ -115,6 +118,8 @@ data ElabError
       AnnotationMisplaced
     | -- | @declassify@ in a module whose policy does not allow it
       DeclassifyNotAllowed
+    | -- | the security policy could not be read or does not fit the module
+      BadPolicy PolicyError
     deriving stock (Eq, Show)
 
 -- | The sub-category an instruction requires its operand type to belong to.
@@ -1006,61 +1011,33 @@ unStack (PolyStack xs) = xs
   the element segments' and start function's indices. The result is a validated 'Module';
   "Runtime.Instantiate" turns it into a running instance.
 
-  TODO(ifc P0): every security level in a validated module is 'Low today, because a decoded
-  module says nothing about levels and "Validation.Reflect" labels everything public. So this
-  accepts exactly the modules it accepted before labels existed. Where the levels come from is
-  decided in principle (Daniel, 2026-09-22) and not yet built:
-    * Everything SecWasm lets the developer annotate stays expressible: the levels of a
-      function's parameters and results and its arrow label (the pc it may be called from),
-      the level of a global, and a level on every load and store. The carrier is a custom
-      section of the module, keyed by function index, global index and code offset, since only
-      that can name one instruction in a binary; a policy file written by hand compiles to it,
-      and every other tool ignores it, so the module stays ordinary WebAssembly.
-    * Inference is the default wherever it is sound and unambiguous: the types and arrow
-      labels of functions that are neither imported nor exported, from the call graph (a fixed
-      point, cheap over two levels); a store's level, as the join of the pc, the address and
-      the value, which is the most precise labelling of memory the rule allows. An explicit
-      annotation always wins over an inferred one, and a disagreement is reported: someone
-      who wrote the annotation wants to know that the code does not meet it.
-    * The interface cannot be inferred: an import's results and an exported global's level
-      say what is on the other side of the module. They are declared, or default to public.
-    * Convenience goes where annotations are common. Loads are the one thing nothing can
-      infer (the level is what the site expects to read), so they get the easy paths: a
-      per-module or per-function default ('Low while developing, since the run-time trap then
-      points at the site that needs an annotation), declared address ranges for the statics a
-      compiler places at fixed addresses, and an @ifc@ import namespace whose functions a plain
-      runtime implements as identities or plain loads and this validator reads as
-      relabellings and annotated loads, so the annotations live in the source program.
-      Stores are the opposite case and may stay awkward to annotate.
-    * Open: whether declassification (a trusted relabelling downwards) is in scope, since it
-      changes the theorem; and whether load annotations are per site or per function.
-
-  Validation already threads the pc stack through every body and builds the flow witnesses
-  ('requireFlow', 'requireCarried'), so a module with secret levels would be checked by the
-  same code; a failed check is an 'IllegalFlow'.
-
-  TODO(ifc P2): the stack comparisons in this module demand /equal/ levels (a call's arguments,
-  a block's results, the two arms of an @if@). SecWasm allows a lower level where a higher one
-  is expected. To accept that, insert the relabelling instruction described at
-  'Syntax.Instructions.ICall' where the levels differ but flow.
+  The security levels come from the module's policy ('elaborateModuleWith' and
+  "Validation.Policy"); without one everything is public and this accepts exactly the modules
+  it accepted before levels existed.
 -}
 elaborateModule :: RawModule -> Either ElabError SomeModule
-elaborateModule m = do
-    validateStructure m
-    case reflectCtx funcSigs globalTypes memTypes tableLimits (length m.dataSegments) of
+elaborateModule = elaborateModuleWith emptyPolicy
+
+{- | 'elaborateModule' under a policy given from outside (a policy file), merged with the one
+  the module carries in its @ifc@ custom section; the two may not disagree. Assembly happens
+  first, so every level is settled before any function is checked.
+-}
+elaborateModuleWith :: Policy -> RawModule -> Either ElabError SomeModule
+elaborateModuleWith given raw = do
+    validateStructure raw
+    assembled <- first BadPolicy (sectionPolicy raw >>= mergePolicies given >>= (`assemble` raw))
+    let m = assembled.annotated
+    case reflectCtx assembled.functionTypes assembled.globalTypes memTypes tableLimits (length m.dataSegments) of
         SomeModuleShape ctxS@(SModuleShape ftsS gsS msS tsS _) -> do
-            functions <- elaborateFuncs ctxS (m.types) ftsS (map Left m.imports ++ map Right m.functions)
+            functions <- elaborateFuncs ctxS (m.types) assembled.declassify ftsS (zip assembled.loadDefaults (map Left m.imports ++ map Right m.functions))
             globals <- elaborateGlobals gsS (m.globals)
             dataSegments <- traverse (elaborateData (memsNonEmpty msS)) (zip [0 ..] m.dataSegments)
             elementSegments <- traverse (elaborateElements ftsS (tablesNonEmpty tsS)) (zip [0 ..] m.elementSegments)
             start <- traverse (resolveStart ftsS) (m.start)
             Right (SomeModule ctxS (Module {functions, globals, dataSegments, elementSegments, exports = m.exports, start}))
   where
-    tableLimits = [t.limits | t <- m.tables]
-    -- The function index space: imports first, then the module's own functions.
-    funcSigs = [ft | RawImport _ _ (ImportFunc ft) <- m.imports] ++ map (\(RawFunction sig _ _) -> sig) (m.functions)
-    globalTypes = map (\(RawGlobal gt _) -> gt) (m.globals)
-    memTypes = map (\(RawMemory mt) -> mt) (m.memories)
+    tableLimits = [t.limits | t <- raw.tables]
+    memTypes = map (\(RawMemory mt) -> mt) (raw.memories)
 
 {- | The module-level rules of the validation section that need no shape: well-formed,
   bounded memory limits; at most one memory; distinct export names; export indices within
@@ -1107,27 +1084,30 @@ resolveStart ftsS (FunctionIdx idx) = do
 elaborateFuncs ::
     SModuleShape shape ->
     [FuncType] ->
+    Bool ->
     Sing fts ->
-    [Either RawImport RawFunction] ->
+    [(SecLevel, Either RawImport RawFunction)] ->
     Either ElabError (FunctionSpace shape fts)
-elaborateFuncs _ _ SNil [] = Right NoFunctions
-elaborateFuncs ctxS types (SCons ft fs) (entry : rest) = do
-    fs' <- elaborateFuncs ctxS types fs rest
+elaborateFuncs _ _ _ SNil [] = Right NoFunctions
+elaborateFuncs ctxS types declassify (SCons ft fs) ((loadDefault, entry) : rest) = do
+    fs' <- elaborateFuncs ctxS types declassify fs rest
     case entry of
         Left (RawImport moduleName fieldName (ImportFunc _)) -> Right (Imported moduleName fieldName fs')
-        Right f -> (`Defined` fs') <$> elaborateFunctionIn ctxS types ft f
-elaborateFuncs _ _ _ _ = Left (Malformed "function/signature count mismatch")
+        Right f -> (`Defined` fs') <$> elaborateFunctionIn ctxS types loadDefault declassify ft f
+elaborateFuncs _ _ _ _ _ = Left (Malformed "function/signature count mismatch")
 
 elaborateFunctionIn ::
     SModuleShape shape ->
     [FuncType] ->
+    SecLevel ->
+    Bool ->
     SFuncTypeOf ft ->
     RawFunction ->
     Either ElabError (Function shape ft)
-elaborateFunctionIn ctxS types (SFuncType psS rsS) (RawFunction _ declaredT body) =
+elaborateFunctionIn ctxS types loadDefault declassify (SFuncType psS rsS) (RawFunction _ declaredT body) =
     case reflectStack declaredT of
         SomeStack declS ->
-            let env = ElabEnv ctxS types rsS (sReverseOnto psS declS) (SCons rsS SNil) Low False
+            let env = ElabEnv ctxS types rsS (sReverseOnto psS declS) (SCons rsS SNil) loadDefault declassify
              in do
                     elaborated <- elabSeq env (SCons SLow SNil) SNil body
                     case elaborated of

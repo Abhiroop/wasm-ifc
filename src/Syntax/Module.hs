@@ -28,6 +28,7 @@ module Syntax.Module (
 ) where
 
 import Data.ByteString (ByteString)
+import Data.ByteString.Lazy qualified as BL
 import Data.Singletons (Sing)
 import Data.Text (Text)
 import Data.Word (Word32)
@@ -55,6 +56,10 @@ data RawModule = RawModule
     , dataSegments :: [RawDataSegment]
     , exports :: [Export]
     , start :: Maybe FunctionIdx
+    , customSections :: [(Text, BL.ByteString)]
+    {- ^ every custom section, by name, in order; the @ifc@ ones carry the module's security
+    policy ("Validation.Policy") and the rest are ignored
+    -}
     }
 
 -- | An import: where it comes from and what it must be.
