@@ -35,6 +35,11 @@ module Runtime.MemInst (
     writeBytes,
     copyWithin,
     fillBytes,
+    levelOfRange,
+    storeWordAt,
+    writeBytesAt,
+    copyWithinAt,
+    fillBytesAt,
 ) where
 
 import Control.Monad (forM_)
@@ -48,20 +53,21 @@ import Data.Vector.Unboxed.Mutable qualified as MV
 import Data.Word (Word32, Word64, Word8)
 
 import Syntax.Types (Limits (..))
+import Syntax.TypesIFC (SecLevel (..))
 import Validation.Shape (MemShape)
 
 -- *** Linear memory ***
 
-{- | A linear memory: its declared limits, its current size in pages, and the written pages.
+{- | A linear memory: its declared limits, its current size in pages, the written chunks, and
+  the security level of every byte.
 
-  TODO(ifc P1): SecWasm keeps a security level for every byte of memory, at run time, and
-  updates it on every store. So this record needs a second map next to 'pages' that holds the
-  levels. It can be sparse in the same way: a missing page means "all public", just as a
-  missing page of bytes means "all zero", so @memory.grow@ labels new pages public for free and
-  only pages that once held a secret cost anything. The operations change as follows. A load
-  also returns the join of the levels it read, and the interpreter compares it with the
-  instruction's level. A store also sets the levels of the bytes it writes. The bulk operations
-  compute a level per byte (see the TODO on 'Syntax.Instructions.IMemCopy').
+  The levels follow SecWasm: memory is labelled per byte, at run time, and a store relabels the
+  bytes it writes. They are kept in a second chunk map with the same layout as the bytes, one
+  level byte per memory byte, and an absent chunk means "all public", just as an absent byte
+  chunk means "all zero". So a memory that never holds a secret has an empty level map,
+  @memory.grow@ labels new pages public for free, and a public store into a chunk without
+  levels costs nothing. A load reports the join of the levels it read ('levelOfRange'); the
+  interpreter compares it with the level the instruction declares and traps when it is higher.
 -}
 type MemInst :: MemShape -> Type
 data MemInst m = MemInst
@@ -69,7 +75,14 @@ data MemInst m = MemInst
     , pageCount :: !Word32
     , chunks :: !(IntMap (UV.Vector Word8))
     -- ^ by chunk index; an absent chunk is all zeros, a present one is 'chunkSize' bytes long
+    , levels :: !(IntMap (UV.Vector Word8))
+    -- ^ by chunk index, one 'levelByte' per byte; an absent chunk is all public
     }
+
+-- | The byte a level is stored as: public is zero, so untouched memory is public.
+levelByte :: SecLevel -> Word8
+levelByte Low = 0
+levelByte High = 1
 
 -- | Bytes per WebAssembly page.
 pageSize :: Int
@@ -93,7 +106,7 @@ maxMemoryPages = 65536
 
 -- | Allocate a memory at its declared minimum size, zero-initialised.
 allocMemory :: Limits -> MemInst m
-allocMemory declared = MemInst declared declared.min IntMap.empty
+allocMemory declared = MemInst declared declared.min IntMap.empty IntMap.empty
 
 -- | Size of a memory in whole pages.
 memoryPages :: MemInst m -> Word32
@@ -142,10 +155,15 @@ loadWord mem addr count
   straddling a boundary goes byte by byte through 'writeBytes'.
 -}
 storeWord :: MemInst m -> Int -> Int -> Word64 -> Maybe (MemInst m)
-storeWord mem addr count word
+storeWord = storeWordAt Low
+
+-- | 'storeWord' at a security level: the bytes written take that level (SecWasm's E-STORE).
+{-# INLINE storeWordAt #-}
+storeWordAt :: SecLevel -> MemInst m -> Int -> Int -> Word64 -> Maybe (MemInst m)
+storeWordAt level mem addr count word
     | not (inBounds mem addr count) = Nothing
-    | offset + count <= chunkSize = Just mem {chunks = IntMap.insert chunkIx written mem.chunks}
-    | otherwise = writeBytes mem addr [fromIntegral (word `shiftR` (8 * i)) | i <- [0 .. count - 1]]
+    | offset + count <= chunkSize = Just (setLevels level addr count mem {chunks = IntMap.insert chunkIx written mem.chunks})
+    | otherwise = writeBytesAt level mem addr [fromIntegral (word `shiftR` (8 * i)) | i <- [0 .. count - 1]]
   where
     (chunkIx, offset) = addr `quotRem` chunkSize
     current = IntMap.findWithDefault zeroChunk chunkIx mem.chunks
@@ -173,8 +191,12 @@ bytesAt mem addr count = [byteAt a | a <- [addr .. addr + count - 1]]
   'Nothing' if the range falls outside the memory. Each chunk touched is copied once.
 -}
 writeBytes :: MemInst m -> Int -> [Word8] -> Maybe (MemInst m)
-writeBytes mem addr payload
-    | inBounds mem addr (length payload) = Just mem {chunks = foldl' writeRun mem.chunks (runsByChunk addr payload)}
+writeBytes = writeBytesAt Low
+
+-- | 'writeBytes' at a security level.
+writeBytesAt :: SecLevel -> MemInst m -> Int -> [Word8] -> Maybe (MemInst m)
+writeBytesAt level mem addr payload
+    | inBounds mem addr (length payload) = Just (setLevels level addr (length payload) mem {chunks = foldl' writeRun mem.chunks (runsByChunk addr payload)})
     | otherwise = Nothing
   where
     writeRun stored (chunkIx, offset, run) =
@@ -194,14 +216,61 @@ runsByChunk addr payload =
   and then nothing is written.
 -}
 copyWithin :: Int -> Int -> Int -> MemInst m -> Maybe (MemInst m)
-copyWithin dst src count mem = do
+copyWithin = copyWithinAt Low
+
+{- | 'copyWithin' under a context level: each copied byte keeps its own level, joined with the
+  given one (the pc and the operands' levels, which decide whether and where bytes move).
+-}
+copyWithinAt :: SecLevel -> Int -> Int -> Int -> MemInst m -> Maybe (MemInst m)
+copyWithinAt context dst src count mem = do
     payload <- readBytes mem src count
-    writeBytes mem dst payload
+    let sourceLevels = [levelOfRange mem a 1 | a <- [src .. src + count - 1]]
+    written <- writeBytes mem dst payload
+    Just (foldl' (\acc (i, level) -> setLevels (joinLevel context level) (dst + i) 1 acc) written (zip [0 ..] sourceLevels))
 
 {- | @memory.fill@: write @count@ copies of a byte from @dst@. 'Nothing' if the range is outside —
   decided before the bytes are materialised, since a count may be in the billions.
 -}
 fillBytes :: Int -> Word8 -> Int -> MemInst m -> Maybe (MemInst m)
-fillBytes dst value count mem
-    | inBounds mem dst count = writeBytes mem dst (replicate count value)
+fillBytes = fillBytesAt Low
+
+-- | 'fillBytes' at a security level (the fill value's, joined with the context's).
+fillBytesAt :: SecLevel -> Int -> Word8 -> Int -> MemInst m -> Maybe (MemInst m)
+fillBytesAt level dst value count mem
+    | inBounds mem dst count = writeBytesAt level mem dst (replicate count value)
     | otherwise = Nothing
+
+-- *** Levels ***
+
+joinLevel :: SecLevel -> SecLevel -> SecLevel
+joinLevel Low l = l
+joinLevel High _ = High
+
+{- | The join of the levels of @count@ bytes from @addr@: what a load must compare with the
+  level it declares. A memory that never held a secret answers without a lookup, and a range
+  inside one chunk costs one lookup.
+-}
+{-# INLINE levelOfRange #-}
+levelOfRange :: MemInst m -> Int -> Int -> SecLevel
+levelOfRange mem addr count
+    | IntMap.null mem.levels = Low
+    | offset + count <= chunkSize = maybe Low (chunkLevel offset) (IntMap.lookup chunkIx mem.levels)
+    | otherwise = foldl' joinLevel Low [levelOfRange mem a 1 | a <- [addr .. addr + count - 1]]
+  where
+    (chunkIx, offset) = addr `quotRem` chunkSize
+    chunkLevel from stored = if UV.any (/= 0) (UV.slice from count stored) then High else Low
+
+{- | Give @count@ bytes from @addr@ (already checked to be in bounds) one level. Marking bytes
+  public in a chunk that has no levels changes nothing, so it costs nothing; that is the common
+  case, and the one every unlabelled program stays in.
+-}
+{-# INLINE setLevels #-}
+setLevels :: SecLevel -> Int -> Int -> MemInst m -> MemInst m
+setLevels level addr count mem
+    | Low <- level, IntMap.null mem.levels = mem
+    | count <= 0 = mem
+    | otherwise = mem {levels = foldl' mark mem.levels (runsByChunk addr (replicate count (levelByte level)))}
+  where
+    mark stored (chunkIx, offset, run) = case (level, IntMap.lookup chunkIx stored) of
+        (Low, Nothing) -> stored
+        (_, current) -> IntMap.insert chunkIx (fromMaybe zeroChunk current UV.// zip [offset ..] run) stored

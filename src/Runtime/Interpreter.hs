@@ -111,11 +111,12 @@ import GHC.Float (castDoubleToWord64, castFloatToWord32, castWord32ToFloat, cast
 import Data.ByteString qualified as BS
 import Data.List.Singletons (type (++))
 import Data.Maybe (fromMaybe)
+import Data.Singletons (Sing, fromSing)
 import Data.Singletons.Decide (decideEquality)
 import Data.Type.Equality ((:~:) (Refl))
 import Runtime.Convert (convertVal)
 import Runtime.Host (WasiFunc, wasiFuncType)
-import Runtime.MemInst (MemInst, copyWithin, fillBytes, growMemory, loadWord, memoryPages, storeWord, writeBytes)
+import Runtime.MemInst (MemInst, copyWithinAt, fillBytesAt, growMemory, levelOfRange, loadWord, memoryPages, storeWordAt, writeBytesAt)
 import Runtime.Numeric (copysign32, copysign64, fromSigned32, fromSigned64, intDiv32, intDiv64, intRem32, intRem64, toSigned32, toSigned64, wasmMax, wasmMin)
 import Runtime.Stack
 import Runtime.TableInst (tableLookup)
@@ -354,40 +355,40 @@ step funcs (Config store locals stack code control) = case code of
         IFloatBin nt op -> stepBin store locals stack (floatBinT nt op) rest control
         {- Memory size / grow & narrow access -}
         IMemSize -> stepped store locals (memoryPages (currentMem store) :# stack) rest control
-        IMemGrow -> case stack of
+        IMemGrow _ -> case stack of
             delta :# r ->
                 let mem = currentMem store
                  in case growMemory delta mem of
                         Just grown -> stepped (storeMem grown store) locals (memoryPages mem :# r) rest control
                         Nothing -> stepped store locals (growFailed :# r) rest control
-        ILoadN nw sign memArg -> case stack of
+        ILoadN level nw sign memArg -> case stack of
             addr :# r ->
-                case loadWord (currentMem store) (effectiveAddr addr memArg) (narrowBytes nw) of
-                    Just word -> stepped store locals (narrowLoadT nw sign word :# r) rest control
-                    Nothing -> Left OutOfBoundsMemoryAccess
-        IStoreN nw memArg -> case stack of
+                case checkedLoad (currentMem store) level (effectiveAddr addr memArg) (narrowBytes nw) of
+                    Right word -> stepped store locals (narrowLoadT nw sign word :# r) rest control
+                    Left trap -> Left trap
+        IStoreN level _ nw memArg -> case stack of
             value :# addr :# r ->
-                case storeWord (currentMem store) (effectiveAddr addr memArg) (narrowBytes nw) (narrowStoreT nw value) of
+                case storeWordAt (fromSing level) (currentMem store) (effectiveAddr addr memArg) (narrowBytes nw) (narrowStoreT nw value) of
                     Just mem' -> stepped (storeMem mem' store) locals r rest control
                     Nothing -> Left OutOfBoundsMemoryAccess
         {- Bulk memory: each checks both ranges before writing anything -}
-        IMemCopy -> case stack of
+        IMemCopy level -> case stack of
             count :# src :# dst :# r ->
-                case copyWithin (fromIntegral dst) (fromIntegral src) (fromIntegral count) (currentMem store) of
+                case copyWithinAt (fromSing level) (fromIntegral dst) (fromIntegral src) (fromIntegral count) (currentMem store) of
                     Just mem' -> stepped (storeMem mem' store) locals r rest control
                     Nothing -> Left OutOfBoundsMemoryAccess
-        IMemFill -> case stack of
+        IMemFill level -> case stack of
             count :# value :# dst :# r ->
-                case fillBytes (fromIntegral dst) (fromIntegral value) (fromIntegral count) (currentMem store) of
+                case fillBytesAt (fromSing level) (fromIntegral dst) (fromIntegral value) (fromIntegral count) (currentMem store) of
                     Just mem' -> stepped (storeMem mem' store) locals r rest control
                     Nothing -> Left OutOfBoundsMemoryAccess
-        IMemInit segmentIx -> case stack of
+        IMemInit level segmentIx -> case stack of
             count :# srcOffset :# dst :# r ->
                 let segment = fromMaybe BS.empty (getSegment segmentIx store.dataSegments)
                     n = fromIntegral count
                     src = fromIntegral srcOffset
                     inSegment = src + n <= BS.length segment
-                    written = writeBytes (currentMem store) (fromIntegral dst) (BS.unpack (BS.take n (BS.drop src segment)))
+                    written = writeBytesAt (fromSing level) (currentMem store) (fromIntegral dst) (BS.unpack (BS.take n (BS.drop src segment)))
                  in case (inSegment, written) of
                         (True, Just mem') -> stepped (storeMem mem' store) locals r rest control
                         _ -> Left OutOfBoundsMemoryAccess
@@ -405,16 +406,21 @@ step funcs (Config store locals stack code control) = case code of
         IGlobalSet _ _ ix -> case stack of
             v :# r -> stepped (storeSetGlobal ix v store) locals r rest control
         {- Memory -}
-        ILoad nt memArg -> case stack of
+        ILoad level nt memArg -> case stack of
             addr :# r ->
-                case loadWord (currentMem store) (effectiveAddr addr memArg) (numBytes nt) of
-                    Just word -> stepped store locals (loadValue nt word :# r) rest control
-                    Nothing -> Left OutOfBoundsMemoryAccess
-        IStore nt memArg -> case stack of
+                case checkedLoad (currentMem store) level (effectiveAddr addr memArg) (numBytes nt) of
+                    Right word -> stepped store locals (loadValue nt word :# r) rest control
+                    Left trap -> Left trap
+        IStore level _ nt memArg -> case stack of
             value :# addr :# r ->
-                case storeWord (currentMem store) (effectiveAddr addr memArg) (numBytes nt) (storedWord nt value) of
+                case storeWordAt (fromSing level) (currentMem store) (effectiveAddr addr memArg) (numBytes nt) (storedWord nt value) of
                     Just mem' -> stepped (storeMem mem' store) locals r rest control
                     Nothing -> Left OutOfBoundsMemoryAccess
+        {- Relabelling changes the level in the type only: the same word goes back on the stack -}
+        IRelabel _ -> case stack of
+            v :# r -> stepped store locals (v :# r) rest control
+        IDeclassify -> case stack of
+            v :# r -> stepped store locals (v :# r) rest control
         {- Calls: enter the callee (see 'enterCall'); an indirect call first reads the table entry
            and checks its type against the expected one, trapping if they differ -}
         ICall _ witness ix -> enterCall funcs store locals witness ix stack rest control
@@ -537,6 +543,19 @@ stepUn ::
     Control mod res ret locals labels out ->
     Either Trap (StepResult mod res)
 stepUn store locals (a :# r) op = stepped store locals (op a :# r)
+
+{- | A load with SecWasm's run-time check: the word, unless the range is out of bounds or holds a
+  byte more secret than the level the instruction declares. The comparison is skipped when the
+  instruction declares 'High, since nothing exceeds it.
+-}
+checkedLoad :: MemInst m -> Sing (level :: SecLevel) -> Int -> Int -> Either Trap Word64
+checkedLoad mem level addr count = case loadWord mem addr count of
+    Nothing -> Left OutOfBoundsMemoryAccess
+    Just word -> case level of
+        SHigh -> Right word
+        SLow -> case levelOfRange mem addr count of
+            Low -> Right word
+            High -> Left InformationFlowViolation
 
 {- | The module's single memory, and a store update for it. The @ModuleMems mod ~ (m ': ms)@
   constraint every memory instruction carries makes both total.

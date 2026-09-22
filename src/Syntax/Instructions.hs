@@ -95,6 +95,17 @@ data RawInstr where
     StoreN :: Sing (t :: ValType) -> Int -> MemArg -> RawInstr
     MemorySize :: RawInstr
     MemoryGrow :: RawInstr
+    -- \*** Information flow (never decoded: the policy stage produces them, see
+    --       "Validation.Policy") ***
+
+    -- | a load or store with the security level it declares
+    Annotated :: SecLevel -> RawInstr -> RawInstr
+    -- | raise the level of the value on top of the stack to this one
+    Relabel :: SecLevel -> RawInstr
+    {- | lower the level of the value on top of the stack to this one: trusted, and only
+    allowed when the policy says so
+    -}
+    Declassify :: SecLevel -> RawInstr
     -- bulk memory: @memory.copy@, @memory.fill@, @memory.init@ from a data segment, @data.drop@
     MemoryCopy :: RawInstr
     MemoryFill :: RawInstr
@@ -252,9 +263,8 @@ data FloatBinOp = FMin | FMax | FCopysign deriving stock (Eq, Show)
 
   What is still unfinished has a @TODO(ifc …)@ beside it (@grep -rn 'TODO(ifc' src test@ lists
   them; P0 is a decision to take first, P1 is needed for a sound system, P2 for real modules,
-  P3 is polish). The two large ones are memory, which has no levels yet, and function types,
-  which have no bound on the pc they may be called from, so calls are only allowed at a public
-  pc for now.
+  P3 is polish). The large one is function types, which have no bound on the pc they may be
+  called from, so calls are only allowed at a public pc for now.
 -}
 
 -- TODO: organize instructions into groups: data, mem, ctrl and admin
@@ -297,48 +307,54 @@ data
     {- Conversions: pop one @from@, push one @to@ at the same level. The 'ConvertOp' is indexed
        by exactly those types, so the operand/result and the opcode cannot disagree. -}
     IConvert :: ConvertOp from to -> Instr m f l (pc ': pcs) (pc ': pcs) ((from ':~ lv) ': s) ((to ':~ Join pc lv) ': s)
-    {- Memory size / grow and narrow load/store.
-       TODO(ifc P1): memory has no levels yet. A load says its result is as secret as the
-       address, the pc, and a level @lv@ that stands for the bytes read, which is free, so a
-       program can claim that secret bytes are public. A store checks nothing. The @ifc@ branch
-       stopped at the same point (its store notes that the value's level cannot be recorded).
-       SecWasm keeps a level for every byte of memory at run time, and writes a level @ℓ@ in
-       each load and store:
-         * a load takes a @Sing ℓ@ in place of the free @lv@, and at run time traps unless every
-           byte it reads is at most @ℓ@;
-         * a store takes a @Sing ℓ@ and a @FlowsInto (Join pc (Join la lv)) ℓ@ witness, and at
-           run time marks the bytes it writes with @ℓ@;
-         * @memory.grow@ is allowed only at a public pc with a public argument, and the new
-           bytes are public, so @memory.size@ is public too.
-       The run-time half is described in "Runtime.MemInst". -}
-    IMemSize :: forall lv m f l pc pcs s mem mems. (ModuleMems m ~ (mem ': mems)) => Instr m f l (pc ': pcs) (pc ': pcs) s (('I32 ':~ Join pc lv) ': s)
-    IMemGrow :: (ModuleMems m ~ (mem ': mems)) => Instr m f l (pc ': pcs) (pc ': pcs) (('I32 ':~ lv) ': s) (('I32 ':~ Join pc lv) ': s)
-    ILoadN ::
-        forall lv t m f l pc pcs la s mem mems.
+    {- Memory size / grow and narrow load/store, SecWasm's rules. Every byte of memory has a
+       level at run time ("Runtime.MemInst"). A load declares a level @ℓ@, the most secret bytes
+       it expects to read: its result is as secret as the address, the pc and @ℓ@, and at run
+       time it traps if a byte it reads is more secret than @ℓ@. A store declares the level its
+       bytes get; the pc, the address and the value must all flow into it, and that is checked
+       here, not at run time. @memory.grow@ is allowed only in a public context with a public
+       argument, since the memory's size is public (new bytes are public), and @memory.size@
+       yields a public value. -}
+    IMemSize :: (ModuleMems m ~ (mem ': mems)) => Instr m f l (pc ': pcs) (pc ': pcs) s (('I32 ':~ pc) ': s)
+    IMemGrow ::
         (ModuleMems m ~ (mem ': mems)) =>
+        FlowsInto (Join pc lv) 'Low ->
+        Instr m f l (pc ': pcs) (pc ': pcs) (('I32 ':~ lv) ': s) (('I32 ':~ pc) ': s)
+    ILoadN ::
+        (ModuleMems m ~ (mem ': mems)) =>
+        Sing (level :: SecLevel) ->
         NarrowWidth t ->
         Signedness ->
         MemArg ->
-        Instr m f l (pc ': pcs) (pc ': pcs) (('I32 ':~ la) ': s) ((t ':~ Join pc (Join la lv)) ': s)
+        Instr m f l (pc ': pcs) (pc ': pcs) (('I32 ':~ la) ': s) ((t ':~ Join pc (Join la level)) ': s)
     IStoreN ::
         (ModuleMems m ~ (mem ': mems)) =>
+        Sing (level :: SecLevel) ->
+        FlowsInto (Join pc (Join la lv)) level ->
         NarrowWidth t ->
         MemArg ->
-        Instr m f l p p ((t ':~ lv) ': ('I32 ':~ la) ': s) s
+        Instr m f l (pc ': pcs) (pc ': pcs) ((t ':~ lv) ': ('I32 ':~ la) ': s) s
     {- Bulk memory. Operands, top first: the byte count, then the source (an address, a fill
        value, or an offset into the segment), then the destination address. A segment is named
-       by an 'Elem' into the module's data index space, so it exists.
-       TODO(ifc P2): SecWasm covers WebAssembly 1.0, which has no bulk memory, so these rules
-       are ours to write once memory has levels. They need no static check: a copied byte keeps
-       the level of its source joined with the levels of the three operands and the pc, a
-       filled byte takes the fill value's level joined with the same, and an initialised byte
-       (a data segment is public) takes the operands' levels and the pc. -}
-    IMemCopy :: (ModuleMems m ~ (mem ': mems)) => Instr m f l p p (('I32 ':~ ln) ': ('I32 ':~ lsrc) ': ('I32 ':~ ldst) ': s) s
-    IMemFill :: (ModuleMems m ~ (mem ': mems)) => Instr m f l p p (('I32 ':~ ln) ': ('I32 ':~ lsrc) ': ('I32 ':~ ldst) ': s) s
+       by an 'Elem' into the module's data index space, so it exists. SecWasm covers
+       WebAssembly 1.0, which has no bulk memory, so these rules are ours: nothing is checked
+       statically, and every byte written takes the join of the pc and the three operands'
+       levels (they decide whether and where bytes move), joined with the byte's own level for a
+       copy and the fill value's for a fill; a data segment is public. That join is carried as a
+       singleton so the interpreter can write it. -}
+    IMemCopy ::
+        (ModuleMems m ~ (mem ': mems)) =>
+        Sing (Join pc (Join ln (Join lsrc ldst))) ->
+        Instr m f l (pc ': pcs) (pc ': pcs) (('I32 ':~ ln) ': ('I32 ':~ lsrc) ': ('I32 ':~ ldst) ': s) s
+    IMemFill ::
+        (ModuleMems m ~ (mem ': mems)) =>
+        Sing (Join pc (Join ln (Join lsrc ldst))) ->
+        Instr m f l (pc ': pcs) (pc ': pcs) (('I32 ':~ ln) ': ('I32 ':~ lsrc) ': ('I32 ':~ ldst) ': s) s
     IMemInit ::
         (ModuleMems m ~ (mem ': mems)) =>
+        Sing (Join pc (Join ln (Join lsrc ldst))) ->
         Elem 'DataShape (ModuleData m) ->
-        Instr m f l p p (('I32 ':~ ln) ': ('I32 ':~ lsrc) ': ('I32 ':~ ldst) ': s) s
+        Instr m f l (pc ': pcs) (pc ': pcs) (('I32 ':~ ln) ': ('I32 ':~ lsrc) ': ('I32 ':~ ldst) ': s) s
     IDataDrop :: Elem 'DataShape (ModuleData m) -> Instr m f l p p s s
     {- Stack management. @drop@ works on any value type; @select@ (0x1B) on numeric operands and
        keeps the first operand when the condition is non-zero, the second otherwise. Its result
@@ -367,19 +383,27 @@ data
         FlowsInto lv lvar ->
         Elem ('GlobalType 'Mutable (t ':~ lvar)) (ModuleGlobals m) ->
         Instr m f l (pc ': pcs) (pc ': pcs) ((t ':~ lv) ': s) s
-    {- Memory (requires the module to declare a memory). The TODO(ifc P1) on the narrow forms
-       above covers these as well. -}
+    {- Memory (requires the module to declare a memory): the same rules as the narrow forms. -}
     ILoad ::
-        forall lv t m f l pc pcs la s mem mems.
         (ModuleMems m ~ (mem ': mems)) =>
+        Sing (level :: SecLevel) ->
         IsNum t ->
         MemArg ->
-        Instr m f l (pc ': pcs) (pc ': pcs) (('I32 ':~ la) ': s) ((t ':~ Join pc (Join la lv)) ': s)
+        Instr m f l (pc ': pcs) (pc ': pcs) (('I32 ':~ la) ': s) ((t ':~ Join pc (Join la level)) ': s)
     IStore ::
         (ModuleMems m ~ (mem ': mems)) =>
+        Sing (level :: SecLevel) ->
+        FlowsInto (Join pc (Join la lv)) level ->
         IsNum t ->
         MemArg ->
-        Instr m f l p p ((t ':~ lv) ': ('I32 ':~ la) ': s) s
+        Instr m f l (pc ': pcs) (pc ': pcs) ((t ':~ lv) ': ('I32 ':~ la) ': s) s
+    {- Relabelling. SecWasm accepts a value of a lower level wherever a higher one is expected,
+       by subtyping; an intrinsically-typed AST has no subtyping, so the validator inserts
+       'IRelabel' where the policy or a call demands it. 'IDeclassify' goes the other way and is
+       trusted: it is the escape hatch a policy may enable, and with it the guarantee becomes "no
+       leak except through the declassifications". Neither does anything at run time. -}
+    IRelabel :: FlowsInto lv lv' -> Instr m f l p p ((t ':~ lv) ': s) ((t ':~ lv') ': s)
+    IDeclassify :: Instr m f l p p ((t ':~ lv) ': s) ((t ':~ lv') ': s)
     {- Calls. The 'Append' witness lets the interpreter peel the arguments off the stack. The
        arguments must be at exactly the levels the function declares, and the results come back
        at the levels it declares. A function body is checked at a public pc
@@ -390,10 +414,8 @@ data
        called from; the body is checked at that bound and the witness here becomes
        @FlowsInto pc bound@. The field is missing from 'Syntax.Types.FuncTypeOf' (the @ifc@
        branch has no labelled calls either).
-       TODO(ifc P2): arguments at a lower level than declared should be accepted. SecWasm does
-       this by subtyping. An intrinsically-typed AST has no subtyping, so add an instruction that
-       raises the level of the value on top of the stack (it takes a 'FlowsInto' witness and
-       does nothing at run time), and have the validator insert it where needed. -}
+       TODO(ifc P2): arguments at a lower level than declared should be accepted, by inserting
+       'IRelabel' before the call; today the levels must match exactly. -}
     ICall ::
         FlowsInto pc 'Low ->
         Append ps s full ->

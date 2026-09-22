@@ -22,11 +22,11 @@ data Trap
       UninitializedElement
     | -- | @call_indirect@ through a function of another type than expected
       IndirectCallTypeMismatch
-    | {- TODO(ifc P1): add a trap for a failed information-flow check at run time, for example
-      \|    @InformationFlowViolation@. A load raises it when a byte it reads is more secret than the
-      \|    level written in the instruction (see 'Runtime.MemInst.MemInst'). -}
-
-      {- | a @call@ or @call_indirect@ that would nest activations past the interpreter's bound
+    | {- | a load read a byte more secret than the level the instruction declares: SecWasm's one
+      run-time information-flow check (the others are static)
+      -}
+      InformationFlowViolation
+    | {- | a @call@ or @call_indirect@ that would nest activations past the interpreter's bound
       ('callDepthBound' in "Runtime.Interpreter")
       -}
       CallStackExhausted

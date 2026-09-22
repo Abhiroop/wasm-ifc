@@ -40,6 +40,7 @@ import Syntax.Indices
 import Syntax.Instructions
 import Syntax.Module (DataMode (..), Export (..), ExportDesc (..), ImportDesc (..), RawDataSegment (..), RawElementSegment (..), RawImport (..), RawMemory (..), RawModule (..), RawTable (..))
 import Syntax.Types
+import Syntax.TypesIFC (SecLevel (..))
 import Validation.Elaborate (ElabError (..), IndexSpace (..), elaborateModule)
 
 main :: IO ()
@@ -113,6 +114,39 @@ spec = do
                 deepest = fromIntegral callDepthBound - 1
             elabRun [I32] [I32] [] countdown [deepest] `shouldBe` Right [show deepest]
             elabRun [I32] [I32] [] countdown [deepest + 1] `shouldSatisfy` trapContaining "CallStackExhausted"
+
+    describe "information flow through memory (SecWasm's run-time check)" $ do
+        let secretStore = [Const SI32 0, Const SI32 7, Annotated High (Store SI32 (MemArg 0 0))]
+            publicStore = [Const SI32 0, Const SI32 9, Store SI32 (MemArg 0 0)]
+            loadPublic = [Const SI32 0, Load SI32 (MemArg 0 0)]
+            loadSecret = [Const SI32 0, Annotated High (Load SI32 (MemArg 0 0))]
+        it "a load expecting public bytes traps on a byte a secret store wrote" $
+            elabRunWithMemory [] [I32] [] (secretStore ++ loadPublic) [] `shouldSatisfy` trapContaining "InformationFlowViolation"
+        it "a load declared secret yields a secret, which a public function cannot return" $
+            elabRunWithMemory [] [I32] [] (secretStore ++ loadSecret) [] `shouldSatisfy` isLeft
+        it "a secret that was loaded stays secret when stored again (the store's level is inferred)" $
+            -- A secret can only be observed publicly through a declassification, so the
+            -- evidence is the trap on the public read of the copy.
+            elabRunWithMemory [] [I32] [] (secretStore ++ [Const SI32 8] ++ loadSecret ++ [Store SI32 (MemArg 0 0), Const SI32 8, Load SI32 (MemArg 0 0)]) []
+                `shouldSatisfy` trapContaining "InformationFlowViolation"
+        it "a public store over secret bytes makes them public again" $
+            elabRunWithMemory [] [I32] [] (secretStore ++ publicStore ++ loadPublic) [] `shouldBe` Right ["9"]
+        it "a narrow load sees the level of every byte it covers" $
+            elabRunWithMemory [] [I32] [] (secretStore ++ [Const SI32 2, LoadN SI32 1 Unsigned (MemArg 0 0)]) []
+                `shouldSatisfy` trapContaining "InformationFlowViolation"
+        it "memory.copy carries the bytes' levels with them" $
+            elabRunWithMemory [] [I32] [] (secretStore ++ [Const SI32 16, Const SI32 0, Const SI32 4, MemoryCopy, Const SI32 16, Load SI32 (MemArg 0 0)]) []
+                `shouldSatisfy` trapContaining "InformationFlowViolation"
+        it "a store may declare a level the value flows into, not one it does not" $ do
+            elabErrorWithMemory [] [] [] [Const SI32 0, Const SI32 1, Annotated High (Store SI32 (MemArg 0 0))] `shouldSatisfy` isRight
+            elabErrorWithMemory [] [] [] (secretStore ++ loadSecret ++ [Const SI32 4, Store SI32 (MemArg 0 0)]) `shouldSatisfy` isRight
+            elabErrorWithMemory [] [] [] (secretStore ++ [Const SI32 4] ++ loadSecret ++ [Annotated Low (Store SI32 (MemArg 0 0))])
+                `shouldBe` Left (IllegalFlow "store" High Low)
+        it "relabelling goes up freely and never down without declassification" $ do
+            elabError [] [I32] [] [Const SI32 1, Relabel High, Relabel Low] `shouldBe` Left (IllegalFlow "relabel" High Low)
+            elabError [] [I32] [] [Const SI32 1, Relabel High, Declassify Low] `shouldBe` Left DeclassifyNotAllowed
+        it "an annotation belongs on a memory access only" $
+            elabError [] [] [] [Annotated High Nop] `shouldBe` Left AnnotationMisplaced
 
     describe "indirect calls" $ do
         it "go through the table entry, typed" $

@@ -149,6 +149,11 @@ decideAllAtLeast :: Sing (l :: SecLevel) -> Sing (rs :: [LValType]) -> Maybe (Al
 decideAllAtLeast _ SNil = Just NothingCarried
 decideAllAtLeast l (SCons (_ :%~ lv) rest) = CarriedAtLeast <$> decideFlow l lv <*> decideAllAtLeast l rest
 
+-- | Every level flows into itself: the witness an inferred store level satisfies by construction.
+flowsSelf :: Sing (l :: SecLevel) -> FlowsInto l l
+flowsSelf SLow = LowFlowsAnywhere
+flowsSelf SHigh = HighFlowsToHigh
+
 decideFlow :: Sing (l :: SecLevel) -> Sing (l' :: SecLevel) -> Maybe (FlowsInto l l')
 decideFlow SLow _ = Just LowFlowsAnywhere
 decideFlow SHigh SHigh = Just HighFlowsToHigh

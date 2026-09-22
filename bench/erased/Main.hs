@@ -664,12 +664,12 @@ eraseInstr instr = case instr of
     IFloatBin ft op -> EFloatBin (floatType ft) op
     IConvert op -> let (from, to) = convertEnds op in EConvert (SomeConvert from to op)
     IMemSize -> EMemSize
-    IMemGrow -> EMemGrow
-    ILoadN nw sign memArg -> ELoadN (SomeNarrow (narrowInt nw) nw) sign memArg
-    IStoreN nw memArg -> EStoreN (SomeNarrow (narrowInt nw) nw) memArg
-    IMemCopy -> EMemCopy
-    IMemFill -> EMemFill
-    IMemInit ix -> EMemInit (positionOf ix)
+    IMemGrow _ -> EMemGrow
+    ILoadN _ nw sign memArg -> ELoadN (SomeNarrow (narrowInt nw) nw) sign memArg
+    IStoreN _ _ nw memArg -> EStoreN (SomeNarrow (narrowInt nw) nw) memArg
+    IMemCopy _ -> EMemCopy
+    IMemFill _ -> EMemFill
+    IMemInit _ ix -> EMemInit (positionOf ix)
     IDataDrop ix -> EDataDrop (positionOf ix)
     IDrop -> EDrop
     ISelect _ -> ESelect
@@ -678,8 +678,10 @@ eraseInstr instr = case instr of
     ILocalTee _ _ ref -> ELocalTee (localPosition ref) (fromSing (localType ref))
     IGlobalGet ix -> EGlobalGet (positionOf ix)
     IGlobalSet _ _ ix -> EGlobalSet (positionOf ix)
-    ILoad nt memArg -> ELoad (numType nt) memArg
-    IStore nt memArg -> EStore (numType nt) memArg
+    ILoad _ nt memArg -> ELoad (numType nt) memArg
+    IRelabel _ -> ENop
+    IDeclassify -> ENop
+    IStore _ _ nt memArg -> EStore (numType nt) memArg
     ICall _ witness ix -> ECall (widthOf witness) (positionOf ix)
     ICallIndirect _ witness (SFuncType params results) -> ECallIndirect (widthOf witness) (FuncType (unlabelledTypes params) (unlabelledTypes results))
     IBlock witness body -> EBlock (widthOf witness) (eraseExpr body)

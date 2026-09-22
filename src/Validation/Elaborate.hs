@@ -27,7 +27,8 @@ import Data.Type.Equality ((:~:) (Refl))
 import Data.Word (Word32)
 
 import Data.List.Singletons ((%++))
-import Data.Singletons (SomeSing (..), toSing)
+import Data.Maybe (fromMaybe)
+import Data.Singletons (SomeSing (..), toSing, withSomeSing)
 import Data.Singletons.Base.TH (SList (SCons, SNil), Sing, fromSing)
 import Data.Singletons.Decide (decideEquality)
 import Runtime.MemInst (maxMemoryPages)
@@ -110,6 +111,10 @@ data ElabError
       it would flow into
       -}
       IllegalFlow Text SecLevel SecLevel
+    | -- | a level annotation on an instruction that takes none
+      AnnotationMisplaced
+    | -- | @declassify@ in a module whose policy does not allow it
+      DeclassifyNotAllowed
     deriving stock (Eq, Show)
 
 -- | The sub-category an instruction requires its operand type to belong to.
@@ -132,6 +137,10 @@ data ElabEnv (shape :: ModuleShape) (ret :: LResultType) (locals :: [LValType]) 
     , results :: Sing ret
     , locals :: Sing locals
     , labels :: Sing labels
+    , loadDefault :: SecLevel
+    -- ^ the level a load declares when nothing annotates it (see "Validation.Policy")
+    , declassifyAllowed :: Bool
+    -- ^ whether the policy enables 'Declassify'
     }
 
 {- | The result of elaborating a whole instruction sequence that started from pc stack @pcIn@
@@ -315,43 +324,14 @@ elabInstr env pcsIn@(SCons pc _) stackIn instr = case instr of
                     Right (Produces (sameLengthAs pcsIn) pcsIn rest (IGlobalSet pcFlows valueFlows gix))
                 _ -> Left (StackUnderflow "global.set")
     {- Memory -}
-    Load st memArg -> case stackIn of
-        SCons (sc :%~ la) rest -> do
-            NonEmptyMems <- requireMemory env "load"
-            isNum <- requireNum st
-            Refl <- note (OperandMismatch "load" I32 (valTypeOf sc)) (decideEquality sc SI32)
-            checkAlign memArg (numBytes isNum)
-            Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (st :%~ sJoin pc (sJoin la SLow)) rest) (ILoad @'Low isNum memArg))
-        _ -> Left (StackUnderflow "load")
-    Store st memArg -> case stackIn of
-        SCons (sv :%~ _) (SCons (sc :%~ _) rest) -> do
-            NonEmptyMems <- requireMemory env "store"
-            isNum <- requireNum st
-            Refl <- note (OperandMismatch "store" (valTypeOf st) (valTypeOf sv)) (decideEquality sv st)
-            Refl <- note (OperandMismatch "store" I32 (valTypeOf sc)) (decideEquality sc SI32)
-            checkAlign memArg (numBytes isNum)
-            Right (Produces (sameLengthAs pcsIn) pcsIn rest (IStore isNum memArg))
-        _ -> Left (StackUnderflow "store")
-    LoadN st width sign memArg -> case stackIn of
-        SCons (sc :%~ la) rest -> do
-            NonEmptyMems <- requireMemory env "load"
-            nw <- requireNarrow st width
-            Refl <- note (OperandMismatch "load" I32 (valTypeOf sc)) (decideEquality sc SI32)
-            checkAlign memArg (narrowBytes nw)
-            Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (st :%~ sJoin pc (sJoin la SLow)) rest) (ILoadN @'Low nw sign memArg))
-        _ -> Left (StackUnderflow "load")
-    StoreN st width memArg -> case stackIn of
-        SCons (sv :%~ _) (SCons (sc :%~ _) rest) -> do
-            NonEmptyMems <- requireMemory env "store"
-            nw <- requireNarrow st width
-            Refl <- note (OperandMismatch "store" (valTypeOf st) (valTypeOf sv)) (decideEquality sv st)
-            Refl <- note (OperandMismatch "store" I32 (valTypeOf sc)) (decideEquality sc SI32)
-            checkAlign memArg (narrowBytes nw)
-            Right (Produces (sameLengthAs pcsIn) pcsIn rest (IStoreN nw memArg))
-        _ -> Left (StackUnderflow "store")
+    Load st memArg -> elabMemory env pcsIn stackIn Nothing (Load st memArg)
+    Store st memArg -> elabMemory env pcsIn stackIn Nothing (Store st memArg)
+    LoadN st width sign memArg -> elabMemory env pcsIn stackIn Nothing (LoadN st width sign memArg)
+    StoreN st width memArg -> elabMemory env pcsIn stackIn Nothing (StoreN st width memArg)
+    Annotated level access -> elabMemory env pcsIn stackIn (Just level) access
     MemorySize -> do
         NonEmptyMems <- requireMemory env "memory.size"
-        Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (SI32 :%~ sJoin pc SLow) stackIn) (IMemSize @'Low))
+        Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (SI32 :%~ pc) stackIn) IMemSize)
     MemoryCopy -> do
         NonEmptyMems <- requireMemory env "memory.copy"
         threeAddresses "memory.copy" stackIn pcsIn IMemCopy
@@ -361,7 +341,17 @@ elabInstr env pcsIn@(SCons pc _) stackIn instr = case instr of
     MemoryInit (DataIdx d) -> do
         NonEmptyMems <- requireMemory env "memory.init"
         segmentIx <- note (IndexOutOfRange DataSegments d) (mkDataElem (dataShapesSing (env.shape)) d)
-        threeAddresses "memory.init" stackIn pcsIn (IMemInit segmentIx)
+        threeAddresses "memory.init" stackIn pcsIn (`IMemInit` segmentIx)
+    Relabel target -> case stackIn of
+        SCons (sv :%~ lv) rest -> withSomeSing target $ \starget -> do
+            flows <- requireFlow "relabel" lv starget
+            Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (sv :%~ starget) rest) (IRelabel flows))
+        _ -> Left (StackUnderflow "relabel")
+    Declassify target -> case stackIn of
+        SCons (sv :%~ _) rest
+            | env.declassifyAllowed -> withSomeSing target $ \starget -> Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (sv :%~ starget) rest) IDeclassify)
+            | otherwise -> Left DeclassifyNotAllowed
+        _ -> Left (StackUnderflow "declassify")
     DataDrop (DataIdx d) -> do
         segmentIx <- note (IndexOutOfRange DataSegments d) (mkDataElem (dataShapesSing (env.shape)) d)
         Right (Produces (sameLengthAs pcsIn) pcsIn stackIn (IDataDrop segmentIx))
@@ -369,7 +359,8 @@ elabInstr env pcsIn@(SCons pc _) stackIn instr = case instr of
         SCons (sc :%~ lc) rest -> do
             NonEmptyMems <- requireMemory env "memory.grow"
             Refl <- note (OperandMismatch "memory.grow" I32 (valTypeOf sc)) (decideEquality sc SI32)
-            Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (SI32 :%~ sJoin pc lc) rest) IMemGrow)
+            publicContext <- requireFlow "memory.grow" (sJoin pc lc) SLow
+            Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (SI32 :%~ pc) rest) (IMemGrow publicContext))
         _ -> Left (StackUnderflow "memory.grow")
     {- Calls -}
     CallIndirect (TypeIdx t) -> case stackIn of
@@ -623,6 +614,68 @@ requireNarrow :: Sing (t :: ValType) -> Int -> Either ElabError (NarrowWidth t)
 requireNarrow st width =
     note (InvalidNarrowWidth (valTypeOf st) width) (decideNarrow st width)
 
+{- | The four memory accesses, with the level they declare: the annotation if there is one,
+  otherwise the policy's default for a load and, for a store, the lowest level the rule allows
+  (the join of the pc, the address and the value), which is always sound. An annotation on any
+  other instruction is a mistake of the policy stage.
+-}
+elabMemory ::
+    forall shape ret locals labels pc pcs stackIn.
+    ElabEnv shape ret locals labels ->
+    Sing (pc ': pcs) ->
+    Sing stackIn ->
+    Maybe SecLevel ->
+    RawInstr ->
+    Either ElabError (ElaboratedInstr shape ret locals labels (pc ': pcs) stackIn)
+elabMemory env pcsIn@(SCons pc _) stackIn annotation access = case access of
+    Load st memArg -> case stackIn of
+        SCons (sc :%~ la) rest -> do
+            NonEmptyMems <- requireMemory env "load"
+            isNum <- requireNum st
+            Refl <- note (OperandMismatch "load" I32 (valTypeOf sc)) (decideEquality sc SI32)
+            checkAlign memArg (numBytes isNum)
+            withSomeSing loadLevel $ \level ->
+                Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (st :%~ sJoin pc (sJoin la level)) rest) (ILoad level isNum memArg))
+        _ -> Left (StackUnderflow "load")
+    LoadN st width sign memArg -> case stackIn of
+        SCons (sc :%~ la) rest -> do
+            NonEmptyMems <- requireMemory env "load"
+            nw <- requireNarrow st width
+            Refl <- note (OperandMismatch "load" I32 (valTypeOf sc)) (decideEquality sc SI32)
+            checkAlign memArg (narrowBytes nw)
+            withSomeSing loadLevel $ \level ->
+                Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (st :%~ sJoin pc (sJoin la level)) rest) (ILoadN level nw sign memArg))
+        _ -> Left (StackUnderflow "load")
+    Store st memArg -> case stackIn of
+        SCons (sv :%~ lv) (SCons (sc :%~ la) rest) -> do
+            NonEmptyMems <- requireMemory env "store"
+            isNum <- requireNum st
+            Refl <- note (OperandMismatch "store" (valTypeOf st) (valTypeOf sv)) (decideEquality sv st)
+            Refl <- note (OperandMismatch "store" I32 (valTypeOf sc)) (decideEquality sc SI32)
+            checkAlign memArg (numBytes isNum)
+            storeAt (sJoin pc (sJoin la lv)) $ \level flows ->
+                Right (Produces (sameLengthAs pcsIn) pcsIn rest (IStore level flows isNum memArg))
+        _ -> Left (StackUnderflow "store")
+    StoreN st width memArg -> case stackIn of
+        SCons (sv :%~ lv) (SCons (sc :%~ la) rest) -> do
+            NonEmptyMems <- requireMemory env "store"
+            nw <- requireNarrow st width
+            Refl <- note (OperandMismatch "store" (valTypeOf st) (valTypeOf sv)) (decideEquality sv st)
+            Refl <- note (OperandMismatch "store" I32 (valTypeOf sc)) (decideEquality sc SI32)
+            checkAlign memArg (narrowBytes nw)
+            storeAt (sJoin pc (sJoin la lv)) $ \level flows ->
+                Right (Produces (sameLengthAs pcsIn) pcsIn rest (IStoreN level flows nw memArg))
+        _ -> Left (StackUnderflow "store")
+    _ -> Left AnnotationMisplaced
+  where
+    loadLevel = fromMaybe env.loadDefault annotation
+    -- The level a store declares, with the proof that what flows into it may: by construction
+    -- when inferred, decided when annotated.
+    storeAt :: Sing (inferred :: SecLevel) -> (forall level. Sing level -> FlowsInto inferred level -> Either ElabError a) -> Either ElabError a
+    storeAt inferred k = case annotation of
+        Nothing -> k inferred (flowsSelf inferred)
+        Just declared -> withSomeSing declared $ \level -> requireFlow "store" inferred level >>= k level
+
 {- | The bulk-memory instructions consume three i32 operands; the typed instruction is
   polymorphic in what lies beneath.
 -}
@@ -630,14 +683,14 @@ threeAddresses ::
     Text ->
     Sing stackIn ->
     Sing (pc ': pcs) ->
-    (forall s ln lsrc ldst. Instr shape ('FrameShape locals ret) labels (pc ': pcs) (pc ': pcs) (('I32 ':~ ln) ': ('I32 ':~ lsrc) ': ('I32 ':~ ldst) ': s) s) ->
+    (forall s ln lsrc ldst. Sing (Join pc (Join ln (Join lsrc ldst))) -> Instr shape ('FrameShape locals ret) labels (pc ': pcs) (pc ': pcs) (('I32 ':~ ln) ': ('I32 ':~ lsrc) ': ('I32 ':~ ldst) ': s) s) ->
     Either ElabError (ElaboratedInstr shape ret locals labels (pc ': pcs) stackIn)
-threeAddresses name stackIn pcsIn typed = case stackIn of
-    SCons (a :%~ _) (SCons (b :%~ _) (SCons (c :%~ _) rest)) -> do
+threeAddresses name stackIn pcsIn@(SCons pc _) typed = case stackIn of
+    SCons (a :%~ ln) (SCons (b :%~ lsrc) (SCons (c :%~ ldst) rest)) -> do
         Refl <- note (OperandMismatch name I32 (valTypeOf a)) (decideEquality a SI32)
         Refl <- note (OperandMismatch name I32 (valTypeOf b)) (decideEquality b SI32)
         Refl <- note (OperandMismatch name I32 (valTypeOf c)) (decideEquality c SI32)
-        Right (Produces (sameLengthAs pcsIn) pcsIn rest typed)
+        Right (Produces (sameLengthAs pcsIn) pcsIn rest (typed (sJoin pc (sJoin ln (sJoin lsrc ldst)))))
     _ -> Left (StackUnderflow name)
 
 -- | Require the module to declare a table, for @call_indirect@.
@@ -787,6 +840,9 @@ stepDead env pcsIn s instr = case instr of
     Store t _ -> popKnown (valTypeOf t) s >>= popKnown I32
     LoadN t _ _ _ -> pushKnown (valTypeOf t) <$> popKnown I32 s
     StoreN t _ _ -> popKnown (valTypeOf t) s >>= popKnown I32
+    Annotated _ access -> stepDead env pcsIn s access
+    Relabel _ -> Right s
+    Declassify _ -> Right s
     MemorySize -> Right (pushKnown I32 s)
     MemoryGrow -> pushKnown I32 <$> popKnown I32 s
     MemoryCopy -> popTypes [I32, I32, I32] s
@@ -1071,7 +1127,7 @@ elaborateFunctionIn ::
 elaborateFunctionIn ctxS types (SFuncType psS rsS) (RawFunction _ declaredT body) =
     case reflectStack declaredT of
         SomeStack declS ->
-            let env = ElabEnv ctxS types rsS (sReverseOnto psS declS) (SCons rsS SNil)
+            let env = ElabEnv ctxS types rsS (sReverseOnto psS declS) (SCons rsS SNil) Low False
              in do
                     elaborated <- elabSeq env (SCons SLow SNil) SNil body
                     case elaborated of
