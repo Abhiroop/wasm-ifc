@@ -93,7 +93,7 @@ import Syntax.Indices (FunctionIdx (..))
 import Syntax.Instructions (BitwiseOp, ConvertOp, CountOp, Expr (..), FloatBinOp, FloatUnOp, Instr (..), convertEnds)
 import Syntax.Module (Export (..), ExportDesc (..))
 import Syntax.Types
-import Syntax.TypesIFC (LGlobalType, LValType, SLValType (..), unlabelled)
+import Syntax.TypesIFC (LabelledGlobalType, LabelledValType, SLabelledValType (..), unlabelled)
 import Validation.Elaborate (elaborateModule)
 import Validation.Ref (localPosition, localType)
 import Validation.Shape (Append (..), BranchTarget (..), Elem (..), MemShape, SModuleShape (..), SomeFuncRef (..))
@@ -727,10 +727,10 @@ eraseFunctions (FsCons (HostFunc _) rest) = FuncCons HostFunction (eraseFunction
 eraseFunctions (FsCons GhostFunc rest) = FuncCons HostFunction (eraseFunctions rest)
 
 -- | The twin knows no security levels: a labelled stack erases to its value types.
-unlabelledTypes :: Sing (s :: [LValType]) -> [ValType]
+unlabelledTypes :: Sing (s :: [LabelledValType]) -> [ValType]
 unlabelledTypes = map unlabelled . fromSing
 
-eraseGlobals :: Sing (gs :: [LGlobalType]) -> GlobalSpaceInst gs -> Values
+eraseGlobals :: Sing (gs :: [LabelledGlobalType]) -> GlobalSpaceInst gs -> Values
 eraseGlobals SNil GNil = Empty
 eraseGlobals (SCons (SGlobalType _ (valTypeS :%~ _)) rest) (GCons v vs) = valueOf valTypeS v :> eraseGlobals rest vs
   where

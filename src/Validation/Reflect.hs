@@ -72,7 +72,7 @@ import Validation.Shape
 
 -- | A term-level stack shape reflected to its singleton, hidden existentially.
 data SomeStack where
-    SomeStack :: Sing (s :: [LValType]) -> SomeStack
+    SomeStack :: Sing (s :: [LabelledValType]) -> SomeStack
 
 {- | Reflect a function's declared locals, labelling each one public. (Function types and
   globals get their levels from the policy, see "Validation.Policy"; a declared local has no
@@ -96,12 +96,12 @@ stackOrderFuncType :: FuncTypeOf v -> FuncTypeOf v
 stackOrderFuncType (FuncType params results) = FuncType (stackOrder params) (stackOrder results)
 
 -- | The witness that appending nothing changes nothing, for a stack whose singleton we hold.
-appendNil :: Sing (xs :: [LValType]) -> Append xs '[] xs
+appendNil :: Sing (xs :: [LabelledValType]) -> Append xs '[] xs
 appendNil SNil = ANil
 appendNil (SCons _ rest) = ACons (appendNil rest)
 
 -- | The singleton of 'ReverseOnto', built the same structural way.
-sReverseOnto :: Sing (xs :: [LValType]) -> Sing (acc :: [LValType]) -> Sing (ReverseOnto xs acc)
+sReverseOnto :: Sing (xs :: [LabelledValType]) -> Sing (acc :: [LabelledValType]) -> Sing (ReverseOnto xs acc)
 sReverseOnto SNil acc = acc
 sReverseOnto (SCons x xs) acc = sReverseOnto xs (SCons x acc)
 
@@ -113,19 +113,19 @@ sReverseOnto (SCons x xs) acc = sReverseOnto xs (SCons x acc)
 -}
 
 -- | @∃x. (Sing (x :: ValType), Elem x xs)@ — a bounds-checked index into a stack shape.
-data SomeElem (xs :: [LValType]) where
-    SomeElem :: Sing (x :: LValType) -> Elem x xs -> SomeElem xs
+data SomeElem (xs :: [LabelledValType]) where
+    SomeElem :: Sing (x :: LabelledValType) -> Elem x xs -> SomeElem xs
 
-mkLocalElem :: Sing (xs :: [LValType]) -> Word32 -> Maybe (SomeElem xs)
+mkLocalElem :: Sing (xs :: [LabelledValType]) -> Word32 -> Maybe (SomeElem xs)
 mkLocalElem (SCons x _) 0 = Just (SomeElem x Here)
 mkLocalElem (SCons _ xs) n = (\(SomeElem y ix) -> SomeElem y (There ix)) <$> mkLocalElem xs (n - 1)
 mkLocalElem SNil _ = Nothing
 
 -- | @∃rs. (Sing (rs :: ResultType), Elem rs ls)@ — a bounds-checked index into a label context.
-data SomeLabel (ls :: [LResultType]) where
-    SomeLabel :: Sing (rs :: LResultType) -> Elem rs ls -> SomeLabel ls
+data SomeLabel (ls :: [LabelledResultType]) where
+    SomeLabel :: Sing (rs :: LabelledResultType) -> Elem rs ls -> SomeLabel ls
 
-mkLabelElem :: Sing (ls :: [LResultType]) -> Word32 -> Maybe (SomeLabel ls)
+mkLabelElem :: Sing (ls :: [LabelledResultType]) -> Word32 -> Maybe (SomeLabel ls)
 mkLabelElem (SCons rs _) 0 = Just (SomeLabel rs Here)
 mkLabelElem (SCons _ rest) n = (\(SomeLabel rs ix) -> SomeLabel rs (There ix)) <$> mkLabelElem rest (n - 1)
 mkLabelElem SNil _ = Nothing
@@ -133,10 +133,10 @@ mkLabelElem SNil _ = Nothing
 {- | @∃s. (Sing (s :: [ValType]), Append ps s full)@ — proof that @ps@ is a prefix of @full@,
   with the suffix singleton and the 'Append' witness used to split/recombine stacks.
 -}
-data SomeSplit (ps :: [LValType]) (full :: [LValType]) where
-    SomeSplit :: Sing (s :: [LValType]) -> Append ps s full -> SomeSplit ps full
+data SomeSplit (ps :: [LabelledValType]) (full :: [LabelledValType]) where
+    SomeSplit :: Sing (s :: [LabelledValType]) -> Append ps s full -> SomeSplit ps full
 
-matchPrefix :: Sing (ps :: [LValType]) -> Sing (full :: [LValType]) -> Maybe (SomeSplit ps full)
+matchPrefix :: Sing (ps :: [LabelledValType]) -> Sing (full :: [LabelledValType]) -> Maybe (SomeSplit ps full)
 matchPrefix SNil sfull = Just (SomeSplit sfull ANil)
 matchPrefix (SCons p ps) (SCons f fs) = do
     Refl <- decideEquality p f
@@ -177,15 +177,15 @@ joinEachSameLength (BothLonger a) (BothLonger b) = BothLonger (joinEachSameLengt
 {- | A branch target resolved against the label context and the pc stack: the label's result
   type, the pc stack after the branch, and the witness that ties them together.
 -}
-data SomeBranchTarget (l :: SecLevel) (labels :: [LResultType]) (pcs :: [SecLevel]) where
+data SomeBranchTarget (l :: SecLevel) (labels :: [LabelledResultType]) (pcs :: [SecLevel]) where
     SomeBranchTarget ::
-        Sing (rs :: LResultType) ->
+        Sing (rs :: LabelledResultType) ->
         Sing (pcs' :: [SecLevel]) ->
         SameLength pcs pcs' ->
         BranchTarget l rs labels pcs pcs' ->
         SomeBranchTarget l labels pcs
 
-mkBranchTarget :: Sing (l :: SecLevel) -> Sing (labels :: [LResultType]) -> Sing (pcs :: [SecLevel]) -> Word32 -> Maybe (SomeBranchTarget l labels pcs)
+mkBranchTarget :: Sing (l :: SecLevel) -> Sing (labels :: [LabelledResultType]) -> Sing (pcs :: [SecLevel]) -> Word32 -> Maybe (SomeBranchTarget l labels pcs)
 mkBranchTarget l (SCons rs _) (SCons p ps) 0 = Just (SomeBranchTarget rs (SCons (sJoin l p) ps) (BothLonger (sameLengthAs ps)) TargetHere)
 mkBranchTarget l (SCons _ labels) (SCons p ps) n =
     (\(SomeBranchTarget rs ps' same target) -> SomeBranchTarget rs (SCons (sJoin l p) ps') (BothLonger same) (TargetThere target))
@@ -214,7 +214,7 @@ tableShapeOf (Limits lo hi) = TableShape (fromIntegral lo) (fmap fromIntegral hi
   to a runtime witness with the type-level signature hidden existentially. The function types
   are given in declared order (as decoded) and stored in stack order.
 -}
-reflectCtx :: [LFuncType] -> [LGlobalType] -> [MemType] -> [Limits] -> Int -> SomeModuleShape
+reflectCtx :: [LabelledFuncType] -> [LabelledGlobalType] -> [MemType] -> [Limits] -> Int -> SomeModuleShape
 reflectCtx funcTypes globalTypes memTypes tableLimits dataCount =
     withSomeSing
         ( ModuleShape
@@ -248,7 +248,7 @@ mkDataElem (SCons SDataShape _) 0 = Just Here
 mkDataElem (SCons _ rest) n = There <$> mkDataElem rest (n - 1)
 mkDataElem SNil _ = Nothing
 
-lookupFuncRef :: Sing (fts :: [LFuncType]) -> Word32 -> Maybe (SomeFuncRef fts)
+lookupFuncRef :: Sing (fts :: [LabelledFuncType]) -> Word32 -> Maybe (SomeFuncRef fts)
 lookupFuncRef (SCons (SFuncType ps rs) _) 0 = Just (SomeFuncRef ps rs Here)
 lookupFuncRef (SCons _ rest) n =
     (\(SomeFuncRef ps rs ix) -> SomeFuncRef ps rs (There ix)) <$> lookupFuncRef rest (n - 1)
@@ -257,10 +257,10 @@ lookupFuncRef SNil _ = Nothing
 {- | @∃m t. (Sing m, Sing (t :: ValType), Elem ('GlobalType m t) gs)@ — a global resolved
   against the signature, carrying its mutability and type.
 -}
-data SomeGlobalRef (gs :: [LGlobalType]) where
-    SomeGlobalRef :: Sing (m :: Mutability) -> Sing (t :: LValType) -> Elem ('GlobalType m t) gs -> SomeGlobalRef gs
+data SomeGlobalRef (gs :: [LabelledGlobalType]) where
+    SomeGlobalRef :: Sing (m :: Mutability) -> Sing (t :: LabelledValType) -> Elem ('GlobalType m t) gs -> SomeGlobalRef gs
 
-lookupGlobalRef :: Sing (gs :: [LGlobalType]) -> Word32 -> Maybe (SomeGlobalRef gs)
+lookupGlobalRef :: Sing (gs :: [LabelledGlobalType]) -> Word32 -> Maybe (SomeGlobalRef gs)
 lookupGlobalRef (SCons (SGlobalType sm st) _) 0 = Just (SomeGlobalRef sm st Here)
 lookupGlobalRef (SCons _ rest) n =
     (\(SomeGlobalRef sm st ix) -> SomeGlobalRef sm st (There ix)) <$> lookupGlobalRef rest (n - 1)

@@ -75,7 +75,7 @@ import Validation.Shape (Append (..), DataShape (..), Elem (..), MemShape, Rever
   peaked at 163 MB of residency — the specific, stated suspicion STYLE.md §0 asks for before
   performance is allowed to motivate anything. See @bench/@ for how that was measured.
 -}
-type ValueStack :: [LValType] -> Type
+type ValueStack :: [LabelledValType] -> Type
 data ValueStack s where
     VNil :: ValueStack '[]
     (:#) :: !(HostType t) -> !(ValueStack ts) -> ValueStack ((t ':~ l) ': ts)
@@ -97,11 +97,11 @@ infixr 5 :#
   only ways to make or change a frame; and a reference's position is below that length because
   its witness proves the local exists. The two together license the unchecked read and write.
 -}
-type LocalSpaceInst :: [LValType] -> Type
+type LocalSpaceInst :: [LabelledValType] -> Type
 newtype LocalSpaceInst ls = LocalSpaceInst (UV.Vector Word64)
 
 -- | The instance of a module's global index space: the globals' current values, by type.
-type GlobalSpaceInst :: [LGlobalType] -> Type
+type GlobalSpaceInst :: [LabelledGlobalType] -> Type
 data GlobalSpaceInst gs where
     GNil :: GlobalSpaceInst '[]
     GCons :: !(HostType t) -> !(GlobalSpaceInst gs) -> GlobalSpaceInst ('GlobalType mut (t ':~ l) ': gs)
@@ -141,7 +141,7 @@ seedLocals paramTypes declaredTypes args =
 {- | Write a stack's values into consecutive slots, the top one at @slot@ and each deeper one
   just below it.
 -}
-writeArguments :: MV.MVector s Word64 -> Int -> Sing (xs :: [LValType]) -> ValueStack xs -> ST s ()
+writeArguments :: MV.MVector s Word64 -> Int -> Sing (xs :: [LabelledValType]) -> ValueStack xs -> ST s ()
 writeArguments _ _ SNil VNil = pure ()
 writeArguments slots slot (SCons (st :%~ _) rest) (x :# xs) = do
     MV.unsafeWrite slots slot (packValue st x)
@@ -150,7 +150,7 @@ writeArguments slots slot (SCons (st :%~ _) rest) (x :# xs) = do
 {- | A locals frame of the given shape, every slot zero (how declared locals start a call).
   Zero is the all-zero word at every value type, the floats' @+0.0@ included.
 -}
-defaultLocals :: Sing (ls :: [LValType]) -> LocalSpaceInst ls
+defaultLocals :: Sing (ls :: [LabelledValType]) -> LocalSpaceInst ls
 defaultLocals types = LocalSpaceInst (UV.replicate (lengthOf types) 0)
 
 -- | The frame of a function with neither parameters nor declared locals.
@@ -180,7 +180,7 @@ unpackValue SI64 w = w
 unpackValue SF32 w = castWord32ToFloat (fromIntegral w)
 unpackValue SF64 w = castWord64ToDouble w
 
-lengthOf :: Sing (ls :: [LValType]) -> Int
+lengthOf :: Sing (ls :: [LabelledValType]) -> Int
 lengthOf SNil = 0
 lengthOf (SCons _ rest) = 1 + lengthOf rest
 
@@ -217,7 +217,7 @@ setFirstMem mem (MCons _ rest) = MCons mem rest
   (which every entry is a reference into). Non-emptiness is the runtime counterpart of the
   @ModuleTables shape ~ (t ': ts)@ constraint @call_indirect@ carries, so 'firstTable' is total.
 -}
-type TableSpaceInst :: [LFuncType] -> [TableShape] -> Type
+type TableSpaceInst :: [LabelledFuncType] -> [TableShape] -> Type
 data TableSpaceInst fts ts where
     TNil :: TableSpaceInst fts '[]
     TCons :: !(TableInst fts) -> !(TableSpaceInst fts ts) -> TableSpaceInst fts (t ': ts)

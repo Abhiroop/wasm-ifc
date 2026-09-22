@@ -13,7 +13,7 @@
 
 {- | The information-flow vocabulary of the typed layer: security levels, value types labelled
   with one, the join, and the flow relation. Every stack, local, global and function type the
-  typed AST is indexed by is over 'LValType', so the one instruction type of
+  typed AST is indexed by is over 'LabelledValType', so the one instruction type of
   "Syntax.Instructions" tracks information flow as well as value types. The model we follow is
   SecWasm (Bastys, Algehed, Sjösten, Sabelfeld, SAS 2022; linked from TODO.md §F).
 
@@ -45,18 +45,15 @@ infix 6 :~
 
 {- | A value type together with the security level of the values it classifies: SecWasm's
   labelled type @τ ::= t⟨ℓ⟩@.
-
-  TODO(ifc P3): naming. @LValType@ reads as "l-value type"; @LabelledValType@ would read as
-  prose, which is the repo's rule.
 -}
-data LValType = ValType :~ SecLevel
+data LabelledValType = ValType :~ SecLevel
     deriving stock (Eq, Show)
 
-$(genSingletons [''LValType])
+$(genSingletons [''LabelledValType])
 $(singDecideInstances [''SecLevel])
 
 -- Written by hand: the generated instance carries constraints GHC reports as redundant.
-instance SDecide LValType where
+instance SDecide LabelledValType where
     (t :%~ l) %~ (t' :%~ l') = case t %~ t' of
         Disproved differ -> Disproved (\Refl -> differ Refl)
         Proved Refl -> case l %~ l' of
@@ -67,14 +64,14 @@ $( singletons
     [d|
         -- A value type at the public level: how every type of a decoded module is labelled
         -- until a policy says otherwise.
-        public :: ValType -> LValType
+        public :: ValType -> LabelledValType
         public t = t :~ Low
 
-        publicAll :: [ValType] -> [LValType]
+        publicAll :: [ValType] -> [LabelledValType]
         publicAll ts = map public ts
 
         -- A labelled type without its label.
-        unlabelled :: LValType -> ValType
+        unlabelled :: LabelledValType -> ValType
         unlabelled (t :~ _) = t
         |]
  )
@@ -108,20 +105,20 @@ $( singletons
 type PcStack = [SecLevel]
 
 -- | A labelled result type: the stack segment a block, loop, if or function yields.
-type LResultType = [LValType]
+type LabelledResultType = [LabelledValType]
 
 -- | A function type over labelled value types, as the shapes hold it.
-type LFuncType = FuncTypeOf LValType
+type LabelledFuncType = FuncTypeOf LabelledValType
 
 -- | A global's type over labelled value types, as the shapes hold it.
-type LGlobalType = GlobalTypeOf LValType
+type LabelledGlobalType = GlobalTypeOf LabelledValType
 
 -- | A decoded function type labelled public throughout.
-publicFuncType :: FuncType -> LFuncType
+publicFuncType :: FuncType -> LabelledFuncType
 publicFuncType (FuncType params results) = FuncType (publicAll params) (publicAll results)
 
 -- | A decoded global type labelled public.
-publicGlobalType :: GlobalType -> LGlobalType
+publicGlobalType :: GlobalType -> LabelledGlobalType
 publicGlobalType (GlobalType mutability t) = GlobalType mutability (public t)
 
 {- | The type of a function all of whose parameters and results are public, from plain value
@@ -141,11 +138,11 @@ data FlowsInto (l :: SecLevel) (l' :: SecLevel) where
   carries the values of its target's type out of the block, and which values arrive depends on
   whether the branch was taken, so they must be at least as secret as that decision.
 -}
-data AllAtLeast (l :: SecLevel) (rs :: [LValType]) where
+data AllAtLeast (l :: SecLevel) (rs :: [LabelledValType]) where
     NothingCarried :: AllAtLeast l '[]
     CarriedAtLeast :: FlowsInto l lv -> AllAtLeast l rs -> AllAtLeast l ((t ':~ lv) ': rs)
 
-decideAllAtLeast :: Sing (l :: SecLevel) -> Sing (rs :: [LValType]) -> Maybe (AllAtLeast l rs)
+decideAllAtLeast :: Sing (l :: SecLevel) -> Sing (rs :: [LabelledValType]) -> Maybe (AllAtLeast l rs)
 decideAllAtLeast _ SNil = Just NothingCarried
 decideAllAtLeast l (SCons (_ :%~ lv) rest) = CarriedAtLeast <$> decideFlow l lv <*> decideAllAtLeast l rest
 

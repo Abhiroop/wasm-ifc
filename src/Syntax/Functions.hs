@@ -21,7 +21,7 @@ import Data.Text (Text)
 
 import Syntax.Instructions (Expr, RawExpr)
 import Syntax.Types
-import Syntax.TypesIFC (LFuncType, LValType, SecLevel (..))
+import Syntax.TypesIFC (LabelledFuncType, LabelledValType, SecLevel (..))
 import Validation.Shape (FrameShape (..), ModuleShape, ReverseOnto)
 
 -- *** As decoded ***
@@ -49,15 +49,15 @@ type FunctionBody mod locals rs pcOut = Expr mod ('FrameShape locals rs) '[rs] '
   Both singletons are kept because a call packs its arguments into the callee's locals, and
   packing a value takes its type.
 -}
-data Function (mod :: ModuleShape) (ft :: LFuncType) where
+data Function (mod :: ModuleShape) (ft :: LabelledFuncType) where
     Function ::
-        Sing (ps :: [LValType]) ->
-        Sing (declared :: [LValType]) ->
+        Sing (ps :: [LabelledValType]) ->
+        Sing (declared :: [LabelledValType]) ->
         FunctionBody mod (ReverseOnto ps declared) rs pcOut ->
         Function mod ('FuncType ps rs)
 
 -- | A module's function index space: one entry per function type in the shape.
-data FunctionSpace (mod :: ModuleShape) (fts :: [LFuncType]) where
+data FunctionSpace (mod :: ModuleShape) (fts :: [LabelledFuncType]) where
     NoFunctions :: FunctionSpace mod '[]
     Defined :: Function mod ft -> FunctionSpace mod fts -> FunctionSpace mod (ft ': fts)
     -- | an import: the module and name it comes from; its type is the entry's

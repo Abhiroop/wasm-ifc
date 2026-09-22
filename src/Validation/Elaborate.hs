@@ -135,7 +135,7 @@ data IndexSpace = Locals | Globals | Functions | Labels | Memories | Types | Tab
 {- | What elaboration knows: the module signature witness, the enclosing function's result
   type and locals, and the result type of each enclosing label.
 -}
-data ElabEnv (shape :: ModuleShape) (ret :: LResultType) (locals :: [LValType]) (labels :: [LResultType]) = ElabEnv
+data ElabEnv (shape :: ModuleShape) (ret :: LabelledResultType) (locals :: [LabelledValType]) (labels :: [LabelledResultType]) = ElabEnv
     { shape :: Sing shape
     , types :: [FuncType]
     -- ^ the module's type section, which @call_indirect@ refers into
@@ -153,7 +153,7 @@ data ElabEnv (shape :: ModuleShape) (ret :: LResultType) (locals :: [LValType]) 
   see 'SameLength'). A sequence either runs to its end or leaves early through an unconditional
   branch, and the two cases carry different evidence:
 -}
-data ElaboratedExpr (shape :: ModuleShape) (ret :: LResultType) (locals :: [LValType]) (labels :: [LResultType]) (pcIn :: PcStack) (stackIn :: [LValType]) where
+data ElaboratedExpr (shape :: ModuleShape) (ret :: LabelledResultType) (locals :: [LabelledValType]) (labels :: [LabelledResultType]) (pcIn :: PcStack) (stackIn :: [LabelledValType]) where
     -- | Control reached the end of the sequence, leaving a concrete @stackOut@ on top.
     Reachable ::
         SameLength pcIn pcOut ->
@@ -177,7 +177,7 @@ data ElaboratedExpr (shape :: ModuleShape) (ret :: LResultType) (locals :: [LVal
   'ElaboratedExpr', with the same two cases. 'elabSeq' folds these into an 'ElaboratedExpr'
   as it walks the sequence.
 -}
-data ElaboratedInstr (shape :: ModuleShape) (ret :: LResultType) (locals :: [LValType]) (labels :: [LResultType]) (pcIn :: PcStack) (stackIn :: [LValType]) where
+data ElaboratedInstr (shape :: ModuleShape) (ret :: LabelledResultType) (locals :: [LabelledValType]) (labels :: [LabelledResultType]) (pcIn :: PcStack) (stackIn :: [LabelledValType]) where
     {- | An ordinary instruction: it leaves a concrete @stackOut@ and elaboration continues
     from there (the analogue of 'Reachable').
     -}
@@ -205,7 +205,7 @@ requireFlow :: Text -> Sing (from :: SecLevel) -> Sing (into :: SecLevel) -> Eit
 requireFlow name from into = note (IllegalFlow name (fromSing from) (fromSing into)) (decideFlow from into)
 
 -- | Require that the values a branch carries are at least as secret as the decision to branch.
-requireCarried :: Text -> Sing (l :: SecLevel) -> Sing (rs :: [LValType]) -> Either ElabError (AllAtLeast l rs)
+requireCarried :: Text -> Sing (l :: SecLevel) -> Sing (rs :: [LabelledValType]) -> Either ElabError (AllAtLeast l rs)
 requireCarried name l rs = note (IllegalFlow name (fromSing l) Low) (decideAllAtLeast l rs)
 
 -- *** Sequences ***
@@ -800,7 +800,7 @@ validateDead env pcsIn = go (PolyStack [])
   (a known entry must match, an unknown one may be anything) and nothing may be left above the
   polymorphic bottom.
 -}
-checkDeadResult :: PolyStack -> Sing (rs :: [LValType]) -> Either ElabError ()
+checkDeadResult :: PolyStack -> Sing (rs :: [LabelledValType]) -> Either ElabError ()
 checkDeadResult final rsS = do
     remaining <- foldM (flip popKnown) final (stackToList rsS)
     case unStack remaining of
@@ -991,10 +991,10 @@ valTypeOf = fromSing
 {- | The value type of a labelled type, and of a whole labelled stack: what the error reports
 and the dead-code checker work with, neither of which looks at security levels.
 -}
-unlabelledTypeOf :: Sing (t :: LValType) -> ValType
+unlabelledTypeOf :: Sing (t :: LabelledValType) -> ValType
 unlabelledTypeOf = unlabelled . fromSing
 
-stackToList :: Sing (s :: [LValType]) -> [ValType]
+stackToList :: Sing (s :: [LabelledValType]) -> [ValType]
 stackToList = map unlabelled . fromSing
 
 orElse :: Maybe a -> Maybe a -> Maybe a
@@ -1071,7 +1071,7 @@ validateStructure m = do
         | otherwise = Left (IndexOutOfRange space i)
 
 -- | The start function must exist and take and return nothing.
-resolveStart :: Sing (fts :: [LFuncType]) -> FunctionIdx -> Either ElabError (Elem ('FuncType '[] '[]) fts)
+resolveStart :: Sing (fts :: [LabelledFuncType]) -> FunctionIdx -> Either ElabError (Elem ('FuncType '[] '[]) fts)
 resolveStart ftsS (FunctionIdx idx) = do
     SomeFuncRef psS rsS funcIx <- note (IndexOutOfRange Functions idx) (lookupFuncRef ftsS idx)
     Refl <- note InvalidStartFunction (decideEquality psS SNil)
@@ -1149,7 +1149,7 @@ elaborateData mems (index, RawDataSegment mode bytes) = case mode of
   exist: each index is resolved to a typed reference ('SomeFuncRef'), so a table only ever
   holds real functions.
 -}
-elaborateElements :: Sing (fts :: [LFuncType]) -> Maybe (NonEmptyTables ts) -> (Int, RawElementSegment) -> Either ElabError (ElementSegment fts)
+elaborateElements :: Sing (fts :: [LabelledFuncType]) -> Maybe (NonEmptyTables ts) -> (Int, RawElementSegment) -> Either ElabError (ElementSegment fts)
 elaborateElements ftsS tables (index, RawElementSegment offsetExpr functions) = do
     NonEmptyTables <- note (NoTable "elem") tables
     offset <- evalConstInit (InvalidElementSegmentOffset index) SI32 offsetExpr

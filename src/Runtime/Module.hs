@@ -93,7 +93,7 @@ data SomeHostRequest where
         Sing (shape :: ModuleShape) ->
         FuncSpaceInst shape (ModuleFuncs shape) ->
         [Export] ->
-        Sing (rs :: [LValType]) ->
+        Sing (rs :: [LabelledValType]) ->
         HostRequest shape rs ->
         SomeHostRequest
 
@@ -126,7 +126,7 @@ continueWith ::
     Sing (shape :: ModuleShape) ->
     FuncSpaceInst shape (ModuleFuncs shape) ->
     [Export] ->
-    Sing (rs :: [LValType]) ->
+    Sing (rs :: [LabelledValType]) ->
     Config shape rs ->
     Either RunError Invocation
 continueWith shapeS funcs exports rsS config = do
@@ -170,10 +170,10 @@ checkArguments params args
 -}
 
 -- | The value types of a labelled stack: what the outside world, which knows no levels, sees.
-unlabelledTypes :: Sing (s :: [LValType]) -> [ValType]
+unlabelledTypes :: Sing (s :: [LabelledValType]) -> [ValType]
 unlabelledTypes = map unlabelled . fromSing
 
-buildStack :: Sing (ps :: [LValType]) -> [Value] -> Maybe (ValueStack ps)
+buildStack :: Sing (ps :: [LabelledValType]) -> [Value] -> Maybe (ValueStack ps)
 buildStack SNil [] = Just VNil
 buildStack (SCons (st :%~ _) rest) (v : vs) = (:#) <$> fromValue st v <*> buildStack rest vs
 buildStack _ _ = Nothing
@@ -185,7 +185,7 @@ fromValue SF32 (F32Value f) = Just f
 fromValue SF64 (F64Value d) = Just d
 fromValue _ _ = Nothing
 
-toValues :: Sing (rs :: [LValType]) -> ValueStack rs -> [Value]
+toValues :: Sing (rs :: [LabelledValType]) -> ValueStack rs -> [Value]
 toValues SNil VNil = []
 toValues (SCons (st :%~ _) rest) (v :# vs) = toValue st v : toValues rest vs
 

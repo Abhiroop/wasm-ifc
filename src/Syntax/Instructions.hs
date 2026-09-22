@@ -273,11 +273,11 @@ data
     Instr
         (mod :: ModuleShape)
         (frame :: FrameShape)
-        (labels :: [LResultType])
+        (labels :: [LabelledResultType])
         (pcIn :: PcStack)
         (pcOut :: PcStack)
-        (stackIn :: [LValType])
-        (stackOut :: [LValType])
+        (stackIn :: [LabelledValType])
+        (stackOut :: [LabelledValType])
     where
     {- Constants. The level @lv@ is free: whoever builds the instruction says how secret the
        literal is, and the validator says 'Low. -}
@@ -498,11 +498,11 @@ data
     Expr
         (mod :: ModuleShape)
         (frame :: FrameShape)
-        (labels :: [LResultType])
+        (labels :: [LabelledResultType])
         (pcIn :: PcStack)
         (pcOut :: PcStack)
-        (stackIn :: [LValType])
-        (stackOut :: [LValType])
+        (stackIn :: [LabelledValType])
+        (stackOut :: [LabelledValType])
     where
     INil :: Expr m f l p p s s
     (:.) ::

@@ -15,7 +15,7 @@ module Syntax.Globals (
 import Syntax.Immediates (HostType)
 import Syntax.Instructions (RawExpr)
 import Syntax.Types
-import Syntax.TypesIFC (LGlobalType, LValType (..))
+import Syntax.TypesIFC (LabelledGlobalType, LabelledValType (..))
 
 -- *** As decoded ***
 
@@ -27,10 +27,10 @@ data RawGlobal = RawGlobal
 -- *** As validated ***
 
 -- | A global's initial value, typed by its declared type.
-data Global (gt :: LGlobalType) where
+data Global (gt :: LabelledGlobalType) where
     Global :: HostType t -> Global ('GlobalType mut (t ':~ l))
 
 -- | A module's global index space: one entry per global type in the shape.
-data GlobalSpace (gs :: [LGlobalType]) where
+data GlobalSpace (gs :: [LabelledGlobalType]) where
     NoGlobals :: GlobalSpace '[]
     Declared :: Global gt -> GlobalSpace gs -> GlobalSpace (gt ': gs)

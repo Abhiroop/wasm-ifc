@@ -39,7 +39,7 @@ import Syntax.Types (
     SValType (..),
     ValType (..),
  )
-import Syntax.TypesIFC (FlowsInto (..), LValType (..), SLValType (..), SSecLevel (..), SecLevel (..))
+import Syntax.TypesIFC (FlowsInto (..), LabelledValType (..), SLabelledValType (..), SSecLevel (..), SecLevel (..))
 import Validation.Ref (LocalRef, resolveLocal)
 import Validation.Shape (Append (..), BranchTarget (..), Elem (..), FrameLocals, FrameShape (..), MemShape (..), ModuleShape (..))
 
@@ -54,7 +54,7 @@ type PublicI32 = 'I32 ':~ 'Low
 type SecretI32 = 'I32 ':~ 'High
 
 -- | The singleton of 'PublicI32'.
-publicI32 :: SLValType PublicI32
+publicI32 :: SLabelledValType PublicI32
 publicI32 = SI32 :%~ SLow
 
 {- | The constant one, public. A constant's level is free in its type (see 'IConst'), so an

@@ -24,7 +24,7 @@ import Data.Singletons (Sing, sing)
 import Data.Text (Text)
 
 import Syntax.Types (ValType (..))
-import Syntax.TypesIFC (LFuncType, PublicFunc)
+import Syntax.TypesIFC (LabelledFuncType, PublicFunc)
 
 -- | The import module name WASI functions are resolved against.
 wasiModuleName :: Text
@@ -40,7 +40,7 @@ wasiModuleName = "wasi_snapshot_preview1"
    'Runtime.Wasi.WasiConfig', let opened files inherit it, and have the driver check buffers
    against it at run time, byte by byte (see 'Runtime.Interpreter.HostRequest'). SecWasm leaves
    host functions out of scope, so there is no rule to copy here. -}
-data WasiFunc (ft :: LFuncType) where
+data WasiFunc (ft :: LabelledFuncType) where
     -- | @args_get(argv, argv_buf)@
     ArgsGet :: WasiFunc (PublicFunc '[ 'I32, 'I32] '[ 'I32])
     -- | @args_sizes_get(argc, argv_buf_size)@

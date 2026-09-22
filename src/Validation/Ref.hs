@@ -24,15 +24,15 @@ import Data.Kind (Type)
 import Data.Singletons.Base.TH (Sing)
 
 import Syntax.Types (ValType)
-import Syntax.TypesIFC (LValType (..), SLValType (..))
+import Syntax.TypesIFC (LabelledValType (..), SLabelledValType (..))
 import Validation.Shape (Elem (..))
 
-type LocalRef :: LValType -> [LValType] -> Type
+type LocalRef :: LabelledValType -> [LabelledValType] -> Type
 data LocalRef t ls where
     LocalRef :: !Int -> !(Sing (vt :: ValType)) -> LocalRef (vt ':~ l) ls
 
 -- | Resolve a local's witness into its position, counted from zero, and its value type.
-resolveLocal :: Sing (t :: LValType) -> Elem t ls -> LocalRef t ls
+resolveLocal :: Sing (t :: LabelledValType) -> Elem t ls -> LocalRef t ls
 resolveLocal (ty :%~ _) ix = LocalRef (positionOf 0 ix) ty
   where
     positionOf :: Int -> Elem x xs -> Int

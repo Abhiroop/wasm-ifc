@@ -142,7 +142,7 @@ import Validation.Shape (Append, BranchTarget (..), DataShape (..), Elem (..), F
   was linked to. A host function can only live in a module that has a memory, which WASI
   requires; the constraint is packed here so the driver can reach that memory without asking.
 -}
-data FuncInst (mod :: ModuleShape) (ft :: LFuncType) where
+data FuncInst (mod :: ModuleShape) (ft :: LabelledFuncType) where
     WasmFunc :: Function mod ft -> FuncInst mod ft
     {- | An import from the @ifc@ module: an annotation in the shape of a function
     ("Validation.Policy"). Assembly rewrote every call to it and refused to export it, start
@@ -153,7 +153,7 @@ data FuncInst (mod :: ModuleShape) (ft :: LFuncType) where
     HostFunc :: (ModuleMems mod ~ (mem ': mems)) => WasiFunc ft -> FuncInst mod ft
 
 -- | The instance of a module's function index space: one 'FuncInst' per type in 'ModuleFuncs'.
-data FuncSpaceInst (mod :: ModuleShape) (fts :: [LFuncType]) where
+data FuncSpaceInst (mod :: ModuleShape) (fts :: [LabelledFuncType]) where
     FsNil :: FuncSpaceInst mod '[]
     FsCons :: FuncInst mod ft -> FuncSpaceInst mod fts -> FuncSpaceInst mod (ft ': fts)
 
@@ -210,11 +210,11 @@ data ModuleInst (mod :: ModuleShape) = ModuleInst
 data
     Control
         (mod :: ModuleShape)
-        (res :: LResultType)
-        (ret :: LResultType)
-        (locals :: [LValType])
-        (labels :: [LResultType])
-        (cur :: [LValType])
+        (res :: LabelledResultType)
+        (ret :: LabelledResultType)
+        (locals :: [LabelledValType])
+        (labels :: [LabelledResultType])
+        (cur :: [LabelledValType])
     where
     {- | The bottom of the stack: the entry activation. Falling through (or @br@ to its only
     label, or @return@) leaving @res@ completes the whole computation.
@@ -254,7 +254,7 @@ data
   stack expects exactly the @out@ it leaves. All shape indices are existential; only the
   module signature @mod@ and the overall result @res@ are visible.
 -}
-data Config (mod :: ModuleShape) (res :: LResultType) where
+data Config (mod :: ModuleShape) (res :: LabelledResultType) where
     Config ::
         !(Store mod) ->
         !(LocalSpaceInst locals) ->
@@ -267,7 +267,7 @@ data Config (mod :: ModuleShape) (res :: LResultType) where
   the store as the computation left it; or a call into the host, which the pure machine
   cannot perform and so hands out as a request.
 -}
-data StepResult (mod :: ModuleShape) (res :: LResultType) where
+data StepResult (mod :: ModuleShape) (res :: LabelledResultType) where
     Stepped :: !(Config mod res) -> StepResult mod res
     Done :: !(Store mod) -> !(ValueStack res) -> StepResult mod res
     HostCall :: HostRequest mod res -> StepResult mod res
@@ -283,7 +283,7 @@ data StepResult (mod :: ModuleShape) (res :: LResultType) where
   driver can compare the byte levels with the descriptor's level at this boundary, in the same
   way as a load does.
 -}
-data HostRequest (mod :: ModuleShape) (res :: LResultType) where
+data HostRequest (mod :: ModuleShape) (res :: LabelledResultType) where
     HostRequest ::
         (ModuleMems mod ~ (mem ': mems)) =>
         WasiFunc ('FuncType ps rs) ->
@@ -296,7 +296,7 @@ data HostRequest (mod :: ModuleShape) (res :: LResultType) where
   the stack it saved below the arguments, the code after the call and its control stack. The
   'Append' witness says where the results sit on that stack.
 -}
-data Suspended (mod :: ModuleShape) (res :: LResultType) (rs :: LResultType) where
+data Suspended (mod :: ModuleShape) (res :: LabelledResultType) (rs :: LabelledResultType) where
     Suspended ::
         Append rs below full ->
         LocalSpaceInst locals ->
@@ -678,7 +678,7 @@ storeToModule funcs store =
     ModuleInst {functions = funcs, globals = store.globals, memories = store.memories, tables = store.tables, dataSegments = store.dataSegments}
 
 -- | Where a run stops: with its results and final store, or waiting for the host.
-data Halt (mod :: ModuleShape) (res :: LResultType) where
+data Halt (mod :: ModuleShape) (res :: LabelledResultType) where
     Finished :: Store mod -> ValueStack res -> Halt mod res
     AwaitingHost :: HostRequest mod res -> Halt mod res
 
@@ -694,7 +694,7 @@ run funcs config = case step funcs config of
     Right (Stepped next) -> run funcs next
 
 -- | How a fuel-bounded run ends: halted like 'run', or stopped with the budget spent.
-data Fuelled (mod :: ModuleShape) (res :: LResultType) where
+data Fuelled (mod :: ModuleShape) (res :: LabelledResultType) where
     Halted :: Halt mod res -> Fuelled mod res
     OutOfFuel :: Config mod res -> Fuelled mod res
 
@@ -711,7 +711,7 @@ runFor fuel funcs config
         Right (Stepped next) -> runFor (fuel - 1) funcs next
 
 -- | How a function invocation ends: with the module as the call left it, or needing the host.
-data Outcome (mod :: ModuleShape) (rs :: LResultType) where
+data Outcome (mod :: ModuleShape) (rs :: LabelledResultType) where
     Completed :: ModuleInst mod -> ValueStack rs -> Outcome mod rs
     NeedsHost :: HostRequest mod rs -> Outcome mod rs
 

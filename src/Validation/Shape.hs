@@ -30,11 +30,11 @@ import Data.Singletons.Base.TH (SList (SCons, SNil), Sing, genSingletons)
 import Numeric.Natural (Natural)
 
 import Syntax.Types (AddrType, FuncTypeOf (..), GlobalTypeOf)
-import Syntax.TypesIFC (Join, LValType, SecLevel)
+import Syntax.TypesIFC (Join, LabelledValType, SecLevel)
 
 {- *** Stack order ***
 
-   Every type-level @[LValType]@ that describes a stack segment lists the /top/ of the stack
+   Every type-level @[LabelledValType]@ that describes a stack segment lists the /top/ of the stack
    first — the operand stack indices of 'Syntax.Instructions.Instr', the label result types,
    and the parameter and result lists of a 'FuncType' or block type once it is inside a shape
    (they are exactly the segment a call or block consumes and produces). Declared order, the
@@ -96,7 +96,7 @@ data Elem x xs where
   are raised by @l@, the level of the decision to branch, and the entries below are untouched.
   One witness for both facts, so the position and the raise cannot disagree.
 -}
-type BranchTarget :: SecLevel -> [LValType] -> [[LValType]] -> [SecLevel] -> [SecLevel] -> Type
+type BranchTarget :: SecLevel -> [LabelledValType] -> [[LabelledValType]] -> [SecLevel] -> [SecLevel] -> Type
 data BranchTarget l rs labels pcs pcs' where
     TargetHere :: BranchTarget l rs (rs ': labels) (p ': pcs) (Join l p ': pcs)
     TargetThere :: BranchTarget l rs labels pcs pcs' -> BranchTarget l rs (other ': labels) (p ': pcs) (Join l p ': pcs')
@@ -105,8 +105,8 @@ data BranchTarget l rs labels pcs pcs' where
   against the signature, carrying its parameter and result shapes: what a table entry, an
   element segment and the runtime's export lookup hold.
 -}
-data SomeFuncRef (fts :: [FuncTypeOf LValType]) where
-    SomeFuncRef :: Sing (ps :: [LValType]) -> Sing (rs :: [LValType]) -> Elem ('FuncType ps rs) fts -> SomeFuncRef fts
+data SomeFuncRef (fts :: [FuncTypeOf LabelledValType]) where
+    SomeFuncRef :: Sing (ps :: [LabelledValType]) -> Sing (rs :: [LabelledValType]) -> Elem ('FuncType ps rs) fts -> SomeFuncRef fts
 
 {- | The compile-time shape of a module: the types of its function, global, memory, table and
   data-segment index spaces. Used as a single kind index on the instruction GADT so it stays compact. Memories
@@ -124,19 +124,19 @@ data SomeFuncRef (fts :: [FuncTypeOf LValType]) where
   in "Validation.Reflect". The singletons below regenerate by themselves.
 -}
 data ModuleShape = ModuleShape
-    { funcTypes :: [FuncTypeOf LValType]
-    , globalTypes :: [GlobalTypeOf LValType]
+    { funcTypes :: [FuncTypeOf LabelledValType]
+    , globalTypes :: [GlobalTypeOf LabelledValType]
     , memShapes :: [MemShape]
     , tableShapes :: [TableShape]
     , dataShapes :: [DataShape]
     -- ^ one entry per data segment: the data index space, which only has a size
     }
 
-type ModuleFuncs :: ModuleShape -> [FuncTypeOf LValType]
+type ModuleFuncs :: ModuleShape -> [FuncTypeOf LabelledValType]
 type family ModuleFuncs s where
     ModuleFuncs ('ModuleShape fs _ _ _ _) = fs
 
-type ModuleGlobals :: ModuleShape -> [GlobalTypeOf LValType]
+type ModuleGlobals :: ModuleShape -> [GlobalTypeOf LabelledValType]
 type family ModuleGlobals s where
     ModuleGlobals ('ModuleShape _ gs _ _ _) = gs
 
@@ -163,15 +163,15 @@ type family ModuleData s where
   once that exists: @return@ and every write in the body are checked against it.
 -}
 data FrameShape = FrameShape
-    { locals :: [LValType]
-    , results :: [LValType]
+    { locals :: [LabelledValType]
+    , results :: [LabelledValType]
     }
 
-type FrameLocals :: FrameShape -> [LValType]
+type FrameLocals :: FrameShape -> [LabelledValType]
 type family FrameLocals f where
     FrameLocals ('FrameShape ls _) = ls
 
-type FrameReturn :: FrameShape -> [LValType]
+type FrameReturn :: FrameShape -> [LabelledValType]
 type family FrameReturn f where
     FrameReturn ('FrameShape _ rs) = rs
 

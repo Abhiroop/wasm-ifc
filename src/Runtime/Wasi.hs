@@ -106,7 +106,7 @@ import Runtime.Module (Invocation (..), RunError, SomeHostRequest (..), SomeModu
 import Runtime.Numeric (toSigned64)
 import Runtime.Stack (ValueStack (..))
 import Syntax.Types (FuncTypeOf (..), ValType (..))
-import Syntax.TypesIFC (LValType, Public)
+import Syntax.TypesIFC (LabelledValType, Public)
 import Validation.Shape (MemShape)
 
 -- *** Configuration and the descriptor table ***
@@ -567,7 +567,7 @@ atOffset fd offset action = do
 -- *** Performing one call ***
 
 -- | What a host call produced: results to push and the memory as it left it, or an exit.
-data WasiOutcome (rs :: [LValType]) (m :: MemShape) where
+data WasiOutcome (rs :: [LabelledValType]) (m :: MemShape) where
     WasiReturn :: ValueStack rs -> MemInst m -> WasiOutcome rs m
     WasiExit :: Int -> WasiOutcome rs m
 

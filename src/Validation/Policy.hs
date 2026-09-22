@@ -93,7 +93,7 @@ import Syntax.Indices (FunctionIdx (..), GlobalIdx (..))
 import Syntax.Instructions (RawInstr (..))
 import Syntax.Module
 import Syntax.Types (FuncType, FuncTypeOf (..), GlobalTypeOf (..), SValType (..), ValType (..))
-import Syntax.TypesIFC (LFuncType, LGlobalType, LValType (..), SecLevel (..))
+import Syntax.TypesIFC (LabelledFuncType, LabelledGlobalType, LabelledValType (..), SecLevel (..))
 
 -- | The levels of a function's parameters and results, in declared order.
 data FunctionLevels = FunctionLevels
@@ -268,9 +268,9 @@ sectionPolicy m = foldM step emptyPolicy [bytes | (name, bytes) <- m.customSecti
   this; nothing at run time consults a policy.
 -}
 data Assembled = Assembled
-    { functionTypes :: [LFuncType]
+    { functionTypes :: [LabelledFuncType]
     -- ^ one per entry of the function index space, in declared order
-    , globalTypes :: [LGlobalType]
+    , globalTypes :: [LabelledGlobalType]
     , loadDefaults :: [SecLevel]
     -- ^ one per entry of the function index space
     , declassify :: Bool
@@ -483,5 +483,5 @@ assemble policy m = do
         ls -> Just (if High `elem` ls then High else Low)
 
 -- | Attach levels to a decoded function type, in declared order.
-labelFuncType :: FunctionLevels -> FuncType -> LFuncType
+labelFuncType :: FunctionLevels -> FuncType -> LabelledFuncType
 labelFuncType fl (FuncType ps rs) = FuncType (zipWith (:~) ps fl.params) (zipWith (:~) rs fl.results)
