@@ -37,8 +37,8 @@ import Syntax.Functions (FunctionSpace, RawFunction)
 import Syntax.Globals (GlobalSpace, RawGlobal)
 import Syntax.Indices (FunctionIdx, GlobalIdx, MemoryIdx, TableIdx)
 import Syntax.Instructions (RawExpr)
-import Syntax.Types (FuncType, FuncTypeOf (..), Limits, MemType)
-import Syntax.TypesIFC (LabelledFuncType)
+import Syntax.Types (FuncType, Limits, MemType)
+import Syntax.TypesIFC (LabelledFuncType (..), SecLevel (..))
 import Validation.Shape (Elem, ModuleFuncs, ModuleGlobals, ModuleShape, SomeFuncRef)
 
 data RawModule = RawModule
@@ -130,7 +130,7 @@ data Module (shape :: ModuleShape) = Module
     , dataSegments :: [DataSegment]
     , elementSegments :: [ElementSegment (ModuleFuncs shape)]
     , exports :: [Export]
-    , start :: Maybe (Elem ('FuncType '[] '[]) (ModuleFuncs shape))
+    , start :: Maybe (Elem ('LabelledFuncType 'Low '[] '[]) (ModuleFuncs shape))
     -- ^ the start function, known to take and return nothing
     }
 

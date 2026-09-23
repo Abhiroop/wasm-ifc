@@ -29,8 +29,8 @@ import Data.List.Singletons (type (++))
 import Data.Singletons.Base.TH (SList (SCons, SNil), Sing, genSingletons)
 import Numeric.Natural (Natural)
 
-import Syntax.Types (AddrType, FuncTypeOf (..), GlobalTypeOf)
-import Syntax.TypesIFC (Join, LabelledValType, SecLevel)
+import Syntax.Types (AddrType, GlobalTypeOf)
+import Syntax.TypesIFC (Join, LabelledFuncType (..), LabelledValType, SecLevel)
 
 {- *** Stack order ***
 
@@ -101,12 +101,12 @@ data BranchTarget l rs labels pcs pcs' where
     TargetHere :: BranchTarget l rs (rs ': labels) (p ': pcs) (Join l p ': pcs)
     TargetThere :: BranchTarget l rs labels pcs pcs' -> BranchTarget l rs (other ': labels) (p ': pcs) (Join l p ': pcs')
 
-{- | @∃ps rs. (Sing ps, Sing rs, Elem ('FuncType ps rs) fts)@ — a function reference resolved
-  against the signature, carrying its parameter and result shapes: what a table entry, an
-  element segment and the runtime's export lookup hold.
+{- | @∃bound ps rs. (Sing bound, Sing ps, Sing rs, Elem ('LabelledFuncType bound ps rs) fts)@ — a
+  function reference resolved against the signature, carrying its bound and its parameter and
+  result shapes: what a table entry, an element segment and the runtime's export lookup hold.
 -}
-data SomeFuncRef (fts :: [FuncTypeOf LabelledValType]) where
-    SomeFuncRef :: Sing (ps :: [LabelledValType]) -> Sing (rs :: [LabelledValType]) -> Elem ('FuncType ps rs) fts -> SomeFuncRef fts
+data SomeFuncRef (fts :: [LabelledFuncType]) where
+    SomeFuncRef :: Sing (bound :: SecLevel) -> Sing (ps :: [LabelledValType]) -> Sing (rs :: [LabelledValType]) -> Elem ('LabelledFuncType bound ps rs) fts -> SomeFuncRef fts
 
 {- | The compile-time shape of a module: the types of its function, global, memory, table and
   data-segment index spaces. Used as a single kind index on the instruction GADT so it stays compact. Memories
@@ -115,16 +115,12 @@ data SomeFuncRef (fts :: [FuncTypeOf LabelledValType]) where
   promoted, and the projection type families below ('ModuleFuncs' etc.) are what read the
   fields at the type level.
 
-  The function and global types here are over labelled value types, so a function's
-  parameters and results and a global each have a security level.
-
-  TODO(ifc P1): a function type has no bound yet on the context it may be called from; see the
-  TODO on 'Syntax.Instructions.ICall'. Adding it means a third field on
-  'Syntax.Types.FuncTypeOf' (or a separate labelled function type), and a public default for it
-  in "Validation.Reflect". The singletons below regenerate by themselves.
+  The function and global types here are labelled: a function has a bound on the context it
+  may be called from besides labelled parameters and results ('LabelledFuncType'), and a global
+  has a security level.
 -}
 data ModuleShape = ModuleShape
-    { funcTypes :: [FuncTypeOf LabelledValType]
+    { funcTypes :: [LabelledFuncType]
     , globalTypes :: [GlobalTypeOf LabelledValType]
     , memShapes :: [MemShape]
     , tableShapes :: [TableShape]
@@ -132,7 +128,7 @@ data ModuleShape = ModuleShape
     -- ^ one entry per data segment: the data index space, which only has a size
     }
 
-type ModuleFuncs :: ModuleShape -> [FuncTypeOf LabelledValType]
+type ModuleFuncs :: ModuleShape -> [LabelledFuncType]
 type family ModuleFuncs s where
     ModuleFuncs ('ModuleShape fs _ _ _ _) = fs
 
@@ -158,9 +154,8 @@ type family ModuleData s where
   together as one index on the typed AST.
 
   The locals are labelled: a local's security level is declared once and fixed for the function.
-
-  TODO(ifc P1): the frame will also hold the function's bound on the program counter label,
-  once that exists: @return@ and every write in the body are checked against it.
+  (The function's bound is not here: it is the pc the body's pc stack starts at, see
+  'Syntax.Functions.FunctionBody'.)
 -}
 data FrameShape = FrameShape
     { locals :: [LabelledValType]

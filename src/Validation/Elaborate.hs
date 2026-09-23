@@ -372,19 +372,19 @@ elabInstr env pcsIn@(SCons pc _) stackIn instr = case instr of
         SCons (sc :%~ lidx) rest -> do
             NonEmptyTables <- requireTable env
             Refl <- note (OperandMismatch "call_indirect" I32 (valTypeOf sc)) (decideEquality sc SI32)
-            publicContext <- requireFlow "call_indirect" (sJoin pc lidx) SLow
             expected <- note (IndexOutOfRange Types t) (nth (env.types) t)
             case toSing (publicFuncType (stackOrderFuncType expected)) of
-                SomeSing (SFuncType psS rsS) -> do
+                SomeSing (SLabelledFuncType boundS psS rsS) -> do
                     SomeCoercion sS flows witness <- prefixFlows "call_indirect" psS rest
-                    Right (Produces (sameLengthAs pcsIn) pcsIn (rsS %++ sS) (ICallIndirect publicContext flows witness (SFuncType psS rsS)))
+                    calledFrom <- requireFlow "call_indirect" (sJoin pc lidx) boundS
+                    Right (Produces (sameLengthAs pcsIn) pcsIn (rsS %++ sS) (ICallIndirect calledFrom flows witness (SLabelledFuncType boundS psS rsS)))
         _ -> Left (StackUnderflow "call_indirect")
     Call (FunctionIdx f) -> case lookupFuncRef (funcTypesSing (env.shape)) f of
         Nothing -> Left (IndexOutOfRange Functions f)
-        Just (SomeFuncRef psS rsS fix) -> do
+        Just (SomeFuncRef boundS psS rsS fix) -> do
             SomeCoercion sS flows witness <- prefixFlows "call" psS stackIn
-            publicContext <- requireFlow "call" pc SLow
-            Right (Produces (sameLengthAs pcsIn) pcsIn (rsS %++ sS) (ICall publicContext flows witness fix))
+            calledFrom <- requireFlow "call" pc boundS
+            Right (Produces (sameLengthAs pcsIn) pcsIn (rsS %++ sS) (ICall calledFrom flows witness fix))
     {- Integer bitwise / shift / count (integer types only) -}
     And st -> do
         isInt <- requireInt st
@@ -952,7 +952,7 @@ stepDead env pcsIn s instr = case instr of
     Convert op -> let (from, to) = convertSig op in pushKnown to <$> popKnown from s
     Call (FunctionIdx f) -> case lookupFuncRef (funcTypesSing (env.shape)) f of
         Nothing -> Left (IndexOutOfRange Functions f)
-        Just (SomeFuncRef psS rsS _) -> afterFrame (stackToList psS) (stackToList rsS) s
+        Just (SomeFuncRef _ psS rsS _) -> afterFrame (stackToList psS) (stackToList rsS) s
     CallIndirect (TypeIdx t) -> do
         s1 <- popKnown I32 s
         FuncType ps rs <- note (IndexOutOfRange Types t) (nth (env.types) t)
@@ -1146,9 +1146,10 @@ validateStructure m = do
         | otherwise = Left (IndexOutOfRange space i)
 
 -- | The start function must exist and take and return nothing.
-resolveStart :: Sing (fts :: [LabelledFuncType]) -> FunctionIdx -> Either ElabError (Elem ('FuncType '[] '[]) fts)
+resolveStart :: Sing (fts :: [LabelledFuncType]) -> FunctionIdx -> Either ElabError (Elem ('LabelledFuncType 'Low '[] '[]) fts)
 resolveStart ftsS (FunctionIdx idx) = do
-    SomeFuncRef psS rsS funcIx <- note (IndexOutOfRange Functions idx) (lookupFuncRef ftsS idx)
+    SomeFuncRef boundS psS rsS funcIx <- note (IndexOutOfRange Functions idx) (lookupFuncRef ftsS idx)
+    Refl <- note InvalidStartFunction (decideEquality boundS SLow)
     Refl <- note InvalidStartFunction (decideEquality psS SNil)
     Refl <- note InvalidStartFunction (decideEquality rsS SNil)
     Right funcIx
@@ -1176,15 +1177,15 @@ elaborateFunctionIn ::
     [FuncType] ->
     SecLevel ->
     Bool ->
-    SFuncTypeOf ft ->
+    SLabelledFuncType ft ->
     RawFunction ->
     Either ElabError (Function shape ft)
-elaborateFunctionIn ctxS types loadDefault declassify (SFuncType psS rsS) (RawFunction _ declaredT body) =
+elaborateFunctionIn ctxS types loadDefault declassify (SLabelledFuncType boundS psS rsS) (RawFunction _ declaredT body) =
     case reflectStack declaredT of
         SomeStack declS ->
             let env = ElabEnv ctxS types rsS (sReverseOnto psS declS) (SCons rsS SNil) loadDefault declassify
              in do
-                    elaborated <- elabSeq env (SCons SLow SNil) SNil body
+                    elaborated <- elabSeq env (SCons boundS SNil) SNil body
                     case elaborated of
                         Reachable _ _ soS bodySeq -> do
                             ended <- endAt "result" soS rsS bodySeq

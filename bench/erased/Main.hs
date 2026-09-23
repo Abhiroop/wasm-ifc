@@ -93,7 +93,7 @@ import Syntax.Indices (FunctionIdx (..))
 import Syntax.Instructions (BitwiseOp, ConvertOp, CountOp, Expr (..), FloatBinOp, FloatUnOp, Instr (..), convertEnds)
 import Syntax.Module (Export (..), ExportDesc (..))
 import Syntax.Types
-import Syntax.TypesIFC (LabelledGlobalType, LabelledValType, SLabelledValType (..), unlabelled)
+import Syntax.TypesIFC (LabelledGlobalType, LabelledValType, SLabelledFuncType (..), SLabelledValType (..), unlabelled)
 import Validation.Elaborate (elaborateModule)
 import Validation.Ref (localPosition, localType)
 import Validation.Shape (Append (..), BranchTarget (..), Elem (..), MemShape, SModuleShape (..), SomeFuncRef (..))
@@ -684,7 +684,7 @@ eraseInstr instr = case instr of
     IDeclassify -> ENop
     IStore _ _ nt memArg -> EStore (numType nt) memArg
     ICall _ _ witness ix -> ECall (widthOf witness) (positionOf ix)
-    ICallIndirect _ _ witness (SFuncType params results) -> ECallIndirect (widthOf witness) (FuncType (unlabelledTypes params) (unlabelledTypes results))
+    ICallIndirect _ _ witness (SLabelledFuncType _ params results) -> ECallIndirect (widthOf witness) (FuncType (unlabelledTypes params) (unlabelledTypes results))
     IBlock _ witness body -> EBlock (widthOf witness) (eraseExpr body)
     ILoop _ _ _ witness body -> ELoop (widthOf witness) (eraseExpr body)
     IIf _ witness thenArm elseArm -> EIf (widthOf witness) (eraseExpr thenArm) (eraseExpr elseArm)
@@ -746,7 +746,7 @@ eraseTable TNil = Nothing
 eraseTable (TCons t _) = Just (Table n (IntMap.fromList [(fromIntegral i, erased ref) | n > 0, i <- [0 .. n - 1], Right ref <- [tableLookup t i]]))
   where
     n = tableSize t
-    erased (SomeFuncRef params results ix) = FuncRef (FuncType (unlabelledTypes params) (unlabelledTypes results)) (positionOf ix)
+    erased (SomeFuncRef _ params results ix) = FuncRef (FuncType (unlabelledTypes params) (unlabelledTypes results)) (positionOf ix)
 
 eraseSegments :: DataSpaceInst ds -> Segments
 eraseSegments DNil = NoSegments

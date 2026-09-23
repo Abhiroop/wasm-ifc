@@ -105,8 +105,8 @@ import Runtime.MemInst (MemInst, readBytes, writeBytes)
 import Runtime.Module (Invocation (..), RunError, SomeHostRequest (..), SomeModuleInst, Value, continueWith, invokeExport)
 import Runtime.Numeric (toSigned64)
 import Runtime.Stack (ValueStack (..), retagStack)
-import Syntax.Types (FuncTypeOf (..), ValType (..))
-import Syntax.TypesIFC (LabelledValType, Public)
+import Syntax.Types (ValType (..))
+import Syntax.TypesIFC (LabelledFuncType (..), LabelledValType, Public)
 import Validation.Shape (MemShape)
 
 -- *** Configuration and the descriptor table ***
@@ -584,7 +584,7 @@ completing mem action = do
   memory access goes through the bounds-checked 'MemInst' operations, so a pointer outside
   linear memory yields 'Fault' rather than a crash.
 -}
-runWasiCall :: WasiHost -> WasiFunc ('FuncType ps rs) -> ValueStack ps -> MemInst m -> IO (WasiOutcome rs m)
+runWasiCall :: WasiHost -> WasiFunc ('LabelledFuncType bound ps rs) -> ValueStack ps -> MemInst m -> IO (WasiOutcome rs m)
 runWasiCall host func args mem = case (func, args) of
     (ProcExit, code :# VNil) -> pure (WasiExit (fromIntegral code))
     (ArgsGet, bufPtr :# argvPtr :# VNil) -> completing mem (pokeStrings mem argvPtr bufPtr host.config.arguments)

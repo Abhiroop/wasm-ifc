@@ -116,12 +116,9 @@ decideFloat SI64 = Nothing
 type ResultType = [ValType]
 
 {- | A function type, generic in what it calls a value type. The decoder produces it over plain
-  'ValType' ('FuncType'); the shapes the typed AST is indexed by use it over the labelled value
-  type of "Syntax.TypesIFC", so a function's parameters and results carry security levels.
-
-  TODO(ifc P1): SecWasm's function type is @τ* →ℓ τ*@: besides labelled parameters and results
-  it has a bound @ℓ@ on the context the function may be called from. That third field is
-  missing here; see the TODO on 'Syntax.Instructions.ICall'.
+  'ValType' ('FuncType'). The shapes the typed AST is indexed by use
+  'Syntax.TypesIFC.LabelledFuncType' instead, which also carries the bound on the calling
+  context that SecWasm's function types have.
 -}
 data FuncTypeOf v = FuncType [v] [v] deriving stock (Eq, Show)
 

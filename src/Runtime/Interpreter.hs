@@ -115,7 +115,7 @@ import Data.Singletons (Sing, fromSing)
 import Data.Singletons.Decide (decideEquality)
 import Data.Type.Equality ((:~:) (Refl))
 import Runtime.Convert (convertVal)
-import Runtime.Host (WasiFunc, wasiFuncType)
+import Runtime.Host (WasiFunc)
 import Runtime.MemInst (MemInst, copyWithinAt, fillBytesAt, growMemory, levelOfRange, loadWord, memoryPages, storeWordAt, writeBytesAt)
 import Runtime.Numeric (copysign32, copysign64, fromSigned32, fromSigned64, intDiv32, intDiv64, intRem32, intRem64, toSigned32, toSigned64, wasmMax, wasmMin)
 import Runtime.Stack
@@ -155,10 +155,10 @@ data FuncInst (mod :: ModuleShape) (ft :: LabelledFuncType) where
     -}
     HostFunc ::
         (ModuleMems mod ~ (mem ': mems)) =>
-        WasiFunc ('FuncType hostParams hostResults) ->
+        WasiFunc ('LabelledFuncType 'Low hostParams hostResults) ->
         SameValueTypes ps hostParams ->
         SameValueTypes hostResults rs ->
-        FuncInst mod ('FuncType ps rs)
+        FuncInst mod ('LabelledFuncType bound ps rs)
 
 -- | The instance of a module's function index space: one 'FuncInst' per type in 'ModuleFuncs'.
 data FuncSpaceInst (mod :: ModuleShape) (fts :: [LabelledFuncType]) where
@@ -294,7 +294,7 @@ data StepResult (mod :: ModuleShape) (res :: LabelledResultType) where
 data HostRequest (mod :: ModuleShape) (res :: LabelledResultType) where
     HostRequest ::
         (ModuleMems mod ~ (mem ': mems)) =>
-        WasiFunc ('FuncType hostParams hostResults) ->
+        WasiFunc ('LabelledFuncType 'Low hostParams hostResults) ->
         ValueStack hostParams ->
         Store mod ->
         SameValueTypes hostResults rs ->
@@ -438,12 +438,12 @@ step funcs (Config store locals stack code control) = case code of
         {- Calls: enter the callee (see 'enterCall'); an indirect call first reads the table entry
            and checks its type against the expected one, trapping if they differ -}
         ICall _ flows witness ix -> enterCall funcs store locals flows witness ix stack rest control
-        ICallIndirect _ flows witness (SFuncType expectedParams expectedResults) -> case stack of
+        ICallIndirect _ flows witness (SLabelledFuncType expectedBound expectedParams expectedResults) -> case stack of
             index :# below' -> case tableLookup (firstTable store.tables) index of
                 Left trap -> Left trap
-                Right (SomeFuncRef paramsS resultsS ix) ->
-                    case (decideEquality paramsS expectedParams, decideEquality resultsS expectedResults) of
-                        (Just Refl, Just Refl) -> enterCall funcs store locals flows witness ix below' rest control
+                Right (SomeFuncRef boundS paramsS resultsS ix) ->
+                    case (decideEquality boundS expectedBound, decideEquality paramsS expectedParams, decideEquality resultsS expectedResults) of
+                        (Just Refl, Just Refl, Just Refl) -> enterCall funcs store locals flows witness ix below' rest control
                         _ -> Left IndirectCallTypeMismatch
         {- Structured control: push the matching frame and run the body -}
         IBlock flows witness body ->
@@ -488,7 +488,7 @@ enterCall ::
     LocalSpaceInst locals ->
     SegmentFlows args ps ->
     Append args s full ->
-    Elem ('FuncType ps rs) (ModuleFuncs mod) ->
+    Elem ('LabelledFuncType bound ps rs) (ModuleFuncs mod) ->
     ValueStack full ->
     Expr mod ('FrameShape locals ret) labels pcA7 pcB7 (rs ++ s) out ->
     Control mod res ret locals labels out ->
@@ -500,11 +500,10 @@ enterCall funcs store locals flows witness ix stack rest control = case getFunc 
             let (args, below) = splitStack witness stack
                 calleeLocals = seedLocals flows params declared args
              in Right (Stepped (Config store calleeLocals VNil body (CallBoundary depth below locals rest control)))
-    HostFunc wasiFunc argsAgree resultsAgree -> case wasiFuncType wasiFunc of
-        SFuncType _ _ ->
-            let (args, below) = splitStack witness stack
-                suspended = Suspended (appendFromSameValues resultsAgree) locals below rest control
-             in Right (HostCall (HostRequest wasiFunc (retagStack argsAgree (relabelStack flows args)) store resultsAgree suspended))
+    HostFunc wasiFunc argsAgree resultsAgree ->
+        let (args, below) = splitStack witness stack
+            suspended = Suspended (appendFromSameValues resultsAgree) locals below rest control
+         in Right (HostCall (HostRequest wasiFunc (retagStack argsAgree (relabelStack flows args)) store resultsAgree suspended))
     GhostFunc -> Left InformationFlowViolation
   where
     depth = activationDepth control + 1
@@ -742,7 +741,7 @@ data Outcome (mod :: ModuleShape) (rs :: LabelledResultType) where
 -}
 runFunction ::
     ModuleInst mod ->
-    FuncInst mod ('FuncType ps rs) ->
+    FuncInst mod ('LabelledFuncType bound ps rs) ->
     ValueStack ps ->
     Either Trap (Outcome mod rs)
 runFunction tm (WasmFunc (Function params declared body)) args = do

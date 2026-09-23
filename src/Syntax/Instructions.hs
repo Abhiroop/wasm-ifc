@@ -263,8 +263,7 @@ data FloatBinOp = FMin | FMax | FCopysign deriving stock (Eq, Show)
 
   What is still unfinished has a @TODO(ifc …)@ beside it (@grep -rn 'TODO(ifc' src test@ lists
   them; P0 is a decision to take first, P1 is needed for a sound system, P2 for real modules,
-  P3 is polish). The large one is function types, which have no bound on the pc they may be
-  called from, so calls are only allowed at a public pc for now.
+  P3 is polish).
 -}
 
 -- TODO: organize instructions into groups: data, mem, ctrl and admin
@@ -408,33 +407,29 @@ data
        validator appends to a body that produced its results at lower levels than its block or
        function declares. -}
     IRelabelResults :: SegmentFlows from to -> Instr m f l p p from to
-    {- Calls. The 'Append' witness lets the interpreter peel the arguments off the stack. The
-       arguments may be at lower levels than the function declares ('SegmentFlows', SecWasm's
-       subtyping premise), and the results come back at the levels it declares. A function body
-       is checked at a public pc
-       ('Syntax.Functions.FunctionBody'), so a call is only allowed where the pc is public:
-       called from a secret branch, the callee's writes would reveal the branch. For an indirect
-       call the table index decides which function runs, so its level counts as well.
-       TODO(ifc P1): SecWasm gives a function type a third part, a bound on the pc it may be
-       called from; the body is checked at that bound and the witness here becomes
-       @FlowsInto pc bound@. The field is missing from 'Syntax.Types.FuncTypeOf' (the @ifc@
-       branch has no labelled calls either).
-       -}
+    {- Calls (SecWasm's T-CALL). The 'Append' witness lets the interpreter peel the arguments off
+       the stack. The arguments may be at lower levels than the function declares
+       ('SegmentFlows', the paper's subtyping premise), and the results come back at the levels
+       it declares. The caller's pc must flow into the callee's bound, the most secret context
+       it may be called from: its body was checked with that bound as its starting pc, so a
+       function bound at 'Low, called from inside a secret branch, would write its public
+       effects under a decision it never accounted for. For an indirect call the table index
+       decides which function runs, so its level joins the pc (T-CALL-INDIRECT). -}
     ICall ::
-        FlowsInto pc 'Low ->
+        FlowsInto pc bound ->
         SegmentFlows args ps ->
         Append args s full ->
-        Elem ('FuncType ps rs) (ModuleFuncs m) ->
+        Elem ('LabelledFuncType bound ps rs) (ModuleFuncs m) ->
         Instr m f l (pc ': pcs) (pc ': pcs) full (rs ++ s)
     {- Indirect calls: the callee is an entry of the module's table, checked at run time against
        the expected type (a trap if it differs); the module must declare a table. The expected
        type is labelled, so the run-time check compares the levels too. -}
     ICallIndirect ::
         (ModuleTables m ~ (table ': tables)) =>
-        FlowsInto (Join pc lv) 'Low ->
+        FlowsInto (Join pc lv) bound ->
         SegmentFlows args ps ->
         Append args s full ->
-        Sing ('FuncType ps rs) ->
+        Sing ('LabelledFuncType bound ps rs) ->
         Instr m f l (pc ': pcs) (pc ': pcs) (('I32 ':~ lv) ': full) (rs ++ s)
     {- Structured control. Bodies are typed in isolation (@ps -> rs@) within the same frame,
        framed over a polymorphic @s@. A block/if label carries its results; a loop its params.
@@ -545,7 +540,7 @@ infixr 5 :.
 call ::
     forall ps rs s m f l pcs.
     SingI ps =>
-    Elem ('FuncType ps rs) (ModuleFuncs m) -> Instr m f l ('Low ': pcs) ('Low ': pcs) (ps ++ s) (rs ++ s)
+    Elem ('LabelledFuncType 'Low ps rs) (ModuleFuncs m) -> Instr m f l ('Low ': pcs) ('Low ': pcs) (ps ++ s) (rs ++ s)
 call = ICall LowFlowsAnywhere (segmentSelf (sing @ps)) (appendFromSing @ps @s (sing @ps))
 
 {- | Specialised forms for the common case of an empty-result block/loop and a branch to

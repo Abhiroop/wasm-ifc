@@ -28,7 +28,7 @@ import Runtime.Trap (Trap)
 import Syntax.Functions (FunctionSpace (..))
 import Syntax.Module (DataSegment (..), ElementSegment (..), Module (..), SomeModule (..))
 import Syntax.Types
-import Syntax.TypesIFC (decideSameValueTypes)
+import Syntax.TypesIFC (LabelledFuncType (..), SLabelledFuncType (..), SSecLevel (..), SecLevel (..), decideSameValueTypes)
 import Validation.Policy (ghostModuleName)
 import Validation.Reflect (NonEmptyMems (..), memsNonEmpty)
 import Validation.Shape
@@ -67,17 +67,20 @@ instantiate (SomeModule shapeS m) = case shapeS of
 link :: Maybe (NonEmptyMems (ModuleMems shape)) -> Sing fts -> FunctionSpace shape fts -> Either InstantiationError (FuncSpaceInst shape fts)
 link _ SNil NoFunctions = Right FsNil
 link mems (SCons _ rest) (Defined f more) = FsCons (WasmFunc f) <$> link mems rest more
-link mems (SCons (SFuncType psS rsS) rest) (Imported moduleName fieldName more)
+link mems (SCons (SLabelledFuncType _ psS rsS) rest) (Imported moduleName fieldName more)
     | moduleName == ghostModuleName = FsCons GhostFunc <$> link mems rest more
     | moduleName /= wasiModuleName = Left (UnsupportedImport moduleName fieldName)
     | otherwise = case resolveWasiImport fieldName of
         Nothing -> Left (UnsupportedImport moduleName fieldName)
         Just (SomeWasiFunc wasiFunc) -> case wasiFuncType wasiFunc of
-            SFuncType hostPsS hostRsS -> do
+            -- Every host function is bound at public (its type is 'PublicFunc'); the match on the
+            -- bound is what tells the type checker so, since 'SomeWasiFunc' hides the type.
+            SLabelledFuncType SLow hostPsS hostRsS -> do
                 argsAgree <- note (ImportTypeMismatch fieldName) (decideSameValueTypes psS hostPsS)
                 resultsAgree <- note (ImportTypeMismatch fieldName) (decideSameValueTypes hostRsS rsS)
                 NonEmptyMems <- note WasiNeedsMemory mems
                 FsCons (HostFunc wasiFunc argsAgree resultsAgree) <$> link mems rest more
+            SLabelledFuncType SHigh _ _ -> Left (ImportTypeMismatch fieldName)
 
 -- | Every memory at its declared minimum size, from the shape.
 allocateMemories :: Sing (ms :: [MemShape]) -> MemSpaceInst ms
@@ -119,7 +122,7 @@ remainingData (SCons SDataShape rest) (segment : more) = DCons (maybe (Just segm
 remainingData (SCons SDataShape rest) [] = DCons Nothing (remainingData rest [])
 
 -- | Run the start function, if there is one, as the last step of instantiation.
-runStart :: ModuleInst shape -> Maybe (Elem ('FuncType '[] '[]) (ModuleFuncs shape)) -> Either InstantiationError (ModuleInst shape)
+runStart :: ModuleInst shape -> Maybe (Elem ('LabelledFuncType 'Low '[] '[]) (ModuleFuncs shape)) -> Either InstantiationError (ModuleInst shape)
 runStart inst Nothing = Right inst
 runStart inst (Just funcIx) = do
     outcome <- first StartFunctionTrapped (runFunction inst (getFunc funcIx inst.functions) VNil)

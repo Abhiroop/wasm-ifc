@@ -108,15 +108,25 @@ type PcStack = [SecLevel]
 -- | A labelled result type: the stack segment a block, loop, if or function yields.
 type LabelledResultType = [LabelledValType]
 
--- | A function type over labelled value types, as the shapes hold it.
-type LabelledFuncType = FuncTypeOf LabelledValType
+{- | A function type as the shapes hold it: SecWasm's @τ* →ℓ τ*@. Besides labelled parameters
+  and results it carries a /bound/ @ℓ@, the most secret context the function may be called
+  from: the body is checked with @ℓ@ as its starting pc, and a call needs the caller's pc to
+  flow into @ℓ@. So a function bound at 'Low may only be called where nothing secret has been
+  decided, and one bound at 'High may be called from anywhere but can then write only to
+  secret places. Its results must be at least as secret as the bound (a well-formedness
+  condition the policy stage checks), so that what a call pushes respects the caller's pc.
+-}
+data LabelledFuncType = LabelledFuncType SecLevel [LabelledValType] [LabelledValType]
+    deriving stock (Eq, Show)
+
+$(genSingletons [''LabelledFuncType])
 
 -- | A global's type over labelled value types, as the shapes hold it.
 type LabelledGlobalType = GlobalTypeOf LabelledValType
 
--- | A decoded function type labelled public throughout.
+-- | A decoded function type labelled public throughout, bound included.
 publicFuncType :: FuncType -> LabelledFuncType
-publicFuncType (FuncType params results) = FuncType (publicAll params) (publicAll results)
+publicFuncType (FuncType params results) = LabelledFuncType Low (publicAll params) (publicAll results)
 
 -- | A decoded global type labelled public.
 publicGlobalType :: GlobalType -> LabelledGlobalType
@@ -125,7 +135,7 @@ publicGlobalType (GlobalType mutability t) = GlobalType mutability (public t)
 {- | The type of a function all of whose parameters and results are public, from plain value
   types. The host functions of "Runtime.Host" are declared with it.
 -}
-type PublicFunc ps rs = 'FuncType (PublicAll ps) (PublicAll rs)
+type PublicFunc ps rs = 'LabelledFuncType 'Low (PublicAll ps) (PublicAll rs)
 
 {- | Evidence that level @l@ may flow into level @l'@: the lattice order. A witness rather than
   a class because validation of a decoded module has to construct it at run time, from

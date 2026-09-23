@@ -101,7 +101,7 @@ data SomeHostRequest where
 exportSignature :: SomeModuleInst -> Text -> Maybe FuncType
 exportSignature (SomeModuleInst shapeS _ exports) name = do
     FunctionIdx idx <- exportedFuncIndex name exports
-    SomeFuncRef psS rsS _ <- lookupFuncRef (funcTypesSing shapeS) idx
+    SomeFuncRef _ psS rsS _ <- lookupFuncRef (funcTypesSing shapeS) idx
     pure (FuncType (declaredOrder (unlabelledTypes psS)) (declaredOrder (unlabelledTypes rsS)))
 
 {- | Run an exported function on arguments given in declared order; results likewise. The
@@ -111,7 +111,7 @@ exportSignature (SomeModuleInst shapeS _ exports) name = do
 invokeExport :: SomeModuleInst -> Text -> [Value] -> Either RunError Invocation
 invokeExport (SomeModuleInst shapeS inst exports) name args = do
     FunctionIdx idx <- note (NoSuchExport name) (exportedFuncIndex name exports)
-    SomeFuncRef psS rsS funcIx <- note (NoSuchExport name) (lookupFuncRef (funcTypesSing shapeS) idx)
+    SomeFuncRef _ psS rsS funcIx <- note (NoSuchExport name) (lookupFuncRef (funcTypesSing shapeS) idx)
     checkArguments (declaredOrder (unlabelledTypes psS)) args
     argStack <- note (ArgumentCount 0 0) (buildStack psS (stackOrder args))
     outcome <- first Trapped (runFunction inst (getFunc funcIx inst.functions) argStack)

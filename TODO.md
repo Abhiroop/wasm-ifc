@@ -365,16 +365,16 @@ Open P0/P1 correctness items live in the plan above (section **P0**); the list b
 
 - [ ] **[P2·epic·ifc]** **Information-flow control — the actual goal.** Security-level typing on
   the typed layer (labels on value types / the stack; a noninterference argument).
-  **Status (2026-09-23):** the single instruction type tracks value types, security levels and
-  the pc stack; memory keeps a level per byte with the run-time load check; levels come from
-  the policy (`Validation.Policy`: custom section, `--policy` file, ghost `ifc` imports); and
-  SecWasm's subtyping is in place as `SegmentFlows` witnesses on calls, branches, returns and
-  block entries, with block results inferred (pc first, then secret) and bodies ending in
-  `IRelabelResults` where needed. The paper's `lift` of stack values on a branch is not needed
-  here (every sink checks the pc; see the comment on `IBlock`). Remaining `TODO(ifc Pn)`
-  (`grep -rn 'TODO(ifc' src test`): P1 the arrow label on function types, which is the one
-  representation decision left, and labelled host functions; P2 inference of internal function
-  levels (two ways, Daniel's choice) and the two-run property test.
+  **Status (2026-09-23, evening):** SecWasm's function types are complete: `LabelledFuncType
+  bound params results`, where the bound is the most secret context a function may be called
+  from; a body is checked from its bound, `call` needs the pc to flow into the callee's bound,
+  `call_indirect` joins the index's level, the policy writes it as `-{H}->`, and results must be
+  at least the bound. Imports may be declared at policy levels while the host stays public
+  (retagged at the boundary). With that, the single instruction type covers all of SecWasm's
+  static rules plus its run-time load check. Remaining `TODO(ifc Pn)`
+  (`grep -rn 'TODO(ifc' src test`): P1 the levels of the buffers a host call reads and writes
+  (a decision on descriptor levels); P2 inference of internal function levels (two ways, Daniel's
+  choice) and the two-run property test.
   **A finished experiment (branch `refactor-pcc`, Abhiroop, 2026-09-22; not merged).** The same
   pc and witness machinery on the old parallel GADT, plus a different memory model: a module
   declares a `MemPolicy`, consecutive labelled spans laid end to end (a span's base is the sum

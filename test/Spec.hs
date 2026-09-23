@@ -156,15 +156,25 @@ spec = do
             withMemory = singleFunctionModule [onePageMemory]
         it "parses every kind of statement" $ do
             let parsed = policy "func 3 : H L -> H\nexport check : H -> L ; a comment\nimport env.read : L L -> H\nglobal 0 : H\nexport global key : H\nload 3 5 : H\nstore 3 2 : L\nregion 0x1000 0x1400 : H\nload-default : H\nload-default func 3 : L\nload-default export check : H\nallow-declassify\n"
-            Map.lookup 3 parsed.functionsByIndex `shouldBe` Just (FunctionLevels [High, Low] [High])
-            Map.lookup ("env", "read") parsed.importedFunctions `shouldBe` Just (FunctionLevels [Low, Low] [High])
+            Map.lookup 3 parsed.functionsByIndex `shouldBe` Just (FunctionLevels [High, Low] [High] Low)
+            Map.lookup ("env", "read") parsed.importedFunctions `shouldBe` Just (FunctionLevels [Low, Low] [High] Low)
             Map.lookup (3, 5) parsed.loads `shouldBe` Just High
             parsed.regions `shouldBe` [(0x1000, 0x1400, High)]
             parsed.loadDefault `shouldBe` Just High
             parsed.declassifyAllowed `shouldBe` True
-        it "rejects a line that is not a statement, and an arrow label it cannot honour yet" $ do
+        it "rejects a line that is not a statement, and reads the arrow's level" $ do
             parsePolicy "global zero : H" `shouldSatisfy` isLeft
-            parsePolicy "export f : H -{H}-> L" `shouldBe` Left PolicyArrowNotSupported
+            fmap (Map.lookup "f" . (.exportedFunctions)) (parsePolicy "export f : H -{H}-> H") `shouldBe` Right (Just (FunctionLevels [High] [High] High))
+        it "a function's results must be at least its bound" $
+            elabRunWithPolicy "export f : -{H}-> L" (singleFunctionModule [] [] [I32] [] [Const SI32 1]) [] `shouldSatisfy` errorContaining "PolicyResultsBelowBound"
+        it "a call inside a secret branch needs a callee bound at secret" $ do
+            let caller = [LocalGet (LocalIdx 0), If (FuncType [] []) [Call (FunctionIdx 0)] [], Const SI32 0]
+                program = twoFunctions (FuncType [] []) [Nop] (FuncType [I32] [I32]) caller
+            elabRunWithPolicy "func 0 : -{H}->\nexport f : H -> L" program [1] `shouldBe` Right ["0"]
+            elabRunWithPolicy "export f : H -> L" program [1] `shouldSatisfy` errorContaining "IllegalFlow \"call\" High Low"
+        it "a function bound at secret writes only to secret places" $
+            elabRunWithPolicy "func 0 : -{H}->\nexport f : -> L" (twoFunctions (FuncType [] []) [Const SI32 0, Const SI32 1, Store SI32 (MemArg 0 0)] (FuncType [] [I32]) [Call (FunctionIdx 0), Const SI32 0, Load SI32 (MemArg 0 0)]) {memories = [onePageMemory]} []
+                `shouldSatisfy` trapContaining "InformationFlowViolation"
         it "two sources may speak about the same item only if they agree" $ do
             mergePolicies (policy "global 0 : H") (policy "global 0 : L") `shouldBe` Left (PolicyConflict "global 0")
             fmap (.globalsByIndex) (mergePolicies (policy "global 0 : H") (policy "global 0 : H\nload-default : H")) `shouldBe` Right (Map.fromList [(0, High)])

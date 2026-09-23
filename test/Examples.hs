@@ -31,7 +31,6 @@ import Syntax.Immediates (MemArg (..), NumWithSign (..), Signedness (..))
 import Syntax.Instructions
 import Syntax.Types (
     AddrType (..),
-    FuncTypeOf (..),
     GlobalTypeOf (..),
     IsInt (..),
     IsNum (..),
@@ -39,7 +38,7 @@ import Syntax.Types (
     SValType (..),
     ValType (..),
  )
-import Syntax.TypesIFC (FlowsInto (..), LabelledValType (..), SLabelledValType (..), SSecLevel (..), SecLevel (..), SegmentFlows (..))
+import Syntax.TypesIFC (FlowsInto (..), LabelledFuncType (..), LabelledValType (..), SLabelledValType (..), SSecLevel (..), SecLevel (..), SegmentFlows (..))
 import Validation.Ref (LocalRef, resolveLocal)
 import Validation.Shape (Append (..), BranchTarget (..), Elem (..), FrameLocals, FrameShape (..), MemShape (..), ModuleShape (..))
 
@@ -80,7 +79,7 @@ completedI32 (NeedsHost _) = Left "the example called into the host"
    stack effect line up; a single misplaced instruction would not compile.
 -}
 
-factorial :: FuncInst shape ('FuncType '[PublicI32] '[PublicI32])
+factorial :: FuncInst shape ('LabelledFuncType 'Low '[PublicI32] '[PublicI32])
 factorial =
     WasmFunc . Function (SCons publicI32 SNil) (SCons publicI32 SNil) $
         ( one
@@ -124,7 +123,7 @@ factorial =
    reports the spent budget, which is how termination becomes a testable property.
 -}
 
-spinForever :: FunctionBody shape '[] '[] '[ 'Low]
+spinForever :: FunctionBody shape '[] '[] 'Low '[ 'Low]
 spinForever = loop_ (br_ TargetHere :. INil) :. INil
 
 -- | Whether the loop is still running after the given number of steps (it always is).
@@ -149,16 +148,16 @@ runFactorial input =
    @square x = mul x x@, exercising a typed 'call' into another function in the module.
 -}
 
-type CallCtx = 'ModuleShape '[ 'FuncType '[PublicI32, PublicI32] '[PublicI32]] '[] '[] '[] '[]
+type CallCtx = 'ModuleShape '[ 'LabelledFuncType 'Low '[PublicI32, PublicI32] '[PublicI32]] '[] '[] '[] '[]
 
-multiply :: FuncInst CallCtx ('FuncType '[PublicI32, PublicI32] '[PublicI32])
+multiply :: FuncInst CallCtx ('LabelledFuncType 'Low '[PublicI32, PublicI32] '[PublicI32])
 multiply = WasmFunc . Function (SCons publicI32 (SCons publicI32 SNil)) SNil $ (ILocalGet (resolveLocal publicI32 Here) :. ILocalGet (resolveLocal publicI32 (There Here)) :. IMul I32IsNum :. INil)
 
-square :: FuncInst CallCtx ('FuncType '[PublicI32] '[PublicI32])
+square :: FuncInst CallCtx ('LabelledFuncType 'Low '[PublicI32] '[PublicI32])
 square = WasmFunc . Function (SCons publicI32 SNil) SNil $ (ILocalGet (resolveLocal publicI32 Here) :. ILocalGet (resolveLocal publicI32 Here) :. call toMultiply :. INil)
   where
     -- function index 0 in the module signature
-    toMultiply :: Elem ('FuncType '[PublicI32, PublicI32] '[PublicI32]) '[ 'FuncType '[PublicI32, PublicI32] '[PublicI32]]
+    toMultiply :: Elem ('LabelledFuncType 'Low '[PublicI32, PublicI32] '[PublicI32]) '[ 'LabelledFuncType 'Low '[PublicI32, PublicI32] '[PublicI32]]
     toMultiply = Here
 
 runSquare :: Word32 -> Either String Word32
@@ -175,7 +174,7 @@ runSquare input = either (Left . show) completedI32 (runFunction callModule squa
 
 type GlobalCtx = 'ModuleShape '[] '[ 'GlobalType 'Mutable PublicI32] '[] '[] '[]
 
-increment :: FuncInst GlobalCtx ('FuncType '[] '[PublicI32])
+increment :: FuncInst GlobalCtx ('LabelledFuncType 'Low '[] '[PublicI32])
 increment =
     WasmFunc . Function SNil SNil $
         ( IGlobalGet Here

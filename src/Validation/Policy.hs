@@ -40,9 +40,9 @@
   > load-default export check : H
   > allow-declassify
 
-  TODO(ifc P1): the arrow label (SecWasm's bound on the pc a function may be called from) is
-  parsed but only @L@ is accepted, because function types have no such field yet (see
-  'Syntax.Instructions.ICall').
+  The arrow may carry a level, @-{H}->@: the function's bound, the most secret context it may
+  be called from (SecWasm's @→ℓ@; see 'Syntax.TypesIFC.LabelledFuncType'). A plain @->@ is
+  @-{L}->@. A function's results must be at least as secret as its bound.
   Annotations can also live in the source program, as calls to an import module named @ifc@
   (the /ghost/ functions): a plain runtime runs them through a shim of identities and plain
   accesses, and this stage rewrites every call to one into the instruction it stands for, so
@@ -100,12 +100,13 @@ import Syntax.Indices (FunctionIdx (..), GlobalIdx (..))
 import Syntax.Instructions (RawInstr (..))
 import Syntax.Module
 import Syntax.Types (FuncType, FuncTypeOf (..), GlobalTypeOf (..), SValType (..), ValType (..))
-import Syntax.TypesIFC (LabelledFuncType, LabelledGlobalType, LabelledValType (..), SecLevel (..))
+import Syntax.TypesIFC (LabelledFuncType (..), LabelledGlobalType, LabelledValType (..), SecLevel (..), join)
 
--- | The levels of a function's parameters and results, in declared order.
+-- | The levels of a function's parameters and results, in declared order, and its bound.
 data FunctionLevels = FunctionLevels
     { params :: [SecLevel]
     , results :: [SecLevel]
+    , bound :: SecLevel
     }
     deriving stock (Eq, Show)
 
@@ -142,8 +143,8 @@ data PolicyError
       PolicyArity Text
     | -- | a custom section that is not UTF-8 text
       PolicySectionNotText
-    | -- | an arrow label other than @L@ (not supported yet)
-      PolicyArrowNotSupported
+    | -- | a function whose results are below its bound
+      PolicyResultsBelowBound Text
     | -- | an @ifc@ import with a name this stage does not know, or the wrong type for it
       PolicyGhostType Text
     | -- | an @ifc@ import that is exported, started or placed in a table
@@ -207,8 +208,10 @@ parsePolicy source = foldM statement emptyPolicy (zip [1 ..] (T.lines source))
         _ -> Left (PolicySyntax lineNo (T.unwords headWords))
     functionLevels lineNo body = case break isArrow body of
         (ps, arrow : rs) -> do
-            unless (arrow == "->" || arrow == "-{L}->") (Left PolicyArrowNotSupported)
-            FunctionLevels <$> traverse (level lineNo) ps <*> traverse (level lineNo) rs
+            arrowLevel <- case arrow of
+                "->" -> Right Low
+                _ -> level lineNo (T.drop 2 (T.dropEnd 3 arrow))
+            FunctionLevels <$> traverse (level lineNo) ps <*> traverse (level lineNo) rs <*> pure arrowLevel
         _ -> Left (PolicySyntax lineNo (T.unwords body))
     isArrow w = w == "->" || (T.isPrefixOf "-{" w && T.isSuffixOf "}->" w)
     oneLevel lineNo body = case body of
@@ -393,10 +396,11 @@ assemble policy m = do
             ++ [("export " <> name, fl) | name <- exportNamesOf i, Just fl <- [Map.lookup name policy.exportedFunctions]]
             ++ [("import", fl) | Just key <- [importOf i], Just fl <- [Map.lookup key policy.importedFunctions]]
     functionType (i, ft@(FuncType ps rs)) = case declarationsFor i of
-        [] -> Right (labelFuncType (FunctionLevels (map (const Low) ps) (map (const Low) rs)) ft)
+        [] -> Right (labelFuncType (FunctionLevels (map (const Low) ps) (map (const Low) rs) Low) ft)
         (what, fl) : others -> do
             unless (all ((== fl) . snd) others) (Left (PolicyConflict what))
             unless (length fl.params == length ps && length fl.results == length rs) (Left (PolicyArity what))
+            unless (all (\l -> join fl.bound l == l) fl.results) (Left (PolicyResultsBelowBound what))
             Right (labelFuncType fl ft)
     globalType (i, GlobalType mutability t) = case maybeToList (Map.lookup i policy.globalsByIndex) ++ mapMaybe (`Map.lookup` policy.exportedGlobals) (globalExportNames i) of
         [] -> Right (GlobalType mutability (t :~ Low))
@@ -491,4 +495,4 @@ assemble policy m = do
 
 -- | Attach levels to a decoded function type, in declared order.
 labelFuncType :: FunctionLevels -> FuncType -> LabelledFuncType
-labelFuncType fl (FuncType ps rs) = FuncType (zipWith (:~) ps fl.params) (zipWith (:~) rs fl.results)
+labelFuncType fl (FuncType ps rs) = LabelledFuncType fl.bound (zipWith (:~) ps fl.params) (zipWith (:~) rs fl.results)

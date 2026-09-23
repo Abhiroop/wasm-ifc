@@ -23,6 +23,7 @@ module Validation.Reflect (
     stackOrder,
     declaredOrder,
     stackOrderFuncType,
+    stackOrderLabelled,
     sReverseOnto,
     appendNil,
     mkLocalElem,
@@ -99,6 +100,10 @@ declaredOrder = reverse
 -- | A decoded function type with its parameter and result lists in stack order.
 stackOrderFuncType :: FuncTypeOf v -> FuncTypeOf v
 stackOrderFuncType (FuncType params results) = FuncType (stackOrder params) (stackOrder results)
+
+-- | The same for a labelled function type.
+stackOrderLabelled :: LabelledFuncType -> LabelledFuncType
+stackOrderLabelled (LabelledFuncType bound params results) = LabelledFuncType bound (stackOrder params) (stackOrder results)
 
 -- | The witness that appending nothing changes nothing, for a stack whose singleton we hold.
 appendNil :: Sing (xs :: [LabelledValType]) -> Append xs '[] xs
@@ -252,7 +257,7 @@ reflectCtx :: [LabelledFuncType] -> [LabelledGlobalType] -> [MemType] -> [Limits
 reflectCtx funcTypes globalTypes memTypes tableLimits dataCount =
     withSomeSing
         ( ModuleShape
-            (map stackOrderFuncType funcTypes)
+            (map stackOrderLabelled funcTypes)
             globalTypes
             (map memShapeOf memTypes)
             (map tableShapeOf tableLimits)
@@ -283,9 +288,9 @@ mkDataElem (SCons _ rest) n = There <$> mkDataElem rest (n - 1)
 mkDataElem SNil _ = Nothing
 
 lookupFuncRef :: Sing (fts :: [LabelledFuncType]) -> Word32 -> Maybe (SomeFuncRef fts)
-lookupFuncRef (SCons (SFuncType ps rs) _) 0 = Just (SomeFuncRef ps rs Here)
+lookupFuncRef (SCons (SLabelledFuncType bound ps rs) _) 0 = Just (SomeFuncRef bound ps rs Here)
 lookupFuncRef (SCons _ rest) n =
-    (\(SomeFuncRef ps rs ix) -> SomeFuncRef ps rs (There ix)) <$> lookupFuncRef rest (n - 1)
+    (\(SomeFuncRef bound ps rs ix) -> SomeFuncRef bound ps rs (There ix)) <$> lookupFuncRef rest (n - 1)
 lookupFuncRef SNil _ = Nothing
 
 {- | @∃m t. (Sing m, Sing (t :: ValType), Elem ('GlobalType m t) gs)@ — a global resolved
