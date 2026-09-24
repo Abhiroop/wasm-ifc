@@ -284,12 +284,10 @@ data StepResult (mod :: ModuleShape) (res :: LabelledResultType) where
   parameter shape), the store to perform it against, and how to continue once the results
   are known. The memory constraint travels with it so the driver can read and write memory.
 
-  TODO(ifc P1): a host call is where data enters and leaves the module, so it is where a leak
-  finally happens, for example when secret bytes are written to a public file descriptor.
-  SecWasm does not cover host functions, so this part is ours to design. Each host function
-  needs a labelled type (see "Runtime.Host"). For the buffers a call reads from memory, the
-  driver can compare the byte levels with the descriptor's level at this boundary, in the same
-  way as a load does.
+  A host call is where data enters and leaves the module, so it is where a leak finally
+  happens. The scalar arguments and results are typed by the policy's declaration of the
+  import; the buffers a call reads or writes are checked by the driver against the file
+  descriptor's level ("Runtime.Wasi"), the same kind of check as a load's.
 -}
 data HostRequest (mod :: ModuleShape) (res :: LabelledResultType) where
     HostRequest ::

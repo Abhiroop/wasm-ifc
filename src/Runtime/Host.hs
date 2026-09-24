@@ -34,15 +34,10 @@ wasiModuleName = "wasi_snapshot_preview1"
    levels; the type a module imports it at comes from the policy (@import
    wasi_snapshot_preview1.fd_read : … -> H@), and 'Runtime.Instantiate' links the two when the
    value types agree, retagging the words at the boundary. That covers the scalar arguments
-   and results.
-   TODO(ifc P1): the buffers are the open half. @fd_read@ writes bytes into memory and
-   @fd_write@ reads them, and their level is the file descriptor's, a run-time number: one way
-   is a level per preopened directory in 'Runtime.Wasi.WasiConfig', inherited through
-   @path_open@, with the driver labelling the bytes a read delivers and checking the bytes a
-   write takes against it, byte by byte, at 'Runtime.Interpreter.HostRequest'. Whether that
-   is the attacker model wanted (SecWasm's attacker sees only public globals, and leaves host
-   imports out) is the decision still to take. Until then a host read delivers public bytes
-   and a host write checks nothing. -}
+   and results. The buffers a call reads from or writes to memory take the level of the file
+   descriptor involved, which the policy gives per standard stream and per preopened directory
+   ('Runtime.Wasi.DescriptorLevels'): a read marks the bytes it delivers, a write checks the
+   bytes it takes and traps when one is more secret than its destination. -}
 data WasiFunc (ft :: LabelledFuncType) where
     -- | @args_get(argv, argv_buf)@
     ArgsGet :: WasiFunc (PublicFunc '[ 'I32, 'I32] '[ 'I32])

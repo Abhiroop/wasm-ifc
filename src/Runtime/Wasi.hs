@@ -17,6 +17,8 @@
 module Runtime.Wasi (
     WasiConfig (..),
     Preopen (..),
+    DescriptorLevels (..),
+    publicDescriptors,
     Errno (..),
     errnoWord,
     WasiHost,
@@ -101,12 +103,13 @@ import System.Posix.Unistd (fileSynchronise)
 import Runtime.Bytes (bytesOfWord32, bytesOfWord64, word32OfBytes, word64OfBytes)
 import Runtime.Host (WasiFunc (..))
 import Runtime.Interpreter (HostRequest (..), currentMem, resumeWith, storeMem)
-import Runtime.MemInst (MemInst, readBytes, writeBytes)
-import Runtime.Module (Invocation (..), RunError, SomeHostRequest (..), SomeModuleInst, Value, continueWith, invokeExport)
+import Runtime.MemInst (MemInst, levelOfRange, readBytes, writeBytes, writeBytesAt)
+import Runtime.Module (Invocation (..), RunError (..), SomeHostRequest (..), SomeModuleInst, Value, continueWith, invokeExport)
 import Runtime.Numeric (toSigned64)
 import Runtime.Stack (ValueStack (..), retagStack)
+import Runtime.Trap (Trap (..))
 import Syntax.Types (ValType (..))
-import Syntax.TypesIFC (LabelledFuncType (..), LabelledValType, Public)
+import Syntax.TypesIFC (LabelledFuncType (..), LabelledValType, Public, SecLevel (..))
 import Validation.Shape (MemShape)
 
 -- *** Configuration and the descriptor table ***
@@ -117,7 +120,25 @@ data WasiConfig = WasiConfig
     , environment :: [(Text, Text)]
     , preopens :: [Preopen]
     -- ^ become descriptors 3, 4, … in order
+    , descriptorLevels :: DescriptorLevels
     }
+
+{- | The security levels of what the host connects the module to: each standard stream, and
+  each preopened directory by its guest name; whatever is opened under a directory inherits
+  its level. A descriptor's level is the level of the bytes read from it and the most secret
+  bytes that may be written to it ("Validation.Policy" carries these as @stdin : H@,
+  @stdout : H@, @stderr : H@ and @preopen /data : H@). Everything undeclared is public.
+-}
+data DescriptorLevels = DescriptorLevels
+    { standardInput :: SecLevel
+    , standardOutput :: SecLevel
+    , standardError :: SecLevel
+    , preopenLevels :: Map Text SecLevel
+    }
+
+-- | Every stream and directory public: the levels of a run without a policy.
+publicDescriptors :: DescriptorLevels
+publicDescriptors = DescriptorLevels Low Low Low Map.empty
 
 -- | A host directory the module may reach, under the name the guest sees.
 data Preopen = Preopen
@@ -131,6 +152,8 @@ data Descriptor = Descriptor
     , rightsBase :: Word64
     , rightsInheriting :: Word64
     , fdflags :: Word16
+    , level :: SecLevel
+    -- ^ of the bytes it delivers, and the most secret bytes it accepts
     }
 
 data Resource
@@ -149,8 +172,9 @@ data WasiHost = WasiHost
 newHost :: WasiConfig -> IO WasiHost
 newHost cfg = do
     let stream h = Descriptor (StandardStream h) streamRights 0 0
-        streams = [(0, stream stdin), (1, stream stdout), (2, stream stderr)]
-        dirs = [(fd, Descriptor (Directory p.hostPath (Just p.guestPath)) directoryRights (directoryRights .|. fileRights) 0) | (fd, p) <- zip [3 ..] cfg.preopens]
+        levels = cfg.descriptorLevels
+        streams = [(0, stream stdin levels.standardInput), (1, stream stdout levels.standardOutput), (2, stream stderr levels.standardError)]
+        dirs = [(fd, Descriptor (Directory p.hostPath (Just p.guestPath)) directoryRights (directoryRights .|. fileRights) 0 (Map.findWithDefault Low p.guestPath levels.preopenLevels)) | (fd, p) <- zip [3 ..] cfg.preopens]
     table <- newIORef (Map.fromList (streams ++ dirs))
     pure (WasiHost cfg table)
 
@@ -255,6 +279,11 @@ data Errno
     | Txtbsy
     | Xdev
     | Notcapable
+    | {- | not an errno, and last so the errno numbers above stay the interface's: a byte more
+      secret than its destination, which 'completing' turns into a trap before any errno is
+      reported
+      -}
+      FlowViolation
     deriving stock (Eq, Show, Enum, Bounded)
 
 errnoWord :: Errno -> Word32
@@ -323,6 +352,16 @@ peekBytes mem addr count = except (maybe (Left Fault) Right (readBytes mem (from
 
 pokeBytes :: MemInst m -> Word32 -> [Word8] -> Host (MemInst m)
 pokeBytes mem addr payload = except (maybe (Left Fault) Right (writeBytes mem (fromIntegral addr) payload))
+
+-- | 'pokeBytes' at a level: what a read from a descriptor of that level delivers.
+pokeBytesAt :: SecLevel -> MemInst m -> Word32 -> [Word8] -> Host (MemInst m)
+pokeBytesAt l mem addr payload = except (maybe (Left Fault) Right (writeBytesAt l mem (fromIntegral addr) payload))
+
+-- | 'peekBytes' for a write to a descriptor of the given level: every byte must be at most that.
+peekBytesAt :: SecLevel -> MemInst m -> Word32 -> Int -> Host [Word8]
+peekBytesAt l mem addr count = case levelOfRange mem (fromIntegral addr) count of
+    High | l == Low -> throwE FlowViolation
+    _ -> peekBytes mem addr count
 
 peekWord32 :: MemInst m -> Word32 -> Host Word32
 peekWord32 mem addr = word32OfBytes <$> peekBytes mem addr 4
@@ -541,19 +580,23 @@ fdWriteAll fd payload
         (written +) <$> fdWriteAll fd (BS.drop written payload)
 
 -- | Read into each iovec in turn until one comes back short (end of input).
-readInto :: MemInst m -> Resource -> [(Word32, Word32)] -> Host (MemInst m, Word32)
-readInto mem resource = go mem 0
+readInto :: MemInst m -> Descriptor -> [(Word32, Word32)] -> Host (MemInst m, Word32)
+readInto mem descriptor = go mem 0
   where
     go m total [] = pure (m, total)
     go m total ((ptr, len) : rest) = do
-        chunk <- readSome resource (fromIntegral len)
-        m' <- pokeBytes m ptr (BS.unpack chunk)
+        chunk <- readSome descriptor.resource (fromIntegral len)
+        m' <- pokeBytesAt descriptor.level m ptr (BS.unpack chunk)
         let got = fromIntegral (BS.length chunk)
         if got < len then pure (m', total + got) else go m' (total + got) rest
 
--- | The bytes the iovecs point at, in order.
-gather :: MemInst m -> [(Word32, Word32)] -> Host ByteString
-gather mem iovecs = BS.pack . concat <$> forM iovecs (\(ptr, len) -> peekBytes mem ptr (fromIntegral len))
+{- | The bytes the iovecs point at, in order, for a write to the given descriptor: each byte's
+  level must flow into the descriptor's. This is the host boundary's one dynamic check, the
+  counterpart of a load's ('Runtime.Interpreter.checkedLoad'): a secret byte handed to a public
+  descriptor is the leak the whole system exists to stop, and it ends the run as a trap.
+-}
+gather :: Descriptor -> MemInst m -> [(Word32, Word32)] -> Host ByteString
+gather descriptor mem iovecs = BS.pack . concat <$> forM iovecs (\(ptr, len) -> peekBytesAt descriptor.level mem ptr (fromIntegral len))
 
 -- | Run an action at a file offset, then put the position back.
 atOffset :: Fd -> Word64 -> Host a -> Host a
@@ -570,12 +613,15 @@ atOffset fd offset action = do
 data WasiOutcome (rs :: [LabelledValType]) (m :: MemShape) where
     WasiReturn :: ValueStack rs -> MemInst m -> WasiOutcome rs m
     WasiExit :: Int -> WasiOutcome rs m
+    -- | the boundary's flow check failed: the run ends as with any trap
+    WasiTrap :: Trap -> WasiOutcome rs m
 
 -- | Run an errno-returning call: on failure the memory is as it was.
 completing :: MemInst m -> Host (MemInst m) -> IO (WasiOutcome '[Public 'I32] m)
 completing mem action = do
     result <- runExceptT action
     pure $ case result of
+        Left FlowViolation -> WasiTrap InformationFlowViolation
         Left err -> WasiReturn (errnoWord err :# VNil) mem
         Right mem' -> WasiReturn (errnoWord Success :# VNil) mem'
 
@@ -651,7 +697,7 @@ runWasiCall host func args mem = case (func, args) of
         descriptor <- lookupFd host fd >>= requireRight rightFdRead >>= requireRight rightFdSeek
         fd' <- fileOf descriptor
         iovecs <- peekIovecs mem iovsPtr iovsLen
-        (mem', count) <- atOffset fd' offset (readInto mem descriptor.resource iovecs)
+        (mem', count) <- atOffset fd' offset (readInto mem descriptor iovecs)
         pokeWord32 mem' nreadPtr count
     (FdPrestatGet, outPtr :# fd :# VNil) -> completing mem $ do
         name <- lookupFd host fd >>= preopenName
@@ -665,7 +711,7 @@ runWasiCall host func args mem = case (func, args) of
         descriptor <- lookupFd host fd >>= requireRight rightFdWrite >>= requireRight rightFdSeek
         fd' <- fileOf descriptor
         iovecs <- peekIovecs mem iovsPtr iovsLen
-        payload <- gather mem iovecs
+        payload <- gather descriptor mem iovecs
         -- The position is left where it was. With the append flag the offset is ignored and
         -- the data goes to the end, as Linux does.
         written <- atOffset fd' offset (writeAll descriptor payload)
@@ -673,16 +719,17 @@ runWasiCall host func args mem = case (func, args) of
     (FdRead, nreadPtr :# iovsLen :# iovsPtr :# fd :# VNil) -> completing mem $ do
         descriptor <- lookupFd host fd >>= requireRight rightFdRead
         iovecs <- peekIovecs mem iovsPtr iovsLen
-        (mem', count) <- readInto mem descriptor.resource iovecs
+        (mem', count) <- readInto mem descriptor iovecs
         pokeWord32 mem' nreadPtr count
     (FdReaddir, bufusedPtr :# cookie :# bufLen :# bufPtr :# fd :# VNil) -> completing mem $ do
-        path <- lookupFd host fd >>= requireRight 14 >>= directoryOf
+        descriptor <- lookupFd host fd >>= requireRight 14
+        path <- directoryOf descriptor
         names <- hostIO (sort <$> listDirectory path)
         entries <- forM (zip [1 ..] ("." : ".." : names)) $ \(next, name) -> do
             st <- statPath False (path </> name)
             pure (dirent next (fromIntegral (fileID st)) (fileTypeOf st) name)
         let payload = take (fromIntegral bufLen) (concat (drop (fromIntegral cookie) entries))
-        mem' <- pokeBytes mem bufPtr payload
+        mem' <- pokeBytesAt descriptor.level mem bufPtr payload
         pokeWord32 mem' bufusedPtr (fromIntegral (length payload))
     (FdRenumber, to :# fd :# VNil) -> completing mem $ do
         descriptor <- lookupFd host fd
@@ -707,7 +754,7 @@ runWasiCall host func args mem = case (func, args) of
     (FdWrite, nwrittenPtr :# iovsLen :# iovsPtr :# fd :# VNil) -> completing mem $ do
         descriptor <- lookupFd host fd >>= requireRight rightFdWrite
         iovecs <- peekIovecs mem iovsPtr iovsLen
-        payload <- gather mem iovecs
+        payload <- gather descriptor mem iovecs
         written <- writeAll descriptor payload
         pokeWord32 mem nwrittenPtr (fromIntegral written)
     (PathCreateDirectory, pathLen :# pathPtr :# fd :# VNil) -> completing mem $ do
@@ -860,7 +907,7 @@ openPath host parent target follow oflags requestedBase requestedInheriting flag
     case existing of
         Just st | isDirectory st -> do
             when wantsWrite (throwE Isdir)
-            liftIO (insertFd host (Descriptor (Directory target.host Nothing) (base .&. directoryRights) inheriting flags))
+            liftIO (insertFd host (Descriptor (Directory target.host Nothing) (base .&. directoryRights) inheriting flags parent.level))
         Just _ | mustBeDirectory -> throwE Notdir
         Nothing | mustBeDirectory -> throwE Noent
         Nothing | not creat -> throwE Noent
@@ -878,7 +925,7 @@ openPath host parent target follow oflags requestedBase requestedInheriting flag
                         , sync = testBit flags 4
                         }
             fd <- hostIO (openFd target.host mode openFlags)
-            liftIO (insertFd host (Descriptor (RegularFile target.host fd) (base .&. fileRights) inheriting flags))
+            liftIO (insertFd host (Descriptor (RegularFile target.host fd) (base .&. fileRights) inheriting flags parent.level))
   where
     creat = testBit oflags 0
     mustBeDirectory = testBit oflags 1 || target.mustBeDirectory
@@ -959,6 +1006,7 @@ runWithWasi cfg wasmModule name args = do
             outcome <- runWasiCall host wasiFunc callArgs (currentMem store)
             case outcome of
                 WasiExit code -> pure (Right (Exited code))
+                WasiTrap trap -> pure (Left (Trapped trap))
                 WasiReturn results mem' ->
                     serve (continueWith shapeS funcs exports rsS (resumeWith (storeMem mem' store) (retagStack resultsAgree results) suspended))
     serve (invokeExport wasmModule name args)

@@ -365,15 +365,13 @@ Open P0/P1 correctness items live in the plan above (section **P0**); the list b
 
 - [ ] **[P2·epic·ifc]** **Information-flow control — the actual goal.** Security-level typing on
   the typed layer (labels on value types / the stack; a noninterference argument).
-  **Status (2026-09-23, evening):** SecWasm's function types are complete: `LabelledFuncType
-  bound params results`, where the bound is the most secret context a function may be called
-  from; a body is checked from its bound, `call` needs the pc to flow into the callee's bound,
-  `call_indirect` joins the index's level, the policy writes it as `-{H}->`, and results must be
-  at least the bound. Imports may be declared at policy levels while the host stays public
-  (retagged at the boundary). With that, the single instruction type covers all of SecWasm's
-  static rules plus its run-time load check. Remaining `TODO(ifc Pn)`
-  (`grep -rn 'TODO(ifc' src test`): P1 the levels of the buffers a host call reads and writes
-  (a decision on descriptor levels); P2 inference of internal function levels (two ways, Daniel's
+  **Status (2026-09-24):** SecWasm's rules are all in the single instruction type, including the
+  arrow label, plus the run-time load check, and the host boundary is covered as our extension:
+  an import's scalar levels come from the policy, and the buffers a host call reads or writes
+  take the file descriptor's level, declared per standard stream and per preopened directory
+  (`stdout : H`, `preopen /data : H`) and inherited by whatever is opened underneath; a write of
+  a byte more secret than its destination traps. Remaining `TODO(ifc Pn)`
+  (`grep -rn 'TODO(ifc' src test`): P2 inference of internal function levels (two ways, Daniel's
   choice) and the two-run property test.
   **A finished experiment (branch `refactor-pcc`, Abhiroop, 2026-09-22; not merged).** The same
   pc and witness machinery on the old parallel GADT, plus a different memory model: a module

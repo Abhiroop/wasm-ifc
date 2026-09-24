@@ -38,6 +38,9 @@
   > load-default : L
   > load-default func 3 : H
   > load-default export check : H
+  > stdin : H                  ; the standard streams' levels, for the WASI host
+  > stdout : L
+  > preopen /data : H          ; a preopened directory (by guest name) and all it contains
   > allow-declassify
 
   The arrow may carry a level, @-{H}->@: the function's bound, the most secret context it may
@@ -74,6 +77,7 @@ module Validation.Policy (
     parsePolicy,
     mergePolicies,
     sectionPolicy,
+    modulePolicy,
     Assembled (..),
     assemble,
     labelFuncType,
@@ -126,11 +130,15 @@ data Policy = Policy
     , loadDefaultsByIndex :: Map Word32 SecLevel
     , loadDefaultsByExport :: Map Text SecLevel
     , declassifyAllowed :: Bool
+    , streamLevels :: Map Text SecLevel
+    -- ^ by @stdin@, @stdout@, @stderr@
+    , preopenLevels :: Map Text SecLevel
+    -- ^ by the directory's guest name
     }
     deriving stock (Eq, Show)
 
 emptyPolicy :: Policy
-emptyPolicy = Policy Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty [] Nothing Map.empty Map.empty False
+emptyPolicy = Policy Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty [] Nothing Map.empty Map.empty False Map.empty Map.empty
 
 data PolicyError
     = -- | a line that is not a statement: its number and text
@@ -205,6 +213,12 @@ parsePolicy source = foldM statement emptyPolicy (zip [1 ..] (T.lines source))
         ["load-default", "export", name] -> do
             l <- oneLevel lineNo body
             Right policy {loadDefaultsByExport = Map.insert name l policy.loadDefaultsByExport}
+        [stream] | stream `elem` ["stdin", "stdout", "stderr"] -> do
+            l <- oneLevel lineNo body
+            Right policy {streamLevels = Map.insert stream l policy.streamLevels}
+        ["preopen", guest] -> do
+            l <- oneLevel lineNo body
+            Right policy {preopenLevels = Map.insert guest l policy.preopenLevels}
         _ -> Left (PolicySyntax lineNo (T.unwords headWords))
     functionLevels lineNo body = case break isArrow body of
         (ps, arrow : rs) -> do
@@ -239,6 +253,8 @@ mergePolicies a b = do
     stores <- agreeing "store" a.stores b.stores
     loadDefaultsByIndex <- agreeing "load-default func" a.loadDefaultsByIndex b.loadDefaultsByIndex
     loadDefaultsByExport <- agreeing "load-default export" a.loadDefaultsByExport b.loadDefaultsByExport
+    streamLevels <- agreeing "stream" a.streamLevels b.streamLevels
+    preopenLevels <- agreeing "preopen" a.preopenLevels b.preopenLevels
     loadDefault <- case (a.loadDefault, b.loadDefault) of
         (Just x, Just y) | x /= y -> Left (PolicyConflict "load-default")
         (x, y) -> Right (x <|> y)
@@ -256,6 +272,8 @@ mergePolicies a b = do
             , loadDefaultsByIndex
             , loadDefaultsByExport
             , declassifyAllowed = a.declassifyAllowed || b.declassifyAllowed
+            , streamLevels
+            , preopenLevels
             }
   where
     agreeing :: (Ord k, Show k, Eq v) => Text -> Map k v -> Map k v -> Either PolicyError (Map k v)
@@ -270,6 +288,10 @@ sectionPolicy m = foldM step emptyPolicy [bytes | (name, bytes) <- m.customSecti
     step acc bytes = do
         text <- either (const (Left PolicySectionNotText)) Right (decodeUtf8' (BS.toStrict bytes))
         parsePolicy text >>= mergePolicies acc
+
+-- | The policy in force for a module: the given one merged with the module's own section.
+modulePolicy :: Policy -> RawModule -> Either PolicyError Policy
+modulePolicy given m = sectionPolicy m >>= mergePolicies given
 
 -- *** Assembly ***
 

@@ -123,6 +123,7 @@ executable wasm-ifc
         base
       , wasm-ifc
       , bytestring
+      , containers
       , filepath
       , text
 

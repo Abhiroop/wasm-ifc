@@ -33,7 +33,7 @@ import Runtime.Module (Invocation (..), RunError (..), SomeHostRequest (..), Som
 import Runtime.Numeric (intDiv32)
 import Runtime.Stack (ValueStack (..), retagStack)
 import Runtime.Trap (Trap (..))
-import Runtime.Wasi (Completion (..), WasiConfig (..), runWithWasi)
+import Runtime.Wasi (Completion (..), DescriptorLevels (..), WasiConfig (..), publicDescriptors, runWithWasi)
 import Syntax.Functions (RawFunction (..))
 import Syntax.Globals (RawGlobal (..))
 import Syntax.Immediates
@@ -215,6 +215,10 @@ spec = do
             elabRunWithPolicy "load-default : H" (withMemory [] [I32] [] [Const SI32 0, Load SI32 (MemArg 0 0)]) [] `shouldSatisfy` errorContaining "IllegalFlow \"result\""
         it "a module without functions assembles (the index space is empty, not wrapped around)" $
             void (elaborateModule (singleFunctionModule [] [] [] [] []) {functions = [], exports = []}) `shouldSatisfy` isRight
+        it "declares the levels of the standard streams and preopens for the host" $ do
+            let parsed = policy "stdout : H\npreopen /data : H"
+            Map.lookup "stdout" parsed.streamLevels `shouldBe` Just High
+            Map.lookup "/data" parsed.preopenLevels `shouldBe` Just High
         it "the module's own ifc section carries a policy" $ do
             let declassifying = (singleFunctionModule [] [] [I32] [] [Const SI32 1, Relabel High, Declassify Low]) {customSections = [("ifc", "allow-declassify")]}
             elabRunModule declassifying [] `shouldBe` Right ["1"]
@@ -274,8 +278,16 @@ spec = do
                             Right (Returned _ results) -> results `shouldBe` [I32Value 99]
                             _ -> expectationFailure "expected the module to return the fake errno"
                     _ -> expectationFailure "expected a suspended fd_write call"
+        it "writing secret bytes to a public descriptor traps; to a secret one it goes through" $ do
+            -- An iovec at 8 pointing at 4 secret bytes at 0; fd 1 is stdout.
+            let body = [Const SI32 0, Const SI32 7, Annotated High (Store SI32 (MemArg 0 0)), Const SI32 8, Const SI32 0, Store SI32 (MemArg 0 0), Const SI32 12, Const SI32 4, Store SI32 (MemArg 0 0), Const SI32 1, Const SI32 8, Const SI32 1, Const SI32 16, Call (FunctionIdx 0)]
+                program = either (error . show) id (load (wasiModule fdWriteImport body [I32]))
+            leaked <- runWithWasi noHost program "f" []
+            fmap describeCompletion leaked `shouldBe` Left (Trapped InformationFlowViolation)
+            allowed <- runWithWasi noHost {descriptorLevels = publicDescriptors {standardOutput = High}} program "f" []
+            fmap describeCompletion allowed `shouldBe` Right "returned [I32Value 0]"
         it "args_sizes_get reports the argument count and buffer size" $ do
-            let cfg = WasiConfig ["prog", "xy"] [] []
+            let cfg = WasiConfig ["prog", "xy"] [] [] publicDescriptors
                 body = [Const SI32 0, Const SI32 4, Call (FunctionIdx 0), Drop, Const SI32 0, Load SI32 (MemArg 0 0), Const SI32 4, Load SI32 (MemArg 0 0), Add SI32]
             completion <- runWithWasi cfg (either (error . show) id (load (wasiModule (wasiImport "args_sizes_get" (FuncType [I32, I32] [I32])) body [I32]))) "f" []
             fmap describeCompletion completion `shouldBe` Right "returned [I32Value 10]"
@@ -686,7 +698,7 @@ wasiModule imported body results =
     importType (RawImport _ _ (ImportFunc ft)) = ft
 
 noHost :: WasiConfig
-noHost = WasiConfig [] [] []
+noHost = WasiConfig [] [] [] publicDescriptors
 
 describeCompletion :: Completion -> String
 describeCompletion (Ran _ results) = "returned " ++ show results

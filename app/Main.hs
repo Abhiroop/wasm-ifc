@@ -13,39 +13,41 @@ import System.Exit (ExitCode (..), die, exitSuccess, exitWith)
 import Text.Read (readMaybe)
 
 import Codec.Wasm (decodeModule)
+import Data.Map.Strict qualified as Map
 import Data.Text.IO qualified as TIO
 import Runtime.Instantiate (instantiate)
 import Runtime.Module (RunError (..), SomeModuleInst, Value (..), exportSignature, readGlobalExport, renderValue)
-import Runtime.Wasi (Completion (..), Preopen (..), WasiConfig (..), runWithWasi)
+import Runtime.Wasi (Completion (..), DescriptorLevels (..), Preopen (..), WasiConfig (..), runWithWasi)
 import Syntax.Module (SomeModule)
 import Syntax.Types (FuncTypeOf (..), ValType (..))
+import Syntax.TypesIFC (SecLevel (..))
 import System.FilePath (takeFileName)
 import Validation.Elaborate (elaborateModuleWith)
-import Validation.Policy (emptyPolicy, parsePolicy)
+import Validation.Policy (Policy (..), emptyPolicy, modulePolicy, parsePolicy)
 
 main :: IO ()
 main = do
     args <- getArgs
     case args of
         ("check" : rest) -> case parseOptions rest of
-            Right (options, [path]) -> withValidated options path (\_ -> putStrLn "ok")
+            Right (options, [path]) -> withValidated options path (\_ _ -> putStrLn "ok")
             _ -> die usage
         ("get" : rest) -> case parseOptions rest of
-            Right (options, [path, name]) -> withModule options path $ \wasmModule ->
+            Right (options, [path, name]) -> withModule options path $ \_ wasmModule ->
                 either (die . describeRunError) (putStrLn . renderValue) (readGlobalExport wasmModule (T.pack name))
             _ -> die usage
         ("invoke" : rest) -> case parseOptions rest of
             Right (options, path : name : rawArgs) ->
-                withModule options path $ \wasmModule ->
+                withModule options path $ \policy wasmModule ->
                     case parseArguments wasmModule (T.pack name) (map T.pack rawArgs) of
                         Left err -> die err
-                        Right values -> runUnderWasi (configFor options path []) wasmModule (T.pack name) values (mapM_ (putStrLn . renderValue))
+                        Right values -> runUnderWasi (configFor options policy path []) wasmModule (T.pack name) values (mapM_ (putStrLn . renderValue))
             _ -> die usage
         ("run" : rest) -> case parseOptions rest of
             Right (options, path : programArgs) ->
-                withModule options path $ \wasmModule -> case exportSignature wasmModule "_start" of
+                withModule options path $ \policy wasmModule -> case exportSignature wasmModule "_start" of
                     Nothing -> die "the module has no _start export"
-                    Just (FuncType [] []) -> runUnderWasi (configFor options path programArgs) wasmModule "_start" [] (\_ -> pure ())
+                    Just (FuncType [] []) -> runUnderWasi (configFor options policy path programArgs) wasmModule "_start" [] (\_ -> pure ())
                     Just _ -> die "_start must take no parameters and return nothing"
             _ -> die usage
         _ -> die usage
@@ -90,13 +92,22 @@ parseOptions = go (Options [] [] Nothing)
         _ -> Left ("--env expects NAME=VALUE, got " ++ spec)
     go options rest = Right (options, rest)
 
-configFor :: Options -> FilePath -> [String] -> WasiConfig
-configFor options path programArgs =
+configFor :: Options -> Policy -> FilePath -> [String] -> WasiConfig
+configFor options policy path programArgs =
     WasiConfig
         { arguments = map T.pack (takeFileName path : programArgs)
         , environment = options.vars
         , preopens = options.dirs
+        , descriptorLevels =
+            DescriptorLevels
+                { standardInput = stream "stdin"
+                , standardOutput = stream "stdout"
+                , standardError = stream "stderr"
+                , preopenLevels = policy.preopenLevels
+                }
         }
+  where
+    stream name = Map.findWithDefault Low name policy.streamLevels
 
 -- | Invoke an export with the WASI host serving its calls; hand the results to the printer.
 runUnderWasi :: WasiConfig -> SomeModuleInst -> Text -> [Value] -> ([Value] -> IO ()) -> IO ()
@@ -112,7 +123,7 @@ runUnderWasi cfg wasmModule name args printResults = do
   work is a pure @Either String@; IO is only reading the file and printing. Any failure is
   reported and exits non-zero (via 'die').
 -}
-withValidated :: Options -> FilePath -> (SomeModule -> IO ()) -> IO ()
+withValidated :: Options -> FilePath -> (Policy -> SomeModule -> IO ()) -> IO ()
 withValidated options path action = do
     policy <- case options.policyFile of
         Nothing -> pure emptyPolicy
@@ -126,18 +137,22 @@ withValidated options path action = do
         Left ioErr -> die ("Cannot read " ++ path ++ ": " ++ show ioErr)
         Right bytes -> case pipeline policy bytes of
             Left err -> die err
-            Right validated -> action validated
+            Right (inForce, validated) -> action inForce validated
   where
+    -- The policy in force is the given one merged with the module's own section; the WASI
+    -- host reads the descriptor levels off it.
     pipeline policy bytes = do
         raw <- first ("Decode error: " ++) (decodeModule bytes)
-        first (\e -> "Validation error: " ++ show e) (elaborateModuleWith policy raw)
+        inForce <- first (\e -> "Policy error: " ++ show e) (modulePolicy policy raw)
+        validated <- first (\e -> "Validation error: " ++ show e) (elaborateModuleWith policy raw)
+        Right (inForce, validated)
 
 -- | 'withValidated', then instantiate: the module ready to have an export invoked.
-withModule :: Options -> FilePath -> (SomeModuleInst -> IO ()) -> IO ()
-withModule options path action = withValidated options path $ \validated ->
+withModule :: Options -> FilePath -> (Policy -> SomeModuleInst -> IO ()) -> IO ()
+withModule options path action = withValidated options path $ \policy validated ->
     case instantiate validated of
         Left err -> die ("Instantiation error: " ++ show err)
-        Right wasmModule -> action wasmModule
+        Right wasmModule -> action policy wasmModule
 
 -- | Parse the textual arguments at the export's parameter types.
 parseArguments :: SomeModuleInst -> Text -> [Text] -> Either String [Value]

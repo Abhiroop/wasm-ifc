@@ -52,7 +52,7 @@ import Syntax.Instructions (
 import Syntax.Module
 import Syntax.Types
 import Syntax.TypesIFC
-import Validation.Policy (Assembled (..), Policy, PolicyError, assemble, emptyPolicy, mergePolicies, sectionPolicy)
+import Validation.Policy (Assembled (..), Policy, PolicyError, assemble, emptyPolicy, modulePolicy)
 import Validation.Ref (resolveLocal)
 import Validation.Reflect
 import Validation.Shape
@@ -1100,7 +1100,7 @@ elaborateModule = elaborateModuleWith emptyPolicy
 elaborateModuleWith :: Policy -> RawModule -> Either ElabError SomeModule
 elaborateModuleWith given raw = do
     validateStructure raw
-    assembled <- first BadPolicy (sectionPolicy raw >>= mergePolicies given >>= (`assemble` raw))
+    assembled <- first BadPolicy (modulePolicy given raw >>= (`assemble` raw))
     let m = assembled.annotated
     case reflectCtx assembled.functionTypes assembled.globalTypes memTypes tableLimits (length m.dataSegments) of
         SomeModuleShape ctxS@(SModuleShape ftsS gsS msS tsS _) -> do
