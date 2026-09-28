@@ -5,3 +5,6 @@
 	path = test/wasi/testsuite
 	url = https://github.com/WebAssembly/wasi-testsuite.git
 	branch = prod/testsuite-base
+[submodule "paper/current"]
+	path = paper/current
+	url = https://git@git.overleaf.com/6a01b6844c1b5b6d7830b9c5
