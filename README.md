@@ -1,117 +1,106 @@
 ## wasm-ifc
 
-Experiments with WebAssembly and information-flow control, in Haskell.
+A WebAssembly interpreter in Haskell whose instruction type makes ill-typed programs and, for
+the programs it is given a security policy for, information leaks impossible to represent. The
+information-flow rules are those of SecWasm (Bastys, Algehed, Sjösten and Sabelfeld, SAS 2022).
 
-The pipeline is a single path: decode the binary into an untyped AST, *elaborate* it
-(validation = type-checking, recovering the type indices) into an intrinsically-typed module,
-*instantiate* that (link imports, allocate memories and tables, place segments, run the start
-function), and run exports on a small-step machine.
+### How it works
+
+A module goes through one pipeline. The decoder produces an untyped AST; the elaborator
+validates it, which is type-checking, and in doing so recovers the type indices of an
+intrinsically-typed module; instantiation links imports, allocates memories and tables,
+places segments and runs the start function; and a small-step machine runs exports.
 
 ```
   bytes ──decode──▶ RawModule ──elaborate──▶ Module ──instantiate──▶ ModuleInst ──step──▶ result
    Codec.Wasm      Syntax.*    Validation.*  Syntax.*   Runtime.*    Runtime.*   Runtime.Interpreter
-                  (untyped)    (validate +   (typed)   (Instantiate) (instances) (total `step`)
-                               recover indices)
 ```
 
-Each syntactic thing lives in one module in both its forms: `Syntax.Module` holds `RawModule`
-(as decoded) and `Module shape` (as validated), `Syntax.Functions` holds `RawFunction` and
-`Function`, `Syntax.Globals` holds `RawGlobal` and `Global`. Immediates (`MemArg`, signedness,
-narrow widths) are in `Syntax.Immediates`; `Syntax.Types` holds only types.
+The typed instruction `Instr` is indexed by the module's shape, the function's frame, the
+enclosing labels, a stack of program-counter labels before and after, and the operand stack
+before and after. Every value type in those indices carries a security level, public or
+secret. So one type states both what WebAssembly validation checks and what SecWasm's type
+system checks: a computed value is as secret as its most secret operand, a write inside a
+secret branch to a public place is a type error, and a call from a secret context needs a
+callee that allows one. Each side condition of a rule is a witness the instruction carries,
+which the elaborator constructs and a hand-written program states. Levels exist only in
+types, with one exception: every byte of linear memory has a level at run time, and a load
+that reads a byte more secret than it declares traps, which is SecWasm's one dynamic check.
 
-The three layers follow one naming convention (with `Raw` for the decoder's untyped output):
+The machine's `step` is total over every well-typed configuration and no configuration can be
+ill-typed, so the machine is its own type-soundness argument: preservation holds by
+construction and progress by totality. Without a policy every level is public and the
+interpreter accepts exactly the modules WebAssembly validation accepts.
 
-* **Syntax** (`Syntax.*`): the program as written. Both the raw, unvalidated AST (`RawInstr`,
-  `RawModule`, …) and the *intrinsically-typed* `Instr`/`Expr`/`Function`/`Module` — indexed
-  by the value-stack shape, locals, labels and module shape they run within, so ill-typed
-  programs are not representable.
-  Every value type in those indices also carries a security level (`Syntax.TypesIFC`:
-  `ValType :~ SecLevel`, public or secret), so the same `Instr` tracks information flow: a
-  computed value is as secret as its most secret operand, and a stack of program-counter labels
-  (one per enclosing block) makes a write inside a secret branch to a public place a type
-  error. The levels exist only in types, except in linear memory, where every byte carries one
-  at run time and a load traps if it reads a byte more secret than it declares (SecWasm's one
-  dynamic check). Where the levels come from is the module's *policy* (`Validation.Policy`): a
-  text format, carried in the module's `ifc` custom section or in a file given with
-  `--policy`, that declares the interface (parameter and result levels and the `-{H}->` bound on
-  the calling context), memory accesses, and the levels of the standard streams and preopened
-  directories the WASI host connects to; everything undeclared is public or inferred. Annotations can also be written in the source program as calls to an import
-  module `ifc` (`load_secret_i32`, `secret_i32`, `declassify_i32`, …), which a plain runtime
-  serves with a shim and this one rewrites into the instructions they stand for. The checks still missing are marked `TODO(ifc …)` beside the code they belong to.
-* **Validation** (`Validation.*`): the type-level *shapes* the syntax is indexed by
-  (`Validation.Shape`: `ModuleShape`, `MemShape`, `Append`, `Elem`), the singleton witnesses
-  and decidable equality (`Validation.Reflect`), and the elaborator (`Validation.Elaborate`),
-  which checks a whole decoded module and recovers its hidden type indices. It validates only;
-  it never allocates or runs anything.
-* **Runtime** (`Runtime.*`): instantiation (`Runtime.Instantiate`: a validated `Module` to a
-  `ModuleInst`, with its own `InstantiationError`), the *instances* (`ModuleInst`, `FuncInst`,
-  `MemInst`, the value containers) and the interpreter. `Runtime.Interpreter` is a total small-step abstract
-  machine: a `Config` steps to the next `Config` (or finishes, or traps). Because only
-  well-typed configurations are representable and `step` is total (enforced by
-  `-Werror=incomplete-patterns`, no `error`/`unsafeCoerce`), the machine *is* the
-  type-soundness argument — preservation by construction, progress by totality.
+### Security policies
 
-Naming: `Foo` is the static syntax (in `Syntax`); `FooShape` is its type-level abstraction
-(in `Validation`); `FooInst (shape :: FooShape)` is the runtime instance (in `Runtime`).
+Levels come from a policy (`Validation.Policy`), one text format with two carriers: the
+module's own `ifc` custom section, keyed by function index, global index and memory-access
+position, and a file given with `--policy`, keyed by import and export names. It declares
+function types with the bound on their calling context (`export check : H -{L}-> L`), globals,
+memory accesses and regions, and the levels of the standard streams and preopened directories
+the WASI host connects to. Stores need no declaration, since their level is inferred; loads
+take a site declaration, a region, or a default. Annotations can also be written in the source
+program as calls to an import module `ifc` (`secret_i32`, `load_secret_i32`, `declassify_i32`,
+…), which a plain runtime serves with a shim and this one rewrites into the instructions they
+stand for. Whatever the policy does not declare is public.
+
+At the host boundary an import's scalar arguments and results take the policy's levels, and
+the bytes a host call reads or writes take the level of the file descriptor involved: a read
+marks the bytes it delivers, and a write of a byte more secret than its descriptor traps.
 
 ### Layout
 
 | Path | Contents |
 |------|----------|
-| `src/Syntax/`     | the program syntax, raw and typed side by side: types, immediates, indices, instructions, functions, globals, the module |
+| `src/Syntax/`     | the program, raw and typed side by side: types and security levels (`TypesIFC`), immediates, indices, instructions, functions, globals, the module |
 | `src/Codec/`      | the binary decoder |
-| `src/Validation/` | type-level shapes (`Shape`), singletons + decidable equality (`Reflect`), the elaborator (`Elaborate`) |
-| `src/Runtime/`    | instantiation, the small-step interpreter, the runtime instances, value/memory machinery, shared numerics, the WASI host |
-| `test/`           | the hspec/hedgehog suite, the hand-written typed examples, the spec-testsuite runner |
+| `src/Validation/` | type-level shapes, singletons, the policy stage, the elaborator |
+| `src/Runtime/`    | instantiation, the small-step interpreter, memory with byte levels, the WASI host |
+| `app/Main.hs`     | the command-line interface |
+| `test/`           | unit tests and typed examples; runners for the spec testsuite and the wasi-testsuite |
+| `samples/`        | example programs checked by `samples/check.sh` |
+| `bench/`          | benchmarks and the allocation tripwire; results in `BENCHMARKS.md` |
+| `paper/`          | the paper draft (a submodule on Overleaf) |
+| `Formalisation/`  | earlier Agda and Lean models |
 | `app.old/`        | the original prototype, kept for reference (not built) |
-| `app/Main.hs`     | the CLI |
-| `samples/wat/`    | example programs (`.wat`); `samples/build.sh` compiles them with `wat2wasm` |
-| `samples/wasi/`   | WASI programs run with `run`; checked by `samples/check.sh` |
-| `test/spec/`      | the official spec testsuite (a pinned submodule) driven by `test/SpecSuite.hs` |
-| `test/wasi/`      | the official wasi-testsuite (a pinned submodule) driven by `test/WasiSuite.hs` |
+
+Naming follows three layers: `Foo` is syntax, `FooShape` its type-level form in `Validation`,
+and `FooInst` its run-time instance.
 
 ### Usage
 
 ```sh
 cabal build
-cabal run wasm-ifc -- invoke <file.wasm> <export> [args...]   # decode → validate → instantiate → run
-cabal run wasm-ifc -- check [--policy P] <file.wasm>           # decode → validate only, under a security policy
-cabal run wasm-ifc -- run [--dir D[::G]]... [--env K=V]... <file.wasm> [args...]   # a WASI program
+cabal run wasm-ifc -- check  [--policy P] <file.wasm>                      # decode and validate
+cabal run wasm-ifc -- invoke [--policy P] <file.wasm> <export> [args...]   # run an export
+cabal run wasm-ifc -- run    [--policy P] [--dir D[::G]]... [--env K=V]... <file.wasm> [args...]   # a WASI program
+cabal run wasm-ifc -- get    [--policy P] <file.wasm> <global>             # an exported global
 
-samples/build.sh    # compile every sample .wat to .wasm  (needs wabt's wat2wasm)
-samples/check.sh    # run every sample and check it against its expected result (and against wasmtime, if installed)
-samples/validate.sh # every sample must be accepted by both wasm-validate and our own check
-cabal test          # the hspec/hedgehog suite, the spec testsuite (needs wabt's wast2json) and the
-                    # wasi-testsuite; both suites are submodules: `git submodule update --init`
+./scripts/gate.sh   # format, -Werror build, all test suites, lint, samples
+cabal test          # unit tests, the spec testsuite (needs wabt's wast2json), the wasi-testsuite;
+                    # the suites are submodules: git submodule update --init
 ```
 
-### Status and limitations
+### Status
 
-Runs today: the numeric, comparison and conversion instructions (including the saturating
-truncations); memory loads and stores, `memory.size`/`memory.grow`, and bulk memory
-(`memory.copy`/`fill`/`init`, `data.drop`, passive segments); structured control, branches,
-calls, `call_indirect` through tables with element segments, and globals; whole-module
-validation; the start function; exported functions invoked from the CLI with arguments typed
-by their signature. The official spec testsuite passes for everything in this subset (21,510
-assertions; the rest are skipped for features we do not have), and `wasmtime` agrees on every
-sample it can run.
+WebAssembly: the numeric, comparison and conversion instructions, memory including bulk
+memory, structured control, calls, `call_indirect` through tables, globals, typed `select`,
+whole-module validation and the start function. The official spec testsuite passes for this
+subset (23,306 assertions, none failing; the rest need features listed below), and so does
+every program in the official wasi-testsuite (72 of 72), over the complete WASI Preview 1
+interface.
 
-WASI: the complete Preview 1 interface (`wasi_snapshot_preview1`, all 45 functions) with a
-sandboxed file system over preopened directories, arguments, environment, clocks, random
-bytes and polling. `run [--dir HOST[::GUEST]]… [--env NAME=VALUE]… file.wasm [args…]`
-executes a program's `_start`. Every program in the official `wasi-testsuite` passes (72 of
-72, in C, Rust and AssemblyScript). The interpreter stays pure: a call into the host is handed
-out as a request and the IO driver (`Runtime.Wasi`) serves it and resumes the module.
+Information flow: SecWasm's typing rules in full, including the bound on function types,
+its subtyping as explicit witnesses, block results inferred, per-byte memory levels with the
+run-time load check, and the policy and host boundary described above.
 
-Not yet: information-flow control (the project's goal; `TODO.md` §F); imports of tables,
-memories and globals; the `table.*` instructions and `elem.drop`; typed `select` (`0x1C`);
-multiple memories; reference and SIMD types; sockets (the `sock_*` calls answer ENOTSOCK).
-Linear memory is sparse and copy-on-write per 64 KiB page.
+Not yet: inference of undeclared internal functions' levels; a noninterference property test
+and proof; imports of tables, memories and globals; the `table.*` instructions; multiple
+memories; reference and SIMD types. The backlog is `TODO.md`.
 
 ### Toolchain
 
-```
-cabal 3.14.2.0, GHC 9.12.2 on a POSIX system (the WASI host uses the unix package); wabt
-(wat2wasm, wast2json, wasm-validate) for the samples and the spec testsuite; wasmtime
-(optional) as a differential oracle in samples/check.sh
-```
+GHC 9.12.2 and cabal 3.14 on a POSIX system; wabt (`wat2wasm`, `wast2json`, `wasm-validate`)
+for the samples and the spec testsuite; `wasmtime` optionally, as a second opinion in
+`samples/check.sh`.

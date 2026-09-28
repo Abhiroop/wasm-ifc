@@ -1,5 +1,6 @@
 # Revision history for wasm-ifc
 
-## 0.1.0.0 -- YYYY-mm-dd
+## 0.1.0.0 — unreleased
 
-* First version. Released on an unsuspecting world.
+The current state is described in `README.md` and the open work in `TODO.md`; the history is
+in git.

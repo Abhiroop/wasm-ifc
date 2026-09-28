@@ -1,8 +1,10 @@
 # wasm-ifc — agent guide
 
-Intrinsically-typed WebAssembly interpreter in Haskell (GHC 9.12, singletons-base).
-Architecture, layout and conventions: see `README.md`; the backlog is `TODO.md`; the
-style + working rules are `STYLE.md` (§11 records the type-level override for the core).
+Intrinsically-typed WebAssembly interpreter in Haskell (GHC 9.12, singletons-base) with
+SecWasm's information-flow control in the same instruction type. The main line is the branch
+`implement`. Architecture, layout and conventions: see `README.md`; the backlog is `TODO.md`;
+the style + working rules are `STYLE.md` (§11 records the type-level override for the core).
+`paper/current` is the paper draft, a submodule on Overleaf.
 
 ## Build, test, gate
 
@@ -18,6 +20,10 @@ style + working rules are `STYLE.md` (§11 records the type-level override for t
 - Three-layer naming: `Foo` (syntax) / `FooShape` (Validation) / `FooInst` (Runtime); `Raw`
   prefix for decoder output; index-space vectors are `…Space`/`…SpaceInst`. Names read as prose.
 - Soundness is never deferred: never leave an illegal state representable.
+- Open design points are `TODO(ifc Pn)` comments beside the code they concern; `TODO.md`
+  summarises them. Remove the comment when the point is settled.
+- Prose written for Daniel (comments, reports, the paper) follows his academic-writing skill:
+  `/mnt/c/Users/dgalan/.claude/skills/academic-writing/SKILL.md` (Windows side of WSL).
 - Commit trailer: `Co-Authored-By: <model> <noreply@anthropic.com>`. Never push; that is the
   maintainer's call.
 
