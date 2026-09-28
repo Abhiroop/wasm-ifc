@@ -1,10 +1,22 @@
 # wasm-ifc — agent guide
 
 Intrinsically-typed WebAssembly interpreter in Haskell (GHC 9.12, singletons-base) with
-SecWasm's information-flow control in the same instruction type. The main line is the branch
-`implement`. Architecture, layout and conventions: see `README.md`; the backlog is `TODO.md`;
-the style + working rules are `STYLE.md` (§11 records the type-level override for the core).
-`paper/current` is the paper draft, a submodule on Overleaf.
+SecWasm's information-flow control in the same instruction type. Architecture, layout and
+conventions: see `README.md`; the backlog is `TODO.md`; the style + working rules are
+`STYLE.md` (§11 records the type-level override for the core).
+
+## Two branches, two agents
+
+Two agents work on this repository in separate worktrees, one branch each:
+
+- `implement`: the implementation. Everything except `paper/`: source, tests, benchmarks,
+  samples and the documents at the top level.
+- `paper`: the paper. `paper/current` is the draft, a submodule on Overleaf; `paper/README.md`
+  describes the workflow. Code is not changed on this branch.
+
+Changes flow one way: merge `implement` into `paper` when the paper needs the current
+implementation (for example to check a claim against the code). Never merge `paper` into
+`implement`; the `paper/current` pointer on `implement` is not maintained.
 
 ## Build, test, gate
 
