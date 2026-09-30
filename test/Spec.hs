@@ -18,12 +18,14 @@ import Data.Word (Word32, Word8)
 import Hedgehog (Gen)
 import Hedgehog.Gen qualified as Gen
 import Hedgehog.Range qualified as Range
+import System.Environment (lookupEnv)
 import Test.Hspec
-import Test.Hspec.Hedgehog (forAll, hedgehog, (===))
+import Test.Hspec.Hedgehog (classify, forAll, hedgehog, label, modifyMaxSuccess, (===))
 
 import Codec.Wasm (decodeModule)
 import Data.Map.Strict qualified as Map
 import Examples (labelledSumLength, leakLength, runFactorial, runIncrement, runSpinFor, runSquare, secretStoreLength)
+import Noninterference (Observation (..), compileModule, genModule, holdsValueAcrossBranch, observe)
 import Runtime.Bytes (bytesOfWord32, bytesOfWord64, word32OfBytes, word64OfBytes)
 import Runtime.Convert (convertVal)
 import Runtime.Host (WasiFunc (..))
@@ -616,12 +618,29 @@ spec = do
             w <- forAll (Gen.word32 Range.linearBounded)
             (convertVal (I32TruncF64 Signed) =<< convertVal (F64ConvertI32 Signed) w) === Right w
 
-    {- TODO(ifc P2): the property we are after (noninterference) compares two runs, so no type can
-       state it; test it here instead. Extend 'genProgram' with a secret parameter, keep the
-       programs that validate with a public result, run each twice with the same public input and
-       different secrets, and require equal results whenever both runs finish. A second property:
-       a generated leak, such as a secret @if@ around a write to a public local, must be rejected.
-       Neither can be written until validation assigns levels other than 'Low. -}
+    describe "noninterference over generated programs (test/Noninterference.hs)" $ do
+        -- A leak can be rare among the generated programs: a mutant that skips the load check
+        -- first failed after 1,666 cases, so this runs more than the default hundred;
+        -- WASM_IFC_NI_CASES sets the count for a longer campaign.
+        cases <- runIO (maybe 2000 read <$> lookupEnv "WASM_IFC_NI_CASES")
+        modifyMaxSuccess (const cases) $
+            it "two runs that differ only in their secrets, and both finish, agree on everything public" $
+                hedgehog $ do
+                    generated <- forAll genModule
+                    public <- forAll (Gen.word32 (Range.linear 0 64))
+                    secret <- forAll (Gen.word32 Range.linearBounded)
+                    otherSecret <- forAll (Gen.word32 Range.linearBounded)
+                    let m = compileModule generated
+                    case (observe m secret public, observe m otherSecret public) of
+                        (Right (Just first), Right (Just second)) -> do
+                            label "accepted, both runs finished"
+                            classify "accepted, finished, holding a value across a conditional branch" (holdsValueAcrossBranch generated)
+                            first.result === second.result
+                            first.publicGlobal === second.publicGlobal
+                            [(a, i) | (i, (a, Low), (_, Low)) <- zip3 [0 :: Int ..] first.memory second.memory]
+                                === [(b, i) | (i, (_, Low), (b, Low)) <- zip3 [0 :: Int ..] first.memory second.memory]
+                        (Right _, Right _) -> label "accepted, a run trapped"
+                        _ -> label "rejected"
     describe "generated well-typed programs (i32 arithmetic with if/else over two parameters)" $ do
         it "elaborate, run, and agree with a reference evaluator" $ hedgehog $ do
             program <- forAll (genProgram 4)

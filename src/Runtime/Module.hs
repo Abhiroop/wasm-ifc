@@ -18,6 +18,7 @@ module Runtime.Module (
     exportSignature,
     exportedResultLevels,
     exportedGlobalLevel,
+    readMemoryLevels,
     invokeExport,
     readGlobalExport,
     continueWith,
@@ -27,10 +28,11 @@ import Data.Bifunctor (first)
 import Data.Singletons (Sing, fromSing)
 import Data.Singletons.Base.TH (SList (SCons, SNil))
 import Data.Text (Text)
-import Data.Word (Word32, Word64)
+import Data.Word (Word32, Word64, Word8)
 
 import Runtime.Interpreter (Config, FuncSpaceInst, Halt (..), HostRequest, ModuleInst (..), Outcome (..), getFunc, run, runFunction, storeToModule)
-import Runtime.Stack (ValueStack (..), getGlobal)
+import Runtime.MemInst (levelOfRange, readBytes)
+import Runtime.Stack (MemSpaceInst (..), ValueStack (..), getGlobal)
 import Runtime.Trap (Trap)
 import Syntax.Immediates (HostType)
 import Syntax.Indices (FunctionIdx (..), GlobalIdx (..))
@@ -153,6 +155,17 @@ exportedGlobalLevel (SomeModuleInst shapeS _ exports) name = do
     GlobalIdx idx <- exportedGlobalIndex name exports
     SomeGlobalRef _ (_ :%~ level) _ <- lookupGlobalRef (globalTypesSing shapeS) idx
     pure (fromSing level)
+
+{- | The bytes of memory 0 in a range, each with its level, or 'Nothing' if the module has no
+  memory or the range is out of bounds: what an observer of the memory's public part sees
+  once the module has run (the bytes labelled 'Low').
+-}
+readMemoryLevels :: SomeModuleInst -> Int -> Int -> Maybe [(Word8, SecLevel)]
+readMemoryLevels (SomeModuleInst _ inst _) addr count = case inst.memories of
+    MCons mem _ -> do
+        bytes <- readBytes mem addr count
+        pure (zip bytes [levelOfRange mem a 1 | a <- [addr .. addr + count - 1]])
+    MNil -> Nothing
 
 -- | The current value of an exported global (the spec's @get@ action).
 readGlobalExport :: SomeModuleInst -> Text -> Either RunError Value

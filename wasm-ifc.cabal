@@ -132,6 +132,7 @@ test-suite wasm-ifc-test
     type:             exitcode-stdio-1.0
     main-is:          Spec.hs
     other-modules:    Examples
+                    , Noninterference
     hs-source-dirs:   test
     build-depends:
         base
