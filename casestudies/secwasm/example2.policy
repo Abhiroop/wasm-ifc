@@ -1,0 +1,4 @@
+; Example 2 (the secret result goes to a secret global)
+region 4 8 : H
+load 0 0 : H
+global 0 : H

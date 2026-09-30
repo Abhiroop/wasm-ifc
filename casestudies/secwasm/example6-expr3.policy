@@ -1,0 +1,3 @@
+; Example 6, expr 3 in a high context
+load 0 0 : H
+load 0 1 : H

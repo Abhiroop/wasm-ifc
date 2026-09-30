@@ -1,0 +1,2 @@
+; leak admitted by the printed rule, rejected here
+export f : H ->

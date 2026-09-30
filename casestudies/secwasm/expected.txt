@@ -1,0 +1,17 @@
+fig2a ran
+example1 trapped
+example2 ran
+example3 trapped
+example4 rejected
+example5 rejected
+example6-expr3 rejected
+example6-expr4 rejected
+example6-expr5 ran
+example7 ran
+example8 rejected 1
+finding1-br-table-leak rejected 3
+finding2-if-early-exit ran 1 0
+finding3-exact-labels ran 1
+finding4-unreachable ran 0
+finding6-repeated-targets ran 1
+finding7-branch-out-of-body ran

@@ -52,3 +52,23 @@ What it took, in the order we met it:
 5. **Declarations:** three lines for the channels and one for the loads of `main`
    (`load-default func 11 : H`); declaring each trapping load instead takes five
    (`declare-loads.py`). Inference raised six locals and one internal function (`write`).
+
+## SecWasm's examples and the counterexamples to its printed rules (`secwasm/`)
+
+`secwasm/build.sh` assembles (wabt) the examples of Bastys et al. (Figure 2a, Examples 1–8,
+with their medium level mapped to secret) and one module per counterexample of the paper's
+findings; `expected.txt` gives each one's verdict and arguments. Every program ends as SecWasm
+says it should, and every counterexample as the repaired rules say:
+
+| Program | Outcome |
+|---|---|
+| Fig. 2a, Examples 2, 6 (expr 5) and 7 | run |
+| Examples 1 and 3 | trap: a load declared public reads a secret byte |
+| Examples 4, 5, 6 (expr 3), 6 (expr 4) and 8 | rejected, with the rule and the instruction |
+| Finding 1 (the printed `br_table` rule's leak) | rejected |
+| Findings 2, 3, 4, 6 and 7 (programs the printed rules cannot type) | run |
+
+Two of the examples return a secret; as the command-line interface does not deliver a secret
+result, they store it in a secret global instead. Example 1 declares its load public, as
+SecWasm's does: without the declaration, the region would declare the constant-address load
+secret and the module would be rejected statically instead.

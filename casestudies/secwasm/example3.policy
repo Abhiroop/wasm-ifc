@@ -1,0 +1,3 @@
+; Example 3 (the bytes 2..5 become secret)
+region 4 8 : H
+store 0 0 : H

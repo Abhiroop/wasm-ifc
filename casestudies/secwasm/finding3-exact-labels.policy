@@ -1,0 +1,3 @@
+; untypable by the printed rules (exact labels), accepted here
+func 0 : H -> H
+export f : H -> H

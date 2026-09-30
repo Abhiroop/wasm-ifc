@@ -1,0 +1,3 @@
+; Example 6, expr 4 in a (medium) context
+load 0 0 : H
+load 0 1 : H

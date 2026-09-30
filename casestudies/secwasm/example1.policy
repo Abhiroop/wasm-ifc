@@ -1,0 +1,4 @@
+; Example 1 (M read as L traps; M mapped to H). The load is declared public, as in SecWasm;
+; without the declaration the region would declare this constant-address load secret.
+region 4 8 : H
+load 0 0 : L

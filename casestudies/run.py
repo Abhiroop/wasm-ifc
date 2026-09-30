@@ -30,6 +30,15 @@ PASSWORD_DIRS = [
     {"guest": "/log", "files": {}},
 ]
 
+def secwasm_study():
+    """SecWasm's examples and the counterexamples to its printed rules (casestudies/secwasm/)."""
+    programs = []
+    for line in (HERE / "secwasm" / "expected.txt").read_text().splitlines():
+        name, expect, *args = line.split()
+        programs.append({"name": name, "wasm": f"secwasm/{name}.wasm", "policy": f"secwasm/{name}.policy", "invoke": "f", "args": args, "expect": expect})
+    return programs
+
+
 STUDIES = {
     "password": [
         {"name": "password", "wasm": "password/password.wasm", "policy": "password/checker.policy", "dirs": PASSWORD_DIRS, "expect": "ran"},
@@ -37,6 +46,7 @@ STUDIES = {
         {"name": "password-leak-memory", "wasm": "password/password-leak-memory.wasm", "policy": "password/checker.policy", "dirs": PASSWORD_DIRS, "expect": "trapped"},
         {"name": "password-naive", "wasm": "password/password-naive.wasm", "policy": "password/checker.policy", "dirs": PASSWORD_DIRS, "expect": "rejected"},
     ],
+    "secwasm": secwasm_study(),
 }
 
 
@@ -85,7 +95,11 @@ def evaluate(wasm_ifc, program):
                 (host / name).write_text(content)
             dirs += ["--dir", f"{host}::{d['guest']}"]
         started = time.monotonic()
-        result = run([wasm_ifc, "run", "--policy", str(policy), *dirs, str(wasm), *program.get("args", [])])
+        if "invoke" in program:
+            command = [wasm_ifc, "invoke", "--policy", str(policy), str(wasm), program["invoke"], *program.get("args", [])]
+        else:
+            command = [wasm_ifc, "run", "--policy", str(policy), *dirs, str(wasm), *program.get("args", [])]
+        result = run(command)
         elapsed = time.monotonic() - started
         written = {}
         for i, d in enumerate(program.get("dirs", [])):
