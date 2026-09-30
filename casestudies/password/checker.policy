@@ -1,0 +1,5 @@
+; The password checker's policy (casestudies/password/password.c, built by build.sh).
+preopen /secrets : H           ; files opened here are secret: the password
+preopen /log : L               ; the log shared with the developer is public
+stdout : H                     ; only the user sees the verdict
+load-default func 11 : H       ; main (__original_main) reads the password's bytes
