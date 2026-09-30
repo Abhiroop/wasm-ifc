@@ -10,6 +10,8 @@ module Runtime.Trap (
     Trap (..),
 ) where
 
+import Syntax.Immediates (AccessSite)
+
 data Trap
     = IntegerDivideByZero
     | IntegerOverflow
@@ -23,7 +25,12 @@ data Trap
     | -- | @call_indirect@ through a function of another type than expected
       IndirectCallTypeMismatch
     | {- | a load read a byte more secret than the level the instruction declares: one of
-      SecWasm's two run-time information-flow checks (the others are static)
+      SecWasm's two run-time information-flow checks (the others are static). The site is the
+      load's, as a policy would declare it.
+      -}
+      SecretRead AccessSite
+    | {- | a host call was handed a byte more secret than the descriptor it writes to, or the
+      module entered an @ifc@ ghost import (which the policy stage rewrites away)
       -}
       InformationFlowViolation
     | {- | @call_indirect@ through a function whose bound is below the one the instruction

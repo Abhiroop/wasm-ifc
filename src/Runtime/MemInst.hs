@@ -36,6 +36,7 @@ module Runtime.MemInst (
     copyWithin,
     fillBytes,
     levelOfRange,
+    labelRange,
     storeWordAt,
     writeBytesAt,
     copyWithinAt,
@@ -259,6 +260,14 @@ levelOfRange mem addr count
   where
     (chunkIx, offset) = addr `quotRem` chunkSize
     chunkLevel from stored = if UV.any (/= 0) (UV.slice from count stored) then High else Low
+
+{- | Give @count@ bytes from @addr@ one level without changing them, or 'Nothing' if they are
+  out of bounds: how instantiation labels the policy's secret regions.
+-}
+labelRange :: SecLevel -> MemInst m -> Int -> Int -> Maybe (MemInst m)
+labelRange level mem addr count
+    | inBounds mem addr count = Just (setLevels level addr count mem)
+    | otherwise = Nothing
 
 {- | Give @count@ bytes from @addr@ (already checked to be in bounds) one level. Marking bytes
   public in a chunk that has no levels changes nothing, so it costs nothing; that is the common

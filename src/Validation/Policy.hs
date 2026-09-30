@@ -18,6 +18,10 @@
       read. A site declaration wins; otherwise a region declaration for a constant address;
       otherwise the function's default; otherwise the module's default, which is public unless
       set, so that a secret read without a declaration traps at run time and names the site.
+    * /Regions/: address ranges of the memory. Instantiation labels the bytes of a secret region
+      secret once the data segments are placed, so a load anywhere in it traps unless declared
+      secret; a load whose address is a constant pushed just before it takes the level of the
+      regions its bytes fall in as its declaration.
 
   A memory access site is named by the function's index and the position of the access among
   the memory accesses of that function's body, counted from zero in code order with nested
@@ -104,10 +108,10 @@ import Data.Text.Encoding (decodeUtf8')
 import Data.Word (Word32)
 import Numeric (readHex)
 
-import Data.Singletons (withSomeSing)
+import Data.Singletons (fromSing, withSomeSing)
 import Syntax.Functions (RawFunction (..))
 import Syntax.Globals (RawGlobal (..))
-import Syntax.Immediates (MemArg (..))
+import Syntax.Immediates (AccessSite (..), MemArg (..))
 import Syntax.Indices (FunctionIdx (..), GlobalIdx (..))
 import Syntax.Instructions (RawInstr (..))
 import Syntax.Module
@@ -186,6 +190,8 @@ data PolicyError
       are observable, so it may be called only from a public context with public arguments
       -}
       PolicyImportNotPublic Text
+    | -- | a region whose end is not above its start
+      PolicyEmptyRegion Word32 Word32
     | -- | an @ifc@ import with a name this stage does not know, or the wrong type for it
       PolicyGhostType Text
     | -- | an @ifc@ import that is exported, started or placed in a table
@@ -346,6 +352,8 @@ data Assembled = Assembled
     , globalTypes :: [LabelledGlobalType]
     , sectionTypes :: [LabelledFuncType]
     -- ^ one per entry of the type section, in declared order
+    , secretRegions :: [(Word32, Word32)]
+    -- ^ the half-open address ranges whose bytes instantiation labels secret
     , loadDefaults :: [SecLevel]
     -- ^ one per entry of the function index space
     , declassify :: Bool
@@ -401,6 +409,7 @@ ghostInstruction ghost = case ghost of
 -- | Resolve a policy against a module (see the module header for the order of precedence).
 assemble :: Policy -> RawModule -> Either PolicyError Assembled
 assemble policy m = do
+    mapM_ (\(lo, hi, _) -> when (lo >= hi) (Left (PolicyEmptyRegion lo hi))) policy.regions
     unless (null [() | (lo, hi, l) <- policy.regions, (lo', hi', l') <- policy.regions, l /= l', lo < hi', lo' < hi]) (Left (PolicyConflict "region"))
     ghosts <- Map.fromList <$> sequence [(i,) <$> ghostOf imp | (i, imp) <- zip [0 ..] m.imports, imp.moduleName == ghostModuleName]
     mapM_ (notAGhost ghosts) ([(e.name, i) | e <- m.exports, ExportFunc (FunctionIdx i) <- [e.desc]] ++ [("start", i) | Just (FunctionIdx i) <- [m.start]] ++ [("elem", i) | seg <- m.elementSegments, FunctionIdx i <- seg.functions])
@@ -422,6 +431,7 @@ assemble policy m = do
             { functionTypes
             , globalTypes
             , sectionTypes
+            , secretRegions = [(lo, hi) | (lo, hi, High) <- policy.regions]
             , loadDefaults
             , declassify = policy.declassifyAllowed
             , typingRestrictions = policy.restrictions
@@ -492,21 +502,27 @@ assemble policy m = do
             | otherwise -> Left (PolicyConflict ("load-default " <> T.pack (show i)))
 
     -- Write the site declarations into a body: each memory access, in code order, takes the
-    -- level declared for its position, else the level of the region a constant address
-    -- falls in.
-    annotateFunction ghosts i (RawFunction sig locals body) = RawFunction sig locals (lowerGhosts ghosts (fst (annotateSeq i 0 body)))
+    -- level declared for its position, else, for a load whose address is a constant, the level
+    -- of the regions its bytes fall in; and every load is told its site, which its trap names.
+    annotateFunction ghosts i (RawFunction sig locals body) = RawFunction sig locals (fst (lowerGhosts ghosts i 0 (fst (annotateSeq i 0 body))))
     -- Rewrite every call to a ghost into the instruction it stands for; after the site
     -- annotation, so the accesses it introduces do not shift the positions a tool computed
-    -- from the module as written.
-    lowerGhosts :: Map Word32 Ghost -> [RawInstr] -> [RawInstr]
-    lowerGhosts ghosts = map lower
-      where
-        lower instr = case instr of
-            Call (FunctionIdx f) | Just ghost <- Map.lookup f ghosts -> ghostInstruction ghost
-            Block bt b -> Block bt (map lower b)
-            Loop bt b -> Loop bt (map lower b)
-            If bt t e -> If bt (map lower t) (map lower e)
-            other -> other
+    -- from the module as written. A ghost load is sited by the position of its call among the
+    -- function's calls to ghost accesses.
+    lowerGhosts :: Map Word32 Ghost -> Word32 -> Word32 -> [RawInstr] -> ([RawInstr], Word32)
+    lowerGhosts _ _ n [] = ([], n)
+    lowerGhosts ghosts i n (instr : rest) =
+        let (instr', n') = case instr of
+                Call (FunctionIdx f) | Just ghost <- Map.lookup f ghosts -> case ghost of
+                    GhostLoad {} -> (AtSite (GhostCallAt i n) (ghostInstruction ghost), n + 1)
+                    GhostStore {} -> (ghostInstruction ghost, n + 1)
+                    _ -> (ghostInstruction ghost, n)
+                Block bt b -> let (b', k) = lowerGhosts ghosts i n b in (Block bt b', k)
+                Loop bt b -> let (b', k) = lowerGhosts ghosts i n b in (Loop bt b', k)
+                If bt t e -> let (t', k) = lowerGhosts ghosts i n t; (e', k') = lowerGhosts ghosts i k e in (If bt t' e', k')
+                other -> (other, n)
+            (rest', n'') = lowerGhosts ghosts i n' rest
+         in (instr' : rest', n'')
     annotateSeq :: Word32 -> Word32 -> [RawInstr] -> ([RawInstr], Word32)
     annotateSeq _ n [] = ([], n)
     -- A load whose address is a constant: @i32.const k; load@.
@@ -514,13 +530,6 @@ assemble policy m = do
         | isLoad access =
             let (rest', n') = annotateSeq i (n + 1) rest
              in (Const SI32 k : atSite i n (Just k) access : rest', n')
-    -- A store whose address is a constant and whose value is one instruction that only
-    -- pushes: @i32.const k; <value>; store@. (A value computed by several instructions hides the
-    -- address from this peephole, and the store then gets no region level.)
-    annotateSeq i n (Const SI32 k : value : access : rest)
-        | isStore access && pushesOne value =
-            let (rest', n') = annotateSeq i (n + 1) rest
-             in (Const SI32 k : value : atSite i n (Just k) access : rest', n')
     annotateSeq i n (instr : rest)
         | isMemoryAccess instr =
             let (rest', n') = annotateSeq i (n + 1) rest
@@ -533,28 +542,30 @@ assemble policy m = do
                     other -> (other, n)
                 (rest', n'') = annotateSeq i n' rest
              in (instr' : rest', n'')
-    -- The level a memory access declares: the site's, else the region's when the address
-    -- is the constant given, else nothing (the validator then applies the defaults).
-    atSite i n constantAddress access = case Map.lookup (i, n) (siteMap access) of
-        Just l -> Annotated l access
-        Nothing -> case constantAddress >>= \k -> regionLevel (fromIntegral k + offsetOf access) of
-            Just l -> Annotated l access
-            Nothing -> access
+    -- A memory access with the level it declares (the site's, else the regions' when a load's
+    -- address is the constant given, else nothing: the validator then applies the defaults),
+    -- and a load with its site.
+    atSite i n _ access@(Annotated _ inner)
+        | isLoad inner = AtSite (AccessAt i n) access
+        | otherwise = access
+    atSite i n constantAddress access =
+        let declared = case Map.lookup (i, n) (siteMap access) of
+                Just l -> Just l
+                Nothing -> constantAddress >>= \k -> regionLevel (fromIntegral k + offsetOf access) (widthOf access)
+            annotated = maybe access (`Annotated` access) declared
+         in if isLoad access then AtSite (AccessAt i n) annotated else annotated
+    -- (An access the module already annotates, as a hand-built one may, counts as well.)
     isLoad instr = case instr of
         Load {} -> True
         LoadN {} -> True
+        Annotated _ inner -> isLoad inner
         _ -> False
     isStore instr = case instr of
         Store {} -> True
         StoreN {} -> True
+        Annotated _ inner -> isStore inner
         _ -> False
     isMemoryAccess instr = isLoad instr || isStore instr
-    pushesOne instr = case instr of
-        Const {} -> True
-        LocalGet _ -> True
-        GlobalGet _ -> True
-        MemorySize -> True
-        _ -> False
     siteMap instr = case instr of
         Load {} -> policy.loads
         LoadN {} -> policy.loads
@@ -562,11 +573,18 @@ assemble policy m = do
     offsetOf instr = case instr of
         Load _ (MemArg _ off) -> fromIntegral off
         LoadN _ _ _ (MemArg _ off) -> fromIntegral off
-        Store _ (MemArg _ off) -> fromIntegral off
-        StoreN _ _ (MemArg _ off) -> fromIntegral off
         _ -> 0 :: Integer
-    regionLevel :: Integer -> Maybe SecLevel
-    regionLevel addr = case [l | (lo, hi, l) <- policy.regions, toInteger lo <= addr, addr < toInteger hi] of
+    widthOf instr = case instr of
+        Load st _ -> case fromSing st of
+            I32 -> 4
+            I64 -> 8
+            F32 -> 4
+            F64 -> 8
+        LoadN _ width _ _ -> toInteger width
+        _ -> 0 :: Integer
+    -- The level of the regions the bytes [from, from + width) fall in: secret if any is.
+    regionLevel :: Integer -> Integer -> Maybe SecLevel
+    regionLevel from width = case [l | (lo, hi, l) <- policy.regions, toInteger lo < from + width, from < toInteger hi] of
         [] -> Nothing
         ls -> Just (if High `elem` ls then High else Low)
 

@@ -102,6 +102,8 @@ data RawInstr where
 
     -- | a load or store with the security level it declares
     Annotated :: SecLevel -> RawInstr -> RawInstr
+    -- | a load (possibly 'Annotated') with its place in the module, which its trap names
+    AtSite :: AccessSite -> RawInstr -> RawInstr
     -- | raise the level of the value on top of the stack to this one
     Relabel :: SecLevel -> RawInstr
     {- | lower the level of the value on top of the stack to this one: trusted, and only
@@ -334,6 +336,7 @@ data
     ILoadN ::
         (ModuleMems m ~ (mem ': mems)) =>
         Sing (level :: SecLevel) ->
+        AccessSite ->
         NarrowWidth t ->
         Signedness ->
         MemArg ->
@@ -398,6 +401,7 @@ data
     ILoad ::
         (ModuleMems m ~ (mem ': mems)) =>
         Sing (level :: SecLevel) ->
+        AccessSite ->
         IsNum t ->
         MemArg ->
         Instr m f l (pc ': pcs) (pc ': pcs) (('I32 ':~ la) ': s) ((t ':~ Join pc (Join la level)) ': s)

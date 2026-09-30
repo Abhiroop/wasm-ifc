@@ -12,15 +12,17 @@ module Runtime.Instantiate (
     instantiate,
 ) where
 
+import Control.Monad (foldM)
 import Data.Bifunctor (first)
 import Data.ByteString qualified as BS
 import Data.Singletons (Sing, fromSing)
 import Data.Singletons.Base.TH (SList (SCons, SNil))
 import Data.Text (Text)
+import Data.Word (Word32)
 
 import Runtime.Host (SomeWasiFunc (..), resolveWasiImport, wasiFuncType, wasiModuleName)
 import Runtime.Interpreter (FuncInst (..), FuncSpaceInst (..), ModuleInst (..), Outcome (..), getFunc, runFunction)
-import Runtime.MemInst (allocMemory, writeBytes)
+import Runtime.MemInst (allocMemory, labelRange, writeBytes)
 import Runtime.Module (SomeModuleInst (..))
 import Runtime.Stack (DataSpaceInst (..), MemSpaceInst (..), TableSpaceInst (..), ValueStack (..), initialGlobals)
 import Runtime.TableInst (allocTable, setTableEntries)
@@ -46,6 +48,8 @@ data InstantiationError
       WasiNeedsMemory
     | -- | a data segment does not fit in memory 0 (or there is no memory)
       DataSegmentOutOfBounds Int
+    | -- | a secret region of the policy does not fit in memory 0 as instantiated
+      RegionOutOfBounds Word32 Word32
     | -- | an element segment does not fit in table 0 (or there is no table)
       ElementSegmentOutOfBounds Int
     | -- | the start function trapped
@@ -58,7 +62,8 @@ instantiate :: SomeModule -> Either InstantiationError SomeModuleInst
 instantiate (SomeModule shapeS m) = case shapeS of
     SModuleShape ftsS _ msS tsS dsS -> do
         funcs <- link (memsNonEmpty msS) ftsS m.functions
-        mems <- placeData m.dataSegments (allocateMemories msS)
+        placed <- placeData m.dataSegments (allocateMemories msS)
+        mems <- labelRegions m.secretRegions placed
         tables <- placeElements m.elementSegments (allocateTables tsS)
         let inst = ModuleInst {functions = funcs, globals = initialGlobals m.globals, memories = mems, tables, dataSegments = remainingData dsS m.dataSegments}
         started <- runStart inst m.start
@@ -111,6 +116,16 @@ placeData segments mems = case (mems, [(i, off, s.bytes) | (i, s) <- zip [0 ..] 
         mem' <- foldl (\acc (i, off, payload) -> acc >>= \current -> note (DataSegmentOutOfBounds i) (writeBytes current (fromIntegral off) (BS.unpack payload))) (Right mem) active
         Right (MCons mem' rest)
     (MNil, (i, _, _) : _) -> Left (DataSegmentOutOfBounds i)
+
+{- | Label the bytes of the policy's secret regions secret, once the data segments are placed
+  (their bytes are public, the region's are secret, whatever a segment wrote there).
+-}
+labelRegions :: [(Word32, Word32)] -> MemSpaceInst ms -> Either InstantiationError (MemSpaceInst ms)
+labelRegions [] mems = Right mems
+labelRegions regions (MCons mem rest) = do
+    mem' <- foldM (\current (lo, hi) -> note (RegionOutOfBounds lo hi) (labelRange High current (fromIntegral lo) (fromIntegral (hi - lo)))) mem regions
+    Right (MCons mem' rest)
+labelRegions ((lo, hi) : _) MNil = Left (RegionOutOfBounds lo hi)
 
 -- | Place the element segments' functions into table 0, in order.
 placeElements :: [ElementSegment fts] -> TableSpaceInst fts ts -> Either InstantiationError (TableSpaceInst fts ts)

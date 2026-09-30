@@ -11,6 +11,7 @@
 module Syntax.Immediates (
     HostType,
     MemArg (..),
+    AccessSite (..),
     Signedness (..),
     NumWithSign (..),
     decideNumWithSign,
@@ -39,6 +40,17 @@ type family HostType (t :: ValType) :: Type where
   the dynamic address.
 -}
 data MemArg = MemArg {alignment :: Word32, offset :: Word32} deriving stock (Eq, Show)
+
+{- | Where a load sits in the module, so that the trap of its run-time check can name it the way
+  a policy declares it. A load written as an instruction is named by its function's index and
+  its position among that function's memory accesses (the policy's @load F N@); one written as
+  a call to an @ifc@ ghost import, by its function's index and the position of the call among
+  that function's calls to ghost accesses.
+-}
+data AccessSite
+    = AccessAt Word32 Word32
+    | GhostCallAt Word32 Word32
+    deriving stock (Eq, Show)
 
 {- | Signed vs. unsigned interpretation of an integer operation. Stored values are raw bit
   patterns; signedness is chosen per operation, not per value.

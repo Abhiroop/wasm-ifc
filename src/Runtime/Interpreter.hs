@@ -375,9 +375,9 @@ step funcs (Config store locals stack code control) = case code of
                  in case growMemory delta mem of
                         Just grown -> stepped (storeMem grown store) locals (memoryPages mem :# r) rest control
                         Nothing -> stepped store locals (growFailed :# r) rest control
-        ILoadN level nw sign memArg -> case stack of
+        ILoadN level site nw sign memArg -> case stack of
             addr :# r ->
-                case checkedLoad (currentMem store) level (effectiveAddr addr memArg) (narrowBytes nw) of
+                case checkedLoad (currentMem store) level site (effectiveAddr addr memArg) (narrowBytes nw) of
                     Right word -> stepped store locals (narrowLoadT nw sign word :# r) rest control
                     Left trap -> Left trap
         IStoreN level _ nw memArg -> case stack of
@@ -420,9 +420,9 @@ step funcs (Config store locals stack code control) = case code of
         IGlobalSet _ _ ix -> case stack of
             v :# r -> stepped (storeSetGlobal ix v store) locals r rest control
         {- Memory -}
-        ILoad level nt memArg -> case stack of
+        ILoad level site nt memArg -> case stack of
             addr :# r ->
-                case checkedLoad (currentMem store) level (effectiveAddr addr memArg) (numBytes nt) of
+                case checkedLoad (currentMem store) level site (effectiveAddr addr memArg) (numBytes nt) of
                     Right word -> stepped store locals (loadValue nt word :# r) rest control
                     Left trap -> Left trap
         IStore level _ nt memArg -> case stack of
@@ -581,14 +581,14 @@ stepUn store locals (a :# r) op = stepped store locals (op a :# r)
   byte more secret than the level the instruction declares. The comparison is skipped when the
   instruction declares 'High, since nothing exceeds it.
 -}
-checkedLoad :: MemInst m -> Sing (level :: SecLevel) -> Int -> Int -> Either Trap Word64
-checkedLoad mem level addr count = case loadWord mem addr count of
+checkedLoad :: MemInst m -> Sing (level :: SecLevel) -> AccessSite -> Int -> Int -> Either Trap Word64
+checkedLoad mem level site addr count = case loadWord mem addr count of
     Nothing -> Left OutOfBoundsMemoryAccess
     Just word -> case level of
         SHigh -> Right word
         SLow -> case levelOfRange mem addr count of
             Low -> Right word
-            High -> Left InformationFlowViolation
+            High -> Left (SecretRead site)
 
 {- | The module's single memory, and a store update for it. The @ModuleMems mod ~ (m ': ms)@
   constraint every memory instruction carries makes both total.

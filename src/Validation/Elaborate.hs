@@ -115,7 +115,9 @@ data ElabError
       it would flow into
       -}
       IllegalFlow Text SecLevel SecLevel
-    | -- | a level annotation on an instruction that takes none
+    | {- | a level annotation or a site on an instruction that takes none, or a load without a
+      site: a mistake of the policy stage
+      -}
       AnnotationMisplaced
     | -- | @declassify@ in a module whose policy does not allow it
       DeclassifyNotAllowed
@@ -332,11 +334,13 @@ elabInstr env pcsIn@(SCons pc _) stackIn instr = case instr of
                     Right (Produces (sameLengthAs pcsIn) pcsIn rest (IGlobalSet pcFlows valueFlows gix))
                 _ -> Left (StackUnderflow "global.set")
     {- Memory -}
-    Load st memArg -> elabMemory env pcsIn stackIn Nothing (Load st memArg)
-    Store st memArg -> elabMemory env pcsIn stackIn Nothing (Store st memArg)
-    LoadN st width sign memArg -> elabMemory env pcsIn stackIn Nothing (LoadN st width sign memArg)
-    StoreN st width memArg -> elabMemory env pcsIn stackIn Nothing (StoreN st width memArg)
-    Annotated level access -> elabMemory env pcsIn stackIn (Just level) access
+    Load st memArg -> elabMemory env pcsIn stackIn Nothing Nothing (Load st memArg)
+    Store st memArg -> elabMemory env pcsIn stackIn Nothing Nothing (Store st memArg)
+    LoadN st width sign memArg -> elabMemory env pcsIn stackIn Nothing Nothing (LoadN st width sign memArg)
+    StoreN st width memArg -> elabMemory env pcsIn stackIn Nothing Nothing (StoreN st width memArg)
+    Annotated level access -> elabMemory env pcsIn stackIn (Just level) Nothing access
+    AtSite site (Annotated level access) -> elabMemory env pcsIn stackIn (Just level) (Just site) access
+    AtSite site access -> elabMemory env pcsIn stackIn Nothing (Just site) access
     MemorySize -> do
         NonEmptyMems <- requireMemory env "memory.size"
         Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (SI32 :%~ pc) stackIn) IMemSize)
@@ -715,8 +719,10 @@ requireNarrow st width =
 
 {- | The four memory accesses, with the level they declare: the annotation if there is one,
   otherwise the policy's default for a load and, for a store, the lowest level the rule allows
-  (the join of the pc, the address and the value), which is always sound. An annotation on any
-  other instruction is a mistake of the policy stage.
+  (the join of the pc, the address and the value), which is always sound. A load also takes
+  the site the policy stage gave it, which its trap names. An annotation on any other
+  instruction, a site on anything but a load, and a load without one are mistakes of the policy
+  stage.
 -}
 elabMemory ::
     forall shape ret locals labels pc pcs stackIn.
@@ -724,17 +730,19 @@ elabMemory ::
     Sing (pc ': pcs) ->
     Sing stackIn ->
     Maybe SecLevel ->
+    Maybe AccessSite ->
     RawInstr ->
     Either ElabError (ElaboratedInstr shape ret locals labels (pc ': pcs) stackIn)
-elabMemory env pcsIn@(SCons pc _) stackIn annotation access = case access of
+elabMemory env pcsIn@(SCons pc _) stackIn annotation site access = case access of
     Load st memArg -> case stackIn of
         SCons (sc :%~ la) rest -> do
             NonEmptyMems <- requireMemory env "load"
             isNum <- requireNum st
             Refl <- note (OperandMismatch "load" I32 (valTypeOf sc)) (decideEquality sc SI32)
             checkAlign memArg (numBytes isNum)
+            loadSite <- note AnnotationMisplaced site
             withSomeSing loadLevel $ \level ->
-                Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (st :%~ sJoin pc (sJoin la level)) rest) (ILoad level isNum memArg))
+                Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (st :%~ sJoin pc (sJoin la level)) rest) (ILoad level loadSite isNum memArg))
         _ -> Left (StackUnderflow "load")
     LoadN st width sign memArg -> case stackIn of
         SCons (sc :%~ la) rest -> do
@@ -742,12 +750,14 @@ elabMemory env pcsIn@(SCons pc _) stackIn annotation access = case access of
             nw <- requireNarrow st width
             Refl <- note (OperandMismatch "load" I32 (valTypeOf sc)) (decideEquality sc SI32)
             checkAlign memArg (narrowBytes nw)
+            loadSite <- note AnnotationMisplaced site
             withSomeSing loadLevel $ \level ->
-                Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (st :%~ sJoin pc (sJoin la level)) rest) (ILoadN level nw sign memArg))
+                Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (st :%~ sJoin pc (sJoin la level)) rest) (ILoadN level loadSite nw sign memArg))
         _ -> Left (StackUnderflow "load")
     Store st memArg -> case stackIn of
         SCons (sv :%~ lv) (SCons (sc :%~ la) rest) -> do
             NonEmptyMems <- requireMemory env "store"
+            mapM_ (const (Left AnnotationMisplaced)) site
             isNum <- requireNum st
             Refl <- note (OperandMismatch "store" (valTypeOf st) (valTypeOf sv)) (decideEquality sv st)
             Refl <- note (OperandMismatch "store" I32 (valTypeOf sc)) (decideEquality sc SI32)
@@ -758,6 +768,7 @@ elabMemory env pcsIn@(SCons pc _) stackIn annotation access = case access of
     StoreN st width memArg -> case stackIn of
         SCons (sv :%~ lv) (SCons (sc :%~ la) rest) -> do
             NonEmptyMems <- requireMemory env "store"
+            mapM_ (const (Left AnnotationMisplaced)) site
             nw <- requireNarrow st width
             Refl <- note (OperandMismatch "store" (valTypeOf st) (valTypeOf sv)) (decideEquality sv st)
             Refl <- note (OperandMismatch "store" I32 (valTypeOf sc)) (decideEquality sc SI32)
@@ -940,6 +951,7 @@ stepDead env pcsIn s instr = case instr of
     LoadN t _ _ _ -> pushKnown (valTypeOf t) <$> popKnown I32 s
     StoreN t _ _ -> popKnown (valTypeOf t) s >>= popKnown I32
     Annotated _ access -> stepDead env pcsIn s access
+    AtSite _ access -> stepDead env pcsIn s access
     Relabel _ -> Right s
     Declassify _ -> Right s
     MemorySize -> Right (pushKnown I32 s)
@@ -1128,7 +1140,8 @@ elaborateModuleWith given raw = do
             dataSegments <- traverse (elaborateData (memsNonEmpty msS)) (zip [0 ..] m.dataSegments)
             elementSegments <- traverse (elaborateElements ftsS (tablesNonEmpty tsS)) (zip [0 ..] m.elementSegments)
             start <- traverse (resolveStart ftsS) (m.start)
-            Right (SomeModule ctxS (Module {functions, globals, dataSegments, elementSegments, exports = m.exports, start}))
+            when (not (null assembled.secretRegions) && null m.memories) (Left (NoMemory "region"))
+            Right (SomeModule ctxS (Module {functions, globals, dataSegments, secretRegions = assembled.secretRegions, elementSegments, exports = m.exports, start}))
   where
     tableLimits = [t.limits | t <- raw.tables]
     memTypes = map (\(RawMemory mt) -> mt) (raw.memories)

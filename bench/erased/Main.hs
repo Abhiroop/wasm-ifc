@@ -665,7 +665,7 @@ eraseInstr instr = case instr of
     IConvert op -> let (from, to) = convertEnds op in EConvert (SomeConvert from to op)
     IMemSize -> EMemSize
     IMemGrow _ -> EMemGrow
-    ILoadN _ nw sign memArg -> ELoadN (SomeNarrow (narrowInt nw) nw) sign memArg
+    ILoadN _ _ nw sign memArg -> ELoadN (SomeNarrow (narrowInt nw) nw) sign memArg
     IStoreN _ _ nw memArg -> EStoreN (SomeNarrow (narrowInt nw) nw) memArg
     IMemCopy _ -> EMemCopy
     IMemFill _ -> EMemFill
@@ -678,7 +678,7 @@ eraseInstr instr = case instr of
     ILocalTee _ _ ref -> ELocalTee (localPosition ref) (fromSing (localType ref))
     IGlobalGet ix -> EGlobalGet (positionOf ix)
     IGlobalSet _ _ ix -> EGlobalSet (positionOf ix)
-    ILoad _ nt memArg -> ELoad (numType nt) memArg
+    ILoad _ _ nt memArg -> ELoad (numType nt) memArg
     IRelabel _ -> ENop
     IRelabelResults _ -> ENop
     IDeclassify -> ENop

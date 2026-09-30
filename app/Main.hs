@@ -17,7 +17,9 @@ import Data.Map.Strict qualified as Map
 import Data.Text.IO qualified as TIO
 import Runtime.Instantiate (instantiate)
 import Runtime.Module (RunError (..), SomeModuleInst, Value (..), exportSignature, exportedGlobalLevel, exportedResultLevels, readGlobalExport, renderValue)
+import Runtime.Trap (Trap (..))
 import Runtime.Wasi (Completion (..), DescriptorLevels (..), Preopen (..), WasiConfig (..), runWithWasi)
+import Syntax.Immediates (AccessSite (..))
 import Syntax.Module (SomeModule)
 import Syntax.Types (FuncTypeOf (..), ValType (..))
 import Syntax.TypesIFC (SecLevel (..))
@@ -189,8 +191,15 @@ describeRunError err = case err of
         "expected " ++ show expectedCount ++ " argument(s), got " ++ show actualCount
     ArgumentType position expectedType actualType ->
         "argument " ++ show position ++ " should be " ++ show expectedType ++ ", got " ++ show actualType
+    Trapped (SecretRead site) -> "trap: a load read a secret byte where the policy declares none; " ++ declareAt site
     Trapped trap -> "trap: " ++ show trap
     HostCallNotServed -> "the function called into the host, which this path cannot serve"
+
+-- | How to declare a load secret, for the message of its trap.
+declareAt :: AccessSite -> String
+declareAt site = case site of
+    AccessAt function position -> "declare it with `load " ++ show function ++ " " ++ show position ++ " : H`"
+    GhostCallAt function call -> "it is ghost access " ++ show call ++ " of function " ++ show function ++ "; use load_secret there"
 
 {- | Read one argument at a value type. Integers wrap to the type's width (so @-1@ is a valid
   i32); floats accept decimals, the infinities, NaN, and a NaN with an explicit payload

@@ -124,22 +124,22 @@ spec = do
             loadPublic = [Const SI32 0, Load SI32 (MemArg 0 0)]
             loadSecret = [Const SI32 0, Annotated High (Load SI32 (MemArg 0 0))]
         it "a load expecting public bytes traps on a byte a secret store wrote" $
-            elabRunWithMemory [] [I32] [] (secretStore ++ loadPublic) [] `shouldSatisfy` trapContaining "InformationFlowViolation"
+            elabRunWithMemory [] [I32] [] (secretStore ++ loadPublic) [] `shouldSatisfy` trapContaining "SecretRead (AccessAt 0 1)"
         it "a load declared secret yields a secret, which a public function cannot return" $
             elabRunWithMemory [] [I32] [] (secretStore ++ loadSecret) [] `shouldSatisfy` isLeft
         it "a secret that was loaded stays secret when stored again (the store's level is inferred)" $
             -- A secret can only be observed publicly through a declassification, so the
             -- evidence is the trap on the public read of the copy.
             elabRunWithMemory [] [I32] [] (secretStore ++ [Const SI32 8] ++ loadSecret ++ [Store SI32 (MemArg 0 0), Const SI32 8, Load SI32 (MemArg 0 0)]) []
-                `shouldSatisfy` trapContaining "InformationFlowViolation"
+                `shouldSatisfy` trapContaining "SecretRead (AccessAt 0 3)"
         it "a public store over secret bytes makes them public again" $
             elabRunWithMemory [] [I32] [] (secretStore ++ publicStore ++ loadPublic) [] `shouldBe` Right ["9"]
         it "a narrow load sees the level of every byte it covers" $
             elabRunWithMemory [] [I32] [] (secretStore ++ [Const SI32 2, LoadN SI32 1 Unsigned (MemArg 0 0)]) []
-                `shouldSatisfy` trapContaining "InformationFlowViolation"
+                `shouldSatisfy` trapContaining "SecretRead (AccessAt 0 1)"
         it "memory.copy carries the bytes' levels with them" $
             elabRunWithMemory [] [I32] [] (secretStore ++ [Const SI32 16, Const SI32 0, Const SI32 4, MemoryCopy, Const SI32 16, Load SI32 (MemArg 0 0)]) []
-                `shouldSatisfy` trapContaining "InformationFlowViolation"
+                `shouldSatisfy` trapContaining "SecretRead (AccessAt 0 1)"
         it "a store may declare a level the value flows into, not one it does not" $ do
             elabErrorWithMemory [] [] [] [Const SI32 0, Const SI32 1, Annotated High (Store SI32 (MemArg 0 0))] `shouldSatisfy` isRight
             elabErrorWithMemory [] [] [] (secretStore ++ loadSecret ++ [Const SI32 4, Store SI32 (MemArg 0 0)]) `shouldSatisfy` isRight
@@ -174,7 +174,7 @@ spec = do
             elabRunWithPolicy "export f : H -> L" program [1] `shouldSatisfy` errorContaining "IllegalFlow \"call\" High Low"
         it "a function bound at secret writes only to secret places" $
             elabRunWithPolicy "func 0 : -{H}->\nexport f : -> L" (twoFunctions (FuncType [] []) [Const SI32 0, Const SI32 1, Store SI32 (MemArg 0 0)] (FuncType [] [I32]) [Call (FunctionIdx 0), Const SI32 0, Load SI32 (MemArg 0 0)]) {memories = [onePageMemory]} []
-                `shouldSatisfy` trapContaining "InformationFlowViolation"
+                `shouldSatisfy` trapContaining "SecretRead (AccessAt 1 0)"
         it "two sources may speak about the same item only if they agree" $ do
             mergePolicies (policy "global 0 : H") (policy "global 0 : L") `shouldBe` Left (PolicyConflict "global 0")
             fmap (.globalsByIndex) (mergePolicies (policy "global 0 : H") (policy "global 0 : H\nload-default : H")) `shouldBe` Right (Map.fromList [(0, High)])
@@ -203,10 +203,22 @@ spec = do
             elabRunWithPolicy "export f : H -> L" (singleFunctionModule [] [I32] [I32] [] [LocalGet (LocalIdx 0), Drop, Const SI32 1]) [1] `shouldBe` Right ["1"]
         it "a store declared secret by position makes a later public read trap" $
             elabRunWithPolicy "store 0 0 : H" (withMemory [] [I32] [] [Const SI32 0, Const SI32 7, Store SI32 (MemArg 0 0), Const SI32 0, Load SI32 (MemArg 0 0)]) []
-                `shouldSatisfy` trapContaining "InformationFlowViolation"
-        it "a region declares the bytes behind constant addresses" $
+                `shouldSatisfy` trapContaining "SecretRead (AccessAt 0 1)"
+        it "a region's bytes are secret from instantiation on, whatever a data segment wrote there" $ do
+            let withSegment = withData [RawDataSegment (Active [Const SI32 0]) "\7\0\0\0"]
+            elabRunWithPolicy "region 0 4 : H" (withSegment (withMemory [I32] [I32] [] [LocalGet (LocalIdx 0), Load SI32 (MemArg 0 0)])) [0]
+                `shouldSatisfy` trapContaining "SecretRead (AccessAt 0 0)"
+            elabRunWithPolicy "region 0 4 : H" (withSegment (withMemory [I32] [I32] [] [LocalGet (LocalIdx 0), Load SI32 (MemArg 0 0)])) [4] `shouldBe` Right ["0"]
+        it "a load at a constant address in a region is declared at the region's level" $ do
+            let withSegment = withData [RawDataSegment (Active [Const SI32 0]) "\7\0\0\0"]
+                constantLoad = withSegment (withMemory [] [I32] [] [Const SI32 2, Load SI32 (MemArg 0 0)])
+            elabRunWithPolicy "region 0 4 : H" constantLoad [] `shouldSatisfy` errorContaining "IllegalFlow \"result\""
+            elabRunWithPolicy "region 0 4 : H\nexport f : -> H" constantLoad [] `shouldBe` Right ["0"]
+        it "a region must lie in the memory as instantiated" $
+            elabRunWithPolicy "region 65530 65540 : H" (withMemory [] [] [] []) [] `shouldSatisfy` errorContaining "RegionOutOfBounds"
+        it "a public store over a region's bytes makes them public" $
             elabRunWithPolicy "region 0 4 : H" (withMemory [I32] [I32] [] [Const SI32 0, Const SI32 7, Store SI32 (MemArg 0 0), LocalGet (LocalIdx 0), Load SI32 (MemArg 0 0)]) [0]
-                `shouldSatisfy` trapContaining "InformationFlowViolation"
+                `shouldBe` Right ["7"]
         it "a public result is relabelled where a secret one is declared" $
             elabRunWithPolicy "export f : -> H" (singleFunctionModule [] [] [I32] [] [Const SI32 1]) [] `shouldBe` Right ["1"]
         it "a block may produce a secret result, and arms at different levels meet at the higher" $ do
@@ -274,7 +286,10 @@ spec = do
             withGhosts imports = ghostModule imports [I32]
         it "a store through the ghost is a secret store: a plain load then traps" $
             elabRunModule (withGhosts [storeSecret] [Const SI32 0, Const SI32 7, Call (FunctionIdx 0), Const SI32 0, Load SI32 (MemArg 0 0)]) []
-                `shouldSatisfy` trapContaining "InformationFlowViolation"
+                `shouldSatisfy` trapContaining "SecretRead (AccessAt 1 0)"
+        it "a public load through the ghost traps on a secret byte, naming the ghost call" $
+            elabRunModule (withGhosts [storeSecret, ghost "load_public_i32" (FuncType [I32] [I32])] [Const SI32 0, Const SI32 7, Call (FunctionIdx 0), Const SI32 0, Call (FunctionIdx 1)]) []
+                `shouldSatisfy` trapContaining "SecretRead (GhostCallAt 2 1)"
         it "a load through the ghost is secret, so it needs declassification to come out" $ do
             elabRunModule (withGhosts [storeSecret, loadSecret] [Const SI32 0, Const SI32 7, Call (FunctionIdx 0), Const SI32 0, Call (FunctionIdx 1)]) []
                 `shouldSatisfy` errorContaining "IllegalFlow \"result\""

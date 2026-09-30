@@ -128,6 +128,8 @@ data Module (shape :: ModuleShape) = Module
     { functions :: FunctionSpace shape (ModuleFuncs shape)
     , globals :: GlobalSpace (ModuleGlobals shape)
     , dataSegments :: [DataSegment]
+    , secretRegions :: [(Word32, Word32)]
+    -- ^ the half-open address ranges of memory 0 whose bytes the policy declares secret
     , elementSegments :: [ElementSegment (ModuleFuncs shape)]
     , exports :: [Export]
     , start :: Maybe (Elem ('LabelledFuncType 'Low '[] '[]) (ModuleFuncs shape))
