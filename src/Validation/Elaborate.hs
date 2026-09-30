@@ -16,10 +16,13 @@
 -}
 module Validation.Elaborate (
     ElabError (..),
+    Raise (..),
     OperandKind (..),
     IndexSpace (..),
     elaborateModule,
     elaborateModuleWith,
+    Inferred (..),
+    elaborateModuleInferring,
 ) where
 
 import Control.Monad (foldM, when)
@@ -29,6 +32,8 @@ import Data.Type.Equality ((:~:) (Refl))
 import Data.Word (Word32)
 
 import Data.List.Singletons ((%++))
+import Data.Map.Strict (Map)
+import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe)
 import Data.Singletons (SomeSing (..), toSing, withSomeSing)
 import Data.Singletons.Base.TH (SList (SCons, SNil), Sing, fromSing)
@@ -123,7 +128,22 @@ data ElabError
       DeclassifyNotAllowed
     | -- | the security policy could not be read or does not fit the module
       BadPolicy PolicyError
+    | {- | an 'IllegalFlow' that raising these labels, which inference chose, may repair (see
+      'elaborateModuleWith')
+      -}
+      LevelTooLow [Raise] ElabError
     deriving stock (Eq, Show)
+
+{- | A label that inference chose and may raise: of a local variable (by its index in the
+  function's local space, parameters first), or of an internal function's parameter or result
+  (by its declared position) or its bound. Each names the function by its index.
+-}
+data Raise
+    = RaiseLocal Word32 Word32
+    | RaiseParam Word32 Int
+    | RaiseResult Word32 Int
+    | RaiseBound Word32
+    deriving stock (Eq, Ord, Show)
 
 -- | The sub-category an instruction requires its operand type to belong to.
 data OperandKind = Numeric | Integral | FloatingPoint
@@ -151,6 +171,8 @@ data ElabEnv (shape :: ModuleShape) (ret :: LabelledResultType) (locals :: [Labe
     -- ^ whether the policy enables 'Declassify'
     , restrictions :: Restrictions
     -- ^ whether calls and @br_if@ follow SecWasm's restrictions (see "Validation.Policy")
+    , functionIndex :: Word32
+    -- ^ the index of the function being elaborated, which the raises of inference name
     }
 
 {- | The result of elaborating a whole instruction sequence that started from pc stack @pcIn@
@@ -208,6 +230,44 @@ note e = maybe (Left e) Right
 -- | Require that level @from@ may flow into level @into@, or report the instruction.
 requireFlow :: Text -> Sing (from :: SecLevel) -> Sing (into :: SecLevel) -> Either ElabError (FlowsInto from into)
 requireFlow name from into = note (IllegalFlow name (fromSing from) (fromSing into)) (decideFlow from into)
+
+{- | An 'IllegalFlow' as one these raises may repair ('LevelTooLow'); any other error, or no
+  raise, as it is.
+-}
+blame :: [Raise] -> Either ElabError a -> Either ElabError a
+blame raises result = case result of
+    Left err@(IllegalFlow {}) | not (null raises) -> Left (LevelTooLow raises err)
+    _ -> result
+
+{- | The raises that let the values @carried@ (top first) meet the labels @expected@ of a
+  function's parameters or results (in stack order): one for each position where a secret
+  value meets a public label, named by its declared position.
+-}
+raisesWhereBelow :: (Int -> Raise) -> Sing (expected :: [LabelledValType]) -> Sing (carried :: [LabelledValType]) -> [Raise]
+raisesWhereBelow raise expected carried =
+    [raise (count - 1 - k) | (k, (_ :~ le, _ :~ lc)) <- zip [0 ..] (zip labels (fromSing carried)), le == Low, lc == High]
+  where
+    labels = fromSing expected
+    count = length labels
+
+-- | The raises that make every label of a function's parameters or results at least @level@.
+raisesToAtLeast :: (Int -> Raise) -> Sing (level :: SecLevel) -> Sing (expected :: [LabelledValType]) -> [Raise]
+raisesToAtLeast raise level expected = case fromSing level of
+    Low -> []
+    High -> [raise (count - 1 - k) | (k, _ :~ Low) <- zip [0 ..] labels]
+  where
+    labels = fromSing expected
+    count = length labels
+
+{- | The raises of a branch's function results, if one of its targets is the function body's
+  own label (the outermost), whose type is the function's results; none otherwise.
+-}
+bodyRaises :: ElabEnv shape ret locals labels -> [Word32] -> [Raise] -> [Raise]
+bodyRaises env targets raises
+    | outermost `elem` targets = raises
+    | otherwise = []
+  where
+    outermost = fromIntegral (length (fromSing env.labels)) - 1
 
 -- | Require that the values a branch carries are at least as secret as the decision to branch.
 requireCarried :: Text -> Sing (l :: SecLevel) -> Sing (rs :: [LabelledValType]) -> Either ElabError (AllAtLeast l rs)
@@ -304,8 +364,8 @@ elabInstr env pcsIn@(SCons pc _) stackIn instr = case instr of
         Just (SomeElem sv@(svt :%~ lvar) ix) -> case stackIn of
             SCons (stop :%~ lv) rest -> do
                 Refl <- note (OperandMismatch "local.set" (valTypeOf svt) (valTypeOf stop)) (decideEquality stop svt)
-                pcFlows <- requireFlow "local.set" pc lvar
-                valueFlows <- requireFlow "local.set" lv lvar
+                pcFlows <- blame [RaiseLocal env.functionIndex i] (requireFlow "local.set" pc lvar)
+                valueFlows <- blame [RaiseLocal env.functionIndex i] (requireFlow "local.set" lv lvar)
                 Right (Produces (sameLengthAs pcsIn) pcsIn rest (ILocalSet pcFlows valueFlows (resolveLocal sv ix)))
             _ -> Left (StackUnderflow "local.set")
         Nothing -> Left (IndexOutOfRange Locals i)
@@ -313,8 +373,8 @@ elabInstr env pcsIn@(SCons pc _) stackIn instr = case instr of
         Just (SomeElem sv@(svt :%~ lvar) ix) -> case stackIn of
             SCons (stop :%~ lv) _ -> do
                 Refl <- note (OperandMismatch "local.tee" (valTypeOf svt) (valTypeOf stop)) (decideEquality stop svt)
-                pcFlows <- requireFlow "local.tee" pc lvar
-                valueFlows <- requireFlow "local.tee" lv lvar
+                pcFlows <- blame [RaiseLocal env.functionIndex i] (requireFlow "local.tee" pc lvar)
+                valueFlows <- blame [RaiseLocal env.functionIndex i] (requireFlow "local.tee" lv lvar)
                 Right (Produces (sameLengthAs pcsIn) pcsIn stackIn (ILocalTee pcFlows valueFlows (resolveLocal sv ix)))
             _ -> Left (StackUnderflow "local.tee")
         Nothing -> Left (IndexOutOfRange Locals i)
@@ -390,9 +450,9 @@ elabInstr env pcsIn@(SCons pc _) stackIn instr = case instr of
     Call (FunctionIdx f) -> case lookupFuncRef (funcTypesSing (env.shape)) f of
         Nothing -> Left (IndexOutOfRange Functions f)
         Just (SomeFuncRef boundS psS rsS fix) -> do
-            SomeCoercion sS flows witness <- prefixFlows "call" psS stackIn
-            calledFrom <- requireFlow "call" pc boundS
-            atCallPc <- argumentsAtCallPc env "call" pc psS
+            SomeCoercion sS flows witness <- blame (raisesWhereBelow (RaiseParam f) psS stackIn) (prefixFlows "call" psS stackIn)
+            calledFrom <- blame [RaiseBound f] (requireFlow "call" pc boundS)
+            atCallPc <- blame (raisesToAtLeast (RaiseParam f) pc psS) (argumentsAtCallPc env "call" pc psS)
             Right (Produces (sameLengthAs pcsIn) pcsIn (rsS %++ sS) (ICall calledFrom flows atCallPc witness fix))
     {- Integer bitwise / shift / count (integer types only) -}
     And st -> do
@@ -494,8 +554,8 @@ elabInstr env pcsIn@(SCons pc _) stackIn instr = case instr of
     Br (LabelIdx l) -> case mkBranchTarget pc (env.labels) pcsIn l of
         Nothing -> Left (IndexOutOfRange Labels l)
         Just (SomeBranchTarget rsS pcsOut same target) -> do
-            SomeCoercion _ flows witness <- prefixFlows "br" rsS stackIn
-            carried <- requireCarried "br" pc rsS
+            SomeCoercion _ flows witness <- blame (bodyRaises env [l] (raisesWhereBelow (RaiseResult env.functionIndex) rsS stackIn)) (prefixFlows "br" rsS stackIn)
+            carried <- blame (bodyRaises env [l] (raisesToAtLeast (RaiseResult env.functionIndex) pc rsS)) (requireCarried "br" pc rsS)
             Right (Transfers same pcsOut (IBr carried flows witness target))
     BrIf (LabelIdx l) -> case stackIn of
         SCons (sc :%~ lc) rest -> do
@@ -503,8 +563,8 @@ elabInstr env pcsIn@(SCons pc _) stackIn instr = case instr of
             case mkBranchTarget (sJoin pc lc) (env.labels) pcsIn l of
                 Nothing -> Left (IndexOutOfRange Labels l)
                 Just (SomeBranchTarget rsS pcsOut same target) -> do
-                    SomeCoercion sS flows witness <- prefixFlows "br_if" rsS rest
-                    carried <- requireCarried "br_if" (sJoin pc lc) rsS
+                    SomeCoercion sS flows witness <- blame (bodyRaises env [l] (raisesWhereBelow (RaiseResult env.functionIndex) rsS rest)) (prefixFlows "br_if" rsS rest)
+                    carried <- blame (bodyRaises env [l] (raisesToAtLeast (RaiseResult env.functionIndex) (sJoin pc lc) rsS)) (requireCarried "br_if" (sJoin pc lc) rsS)
                     Right $ case env.restrictions of
                         LiftFree -> Produces same pcsOut rest (IBrIf carried flows witness KeepsLevels target)
                         SecWasmRestrictions -> Produces same pcsOut (rsS %++ sS) (IBrIf carried flows witness TakesTargetType target)
@@ -521,13 +581,13 @@ elabInstr env pcsIn@(SCons pc _) stackIn instr = case instr of
                             Nothing -> Left (IndexOutOfRange Labels d)
                             Just (SomeLabel rsS defIx) -> do
                                 targetIxs <- mapM (resolveTarget reachS rsS) targets
-                                SomeCoercion _ flows witness <- prefixFlows "br_table" rsS rest
-                                carried <- requireCarried "br_table" (sJoin pc lc) rsS
+                                SomeCoercion _ flows witness <- blame (bodyRaises env (d : [t | LabelIdx t <- targets]) (raisesWhereBelow (RaiseResult env.functionIndex) rsS rest)) (prefixFlows "br_table" rsS rest)
+                                carried <- blame (bodyRaises env (d : [t | LabelIdx t <- targets]) (raisesToAtLeast (RaiseResult env.functionIndex) (sJoin pc lc) rsS)) (requireCarried "br_table" (sJoin pc lc) rsS)
                                 Right (Transfers same pcsOut (IBrTable carried flows witness reach targetIxs defIx))
                 _ -> Left (StackUnderflow "br_table")
     Return -> do
-        SomeCoercion _ flows witness <- prefixFlows "return" (env.results) stackIn
-        carried <- requireCarried "return" pc (env.results)
+        SomeCoercion _ flows witness <- blame (raisesWhereBelow (RaiseResult env.functionIndex) env.results stackIn) (prefixFlows "return" (env.results) stackIn)
+        carried <- blame (raisesToAtLeast (RaiseResult env.functionIndex) pc env.results) (requireCarried "return" pc (env.results))
         Right (Transfers (raiseAllSameLength pc pcsIn) (sRaiseAll pc pcsIn) (IReturn carried flows witness))
     Unreachable -> Right (Transfers (sameLengthAs pcsIn) pcsIn IUnreachable)
 
@@ -670,6 +730,7 @@ loopParams psIn k = case k psIn (segmentSelf psIn) of
 levelOnly :: ElabError -> Bool
 levelOnly e = case e of
     IllegalFlow {} -> True
+    LevelTooLow {} -> True
     _ -> False
 
 {- | The pc a loop body is checked at: the current pc if the body keeps it, and 'High if a
@@ -1126,16 +1187,103 @@ elaborateModule = elaborateModuleWith emptyPolicy
 
 {- | 'elaborateModule' under a policy given from outside (a policy file), merged with the one
   the module carries in its @ifc@ custom section; the two may not disagree. Assembly happens
-  first, so every level is settled before any function is checked.
+  first, so every level the policy declares is settled before any function is checked; the
+  levels it leaves to inference are settled by 'elaborateModuleInferring'.
 -}
 elaborateModuleWith :: Policy -> RawModule -> Either ElabError SomeModule
-elaborateModuleWith given raw = do
+elaborateModuleWith given raw = fst <$> elaborateModuleInferring given raw
+
+{- | What inference settled: the labels it raised from public. Locals are named by function
+  and their index among the function's declared locals (after the parameters); an internal
+  function by its index, with the type it ended with.
+-}
+data Inferred = Inferred
+    { raisedLocals :: [(Word32, Word32)]
+    , raisedFunctions :: [(Word32, LabelledFuncType)]
+    , attempts :: Int
+    -- ^ how many times the module was elaborated
+    }
+    deriving stock (Eq, Show)
+
+{- | The labels inference chooses and may raise: the function types (only those of internal
+  functions ever change) and the levels of each defined function's declared locals.
+-}
+data Choices = Choices
+    { chosenFunctionTypes :: [LabelledFuncType]
+    , localLevels :: Map Word32 [SecLevel]
+    }
+    deriving stock (Eq)
+
+{- | 'elaborateModuleWith', with a report of what inference raised. Inference chooses a label
+  for every local variable and for the parameters, results and bound of every internal
+  function (one the policy does not declare and nothing outside the module can call: not
+  imported, exported, placed in a table or started). It starts with every such label public
+  and elaborates the module; when a rule fails only because one of those labels is too low
+  ('LevelTooLow'), it raises the labels the failure names and elaborates again. Labels only
+  rise and there are finitely many, so this ends, with the least labels the typed rules
+  accept, or with the first failure no raise repairs. Every accepted module is then checked
+  by the same rules as a fully annotated one, so inference cannot make an insecure module
+  typable. Raising a function's bound raises its results too, which must be at least the bound.
+-}
+elaborateModuleInferring :: Policy -> RawModule -> Either ElabError (SomeModule, Inferred)
+elaborateModuleInferring given raw = do
     validateStructure raw
     assembled <- first BadPolicy (modulePolicy given raw >>= (`assemble` raw))
-    let m = assembled.annotated
-    case reflectCtx assembled.functionTypes assembled.globalTypes memTypes tableLimits (length m.dataSegments) of
+    let importCount = fromIntegral (length raw.imports)
+        initial =
+            Choices
+                { chosenFunctionTypes = assembled.functionTypes
+                , localLevels = Map.fromList [(i, map (const Low) declared) | (i, RawFunction _ declared _) <- zip [importCount ..] assembled.annotated.functions]
+                }
+        settle count choices = case elaborateUnder assembled choices of
+            Right validated -> Right (validated, report count initial choices)
+            Left (LevelTooLow raises failure) -> case applyRaises assembled.inferableFunctions choices raises of
+                Just raised -> settle (count + 1) raised
+                Nothing -> Left failure
+            Left failure -> Left failure
+    settle 1 initial
+  where
+    report count initial final =
+        Inferred
+            { raisedLocals = [(f, i) | (f, levels) <- Map.toList final.localLevels, (i, High) <- zip [0 ..] levels]
+            , raisedFunctions = [(f, after) | (f, before, after) <- zip3 [0 ..] initial.chosenFunctionTypes final.chosenFunctionTypes, before /= after]
+            , attempts = count
+            }
+
+{- | Raise the labels a failure names, where inference chose them; 'Nothing' if none of them
+  could rise, which leaves the failure standing.
+-}
+applyRaises :: [Bool] -> Choices -> [Raise] -> Maybe Choices
+applyRaises inferable choices raises
+    | raised == choices = Nothing
+    | otherwise = Just raised
+  where
+    raised = foldl' raiseOne choices raises
+    raiseOne current raise = case raise of
+        RaiseLocal f i -> case paramCount f current of
+            Just count
+                | fromIntegral i < count -> raiseOne current (RaiseParam f (fromIntegral i))
+                | otherwise -> current {localLevels = Map.adjust (setHigh (fromIntegral i - count)) f current.localLevels}
+            Nothing -> current
+        RaiseParam f j -> withType f current $ \(LabelledFuncType bound ps rs) -> LabelledFuncType bound (raiseAt j ps) rs
+        RaiseResult f j -> withType f current $ \(LabelledFuncType bound ps rs) -> LabelledFuncType bound ps (raiseAt j rs)
+        RaiseBound f -> withType f current $ \(LabelledFuncType _ ps rs) -> LabelledFuncType High ps [t :~ High | t :~ _ <- rs]
+    paramCount f current = case drop (fromIntegral f) current.chosenFunctionTypes of
+        LabelledFuncType _ ps _ : _ -> Just (length ps)
+        [] -> Nothing
+    withType f current change
+        | fromIntegral f < length inferable && inferable !! fromIntegral f =
+            current {chosenFunctionTypes = [if k == f then change ft else ft | (k, ft) <- zip [0 ..] current.chosenFunctionTypes]}
+        | otherwise = current
+    raiseAt j ts = [if k == j then t :~ High else t :~ l | (k, t :~ l) <- zip [0 ..] ts]
+    setHigh j levels = [if k == j then High else l | (k, l) <- zip [0 ..] levels]
+
+-- | Elaborate the module once, under the labels inference has chosen so far.
+elaborateUnder :: Assembled -> Choices -> Either ElabError SomeModule
+elaborateUnder assembled choices =
+    case reflectCtx choices.chosenFunctionTypes assembled.globalTypes memTypes tableLimits (length m.dataSegments) of
         SomeModuleShape ctxS@(SModuleShape ftsS gsS msS tsS _) -> do
-            functions <- elaborateFuncs ctxS assembled.sectionTypes assembled.declassify assembled.typingRestrictions ftsS (zip assembled.loadDefaults (map Left m.imports ++ map Right m.functions))
+            functions <- elaborateFuncs ctxS assembled.sectionTypes assembled.declassify assembled.typingRestrictions ftsS (zip3 [0 ..] assembled.loadDefaults (map Left m.imports ++ map (\(i, f) -> Right (f, Map.findWithDefault [] i choices.localLevels)) (zip [importCount ..] m.functions)))
             globals <- elaborateGlobals gsS (m.globals)
             dataSegments <- traverse (elaborateData (memsNonEmpty msS)) (zip [0 ..] m.dataSegments)
             elementSegments <- traverse (elaborateElements ftsS (tablesNonEmpty tsS)) (zip [0 ..] m.elementSegments)
@@ -1143,8 +1291,10 @@ elaborateModuleWith given raw = do
             when (not (null assembled.secretRegions) && null m.memories) (Left (NoMemory "region"))
             Right (SomeModule ctxS (Module {functions, globals, dataSegments, secretRegions = assembled.secretRegions, elementSegments, exports = m.exports, start}))
   where
-    tableLimits = [t.limits | t <- raw.tables]
-    memTypes = map (\(RawMemory mt) -> mt) (raw.memories)
+    m = assembled.annotated
+    importCount = fromIntegral (length m.imports)
+    tableLimits = [t.limits | t <- m.tables]
+    memTypes = map (\(RawMemory mt) -> mt) (m.memories)
 
 {- | The module-level rules of the validation section that need no shape: well-formed,
   bounded memory limits; at most one memory; distinct export names; export indices within
@@ -1195,14 +1345,14 @@ elaborateFuncs ::
     Bool ->
     Restrictions ->
     Sing fts ->
-    [(SecLevel, Either RawImport RawFunction)] ->
+    [(Word32, SecLevel, Either RawImport (RawFunction, [SecLevel]))] ->
     Either ElabError (FunctionSpace shape fts)
 elaborateFuncs _ _ _ _ SNil [] = Right NoFunctions
-elaborateFuncs ctxS types declassify restrictions (SCons ft fs) ((loadDefault, entry) : rest) = do
+elaborateFuncs ctxS types declassify restrictions (SCons ft fs) ((index, loadDefault, entry) : rest) = do
     fs' <- elaborateFuncs ctxS types declassify restrictions fs rest
     case entry of
         Left (RawImport moduleName fieldName (ImportFunc _)) -> Right (Imported moduleName fieldName fs')
-        Right f -> (`Defined` fs') <$> elaborateFunctionIn ctxS types loadDefault declassify restrictions ft f
+        Right (f, localLevels) -> (`Defined` fs') <$> elaborateFunctionIn ctxS types loadDefault declassify restrictions index localLevels ft f
 elaborateFuncs _ _ _ _ _ _ = Left (Malformed "function/signature count mismatch")
 
 elaborateFunctionIn ::
@@ -1211,18 +1361,20 @@ elaborateFunctionIn ::
     SecLevel ->
     Bool ->
     Restrictions ->
+    Word32 ->
+    [SecLevel] ->
     SLabelledFuncType ft ->
     RawFunction ->
     Either ElabError (Function shape ft)
-elaborateFunctionIn ctxS types loadDefault declassify restrictions (SLabelledFuncType boundS psS rsS) (RawFunction _ declaredT body) =
-    case reflectStack declaredT of
-        SomeStack declS ->
-            let env = ElabEnv ctxS types rsS (sReverseOnto psS declS) (SCons rsS SNil) loadDefault declassify restrictions
+elaborateFunctionIn ctxS types loadDefault declassify restrictions index localLevels (SLabelledFuncType boundS psS rsS) (RawFunction _ declaredT body) =
+    case toSing (zipWith (:~) declaredT (localLevels ++ repeat Low)) of
+        SomeSing declS ->
+            let env = ElabEnv ctxS types rsS (sReverseOnto psS declS) (SCons rsS SNil) loadDefault declassify restrictions index
              in do
                     elaborated <- elabSeq env (SCons boundS SNil) SNil body
                     case elaborated of
                         Reachable _ _ soS bodySeq -> do
-                            ended <- endAt "result" soS rsS bodySeq
+                            ended <- blame (raisesWhereBelow (RaiseResult index) rsS soS) (endAt "result" soS rsS bodySeq)
                             Right (Function psS declS ended)
                         Diverged _ _ final poly -> do
                             checkDeadResult final rsS

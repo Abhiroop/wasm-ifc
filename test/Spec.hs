@@ -41,8 +41,8 @@ import Syntax.Indices
 import Syntax.Instructions
 import Syntax.Module (DataMode (..), Export (..), ExportDesc (..), ImportDesc (..), RawDataSegment (..), RawElementSegment (..), RawImport (..), RawMemory (..), RawModule (..), RawTable (..))
 import Syntax.Types
-import Syntax.TypesIFC (SecLevel (..))
-import Validation.Elaborate (ElabError (..), IndexSpace (..), elaborateModule, elaborateModuleWith)
+import Syntax.TypesIFC (LabelledFuncType (..), LabelledValType (..), SecLevel (..))
+import Validation.Elaborate (ElabError (..), IndexSpace (..), Inferred (..), elaborateModule, elaborateModuleInferring, elaborateModuleWith)
 import Validation.Policy (FunctionLevels (..), Policy (..), PolicyError (..), mergePolicies, parsePolicy)
 
 main :: IO ()
@@ -171,7 +171,7 @@ spec = do
             let caller = [LocalGet (LocalIdx 0), If (FuncType [] []) [Call (FunctionIdx 0)] [], Const SI32 0]
                 program = twoFunctions (FuncType [] []) [Nop] (FuncType [I32] [I32]) caller
             elabRunWithPolicy "func 0 : -{H}->\nexport f : H -> L" program [1] `shouldBe` Right ["0"]
-            elabRunWithPolicy "export f : H -> L" program [1] `shouldSatisfy` errorContaining "IllegalFlow \"call\" High Low"
+            elabRunWithPolicy "func 0 : ->\nexport f : H -> L" program [1] `shouldSatisfy` errorContaining "IllegalFlow \"call\" High Low"
         it "a function bound at secret writes only to secret places" $
             elabRunWithPolicy "func 0 : -{H}->\nexport f : -> L" (twoFunctions (FuncType [] []) [Const SI32 0, Const SI32 1, Store SI32 (MemArg 0 0)] (FuncType [] [I32]) [Call (FunctionIdx 0), Const SI32 0, Load SI32 (MemArg 0 0)]) {memories = [onePageMemory]} []
                 `shouldSatisfy` trapContaining "SecretRead (AccessAt 1 0)"
@@ -196,9 +196,9 @@ spec = do
         it "a secret parameter cannot be returned by a public function" $
             elabRunWithPolicy "export f : H -> L" (singleFunctionModule [] [I32] [I32] [] [LocalGet (LocalIdx 0)]) [1]
                 `shouldSatisfy` errorContaining "IllegalFlow \"result\" High Low"
-        it "a secret parameter cannot decide a write to a public local" $
+        it "a local written under a secret decision is secret, so a public function cannot return it" $
             elabRunWithPolicy "export f : H -> L" (singleFunctionModule [] [I32] [I32] [I32] [LocalGet (LocalIdx 0), If (FuncType [] []) [Const SI32 1, LocalSet (LocalIdx 1)] [], LocalGet (LocalIdx 1)]) [1]
-                `shouldSatisfy` errorContaining "IllegalFlow \"local.set\" High Low"
+                `shouldSatisfy` errorContaining "IllegalFlow \"result\" High Low"
         it "a secret parameter may be dropped" $
             elabRunWithPolicy "export f : H -> L" (singleFunctionModule [] [I32] [I32] [] [LocalGet (LocalIdx 0), Drop, Const SI32 1]) [1] `shouldBe` Right ["1"]
         it "a store declared secret by position makes a later public read trap" $
@@ -241,37 +241,59 @@ spec = do
             elabRunModule declassifying [] `shouldBe` Right ["1"]
             elabRunModule (declassifying {customSections = []}) [] `shouldSatisfy` errorContaining "DeclassifyNotAllowed"
 
+    describe "inference of the labels of locals and internal functions" $ do
+        let inferred text m = either (Left . show) Right (parsePolicy text) >>= \policy -> either (Left . show) (Right . snd) (elaborateModuleInferring policy m)
+            secretThroughLocal = singleFunctionModule [] [I32] [I32] [I32] [LocalGet (LocalIdx 0), LocalSet (LocalIdx 1), LocalGet (LocalIdx 1)]
+            helper = twoFunctions (FuncType [I32] [I32]) [LocalGet (LocalIdx 0)] (FuncType [I32] [I32]) [LocalGet (LocalIdx 0), Call (FunctionIdx 0)]
+        it "a local that holds a secret is secret" $ do
+            elabRunWithPolicy "export f : H -> H" secretThroughLocal [5] `shouldBe` Right ["5"]
+            fmap (.raisedLocals) (inferred "export f : H -> H" secretThroughLocal) `shouldBe` Right [(0, 0)]
+        it "a local that never holds a secret stays public" $
+            fmap (.raisedLocals) (inferred "export f : L -> L" secretThroughLocal) `shouldBe` Right []
+        it "an internal function that receives a secret takes it, and returns a secret" $ do
+            elabRunWithPolicy "export f : H -> H" helper [5] `shouldBe` Right ["5"]
+            fmap (.raisedFunctions) (inferred "export f : H -> H" helper) `shouldBe` Right [(0, LabelledFuncType Low [I32 :~ High] [I32 :~ High])]
+        it "an internal function called under a secret pc is bound at secret" $ do
+            let caller = [LocalGet (LocalIdx 0), If (FuncType [] []) [Call (FunctionIdx 0)] [], Const SI32 0]
+                program = twoFunctions (FuncType [] []) [Nop] (FuncType [I32] [I32]) caller
+            fmap (.raisedFunctions) (inferred "export f : H -> L" program) `shouldBe` Right [(0, LabelledFuncType High [] [])]
+        it "the interface is not inferred: an export, a declared function, a table entry stay as declared" $ do
+            elabRunWithPolicy "export f : H -> L" secretThroughLocal [5] `shouldSatisfy` errorContaining "IllegalFlow \"result\" High Low"
+            elabRunWithPolicy "func 0 : L -> L\nexport f : H -> H" helper [5] `shouldSatisfy` errorContaining "IllegalFlow \"call\" High Low"
+            elabRunWithPolicy "export f : H -> H" (helper {tables = [RawTable (Limits 1 Nothing)], elementSegments = [RawElementSegment [Const SI32 0] [FunctionIdx 0]]}) [5]
+                `shouldSatisfy` errorContaining "IllegalFlow \"call\" High Low"
+
     describe "br_table raises the pc down to its deepest target" $ do
         let noResult = FuncType [] []
-            -- a function with a secret parameter and a public local, returning that local
-            withSecret body = singleFunctionModule [] [I32] [I32] [I32] (body ++ [LocalGet (LocalIdx 1)])
-            publicWrite = [Const SI32 1, LocalSet (LocalIdx 1)]
+            -- a function with a secret parameter and a public global, returning that global
+            withSecret body = (singleFunctionModule [] [I32] [I32] [] (body ++ [GlobalGet (GlobalIdx 0)])) {globals = [RawGlobal (GlobalType Mutable I32) [Const SI32 0]]}
+            publicWrite = [Const SI32 1, GlobalSet (GlobalIdx 0)]
         it "a public write after the blocks the table may leave is accepted" $
             elabRunWithPolicy "export f : H -> L" (withSecret (Block noResult [LocalGet (LocalIdx 0), BrTable [LabelIdx 0] (LabelIdx 0)] : publicWrite)) [3]
                 `shouldBe` Right ["1"]
         it "a public write inside a block the table may leave is rejected" $
             elabRunWithPolicy "export f : H -> L" (withSecret [Block noResult (Block noResult [LocalGet (LocalIdx 0), BrTable [LabelIdx 0] (LabelIdx 1)] : publicWrite)]) [3]
-                `shouldSatisfy` errorContaining "IllegalFlow \"local.set\" High Low"
+                `shouldSatisfy` errorContaining "IllegalFlow \"global.set\" High Low"
         it "SecWasm's printed rule leaks here, since the default target is deeper than the table is long" $
             elabRunWithPolicy
                 "export f : H -> L"
                 (withSecret [Block noResult (Block noResult [Block noResult [Block noResult [LocalGet (LocalIdx 0), BrTable [LabelIdx 0] (LabelIdx 3)]]] : publicWrite)])
                 [3]
-                `shouldSatisfy` errorContaining "IllegalFlow \"local.set\" High Low"
+                `shouldSatisfy` errorContaining "IllegalFlow \"global.set\" High Low"
 
     describe "SecWasm's restrictions (secwasm-restrictions)" $ do
         let restricted = ("secwasm-restrictions\n" <>)
             -- (block (result i32) (i32.const 7) (local.get $c) (br_if 0) <rest>)
             afterCoercion rest = singleFunctionModule [] [I32, I32] [I32] [I32] [Block (FuncType [] [I32]) ([Const SI32 7, LocalGet (LocalIdx 0), BrIf (LabelIdx 0)] ++ rest)]
-            -- a value that a br_if coerced up, written to a public local when the branch is not taken
-            coercedThenWritten = afterCoercion [LocalSet (LocalIdx 2), LocalGet (LocalIdx 1), Br (LabelIdx 0)]
+            -- a value that a br_if coerced up, written to a public global when the branch is not taken
+            coercedThenWritten = (afterCoercion [GlobalSet (GlobalIdx 0), LocalGet (LocalIdx 1), Br (LabelIdx 0)]) {globals = [RawGlobal (GlobalType Mutable I32) [Const SI32 0]]}
             -- a public argument pushed before a secret branch, passed to a public parameter after it
             argumentBeforeBranch = twoFunctions (FuncType [I32] []) [Nop] (FuncType [I32] []) [Const SI32 7, Block (FuncType [I32] []) [LocalGet (LocalIdx 0), BrIf (LabelIdx 0), Call (FunctionIdx 0)]]
         it "without them, a br_if that is not taken leaves the carried value at its own level" $ do
             elabRunWithPolicy "export f : L H -> H" coercedThenWritten [0, 5] `shouldBe` Right ["5"]
             elabRunWithPolicy "export f : L H -> H" coercedThenWritten [1, 5] `shouldBe` Right ["7"]
         it "with them, the value takes the target's type on both paths" $ do
-            elabRunWithPolicy (restricted "export f : L H -> H") coercedThenWritten [0, 5] `shouldSatisfy` errorContaining "IllegalFlow \"local.set\" High Low"
+            elabRunWithPolicy (restricted "export f : L H -> H") coercedThenWritten [0, 5] `shouldSatisfy` errorContaining "IllegalFlow \"global.set\" High Low"
             elabRunWithPolicy (restricted "export f : L H -> H") (afterCoercion [LocalGet (LocalIdx 1), Add SI32]) [0, 5] `shouldBe` Right ["12"]
             elabRunWithPolicy (restricted "export f : L H -> H") (afterCoercion [LocalGet (LocalIdx 1), Add SI32]) [1, 5] `shouldBe` Right ["7"]
         it "without them, a call may take an argument below the pc; with them, it may not" $ do

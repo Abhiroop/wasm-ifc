@@ -10,7 +10,11 @@
 
     * /Functions/ and /globals/: a declaration by index, from the module's own @ifc@ custom
       section, or by name for imports and exports, from a policy file. Both may speak about the
-      same item only if they agree. Everything else is public.
+      same item only if they agree. An undeclared global, import or export is public; an
+      undeclared internal function (one nothing outside the module calls: not exported, placed
+      in a table or started) has its parameters, results and bound inferred, as the local
+      variables of every function have their levels ("Validation.Elaborate",
+      'Validation.Elaborate.elaborateModuleInferring').
     * /Stores/: never need a declaration. The validator infers the lowest level the rule allows,
       the join of the pc, the address and the value. A declaration by site overrides it, and is
       meant to be rare.
@@ -70,15 +74,6 @@
   with @i64@, @f32@ and @f64@ likewise, and @public@ in place of @secret@ for the accesses. A
   ghost keeps its place in the function index space, so nothing else moves; it may not be
   exported, started, or put in a table, since it exists to be rewritten, not entered.
-  TODO(ifc P2): inference of the levels of undeclared internal functions; today they are
-  public throughout, so a helper that receives a secret must be declared by index. Two ways to
-  build it, and the choice is Daniel's: (a) re-run elaboration with the levels raised whenever
-  it fails on a level at a call or a result, which reuses the typed rules unchanged and is sound
-  by construction, but re-elaborates the whole module once per raised level and needs the
-  error to name the function and position; (b) a separate level-flow analysis over the raw
-  instructions, one pass with a fixpoint, which is fast but a second copy of the rules that
-  can drift from the typed ones. The arrow label should come first either way, since an
-  inferred function is only useful if it can also be called from a secret context.
 -}
 module Validation.Policy (
     Policy (..),
@@ -356,6 +351,11 @@ data Assembled = Assembled
     -- ^ the half-open address ranges whose bytes instantiation labels secret
     , loadDefaults :: [SecLevel]
     -- ^ one per entry of the function index space
+    , inferableFunctions :: [Bool]
+    {- ^ one per entry of the function index space: whether the function's type is left to
+    inference, because the policy does not declare it and nothing outside the module calls it
+    (it is defined here, and not exported, placed in a table or started)
+    -}
     , declassify :: Bool
     , typingRestrictions :: Restrictions
     , annotated :: RawModule
@@ -433,6 +433,7 @@ assemble policy m = do
             , sectionTypes
             , secretRegions = [(lo, hi) | (lo, hi, High) <- policy.regions]
             , loadDefaults
+            , inferableFunctions = [inferable i | i <- zipWith const [0 ..] signatures]
             , declassify = policy.declassifyAllowed
             , typingRestrictions = policy.restrictions
             , annotated = withFunctions (zipWith (annotateFunction ghosts) [fromIntegral (length m.imports) ..] m.functions)
@@ -473,6 +474,12 @@ assemble policy m = do
     knownGlobal i = when (fromIntegral i >= length m.globals) (Left (PolicyUnknown ("global " <> T.pack (show i))))
     knownExportedGlobal name = when (null [() | e <- m.exports, e.name == name, ExportGlobal _ <- [e.desc]]) (Left (PolicyUnknown ("export global " <> name)))
 
+    inferable i =
+        fromIntegral i >= length m.imports
+            && null (declarationsFor i)
+            && null (exportNamesOf i)
+            && FunctionIdx i `notElem` concat [seg.functions | seg <- m.elementSegments]
+            && m.start /= Just (FunctionIdx i)
     -- Every declaration that names function @i@: by index, by each export name, by import.
     declarationsFor :: Word32 -> [(Text, FunctionLevels)]
     declarationsFor i =
