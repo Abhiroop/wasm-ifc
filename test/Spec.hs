@@ -268,6 +268,22 @@ spec = do
             elabRunModule ((withGhosts [declassify] [Const SI32 1]) {exports = [Export "f" (ExportFunc (FunctionIdx 0))]}) [] `shouldSatisfy` errorContaining "PolicyGhostReferenced"
 
     describe "indirect calls" $ do
+        -- function 0 (type 0, [] -> [i32]) sits in slot 0 of the table; function 1, exported, calls through it
+        let throughTable mainType mainBody =
+                (moduleOf [] [RawFunction (FuncType [] [I32]) [] [Const SI32 42], RawFunction mainType [] mainBody] (FunctionIdx 1))
+                    { tables = [RawTable (Limits 1 Nothing)]
+                    , elementSegments = [RawElementSegment [Const SI32 0] [FunctionIdx 0]]
+                    }
+            underSecret = throughTable (FuncType [I32] [I32]) [LocalGet (LocalIdx 0), If (FuncType [] [I32]) [Const SI32 0, CallIndirect (TypeIdx 0)] [Const SI32 1]]
+            atPublicPc = throughTable (FuncType [] [I32]) [Const SI32 0, CallIndirect (TypeIdx 0)]
+        it "take the type the policy declares for the type-section entry, bound included" $ do
+            elabRunWithPolicy "func 0 : -{H}-> H\ntype 0 : -{H}-> H\nexport f : H -> H" underSecret [1] `shouldBe` Right ["42"]
+            elabRunWithPolicy "func 0 : -{H}-> H\nexport f : H -> H" underSecret [1] `shouldSatisfy` errorContaining "IllegalFlow \"call_indirect\" High Low"
+        it "check at run time that the expected bound flows into the callee's" $ do
+            elabRunWithPolicy "func 0 : -{H}-> H\ntype 0 : -> H\nexport f : -> H" atPublicPc [] `shouldBe` Right ["42"]
+            elabRunWithPolicy "func 0 : -> H\ntype 0 : -{H}-> H\nexport f : -> H" atPublicPc [] `shouldSatisfy` trapContaining "IndirectCallBelowBound"
+        it "a type declaration must name an entry the type section has" $
+            elabRunWithPolicy "type 5 : -> L" atPublicPc [] `shouldSatisfy` errorContaining "PolicyUnknown \"type 5\""
         it "go through the table entry, typed" $
             elabRunModule (tableModule [Const SI32 0, CallIndirect (TypeIdx 0)]) [] `shouldBe` Right ["42"]
         it "trap on an uninitialised entry" $

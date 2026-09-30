@@ -384,6 +384,7 @@ trapText UninitializedElement = "uninitialized element"
 trapText IndirectCallTypeMismatch = "indirect call type mismatch"
 trapText CallStackExhausted = "call stack exhausted"
 trapText InformationFlowViolation = "information flow violation"
+trapText IndirectCallBelowBound = "indirect call below bound"
 
 numericTypes :: [Text]
 numericTypes = ["i32", "i64", "f32", "f64"]

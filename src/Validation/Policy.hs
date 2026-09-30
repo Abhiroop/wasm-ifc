@@ -30,6 +30,7 @@
   > func 3 : H L -> H          ; parameters, then results, as levels; the arrow may be -{L}->
   > export check : H -> L
   > import env.read : L L -> H
+  > type 2 : H -{H}-> H         ; the type-section entry an indirect call names
   > global 0 : H
   > export global key : H
   > load 3 5 : H               ; the sixth memory access of function 3
@@ -46,7 +47,10 @@
 
   The arrow may carry a level, @-{H}->@: the function's bound, the most secret context it may
   be called from (SecWasm's @→ℓ@; see 'Syntax.TypesIFC.LabelledFuncType'). A plain @->@ is
-  @-{L}->@. A function's results must be at least as secret as its bound. An import from the
+  @-{L}->@. A function's results must be at least as secret as its bound. A @type@ declaration
+  labels an entry of the type section, which is the type a @call_indirect@ naming it expects of
+  its callee: the arguments it passes, the results it receives, and the bound, which the callee's
+  bound must be at least (checked at run time, since the table decides the callee). An import from the
   host must keep the bound 'Low' and public parameters, since whatever the host does with them
   is observable; its results may be declared secret.
   Annotations can also live in the source program, as calls to an import module named @ifc@
@@ -123,6 +127,8 @@ data Policy = Policy
     { functionsByIndex :: Map Word32 FunctionLevels
     , exportedFunctions :: Map Text FunctionLevels
     , importedFunctions :: Map (Text, Text) FunctionLevels
+    , typesByIndex :: Map Word32 FunctionLevels
+    -- ^ entries of the type section, which @call_indirect@ names
     , globalsByIndex :: Map Word32 SecLevel
     , exportedGlobals :: Map Text SecLevel
     , loads :: Map (Word32, Word32) SecLevel
@@ -143,7 +149,7 @@ data Policy = Policy
     deriving stock (Eq, Show)
 
 emptyPolicy :: Policy
-emptyPolicy = Policy Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty [] Nothing Map.empty Map.empty False LiftFree Map.empty Map.empty
+emptyPolicy = Policy Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty [] Nothing Map.empty Map.empty False LiftFree Map.empty Map.empty
 
 {- | Which typing rules the validator applies where SecWasm's lift makes a difference. This
   system does not lift the values on the stack when a branch raises the pc (see
@@ -212,6 +218,10 @@ parsePolicy source = foldM statement emptyPolicy (zip [1 ..] (T.lines source))
                 fl <- functionLevels lineNo body
                 Right policy {importedFunctions = Map.insert (modName, T.drop 1 field) fl policy.importedFunctions}
             _ -> Left (PolicySyntax lineNo qualified)
+        ["type", ix] -> do
+            i <- number lineNo ix
+            fl <- functionLevels lineNo body
+            Right policy {typesByIndex = Map.insert i fl policy.typesByIndex}
         ["global", ix] -> do
             i <- number lineNo ix
             l <- oneLevel lineNo body
@@ -275,6 +285,7 @@ mergePolicies a b = do
     functionsByIndex <- agreeing "func" a.functionsByIndex b.functionsByIndex
     exportedFunctions <- agreeing "export" a.exportedFunctions b.exportedFunctions
     importedFunctions <- agreeing "import" a.importedFunctions b.importedFunctions
+    typesByIndex <- agreeing "type" a.typesByIndex b.typesByIndex
     globalsByIndex <- agreeing "global" a.globalsByIndex b.globalsByIndex
     exportedGlobals <- agreeing "export global" a.exportedGlobals b.exportedGlobals
     loads <- agreeing "load" a.loads b.loads
@@ -291,6 +302,7 @@ mergePolicies a b = do
             { functionsByIndex
             , exportedFunctions
             , importedFunctions
+            , typesByIndex
             , globalsByIndex
             , exportedGlobals
             , loads
@@ -332,6 +344,8 @@ data Assembled = Assembled
     { functionTypes :: [LabelledFuncType]
     -- ^ one per entry of the function index space, in declared order
     , globalTypes :: [LabelledGlobalType]
+    , sectionTypes :: [LabelledFuncType]
+    -- ^ one per entry of the type section, in declared order
     , loadDefaults :: [SecLevel]
     -- ^ one per entry of the function index space
     , declassify :: Bool
@@ -397,14 +411,17 @@ assemble policy m = do
     mapM_ knownImport (Map.keys policy.importedFunctions)
     mapM_ publicImport (Map.toList policy.importedFunctions)
     mapM_ (knownGlobal . fst) (Map.toList policy.globalsByIndex)
+    mapM_ (knownType . fst) (Map.toList policy.typesByIndex)
     mapM_ knownExportedGlobal (Map.keys policy.exportedGlobals)
     functionTypes <- traverse functionType (zip [0 ..] signatures)
     globalTypes <- traverse globalType (zip [0 ..] [gt | RawGlobal gt _ <- m.globals])
+    sectionTypes <- traverse sectionType (zip [0 ..] m.types)
     loadDefaults <- traverse functionLoadDefault (zipWith const [0 ..] signatures)
     Right
         Assembled
             { functionTypes
             , globalTypes
+            , sectionTypes
             , loadDefaults
             , declassify = policy.declassifyAllowed
             , typingRestrictions = policy.restrictions
@@ -442,6 +459,7 @@ assemble policy m = do
     publicImport ((modName, field), fl) =
         when (modName /= ghostModuleName && (fl.bound /= Low || any (/= Low) fl.params)) (Left (PolicyImportNotPublic (modName <> "." <> field)))
     knownImport (modName, field) = when (null [() | RawImport mn f _ <- m.imports, mn == modName, f == field]) (Left (PolicyUnknown ("import " <> modName <> "." <> field)))
+    knownType i = when (fromIntegral i >= length m.types) (Left (PolicyUnknown ("type " <> T.pack (show i))))
     knownGlobal i = when (fromIntegral i >= length m.globals) (Left (PolicyUnknown ("global " <> T.pack (show i))))
     knownExportedGlobal name = when (null [() | e <- m.exports, e.name == name, ExportGlobal _ <- [e.desc]]) (Left (PolicyUnknown ("export global " <> name)))
 
@@ -451,7 +469,10 @@ assemble policy m = do
         [("func " <> T.pack (show i), fl) | Just fl <- [Map.lookup i policy.functionsByIndex]]
             ++ [("export " <> name, fl) | name <- exportNamesOf i, Just fl <- [Map.lookup name policy.exportedFunctions]]
             ++ [("import", fl) | Just key <- [importOf i], Just fl <- [Map.lookup key policy.importedFunctions]]
-    functionType (i, ft@(FuncType ps rs)) = case declarationsFor i of
+    functionType (i, ft) = labelled ft (declarationsFor i)
+    sectionType (i, ft) = labelled ft [("type " <> T.pack (show i), fl) | Just fl <- [Map.lookup i policy.typesByIndex]]
+    -- A function type under the declarations that speak about it, which must agree.
+    labelled ft@(FuncType ps rs) declarations = case declarations of
         [] -> Right (labelFuncType (FunctionLevels (map (const Low) ps) (map (const Low) rs) Low) ft)
         (what, fl) : others -> do
             unless (all ((== fl) . snd) others) (Left (PolicyConflict what))

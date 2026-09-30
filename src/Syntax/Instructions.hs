@@ -435,7 +435,9 @@ data
         Instr m f l (pc ': pcs) (pc ': pcs) full (rs ++ s)
     {- Indirect calls: the callee is an entry of the module's table, checked at run time against
        the expected type (a trap if it differs); the module must declare a table. The expected
-       type is labelled, so the run-time check compares the levels too. -}
+       type is labelled (the policy's declaration of the type-section entry), so the run-time
+       check compares the levels too: the parameters and results must be the same, and the
+       expected bound must flow into the callee's. -}
     ICallIndirect ::
         (ModuleTables m ~ (table ': tables)) =>
         FlowsInto (Join pc lv) bound ->

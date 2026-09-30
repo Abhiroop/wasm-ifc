@@ -138,8 +138,8 @@ data IndexSpace = Locals | Globals | Functions | Labels | Memories | Types | Tab
 -}
 data ElabEnv (shape :: ModuleShape) (ret :: LabelledResultType) (locals :: [LabelledValType]) (labels :: [LabelledResultType]) = ElabEnv
     { shape :: Sing shape
-    , types :: [FuncType]
-    -- ^ the module's type section, which @call_indirect@ refers into
+    , types :: [LabelledFuncType]
+    -- ^ the module's type section as the policy labels it, which @call_indirect@ refers into
     , results :: Sing ret
     , locals :: Sing locals
     , labels :: Sing labels
@@ -376,7 +376,7 @@ elabInstr env pcsIn@(SCons pc _) stackIn instr = case instr of
             NonEmptyTables <- requireTable env
             Refl <- note (OperandMismatch "call_indirect" I32 (valTypeOf sc)) (decideEquality sc SI32)
             expected <- note (IndexOutOfRange Types t) (nth (env.types) t)
-            case toSing (publicFuncType (stackOrderFuncType expected)) of
+            case toSing (stackOrderLabelled expected) of
                 SomeSing (SLabelledFuncType boundS psS rsS) -> do
                     SomeCoercion sS flows witness <- prefixFlows "call_indirect" psS rest
                     calledFrom <- requireFlow "call_indirect" (sJoin pc lidx) boundS
@@ -970,8 +970,8 @@ stepDead env pcsIn s instr = case instr of
         Just (SomeFuncRef _ psS rsS _) -> afterFrame (stackToList psS) (stackToList rsS) s
     CallIndirect (TypeIdx t) -> do
         s1 <- popKnown I32 s
-        FuncType ps rs <- note (IndexOutOfRange Types t) (nth (env.types) t)
-        afterFrame (stackOrder ps) (stackOrder rs) s1
+        LabelledFuncType _ ps rs <- note (IndexOutOfRange Types t) (nth (env.types) t)
+        afterFrame (map unlabelled (stackOrder ps)) (map unlabelled (stackOrder rs)) s1
     Nop -> Right s
     Block (FuncType psT rsT) body ->
         validateFrame env pcsIn rsT psT rsT body >> afterFrame (stackOrder psT) (stackOrder rsT) s
@@ -1119,7 +1119,7 @@ elaborateModuleWith given raw = do
     let m = assembled.annotated
     case reflectCtx assembled.functionTypes assembled.globalTypes memTypes tableLimits (length m.dataSegments) of
         SomeModuleShape ctxS@(SModuleShape ftsS gsS msS tsS _) -> do
-            functions <- elaborateFuncs ctxS (m.types) assembled.declassify assembled.typingRestrictions ftsS (zip assembled.loadDefaults (map Left m.imports ++ map Right m.functions))
+            functions <- elaborateFuncs ctxS assembled.sectionTypes assembled.declassify assembled.typingRestrictions ftsS (zip assembled.loadDefaults (map Left m.imports ++ map Right m.functions))
             globals <- elaborateGlobals gsS (m.globals)
             dataSegments <- traverse (elaborateData (memsNonEmpty msS)) (zip [0 ..] m.dataSegments)
             elementSegments <- traverse (elaborateElements ftsS (tablesNonEmpty tsS)) (zip [0 ..] m.elementSegments)
@@ -1174,7 +1174,7 @@ resolveStart ftsS (FunctionIdx idx) = do
 -}
 elaborateFuncs ::
     SModuleShape shape ->
-    [FuncType] ->
+    [LabelledFuncType] ->
     Bool ->
     Restrictions ->
     Sing fts ->
@@ -1190,7 +1190,7 @@ elaborateFuncs _ _ _ _ _ _ = Left (Malformed "function/signature count mismatch"
 
 elaborateFunctionIn ::
     SModuleShape shape ->
-    [FuncType] ->
+    [LabelledFuncType] ->
     SecLevel ->
     Bool ->
     Restrictions ->

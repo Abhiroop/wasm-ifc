@@ -437,14 +437,18 @@ step funcs (Config store locals stack code control) = case code of
             v :# r -> stepped store locals (v :# r) rest control
         IRelabelResults flows -> stepped store locals (relabelStack flows stack) rest control
         {- Calls: enter the callee (see 'enterCall'); an indirect call first reads the table entry
-           and checks its type against the expected one, trapping if they differ -}
+           and checks its type against the expected one: the labelled parameters and results must
+           be the same, and the expected bound must flow into the callee's (SecWasm's
+           ℓf ⊑ ℓt), since the call's pc was checked against the expected bound only. -}
         ICall _ flows _ witness ix -> enterCall funcs store locals flows witness ix stack rest control
         ICallIndirect _ flows _ witness (SLabelledFuncType expectedBound expectedParams expectedResults) -> case stack of
             index :# below' -> case tableLookup (firstTable store.tables) index of
                 Left trap -> Left trap
                 Right (SomeFuncRef boundS paramsS resultsS ix) ->
-                    case (decideEquality boundS expectedBound, decideEquality paramsS expectedParams, decideEquality resultsS expectedResults) of
-                        (Just Refl, Just Refl, Just Refl) -> enterCall funcs store locals flows witness ix below' rest control
+                    case (decideEquality paramsS expectedParams, decideEquality resultsS expectedResults) of
+                        (Just Refl, Just Refl) -> case decideFlow expectedBound boundS of
+                            Just _ -> enterCall funcs store locals flows witness ix below' rest control
+                            Nothing -> Left IndirectCallBelowBound
                         _ -> Left IndirectCallTypeMismatch
         {- Structured control: push the matching frame and run the body -}
         IBlock flows witness body ->
