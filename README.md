@@ -73,6 +73,7 @@ and `FooInst` its run-time instance.
 ```sh
 cabal build
 cabal run wasm-ifc -- check  [--policy P] <file.wasm>                      # decode and validate
+cabal run wasm-ifc -- explain [--policy P] <file.wasm>                     # and show what inference raised
 cabal run wasm-ifc -- invoke [--policy P] <file.wasm> <export> [args...]   # run an export
 cabal run wasm-ifc -- run    [--policy P] [--dir D[::G]]... [--env K=V]... <file.wasm> [args...]   # a WASI program
 cabal run wasm-ifc -- get    [--policy P] <file.wasm> <global>             # an exported global
@@ -91,13 +92,17 @@ subset (23,306 assertions, none failing; the rest need features listed below), a
 every program in the official wasi-testsuite (72 of 72), over the complete WASI Preview 1
 interface.
 
-Information flow: SecWasm's typing rules in full, including the bound on function types,
-its subtyping as explicit witnesses, block results inferred, per-byte memory levels with the
-run-time load check, and the policy and host boundary described above.
+Information flow: SecWasm's typing rules in full, with the repairs of its printed rules,
+including the bound on function types, its subtyping as explicit witnesses, per-byte memory
+levels with the run-time load check, and the policy and host boundary described above. The
+labels of stores, block results, loop parameters, local variables (split into webs first)
+and internal functions are inferred; `explain` shows what inference raised. A two-run
+noninterference property test runs over generated programs, and `casestudies/` runs compiled
+C programs and SecWasm's and WANILLA's examples under policies with secrets.
 
-Not yet: inference of undeclared internal functions' levels; a noninterference property test
-and proof; imports of tables, memories and globals; the `table.*` instructions; multiple
-memories; reference and SIMD types. The backlog is `TODO.md`.
+Not yet: a noninterference proof; the complete host boundary rule; imports of tables,
+memories and globals; the `table.*` instructions; multiple memories; reference and SIMD types.
+The backlog is `TODO.md`; what the paper can cite is in `HANDOFF.md`.
 
 ### Toolchain
 
