@@ -72,3 +72,28 @@ Two of the examples return a secret; as the command-line interface does not deli
 result, they store it in a secret global instead. Example 1 declares its load public, as
 SecWasm's does: without the declaration, the region would declare the constant-address load
 secret and the module would be rejected statically instead.
+
+## WANILLA's labelled modules as an oracle (`wanilla/`)
+
+`wanilla/oracle.py` reads the noninterference suite of WANILLA's artifact (Scherer et al.,
+CCS 2025; <https://researchdata.tuwien.ac.at/records/hc4rp-xp328>, AGPL, downloaded to
+`~/.local/wasm-bench-tools/src/wanilla`, not copied here). Each of its 312 active
+specifications names a module, the function called, the labels of its inputs and outputs, and
+whether a leak exists (SAT) or not (UNSAT). The script translates each specification it can
+express into a policy (confidentiality only: ST and SU are secret, PT and PU public; WANILLA
+lists results with the top of the stack first), validates the module, and compares.
+
+| Verdict | Specifications |
+|---|---|
+| leak, rejected statically | 63 of 63 |
+| no leak, accepted | 152 of 196 |
+| no leak, rejected (precision loss) | 44 of 196: at `result` 21, `return` 11, `memory.grow` 5, `call_indirect` 4, `call` 2, `local.tee` 1 |
+| not expressible | 53: memory, table or import queries 33, memory or global imports 8, imported functions 3, globals relabelled on exit 2, integrity 3, unnamed function 4 |
+
+No leak is missed. The precision losses are rules that decide on labels where WANILLA decides
+on values: a `return` or a branch out of the body under a secret pc makes the results secret
+even when both paths return the same value; `memory.grow` needs a public pc; one label per
+function parameter joins the labels of every call site; and an indirect call is typed at the
+all-public type unless the policy declares the type-section entry, which the translation does
+not. The per-specification verdicts, policies and errors are in
+`results/<date>-<commit>-wanilla.json`.

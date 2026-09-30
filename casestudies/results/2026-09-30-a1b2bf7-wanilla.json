@@ -1,0 +1,2471 @@
+{
+  "commit": "a1b2bf7",
+  "counts": {
+    "precise": 152,
+    "not expressible": 53,
+    "caught statically": 63,
+    "precision loss": 44
+  },
+  "not_expressible": {
+    "a global labelled differently on entry and exit": 2,
+    "Decode error: unsupported: global import": 1,
+    "queries memory, tables or imports": 33,
+    "Decode error: unsupported: memory import": 7,
+    "imports a function the host does not provide": 3,
+    "no function named": 4,
+    "integrity": 3
+  },
+  "specifications": [
+    {
+      "module": "basic/argument-to-global",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : L -> \nglobal 0 : L\n"
+    },
+    {
+      "module": "basic/argument-to-global",
+      "test_id": 1,
+      "expected": "UNSAT",
+      "verdict": "not expressible",
+      "reason": "a global labelled differently on entry and exit"
+    },
+    {
+      "module": "basic/argument-to-global",
+      "test_id": 2,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 0 (AtInstruction 1 (IllegalFlow \"global.set\" High Low))",
+      "policy": "func 0 : H -> \nglobal 0 : L\n"
+    },
+    {
+      "module": "basic/argument-to-global",
+      "test_id": 3,
+      "expected": "UNSAT",
+      "verdict": "not expressible",
+      "reason": "a global labelled differently on entry and exit"
+    },
+    {
+      "module": "basic/br_table",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : L -> L\n"
+    },
+    {
+      "module": "basic/br_table",
+      "test_id": 1,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : L -> H\n"
+    },
+    {
+      "module": "basic/br_table",
+      "test_id": 2,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 0 (AtInstruction 5 (IllegalFlow \"return\" High Low))",
+      "policy": "func 0 : H -> L\n"
+    },
+    {
+      "module": "basic/br_table",
+      "test_id": 3,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : H -> H\n"
+    },
+    {
+      "module": "basic/break",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : L -> L\n"
+    },
+    {
+      "module": "basic/break",
+      "test_id": 1,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : L -> H\n"
+    },
+    {
+      "module": "basic/break",
+      "test_id": 2,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 0 (IllegalFlow \"result\" High Low)",
+      "policy": "func 0 : H -> L\n"
+    },
+    {
+      "module": "basic/break",
+      "test_id": 3,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : H -> H\n"
+    },
+    {
+      "module": "basic/break",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 1 : L -> L\n"
+    },
+    {
+      "module": "basic/break",
+      "test_id": 1,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 1 : L -> H\n"
+    },
+    {
+      "module": "basic/break",
+      "test_id": 2,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 1 (AtInstruction 6 (IllegalFlow \"return\" High Low))",
+      "policy": "func 1 : H -> L\n"
+    },
+    {
+      "module": "basic/break",
+      "test_id": 3,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 1 : H -> H\n"
+    },
+    {
+      "module": "basic/break",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 2 : L -> L\n"
+    },
+    {
+      "module": "basic/break",
+      "test_id": 1,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 2 : L -> H\n"
+    },
+    {
+      "module": "basic/break",
+      "test_id": 2,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 2 (AtInstruction 5 (IllegalFlow \"return\" High Low))",
+      "policy": "func 2 : H -> L\n"
+    },
+    {
+      "module": "basic/break",
+      "test_id": 3,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 2 : H -> H\n"
+    },
+    {
+      "module": "basic/break",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 3 : L -> L\n"
+    },
+    {
+      "module": "basic/break",
+      "test_id": 1,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 3 : L -> H\n"
+    },
+    {
+      "module": "basic/break",
+      "test_id": 2,
+      "expected": "UNSAT",
+      "verdict": "precision loss",
+      "error": "Validation error: InFunction 3 (AtInstruction 8 (IllegalFlow \"return\" High Low))",
+      "policy": "func 3 : H -> L\n"
+    },
+    {
+      "module": "basic/break",
+      "test_id": 3,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 3 : H -> H\n"
+    },
+    {
+      "module": "basic/call-precise-args",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : L L -> L\n"
+    },
+    {
+      "module": "basic/call-precise-args",
+      "test_id": 1,
+      "expected": "UNSAT",
+      "verdict": "precision loss",
+      "error": "Validation error: InFunction 0 (AtInstruction 5 (IllegalFlow \"call\" High Low))",
+      "policy": "func 0 : L H -> L\n"
+    },
+    {
+      "module": "basic/call-precise-args",
+      "test_id": 2,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 0 (AtInstruction 5 (IllegalFlow \"call\" High Low))",
+      "policy": "func 0 : H L -> L\n"
+    },
+    {
+      "module": "basic/call-precise-args",
+      "test_id": 3,
+      "expected": "UNSAT",
+      "verdict": "precision loss",
+      "error": "Validation error: InFunction 0 (AtInstruction 5 (IllegalFlow \"call\" High Low))",
+      "policy": "func 0 : H H -> H\n"
+    },
+    {
+      "module": "basic/call",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : L -> L\n"
+    },
+    {
+      "module": "basic/call",
+      "test_id": 1,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : L -> H\n"
+    },
+    {
+      "module": "basic/call",
+      "test_id": 2,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 2 (IllegalFlow \"result\" High Low)",
+      "policy": "func 0 : H -> L\n"
+    },
+    {
+      "module": "basic/call",
+      "test_id": 3,
+      "expected": "UNSAT",
+      "verdict": "precision loss",
+      "error": "Validation error: InFunction 2 (IllegalFlow \"result\" High Low)",
+      "policy": "func 0 : H -> H\n"
+    },
+    {
+      "module": "basic/call",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 1 : L L -> L L\n"
+    },
+    {
+      "module": "basic/call",
+      "test_id": 1,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 1 : L L -> L H\n"
+    },
+    {
+      "module": "basic/call",
+      "test_id": 2,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 1 : L L -> H L\n"
+    },
+    {
+      "module": "basic/call",
+      "test_id": 3,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 1 : L L -> H H\n"
+    },
+    {
+      "module": "basic/call",
+      "test_id": 4,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 1 (IllegalFlow \"result\" High Low)",
+      "policy": "func 1 : L H -> L L\n"
+    },
+    {
+      "module": "basic/call",
+      "test_id": 5,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 1 : L H -> L H\n"
+    },
+    {
+      "module": "basic/call",
+      "test_id": 6,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 1 (IllegalFlow \"result\" High Low)",
+      "policy": "func 1 : L H -> H L\n"
+    },
+    {
+      "module": "basic/call",
+      "test_id": 7,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 1 : L H -> H H\n"
+    },
+    {
+      "module": "basic/call",
+      "test_id": 8,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 1 (IllegalFlow \"result\" High Low)",
+      "policy": "func 1 : H L -> L L\n"
+    },
+    {
+      "module": "basic/call",
+      "test_id": 9,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 1 (IllegalFlow \"result\" High Low)",
+      "policy": "func 1 : H L -> L H\n"
+    },
+    {
+      "module": "basic/call",
+      "test_id": 10,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 1 : H L -> H L\n"
+    },
+    {
+      "module": "basic/call",
+      "test_id": 11,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 1 : H L -> H H\n"
+    },
+    {
+      "module": "basic/call",
+      "test_id": 12,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 1 (IllegalFlow \"result\" High Low)",
+      "policy": "func 1 : H H -> L L\n"
+    },
+    {
+      "module": "basic/call",
+      "test_id": 13,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 1 (IllegalFlow \"result\" High Low)",
+      "policy": "func 1 : H H -> L H\n"
+    },
+    {
+      "module": "basic/call",
+      "test_id": 14,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 1 (IllegalFlow \"result\" High Low)",
+      "policy": "func 1 : H H -> H L\n"
+    },
+    {
+      "module": "basic/call",
+      "test_id": 15,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 1 : H H -> H H\n"
+    },
+    {
+      "module": "basic/call",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 2 : L L -> L\n"
+    },
+    {
+      "module": "basic/call",
+      "test_id": 1,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 2 : L L -> H\n"
+    },
+    {
+      "module": "basic/call",
+      "test_id": 2,
+      "expected": "UNSAT",
+      "verdict": "precision loss",
+      "error": "Validation error: InFunction 2 (IllegalFlow \"result\" High Low)",
+      "policy": "func 2 : L H -> L\n"
+    },
+    {
+      "module": "basic/call",
+      "test_id": 3,
+      "expected": "UNSAT",
+      "verdict": "precision loss",
+      "error": "Validation error: InFunction 0 (IllegalFlow \"result\" High Low)",
+      "policy": "func 2 : L H -> H\n"
+    },
+    {
+      "module": "basic/call",
+      "test_id": 4,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 2 (IllegalFlow \"result\" High Low)",
+      "policy": "func 2 : H L -> L\n"
+    },
+    {
+      "module": "basic/call",
+      "test_id": 5,
+      "expected": "UNSAT",
+      "verdict": "precision loss",
+      "error": "Validation error: InFunction 0 (IllegalFlow \"result\" High Low)",
+      "policy": "func 2 : H L -> H\n"
+    },
+    {
+      "module": "basic/call",
+      "test_id": 6,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 2 (IllegalFlow \"result\" High Low)",
+      "policy": "func 2 : H H -> L\n"
+    },
+    {
+      "module": "basic/call",
+      "test_id": 7,
+      "expected": "UNSAT",
+      "verdict": "precision loss",
+      "error": "Validation error: InFunction 0 (IllegalFlow \"result\" High Low)",
+      "policy": "func 2 : H H -> H\n"
+    },
+    {
+      "module": "basic/call_indirect",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : L -> L\n"
+    },
+    {
+      "module": "basic/call_indirect",
+      "test_id": 1,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : L -> H\n"
+    },
+    {
+      "module": "basic/call_indirect",
+      "test_id": 2,
+      "expected": "UNSAT",
+      "verdict": "precision loss",
+      "error": "Validation error: InFunction 0 (AtInstruction 3 (IllegalFlow \"call_indirect\" High Low))",
+      "policy": "func 0 : H -> L\n"
+    },
+    {
+      "module": "basic/call_indirect",
+      "test_id": 3,
+      "expected": "UNSAT",
+      "verdict": "precision loss",
+      "error": "Validation error: InFunction 0 (AtInstruction 3 (IllegalFlow \"call_indirect\" High Low))",
+      "policy": "func 0 : H -> H\n"
+    },
+    {
+      "module": "basic/control",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : L -> L\n"
+    },
+    {
+      "module": "basic/control",
+      "test_id": 1,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : L -> H\n"
+    },
+    {
+      "module": "basic/control",
+      "test_id": 2,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 0 (IllegalFlow \"result\" High Low)",
+      "policy": "func 0 : H -> L\n"
+    },
+    {
+      "module": "basic/control",
+      "test_id": 3,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : H -> H\n"
+    },
+    {
+      "module": "basic/control",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 1 : L -> L\n"
+    },
+    {
+      "module": "basic/control",
+      "test_id": 1,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 1 : L -> H\n"
+    },
+    {
+      "module": "basic/control",
+      "test_id": 2,
+      "expected": "UNSAT",
+      "verdict": "precision loss",
+      "error": "Validation error: InFunction 1 (IllegalFlow \"result\" High Low)",
+      "policy": "func 1 : H -> L\n"
+    },
+    {
+      "module": "basic/control",
+      "test_id": 3,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 1 : H -> H\n"
+    },
+    {
+      "module": "basic/control",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 2 : L -> L\n"
+    },
+    {
+      "module": "basic/control",
+      "test_id": 1,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 2 : L -> H\n"
+    },
+    {
+      "module": "basic/control",
+      "test_id": 2,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 2 : H -> L\n"
+    },
+    {
+      "module": "basic/control",
+      "test_id": 3,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 2 : H -> H\n"
+    },
+    {
+      "module": "basic/global-to-result",
+      "test_id": 2,
+      "expected": "SAT",
+      "verdict": "not expressible",
+      "reason": "Decode error: unsupported: global import",
+      "policy": "func 0 : -> L\nglobal 0 : H\n"
+    },
+    {
+      "module": "basic/imported-function",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "not expressible",
+      "reason": "queries memory, tables or imports"
+    },
+    {
+      "module": "basic/imported-function",
+      "test_id": 1,
+      "expected": "UNSAT",
+      "verdict": "not expressible",
+      "reason": "queries memory, tables or imports"
+    },
+    {
+      "module": "basic/imported-function",
+      "test_id": 2,
+      "expected": "UNSAT",
+      "verdict": "not expressible",
+      "reason": "queries memory, tables or imports"
+    },
+    {
+      "module": "basic/imported-function",
+      "test_id": 3,
+      "expected": "SAT",
+      "verdict": "not expressible",
+      "reason": "queries memory, tables or imports"
+    },
+    {
+      "module": "basic/imported-function",
+      "test_id": 4,
+      "expected": "UNSAT",
+      "verdict": "not expressible",
+      "reason": "queries memory, tables or imports"
+    },
+    {
+      "module": "basic/imported-function",
+      "test_id": 5,
+      "expected": "SAT",
+      "verdict": "not expressible",
+      "reason": "queries memory, tables or imports"
+    },
+    {
+      "module": "basic/ite-ite",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : L L -> L\n"
+    },
+    {
+      "module": "basic/ite-ite",
+      "test_id": 1,
+      "expected": "UNSAT",
+      "verdict": "precision loss",
+      "error": "Validation error: InFunction 0 (AtInstruction 5 (IllegalFlow \"return\" High Low))",
+      "policy": "func 0 : L H -> L\n"
+    },
+    {
+      "module": "basic/ite-ite",
+      "test_id": 2,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 0 (AtInstruction 5 (IllegalFlow \"return\" High Low))",
+      "policy": "func 0 : H L -> L\n"
+    },
+    {
+      "module": "basic/ite-ite",
+      "test_id": 3,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 0 (AtInstruction 5 (IllegalFlow \"return\" High Low))",
+      "policy": "func 0 : H H -> L\n"
+    },
+    {
+      "module": "basic/ite-ite",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 1 : L L -> L\n"
+    },
+    {
+      "module": "basic/ite-ite",
+      "test_id": 1,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 1 (AtInstruction 5 (IllegalFlow \"return\" High Low))",
+      "policy": "func 1 : L H -> L\n"
+    },
+    {
+      "module": "basic/ite-ite",
+      "test_id": 2,
+      "expected": "UNSAT",
+      "verdict": "precision loss",
+      "error": "Validation error: InFunction 1 (AtInstruction 5 (IllegalFlow \"return\" High Low))",
+      "policy": "func 1 : H L -> L\n"
+    },
+    {
+      "module": "basic/ite-ite",
+      "test_id": 3,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 1 (AtInstruction 5 (IllegalFlow \"return\" High Low))",
+      "policy": "func 1 : H H -> L\n"
+    },
+    {
+      "module": "basic/ite-ite",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 2 : L L -> L\n"
+    },
+    {
+      "module": "basic/ite-ite",
+      "test_id": 1,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 2 (AtInstruction 5 (IllegalFlow \"return\" High Low))",
+      "policy": "func 2 : L H -> L\n"
+    },
+    {
+      "module": "basic/ite-ite",
+      "test_id": 2,
+      "expected": "UNSAT",
+      "verdict": "precision loss",
+      "error": "Validation error: InFunction 2 (AtInstruction 5 (IllegalFlow \"return\" High Low))",
+      "policy": "func 2 : H L -> L\n"
+    },
+    {
+      "module": "basic/ite-ite",
+      "test_id": 3,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 2 (AtInstruction 5 (IllegalFlow \"return\" High Low))",
+      "policy": "func 2 : H H -> L\n"
+    },
+    {
+      "module": "basic/ite-ite",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 3 : L L -> L\n"
+    },
+    {
+      "module": "basic/ite-ite",
+      "test_id": 1,
+      "expected": "UNSAT",
+      "verdict": "precision loss",
+      "error": "Validation error: InFunction 3 (AtInstruction 5 (IllegalFlow \"return\" High Low))",
+      "policy": "func 3 : L H -> L\n"
+    },
+    {
+      "module": "basic/ite-ite",
+      "test_id": 2,
+      "expected": "UNSAT",
+      "verdict": "precision loss",
+      "error": "Validation error: InFunction 3 (AtInstruction 5 (IllegalFlow \"return\" High Low))",
+      "policy": "func 3 : H L -> L\n"
+    },
+    {
+      "module": "basic/ite-ite",
+      "test_id": 3,
+      "expected": "UNSAT",
+      "verdict": "precision loss",
+      "error": "Validation error: InFunction 3 (AtInstruction 5 (IllegalFlow \"return\" High Low))",
+      "policy": "func 3 : H H -> L\n"
+    },
+    {
+      "module": "basic/ite-scope-extend",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : L -> L\n"
+    },
+    {
+      "module": "basic/ite-scope-extend",
+      "test_id": 1,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : L -> H\n"
+    },
+    {
+      "module": "basic/ite-scope-extend",
+      "test_id": 2,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 0 (AtInstruction 3 (IllegalFlow \"return\" High Low))",
+      "policy": "func 0 : H -> L\n"
+    },
+    {
+      "module": "basic/ite-scope-extend",
+      "test_id": 3,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : H -> H\n"
+    },
+    {
+      "module": "basic/ite-scope-extend",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 1 : L -> L\n"
+    },
+    {
+      "module": "basic/ite-scope-extend",
+      "test_id": 1,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 1 : L -> H\n"
+    },
+    {
+      "module": "basic/ite-scope-extend",
+      "test_id": 2,
+      "expected": "UNSAT",
+      "verdict": "precision loss",
+      "error": "Validation error: InFunction 1 (AtInstruction 3 (IllegalFlow \"return\" High Low))",
+      "policy": "func 1 : H -> L\n"
+    },
+    {
+      "module": "basic/ite-scope-extend",
+      "test_id": 3,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 1 : H -> H\n"
+    },
+    {
+      "module": "basic/ite-while",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precision loss",
+      "error": "Validation error: InFunction 0 (IllegalFlow \"result\" High Low)",
+      "policy": "func 0 : H -> L\n"
+    },
+    {
+      "module": "basic/loop-ctx",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : H -> L\n"
+    },
+    {
+      "module": "basic/memory-access",
+      "test_id": 0,
+      "expected": "SAT",
+      "verdict": "not expressible",
+      "reason": "Decode error: unsupported: memory import",
+      "policy": "func 0 : -> L\nload-default : H\n"
+    },
+    {
+      "module": "basic/memory-access",
+      "test_id": 1,
+      "expected": "UNSAT",
+      "verdict": "not expressible",
+      "reason": "Decode error: unsupported: memory import",
+      "policy": "func 0 : -> L\n"
+    },
+    {
+      "module": "basic/memory-access",
+      "test_id": 2,
+      "expected": "UNSAT",
+      "verdict": "not expressible",
+      "reason": "Decode error: unsupported: memory import",
+      "policy": "func 0 : -> L\n"
+    },
+    {
+      "module": "basic/memory-access",
+      "test_id": 3,
+      "expected": "SAT",
+      "verdict": "not expressible",
+      "reason": "Decode error: unsupported: memory import",
+      "policy": "func 1 : L -> L\nload-default : H\n"
+    },
+    {
+      "module": "basic/memory-access",
+      "test_id": 4,
+      "expected": "UNSAT",
+      "verdict": "not expressible",
+      "reason": "Decode error: unsupported: memory import",
+      "policy": "func 1 : L -> L\n"
+    },
+    {
+      "module": "basic/memory-access",
+      "test_id": 5,
+      "expected": "SAT",
+      "verdict": "not expressible",
+      "reason": "Decode error: unsupported: memory import",
+      "policy": "func 1 : H -> L\n"
+    },
+    {
+      "module": "basic/memory-access",
+      "test_id": 6,
+      "expected": "UNSAT",
+      "verdict": "not expressible",
+      "reason": "queries memory, tables or imports"
+    },
+    {
+      "module": "basic/memory-access",
+      "test_id": 7,
+      "expected": "SAT",
+      "verdict": "not expressible",
+      "reason": "queries memory, tables or imports"
+    },
+    {
+      "module": "basic/memory-access",
+      "test_id": 8,
+      "expected": "SAT",
+      "verdict": "not expressible",
+      "reason": "queries memory, tables or imports"
+    },
+    {
+      "module": "basic/memory-access",
+      "test_id": 9,
+      "expected": "UNSAT",
+      "verdict": "not expressible",
+      "reason": "queries memory, tables or imports"
+    },
+    {
+      "module": "basic/memory",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : -> L\n"
+    },
+    {
+      "module": "basic/memory",
+      "test_id": 1,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : -> H\n"
+    },
+    {
+      "module": "basic/memory",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "not expressible",
+      "reason": "queries memory, tables or imports"
+    },
+    {
+      "module": "basic/memory",
+      "test_id": 1,
+      "expected": "UNSAT",
+      "verdict": "not expressible",
+      "reason": "queries memory, tables or imports"
+    },
+    {
+      "module": "basic/memory",
+      "test_id": 2,
+      "expected": "SAT",
+      "verdict": "not expressible",
+      "reason": "queries memory, tables or imports"
+    },
+    {
+      "module": "basic/memory",
+      "test_id": 3,
+      "expected": "UNSAT",
+      "verdict": "precision loss",
+      "error": "Validation error: InFunction 1 (AtInstruction 1 (IllegalFlow \"memory.grow\" High Low))",
+      "policy": "func 1 : H -> H\n"
+    },
+    {
+      "module": "basic/memory",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 2 : L -> L\n"
+    },
+    {
+      "module": "basic/memory",
+      "test_id": 1,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 2 : L -> H\n"
+    },
+    {
+      "module": "basic/memory",
+      "test_id": 2,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 2 (AtInstruction 6 (IllegalFlow \"memory.grow\" High Low))",
+      "policy": "func 2 : H -> L\n"
+    },
+    {
+      "module": "basic/memory",
+      "test_id": 3,
+      "expected": "UNSAT",
+      "verdict": "precision loss",
+      "error": "Validation error: InFunction 2 (AtInstruction 6 (IllegalFlow \"memory.grow\" High Low))",
+      "policy": "func 2 : H -> H\n"
+    },
+    {
+      "module": "basic/memory",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 3 : L -> L\n"
+    },
+    {
+      "module": "basic/memory",
+      "test_id": 1,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 3 : L -> H\n"
+    },
+    {
+      "module": "basic/memory",
+      "test_id": 2,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 3 (AtInstruction 1 (IllegalFlow \"memory.grow\" High Low))",
+      "policy": "func 3 : H -> L\n"
+    },
+    {
+      "module": "basic/memory",
+      "test_id": 3,
+      "expected": "UNSAT",
+      "verdict": "precision loss",
+      "error": "Validation error: InFunction 3 (AtInstruction 1 (IllegalFlow \"memory.grow\" High Low))",
+      "policy": "func 3 : H -> H\n"
+    },
+    {
+      "module": "basic/memory",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 4 : L -> L\n"
+    },
+    {
+      "module": "basic/memory",
+      "test_id": 1,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 4 : L -> H\n"
+    },
+    {
+      "module": "basic/memory",
+      "test_id": 2,
+      "expected": "UNSAT",
+      "verdict": "precision loss",
+      "error": "Validation error: InFunction 4 (AtInstruction 6 (IllegalFlow \"memory.grow\" High Low))",
+      "policy": "func 4 : H -> L\n"
+    },
+    {
+      "module": "basic/memory",
+      "test_id": 3,
+      "expected": "UNSAT",
+      "verdict": "precision loss",
+      "error": "Validation error: InFunction 4 (AtInstruction 6 (IllegalFlow \"memory.grow\" High Low))",
+      "policy": "func 4 : H -> H\n"
+    },
+    {
+      "module": "basic/numeric",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : -> L\n"
+    },
+    {
+      "module": "basic/numeric",
+      "test_id": 1,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : -> H\n"
+    },
+    {
+      "module": "basic/numeric",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 1 : L -> L\n"
+    },
+    {
+      "module": "basic/numeric",
+      "test_id": 1,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 1 : L -> H\n"
+    },
+    {
+      "module": "basic/numeric",
+      "test_id": 2,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 1 (IllegalFlow \"result\" High Low)",
+      "policy": "func 1 : H -> L\n"
+    },
+    {
+      "module": "basic/numeric",
+      "test_id": 3,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 1 : H -> H\n"
+    },
+    {
+      "module": "basic/numeric",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 2 : L L -> L\n"
+    },
+    {
+      "module": "basic/numeric",
+      "test_id": 1,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 2 : L L -> H\n"
+    },
+    {
+      "module": "basic/numeric",
+      "test_id": 2,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 2 (IllegalFlow \"result\" High Low)",
+      "policy": "func 2 : L H -> L\n"
+    },
+    {
+      "module": "basic/numeric",
+      "test_id": 3,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 2 : L H -> H\n"
+    },
+    {
+      "module": "basic/numeric",
+      "test_id": 4,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 2 (IllegalFlow \"result\" High Low)",
+      "policy": "func 2 : H L -> L\n"
+    },
+    {
+      "module": "basic/numeric",
+      "test_id": 5,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 2 : H L -> H\n"
+    },
+    {
+      "module": "basic/numeric",
+      "test_id": 6,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 2 (IllegalFlow \"result\" High Low)",
+      "policy": "func 2 : H H -> L\n"
+    },
+    {
+      "module": "basic/numeric",
+      "test_id": 7,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 2 : H H -> H\n"
+    },
+    {
+      "module": "basic/numeric",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 3 : L L -> L L\n"
+    },
+    {
+      "module": "basic/numeric",
+      "test_id": 1,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 3 : L L -> L H\n"
+    },
+    {
+      "module": "basic/numeric",
+      "test_id": 2,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 3 : L L -> H L\n"
+    },
+    {
+      "module": "basic/numeric",
+      "test_id": 3,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 3 : L L -> H H\n"
+    },
+    {
+      "module": "basic/numeric",
+      "test_id": 4,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 3 (IllegalFlow \"result\" High Low)",
+      "policy": "func 3 : L H -> L L\n"
+    },
+    {
+      "module": "basic/numeric",
+      "test_id": 5,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 3 (IllegalFlow \"result\" High Low)",
+      "policy": "func 3 : L H -> L H\n"
+    },
+    {
+      "module": "basic/numeric",
+      "test_id": 6,
+      "expected": "UNSAT",
+      "verdict": "precision loss",
+      "error": "Validation error: InFunction 3 (IllegalFlow \"result\" High Low)",
+      "policy": "func 3 : L H -> H L\n"
+    },
+    {
+      "module": "basic/numeric",
+      "test_id": 7,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 3 : L H -> H H\n"
+    },
+    {
+      "module": "basic/numeric",
+      "test_id": 8,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 3 (IllegalFlow \"result\" High Low)",
+      "policy": "func 3 : H L -> L L\n"
+    },
+    {
+      "module": "basic/numeric",
+      "test_id": 9,
+      "expected": "UNSAT",
+      "verdict": "precision loss",
+      "error": "Validation error: InFunction 3 (IllegalFlow \"result\" High Low)",
+      "policy": "func 3 : H L -> L H\n"
+    },
+    {
+      "module": "basic/numeric",
+      "test_id": 10,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 3 (IllegalFlow \"result\" High Low)",
+      "policy": "func 3 : H L -> H L\n"
+    },
+    {
+      "module": "basic/numeric",
+      "test_id": 11,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 3 : H L -> H H\n"
+    },
+    {
+      "module": "basic/numeric",
+      "test_id": 12,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 3 (IllegalFlow \"result\" High Low)",
+      "policy": "func 3 : H H -> L L\n"
+    },
+    {
+      "module": "basic/numeric",
+      "test_id": 13,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 3 (IllegalFlow \"result\" High Low)",
+      "policy": "func 3 : H H -> L H\n"
+    },
+    {
+      "module": "basic/numeric",
+      "test_id": 14,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 3 (IllegalFlow \"result\" High Low)",
+      "policy": "func 3 : H H -> H L\n"
+    },
+    {
+      "module": "basic/numeric",
+      "test_id": 15,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 3 : H H -> H H\n"
+    },
+    {
+      "module": "basic/scope-extend",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : L -> L\n"
+    },
+    {
+      "module": "basic/scope-extend",
+      "test_id": 1,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : L -> H\n"
+    },
+    {
+      "module": "basic/scope-extend",
+      "test_id": 2,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 0 (IllegalFlow \"result\" High Low)",
+      "policy": "func 0 : H -> L\n"
+    },
+    {
+      "module": "basic/scope-extend",
+      "test_id": 3,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : H -> H\n"
+    },
+    {
+      "module": "basic/select",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : L -> L\n"
+    },
+    {
+      "module": "basic/select",
+      "test_id": 1,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : L -> H\n"
+    },
+    {
+      "module": "basic/select",
+      "test_id": 2,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 0 (IllegalFlow \"result\" High Low)",
+      "policy": "func 0 : H -> L\n"
+    },
+    {
+      "module": "basic/select",
+      "test_id": 3,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : H -> H\n"
+    },
+    {
+      "module": "basic/select",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 1 : L -> L\n"
+    },
+    {
+      "module": "basic/select",
+      "test_id": 1,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 1 : L -> H\n"
+    },
+    {
+      "module": "basic/select",
+      "test_id": 2,
+      "expected": "UNSAT",
+      "verdict": "precision loss",
+      "error": "Validation error: InFunction 1 (IllegalFlow \"result\" High Low)",
+      "policy": "func 1 : H -> L\n"
+    },
+    {
+      "module": "basic/select",
+      "test_id": 3,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 1 : H -> H\n"
+    },
+    {
+      "module": "basic/sensitive-upgrade",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : L -> L\n"
+    },
+    {
+      "module": "basic/sensitive-upgrade",
+      "test_id": 1,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : L -> H\n"
+    },
+    {
+      "module": "basic/sensitive-upgrade",
+      "test_id": 2,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 0 (IllegalFlow \"result\" High Low)",
+      "policy": "func 0 : H -> L\n"
+    },
+    {
+      "module": "basic/sensitive-upgrade",
+      "test_id": 3,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : H -> H\n"
+    },
+    {
+      "module": "basic/sensitive-upgrade",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 1 : L -> L\n"
+    },
+    {
+      "module": "basic/sensitive-upgrade",
+      "test_id": 1,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 1 : L -> H\n"
+    },
+    {
+      "module": "basic/sensitive-upgrade",
+      "test_id": 2,
+      "expected": "UNSAT",
+      "verdict": "precision loss",
+      "error": "Validation error: InFunction 1 (IllegalFlow \"result\" High Low)",
+      "policy": "func 1 : H -> L\n"
+    },
+    {
+      "module": "basic/sensitive-upgrade",
+      "test_id": 3,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 1 : H -> H\n"
+    },
+    {
+      "module": "basic/sensitive-upgrade",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 2 : L -> L\n"
+    },
+    {
+      "module": "basic/sensitive-upgrade",
+      "test_id": 1,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 2 : L -> H\n"
+    },
+    {
+      "module": "basic/sensitive-upgrade",
+      "test_id": 2,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 2 (AtInstruction 3 (IllegalFlow \"return\" High Low))",
+      "policy": "func 2 : H -> L\n"
+    },
+    {
+      "module": "basic/sensitive-upgrade",
+      "test_id": 3,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 2 : H -> H\n"
+    },
+    {
+      "module": "basic/sensitive-upgrade",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 3 : L -> L\n"
+    },
+    {
+      "module": "basic/sensitive-upgrade",
+      "test_id": 1,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 3 : L -> H\n"
+    },
+    {
+      "module": "basic/sensitive-upgrade",
+      "test_id": 2,
+      "expected": "UNSAT",
+      "verdict": "precision loss",
+      "error": "Validation error: InFunction 3 (AtInstruction 3 (IllegalFlow \"return\" High Low))",
+      "policy": "func 3 : H -> L\n"
+    },
+    {
+      "module": "basic/sensitive-upgrade",
+      "test_id": 3,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 3 : H -> H\n"
+    },
+    {
+      "module": "basic/stack",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : L -> L\n"
+    },
+    {
+      "module": "basic/stack",
+      "test_id": 1,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : L -> H\n"
+    },
+    {
+      "module": "basic/stack",
+      "test_id": 2,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 0 (IllegalFlow \"result\" High Low)",
+      "policy": "func 0 : H -> L\n"
+    },
+    {
+      "module": "basic/stack",
+      "test_id": 3,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : H -> H\n"
+    },
+    {
+      "module": "basic/stack",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 1 : L L -> L L\n"
+    },
+    {
+      "module": "basic/stack",
+      "test_id": 1,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 1 : L L -> L H\n"
+    },
+    {
+      "module": "basic/stack",
+      "test_id": 2,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 1 : L L -> H L\n"
+    },
+    {
+      "module": "basic/stack",
+      "test_id": 3,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 1 : L L -> H H\n"
+    },
+    {
+      "module": "basic/stack",
+      "test_id": 4,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 1 (IllegalFlow \"result\" High Low)",
+      "policy": "func 1 : L H -> L L\n"
+    },
+    {
+      "module": "basic/stack",
+      "test_id": 5,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 1 : L H -> L H\n"
+    },
+    {
+      "module": "basic/stack",
+      "test_id": 6,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 1 (IllegalFlow \"result\" High Low)",
+      "policy": "func 1 : L H -> H L\n"
+    },
+    {
+      "module": "basic/stack",
+      "test_id": 7,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 1 : L H -> H H\n"
+    },
+    {
+      "module": "basic/stack",
+      "test_id": 8,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 1 (IllegalFlow \"result\" High Low)",
+      "policy": "func 1 : H L -> L L\n"
+    },
+    {
+      "module": "basic/stack",
+      "test_id": 9,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 1 (IllegalFlow \"result\" High Low)",
+      "policy": "func 1 : H L -> L H\n"
+    },
+    {
+      "module": "basic/stack",
+      "test_id": 10,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 1 : H L -> H L\n"
+    },
+    {
+      "module": "basic/stack",
+      "test_id": 11,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 1 : H L -> H H\n"
+    },
+    {
+      "module": "basic/stack",
+      "test_id": 12,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 1 (IllegalFlow \"result\" High Low)",
+      "policy": "func 1 : H H -> L L\n"
+    },
+    {
+      "module": "basic/stack",
+      "test_id": 13,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 1 (IllegalFlow \"result\" High Low)",
+      "policy": "func 1 : H H -> L H\n"
+    },
+    {
+      "module": "basic/stack",
+      "test_id": 14,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 1 (IllegalFlow \"result\" High Low)",
+      "policy": "func 1 : H H -> H L\n"
+    },
+    {
+      "module": "basic/stack",
+      "test_id": 15,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 1 : H H -> H H\n"
+    },
+    {
+      "module": "basic/stack",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 2 : L L -> L\n"
+    },
+    {
+      "module": "basic/stack",
+      "test_id": 1,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 2 : L L -> H\n"
+    },
+    {
+      "module": "basic/stack",
+      "test_id": 2,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 2 (IllegalFlow \"result\" High Low)",
+      "policy": "func 2 : L H -> L\n"
+    },
+    {
+      "module": "basic/stack",
+      "test_id": 3,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 2 : L H -> H\n"
+    },
+    {
+      "module": "basic/stack",
+      "test_id": 4,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 2 : H L -> L\n"
+    },
+    {
+      "module": "basic/stack",
+      "test_id": 5,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 2 : H L -> H\n"
+    },
+    {
+      "module": "basic/stack",
+      "test_id": 6,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 2 (IllegalFlow \"result\" High Low)",
+      "policy": "func 2 : H H -> L\n"
+    },
+    {
+      "module": "basic/stack",
+      "test_id": 7,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 2 : H H -> H\n"
+    },
+    {
+      "module": "basic/stack",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 3 : L -> L\n"
+    },
+    {
+      "module": "basic/stack",
+      "test_id": 1,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 3 : L -> H\n"
+    },
+    {
+      "module": "basic/stack",
+      "test_id": 2,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 3 (IllegalFlow \"result\" High Low)",
+      "policy": "func 3 : H -> L\n"
+    },
+    {
+      "module": "basic/stack",
+      "test_id": 3,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 3 : H -> H\n"
+    },
+    {
+      "module": "basic/termination-leak",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : L -> L\n"
+    },
+    {
+      "module": "basic/termination-leak",
+      "test_id": 1,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : L -> H\n"
+    },
+    {
+      "module": "basic/termination-leak",
+      "test_id": 2,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : H -> L\n"
+    },
+    {
+      "module": "basic/termination-leak",
+      "test_id": 3,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : H -> H\n"
+    },
+    {
+      "module": "basic/termination-leak",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 1 : L -> L\n"
+    },
+    {
+      "module": "basic/termination-leak",
+      "test_id": 1,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 1 : L -> H\n"
+    },
+    {
+      "module": "basic/termination-leak",
+      "test_id": 2,
+      "expected": "UNSAT",
+      "verdict": "precision loss",
+      "error": "Validation error: InFunction 1 (IllegalFlow \"result\" High Low)",
+      "policy": "func 1 : H -> L\n"
+    },
+    {
+      "module": "basic/termination-leak",
+      "test_id": 3,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 1 : H -> H\n"
+    },
+    {
+      "module": "basic/variable",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : L L -> L H\n"
+    },
+    {
+      "module": "complex/call_implicit",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : L -> L\n"
+    },
+    {
+      "module": "complex/call_implicit",
+      "test_id": 1,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : L -> H\n"
+    },
+    {
+      "module": "complex/call_implicit",
+      "test_id": 2,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 0 (IllegalFlow \"result\" High Low)",
+      "policy": "func 0 : H -> L\n"
+    },
+    {
+      "module": "complex/call_implicit",
+      "test_id": 3,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : H -> H\n"
+    },
+    {
+      "module": "complex/call_indirect-imported-function",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "not expressible",
+      "reason": "imports a function the host does not provide"
+    },
+    {
+      "module": "complex/call_indirect-imported-function",
+      "test_id": 1,
+      "expected": "SAT",
+      "verdict": "not expressible",
+      "reason": "imports a function the host does not provide"
+    },
+    {
+      "module": "complex/call_indirect-imported-function",
+      "test_id": 2,
+      "expected": "UNSAT",
+      "verdict": "not expressible",
+      "reason": "queries memory, tables or imports"
+    },
+    {
+      "module": "complex/call_indirect-imported-function",
+      "test_id": 3,
+      "expected": "SAT",
+      "verdict": "not expressible",
+      "reason": "queries memory, tables or imports"
+    },
+    {
+      "module": "complex/call_indirect-table-imported-function",
+      "test_id": 0,
+      "expected": "SAT",
+      "verdict": "not expressible",
+      "reason": "imports a function the host does not provide"
+    },
+    {
+      "module": "complex/call_indirect_implicit",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : L -> L\nglobal 0 : L\nglobal 1 : L\n"
+    },
+    {
+      "module": "complex/call_indirect_implicit",
+      "test_id": 1,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : L -> H\nglobal 0 : L\nglobal 1 : L\n"
+    },
+    {
+      "module": "complex/call_indirect_implicit",
+      "test_id": 2,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 0 (AtInstruction 3 (IllegalFlow \"call_indirect\" High Low))",
+      "policy": "func 0 : H -> L\nglobal 0 : L\nglobal 1 : L\n"
+    },
+    {
+      "module": "complex/call_indirect_implicit",
+      "test_id": 3,
+      "expected": "UNSAT",
+      "verdict": "precision loss",
+      "error": "Validation error: InFunction 0 (AtInstruction 3 (IllegalFlow \"call_indirect\" High Low))",
+      "policy": "func 0 : H -> H\nglobal 0 : L\nglobal 1 : L\n"
+    },
+    {
+      "module": "complex/deadcode-leak-v2",
+      "test_id": 2,
+      "expected": "UNSAT",
+      "verdict": "precision loss",
+      "error": "Validation error: InFunction 0 (IllegalFlow \"result\" High Low)",
+      "policy": "func 0 : H -> L\n"
+    },
+    {
+      "module": "complex/deadcode-leak-v3",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precision loss",
+      "error": "Validation error: InFunction 0 (AtInstruction 11 (IllegalFlow \"call_indirect\" High Low))",
+      "policy": "func 0 : H -> L\nglobal 0 : L\n"
+    },
+    {
+      "module": "complex/deadcode-leak",
+      "test_id": 2,
+      "expected": "UNSAT",
+      "verdict": "precision loss",
+      "error": "Validation error: InFunction 0 (IllegalFlow \"result\" High Low)",
+      "policy": "func 0 : H -> L\n"
+    },
+    {
+      "module": "complex/fib",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : L -> L\n"
+    },
+    {
+      "module": "complex/fib",
+      "test_id": 1,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : L -> H\n"
+    },
+    {
+      "module": "complex/fib",
+      "test_id": 2,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 0 (IllegalFlow \"result\" High Low)",
+      "policy": "func 0 : H -> L\n"
+    },
+    {
+      "module": "complex/fib",
+      "test_id": 3,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : H -> H\n"
+    },
+    {
+      "module": "complex/loop-ifthenelse",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : L -> L\n"
+    },
+    {
+      "module": "complex/loop-ifthenelse",
+      "test_id": 1,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : L -> H\n"
+    },
+    {
+      "module": "complex/loop-ifthenelse",
+      "test_id": 2,
+      "expected": "UNSAT",
+      "verdict": "precision loss",
+      "error": "Validation error: InFunction 0 (IllegalFlow \"result\" High Low)",
+      "policy": "func 0 : H -> L\n"
+    },
+    {
+      "module": "complex/loop-ifthenelse",
+      "test_id": 3,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : H -> H\n"
+    },
+    {
+      "module": "complex/loop-iterative-tainting",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : L -> L\n"
+    },
+    {
+      "module": "complex/loop-iterative-tainting",
+      "test_id": 1,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : L -> H\n"
+    },
+    {
+      "module": "complex/loop-iterative-tainting",
+      "test_id": 2,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 0 (IllegalFlow \"result\" High Low)",
+      "policy": "func 0 : H -> L\n"
+    },
+    {
+      "module": "complex/loop-iterative-tainting",
+      "test_id": 3,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : H -> H\n"
+    },
+    {
+      "module": "complex/loop-the-loop",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : L L -> L\n"
+    },
+    {
+      "module": "complex/return-ctx",
+      "test_id": 0,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 0 (AtInstruction 3 (IllegalFlow \"return\" High Low))",
+      "policy": "func 0 : H -> L\n"
+    },
+    {
+      "module": "complex/return-ctx",
+      "test_id": 1,
+      "expected": "UNSAT",
+      "verdict": "precision loss",
+      "error": "Validation error: InFunction 1 (AtInstruction 17 (IllegalFlow \"return\" High Low))",
+      "policy": "func 1 : H -> L\n"
+    },
+    {
+      "module": "complex/six-stores",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "not expressible",
+      "reason": "queries memory, tables or imports"
+    },
+    {
+      "module": "complex/while-store",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "not expressible",
+      "reason": "queries memory, tables or imports"
+    },
+    {
+      "module": "examples/br_if-join",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precision loss",
+      "error": "Validation error: InFunction 0 (AtInstruction 16 (IllegalFlow \"local.tee\" High Low))",
+      "policy": "func 0 : H L -> L\n"
+    },
+    {
+      "module": "examples/call",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precision loss",
+      "error": "Validation error: InFunction 0 (IllegalFlow \"result\" High Low)",
+      "policy": "func 0 : H -> L\n"
+    },
+    {
+      "module": "examples/confidentiality-integrity",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precision loss",
+      "error": "Validation error: InFunction 0 (IllegalFlow \"result\" High Low)",
+      "policy": "func 0 : L H -> L\n"
+    },
+    {
+      "module": "examples/confidentiality-integrity",
+      "test_id": 1,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 0 (IllegalFlow \"result\" High Low)",
+      "policy": "func 0 : H L -> L\n"
+    },
+    {
+      "module": "examples/fib",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precision loss",
+      "error": "Validation error: InFunction 1 (IllegalFlow \"result\" High Low)",
+      "policy": "func 1 : H L -> H L\n"
+    },
+    {
+      "module": "examples/join-implicit-flow-fixed",
+      "test_id": 0,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 0 (IllegalFlow \"result\" High Low)",
+      "policy": "func 0 : H -> L\n"
+    },
+    {
+      "module": "examples/join-implicit-flow-fixed2",
+      "test_id": 0,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 0 (IllegalFlow \"result\" High Low)",
+      "policy": "func 0 : H -> L\n"
+    },
+    {
+      "module": "examples/join-implicit-flow",
+      "test_id": 0,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 0 (IllegalFlow \"result\" High Low)",
+      "policy": "func 0 : H -> L\n"
+    },
+    {
+      "module": "examples/join",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precision loss",
+      "error": "Validation error: InFunction 0 (AtInstruction 4 (IllegalFlow \"return\" High Low))",
+      "policy": "func 0 : H L -> L\n"
+    },
+    {
+      "module": "examples/scope-extend",
+      "test_id": 0,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 0 (AtInstruction 4 (IllegalFlow \"return\" High Low))",
+      "policy": "func 0 : H -> L\n"
+    },
+    {
+      "module": "examples/tainted-loop-counter",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : L -> L\n"
+    },
+    {
+      "module": "examples/tainted-loop-counter",
+      "test_id": 1,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : L -> H\n"
+    },
+    {
+      "module": "examples/tainted-loop-counter",
+      "test_id": 2,
+      "expected": "SAT",
+      "verdict": "caught statically",
+      "error": "Validation error: InFunction 0 (IllegalFlow \"result\" High Low)",
+      "policy": "func 0 : H -> L\n"
+    },
+    {
+      "module": "examples/tainted-loop-counter",
+      "test_id": 3,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : H -> H\n"
+    },
+    {
+      "module": "examples/while-if-while-if",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : L -> L\n"
+    },
+    {
+      "module": "examples/while-if-while-if",
+      "test_id": 1,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : L -> H\n"
+    },
+    {
+      "module": "examples/while-if-while-if",
+      "test_id": 2,
+      "expected": "UNSAT",
+      "verdict": "precision loss",
+      "error": "Validation error: InFunction 0 (IllegalFlow \"result\" High Low)",
+      "policy": "func 0 : H -> L\n"
+    },
+    {
+      "module": "examples/while-if-while-if",
+      "test_id": 3,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : H -> H\n"
+    },
+    {
+      "module": "figures-final/fig1-fixed",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "not expressible",
+      "reason": "queries memory, tables or imports"
+    },
+    {
+      "module": "figures-final/fig1-fixed",
+      "test_id": 1,
+      "expected": "UNSAT",
+      "verdict": "not expressible",
+      "reason": "queries memory, tables or imports"
+    },
+    {
+      "module": "figures-final/fig1-fixed",
+      "test_id": 2,
+      "expected": "UNSAT",
+      "verdict": "not expressible",
+      "reason": "queries memory, tables or imports"
+    },
+    {
+      "module": "figures-final/fig1-fixed",
+      "test_id": 3,
+      "expected": "UNSAT",
+      "verdict": "not expressible",
+      "reason": "queries memory, tables or imports"
+    },
+    {
+      "module": "figures-final/fig1.graph",
+      "test_id": null,
+      "expected": "UNSAT",
+      "verdict": "not expressible",
+      "reason": "no function named"
+    },
+    {
+      "module": "figures-final/fig1.graph",
+      "test_id": null,
+      "expected": "UNSAT",
+      "verdict": "not expressible",
+      "reason": "no function named"
+    },
+    {
+      "module": "figures-final/fig1",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "not expressible",
+      "reason": "queries memory, tables or imports"
+    },
+    {
+      "module": "figures-final/fig1",
+      "test_id": 1,
+      "expected": "UNSAT",
+      "verdict": "not expressible",
+      "reason": "queries memory, tables or imports"
+    },
+    {
+      "module": "figures-final/fig1",
+      "test_id": 2,
+      "expected": "UNSAT",
+      "verdict": "not expressible",
+      "reason": "queries memory, tables or imports"
+    },
+    {
+      "module": "figures-final/fig1",
+      "test_id": 3,
+      "expected": "UNSAT",
+      "verdict": "not expressible",
+      "reason": "queries memory, tables or imports"
+    },
+    {
+      "module": "figures-final/fig2.graph",
+      "test_id": null,
+      "expected": "UNSAT",
+      "verdict": "not expressible",
+      "reason": "no function named"
+    },
+    {
+      "module": "figures-final/fig2.graph",
+      "test_id": null,
+      "expected": "UNSAT",
+      "verdict": "not expressible",
+      "reason": "no function named"
+    },
+    {
+      "module": "figures-final/fig2",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "not expressible",
+      "reason": "queries memory, tables or imports"
+    },
+    {
+      "module": "figures-final/fig2",
+      "test_id": 1,
+      "expected": "UNSAT",
+      "verdict": "not expressible",
+      "reason": "queries memory, tables or imports"
+    },
+    {
+      "module": "figures-final/fig4",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "not expressible",
+      "reason": "queries memory, tables or imports"
+    },
+    {
+      "module": "figures-final/fig4",
+      "test_id": 1,
+      "expected": "UNSAT",
+      "verdict": "not expressible",
+      "reason": "queries memory, tables or imports"
+    },
+    {
+      "module": "rapid/1-ni-assign-to-high",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : H L -> L\n"
+    },
+    {
+      "module": "rapid/10-ni-rsa-exponentiation",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "not expressible",
+      "reason": "Decode error: unsupported: memory import",
+      "policy": "func 0 : L L H -> L L\nload-default : H\n"
+    },
+    {
+      "module": "rapid/2-ni-branch-on-high-twice",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "not expressible",
+      "reason": "queries memory, tables or imports"
+    },
+    {
+      "module": "rapid/2-ni-branch-on-high",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "not expressible",
+      "reason": "queries memory, tables or imports"
+    },
+    {
+      "module": "rapid/3-ni-high-guard-equal-branches",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precision loss",
+      "error": "Validation error: InFunction 0 (IllegalFlow \"result\" High Low)",
+      "policy": "func 0 : H L -> L\n"
+    },
+    {
+      "module": "rapid/5-ni-temp-impl-flow",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "not expressible",
+      "reason": "queries memory, tables or imports"
+    },
+    {
+      "module": "rapid/6-ni-branch-assign-equal-val",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precision loss",
+      "error": "Validation error: InFunction 0 (IllegalFlow \"result\" High Low)",
+      "policy": "func 0 : H L -> L\n"
+    },
+    {
+      "module": "rapid/7-ni-explicit-flow",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : H H L L -> L\n"
+    },
+    {
+      "module": "rapid/8-ni-explicit-flow-while",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "precise",
+      "error": null,
+      "policy": "func 0 : H L L -> L\n"
+    },
+    {
+      "module": "rapid/9-ni-equal-output",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "not expressible",
+      "reason": "queries memory, tables or imports"
+    },
+    {
+      "module": "integrity/four-element-lattice",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "not expressible",
+      "reason": "integrity"
+    },
+    {
+      "module": "integrity/imported-function",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "not expressible",
+      "reason": "integrity"
+    },
+    {
+      "module": "integrity/imported-function",
+      "test_id": 0,
+      "expected": "UNSAT",
+      "verdict": "not expressible",
+      "reason": "integrity"
+    }
+  ]
+}
