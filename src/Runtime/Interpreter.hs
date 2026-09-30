@@ -151,15 +151,17 @@ data FuncInst (mod :: ModuleShape) (ft :: LabelledFuncType) where
     -}
     GhostFunc :: FuncInst mod ft
     {- | A host function, which the module imports at a type its policy labels while the host's
-    own type is public throughout: the two witnesses say the value types agree, and the
-    boundary retags the words each way.
+    own type is public throughout. The host is called only from a public context (the import's
+    bound is 'Low) and only with public arguments (they flow into the host's public
+    parameters), since a host function's effects are observable; its results may be declared
+    at any level, and the boundary retags the words on the way back.
     -}
     HostFunc ::
         (ModuleMems mod ~ (mem ': mems)) =>
         WasiFunc ('LabelledFuncType 'Low hostParams hostResults) ->
-        SameValueTypes ps hostParams ->
+        SegmentFlows ps hostParams ->
         SameValueTypes hostResults rs ->
-        FuncInst mod ('LabelledFuncType bound ps rs)
+        FuncInst mod ('LabelledFuncType 'Low ps rs)
 
 -- | The instance of a module's function index space: one 'FuncInst' per type in 'ModuleFuncs'.
 data FuncSpaceInst (mod :: ModuleShape) (fts :: [LabelledFuncType]) where
@@ -506,7 +508,7 @@ enterCall funcs store locals flows witness ix stack rest control = case getFunc 
     HostFunc wasiFunc argsAgree resultsAgree ->
         let (args, below) = splitStack witness stack
             suspended = Suspended (appendFromSameValues resultsAgree) locals below rest control
-         in Right (HostCall (HostRequest wasiFunc (retagStack argsAgree (relabelStack flows args)) store resultsAgree suspended))
+         in Right (HostCall (HostRequest wasiFunc (relabelStack argsAgree (relabelStack flows args)) store resultsAgree suspended))
     GhostFunc -> Left InformationFlowViolation
   where
     depth = activationDepth control + 1
@@ -758,7 +760,7 @@ runFunction tm (WasmFunc (Function params declared body)) args = do
     locals = seedLocals (segmentSelf params) params declared args
 runFunction tm (HostFunc wasiFunc argsAgree resultsAgree) args =
     let store = moduleToStore tm
-     in Right (NeedsHost (HostRequest wasiFunc (retagStack argsAgree args) store resultsAgree (Suspended (appendNilSameValues resultsAgree) noLocals VNil INil EntryBoundary)))
+     in Right (NeedsHost (HostRequest wasiFunc (relabelStack argsAgree args) store resultsAgree (Suspended (appendNilSameValues resultsAgree) noLocals VNil INil EntryBoundary)))
 runFunction _ GhostFunc _ = Left InformationFlowViolation
 
 {- *** Numeric dispatch ***

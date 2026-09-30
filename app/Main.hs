@@ -1,7 +1,7 @@
 module Main where
 
 import Control.Exception (IOException, try)
-import Control.Monad (unless)
+import Control.Monad (unless, when)
 import Data.Bifunctor (first)
 import Data.Bits ((.|.))
 import Data.ByteString.Lazy qualified as BL
@@ -16,7 +16,7 @@ import Codec.Wasm (decodeModule)
 import Data.Map.Strict qualified as Map
 import Data.Text.IO qualified as TIO
 import Runtime.Instantiate (instantiate)
-import Runtime.Module (RunError (..), SomeModuleInst, Value (..), exportSignature, readGlobalExport, renderValue)
+import Runtime.Module (RunError (..), SomeModuleInst, Value (..), exportSignature, exportedGlobalLevel, exportedResultLevels, readGlobalExport, renderValue)
 import Runtime.Wasi (Completion (..), DescriptorLevels (..), Preopen (..), WasiConfig (..), runWithWasi)
 import Syntax.Module (SomeModule)
 import Syntax.Types (FuncTypeOf (..), ValType (..))
@@ -33,7 +33,9 @@ main = do
             Right (options, [path]) -> withValidated options path (\_ _ -> putStrLn "ok")
             _ -> die usage
         ("get" : rest) -> case parseOptions rest of
-            Right (options, [path, name]) -> withModule options path $ \_ wasmModule ->
+            Right (options, [path, name]) -> withModule options path $ \_ wasmModule -> do
+                when (exportedGlobalLevel wasmModule (T.pack name) == Just High) $
+                    die ("the global " ++ name ++ " is secret under the policy, so it is not shown")
                 either (die . describeRunError) (putStrLn . renderValue) (readGlobalExport wasmModule (T.pack name))
             _ -> die usage
         ("invoke" : rest) -> case parseOptions rest of
@@ -41,6 +43,10 @@ main = do
                 withModule options path $ \policy wasmModule ->
                     case parseArguments wasmModule (T.pack name) (map T.pack rawArgs) of
                         Left err -> die err
+                        Right _
+                            | Just levels <- exportedResultLevels wasmModule (T.pack name)
+                            , High `elem` levels ->
+                                die ("the results of " ++ name ++ " are secret under the policy, so they are not delivered")
                         Right values -> runUnderWasi (configFor options policy path []) wasmModule (T.pack name) values (mapM_ (putStrLn . renderValue))
             _ -> die usage
         ("run" : rest) -> case parseOptions rest of
@@ -68,6 +74,9 @@ usage =
         , "                                statement of the same name)"
         , "          --dir HOST[::GUEST]   preopen a host directory under the guest name (default: the same)"
         , "          --env NAME=VALUE      an environment variable for the program"
+        , ""
+        , "The embedding program observes what invoke and get deliver, so both refuse an export"
+        , "whose results, or a global whose level, the policy declares secret."
         , ""
         , "Arguments to invoke are typed by the export: integers (decimal or 0x…) for i32/i64;"
         , "decimals, inf, -inf, nan, -nan or a bit pattern nan:0x… for f32/f64. WASI Preview 1"

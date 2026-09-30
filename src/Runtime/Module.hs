@@ -16,6 +16,8 @@ module Runtime.Module (
     Invocation (..),
     SomeHostRequest (..),
     exportSignature,
+    exportedResultLevels,
+    exportedGlobalLevel,
     invokeExport,
     readGlobalExport,
     continueWith,
@@ -135,6 +137,22 @@ continueWith shapeS funcs exports rsS config = do
         Finished store results ->
             Returned (SomeModuleInst shapeS (storeToModule funcs store) exports) (declaredOrder (toValues rsS results))
         AwaitingHost request -> CalledHost (SomeHostRequest shapeS funcs exports rsS request)
+
+{- | The levels of an exported function's results, in declared order. Whoever invokes the
+  export observes them, so a driver that enforces the policy delivers only public ones.
+-}
+exportedResultLevels :: SomeModuleInst -> Text -> Maybe [SecLevel]
+exportedResultLevels (SomeModuleInst shapeS _ exports) name = do
+    FunctionIdx idx <- exportedFuncIndex name exports
+    SomeFuncRef _ _ rsS _ <- lookupFuncRef (funcTypesSing shapeS) idx
+    pure (declaredOrder [level | _ :~ level <- fromSing rsS])
+
+-- | The level of an exported global, which whoever reads it observes (see 'exportedResultLevels').
+exportedGlobalLevel :: SomeModuleInst -> Text -> Maybe SecLevel
+exportedGlobalLevel (SomeModuleInst shapeS _ exports) name = do
+    GlobalIdx idx <- exportedGlobalIndex name exports
+    SomeGlobalRef _ (_ :%~ level) _ <- lookupGlobalRef (globalTypesSing shapeS) idx
+    pure (fromSing level)
 
 -- | The current value of an exported global (the spec's @get@ action).
 readGlobalExport :: SomeModuleInst -> Text -> Either RunError Value

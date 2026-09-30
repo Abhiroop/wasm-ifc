@@ -181,7 +181,12 @@ spec = do
         it "regions that overlap must agree" $ do
             elabRunWithPolicy "region 0 8 : H\nregion 4 12 : L" (withMemory [] [] [] []) [] `shouldSatisfy` errorContaining "PolicyConflict \"region\""
             elabRunWithPolicy "region 0 8 : H\nregion 4 12 : H" (withMemory [] [] [] []) [] `shouldBe` Right []
-        it "an import may be declared at levels of the policy's choosing; the host stays public" $ do
+        it "an import from the host keeps a public bound and public parameters" $ do
+            elabRunWithPolicy "import wasi_snapshot_preview1.fd_write : H L L L -> L" (wasiModule fdWriteImport [Const SI32 0] [I32]) []
+                `shouldSatisfy` errorContaining "PolicyImportNotPublic \"wasi_snapshot_preview1.fd_write\""
+            elabRunWithPolicy "import wasi_snapshot_preview1.fd_write : L L L L -{H}-> H" (wasiModule fdWriteImport [Const SI32 0] [I32]) []
+                `shouldSatisfy` errorContaining "PolicyImportNotPublic"
+        it "an import's results may be declared secret; the host stays public" $ do
             elabRunWithPolicy "import wasi_snapshot_preview1.fd_write : L L L L -> H" (wasiModule fdWriteImport [Const SI32 1, Const SI32 0, Const SI32 0, Const SI32 8, Call (FunctionIdx 0)] [I32]) []
                 `shouldSatisfy` errorContaining "IllegalFlow \"result\""
             elabRunWithPolicy "import wasi_snapshot_preview1.fd_write : L L L L -> H" (wasiModule fdWriteImport [Const SI32 1, Const SI32 0, Const SI32 0, Const SI32 8, Call (FunctionIdx 0), Drop, Const SI32 0] [I32]) []

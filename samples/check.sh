@@ -64,6 +64,27 @@ checkTrap () {
     fi
 }
 
+# checkPolicy <policy in samples/policy> <wasm> <func> <output-substring> [args...]
+# The same as check, under a policy (samples/policy/*.policy); the output must contain the text.
+checkPolicy () {
+    local policy=$1 file=$2 func=$3 needle=$4; shift 4
+    local out; out=$("$BIN" invoke --policy "samples/policy/$policy" "samples/wat/$file" "$func" "$@" 2>&1)
+    local label; label=$(printf '%-22s %-10s %s' "$file" "$func" "$policy")
+    if [[ "$out" == *"$needle"* ]]
+        then printf 'ok   %s -> %s\n' "$label" "$needle"; pass=$((pass+1))
+        else printf 'FAIL %s : got %q (want %q)\n' "$label" "$out" "$needle"; fail=$((fail+1))
+    fi
+}
+# checkRunPolicy <policy in samples/policy> <wasm in samples/wasi> <output-substring>
+checkRunPolicy () {
+    local policy=$1 file=$2 needle=$3
+    local out; out=$("$BIN" run --policy "samples/policy/$policy" "samples/wasi/$file" 2>&1)
+    local label; label=$(printf '%-22s %-10s %s' "$file" "run" "$policy")
+    if [[ "$out" == *"$needle"* ]]
+        then printf 'ok   %s -> %s\n' "$label" "$needle"; pass=$((pass+1))
+        else printf 'FAIL %s : got %q (want %q)\n' "$label" "$out" "$needle"; fail=$((fail+1))
+    fi
+}
 # checkRun <wasm in samples/wasi> <expected stdout> <expected exit code>
 # A WASI program: its _start export runs under the host; stdout and the exit code are checked.
 checkRun () {
@@ -114,6 +135,13 @@ checkTrap divs.wasm divs IntegerDivideByZero       7 0
 checkRun hello.wasm "Hello, world!" 0
 checkRun exit.wasm  ""              7
 checkTrap oob.wasm  oob  OutOfBoundsMemoryAccess    1000000
+
+# Information flow at the boundary: the embedder observes an export's results, and the host
+# every argument of an import.
+checkPolicy public-result.policy args.wasm callsub 7 10 3
+checkPolicy secret-result.policy args.wasm callsub "are secret under the policy, so they are not delivered" 10 3
+checkRunPolicy secret-import-argument.policy hello.wasm PolicyImportNotPublic
+checkRunPolicy secret-import-bound.policy    hello.wasm PolicyImportNotPublic
 
 echo "-----"
 if [ -n "$WASMTIME" ]; then echo "wasmtime agreed on $oracle checks"; else echo "(wasmtime not installed: no differential oracle)"; fi

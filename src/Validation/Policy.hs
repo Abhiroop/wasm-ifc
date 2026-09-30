@@ -46,7 +46,9 @@
 
   The arrow may carry a level, @-{H}->@: the function's bound, the most secret context it may
   be called from (SecWasm's @→ℓ@; see 'Syntax.TypesIFC.LabelledFuncType'). A plain @->@ is
-  @-{L}->@. A function's results must be at least as secret as its bound.
+  @-{L}->@. A function's results must be at least as secret as its bound. An import from the
+  host must keep the bound 'Low' and public parameters, since whatever the host does with them
+  is observable; its results may be declared secret.
   Annotations can also live in the source program, as calls to an import module named @ifc@
   (the /ghost/ functions): a plain runtime runs them through a shim of identities and plain
   accesses, and this stage rewrites every call to one into the instruction it stands for, so
@@ -174,6 +176,10 @@ data PolicyError
       PolicySectionNotText
     | -- | a function whose results are below its bound
       PolicyResultsBelowBound Text
+    | {- | a host import declared with a secret bound or a secret parameter: the host's effects
+      are observable, so it may be called only from a public context with public arguments
+      -}
+      PolicyImportNotPublic Text
     | -- | an @ifc@ import with a name this stage does not know, or the wrong type for it
       PolicyGhostType Text
     | -- | an @ifc@ import that is exported, started or placed in a table
@@ -389,6 +395,7 @@ assemble policy m = do
     mapM_ (knownExport . fst) (Map.toList policy.exportedFunctions)
     mapM_ (knownExport . fst) (Map.toList policy.loadDefaultsByExport)
     mapM_ knownImport (Map.keys policy.importedFunctions)
+    mapM_ publicImport (Map.toList policy.importedFunctions)
     mapM_ (knownGlobal . fst) (Map.toList policy.globalsByIndex)
     mapM_ knownExportedGlobal (Map.keys policy.exportedGlobals)
     functionTypes <- traverse functionType (zip [0 ..] signatures)
@@ -432,6 +439,8 @@ assemble policy m = do
         _ -> Nothing
     knownFunction i = when (fromIntegral i >= length signatures) (Left (PolicyUnknown ("func " <> T.pack (show i))))
     knownExport name = when (null [() | e <- m.exports, e.name == name, ExportFunc _ <- [e.desc]]) (Left (PolicyUnknown ("export " <> name)))
+    publicImport ((modName, field), fl) =
+        when (modName /= ghostModuleName && (fl.bound /= Low || any (/= Low) fl.params)) (Left (PolicyImportNotPublic (modName <> "." <> field)))
     knownImport (modName, field) = when (null [() | RawImport mn f _ <- m.imports, mn == modName, f == field]) (Left (PolicyUnknown ("import " <> modName <> "." <> field)))
     knownGlobal i = when (fromIntegral i >= length m.globals) (Left (PolicyUnknown ("global " <> T.pack (show i))))
     knownExportedGlobal name = when (null [() | e <- m.exports, e.name == name, ExportGlobal _ <- [e.desc]]) (Left (PolicyUnknown ("export global " <> name)))

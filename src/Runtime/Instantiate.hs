@@ -28,7 +28,7 @@ import Runtime.Trap (Trap)
 import Syntax.Functions (FunctionSpace (..))
 import Syntax.Module (DataSegment (..), ElementSegment (..), Module (..), SomeModule (..))
 import Syntax.Types
-import Syntax.TypesIFC (LabelledFuncType (..), SLabelledFuncType (..), SSecLevel (..), SecLevel (..), decideSameValueTypes)
+import Syntax.TypesIFC (LabelledFuncType (..), SLabelledFuncType (..), SSecLevel (..), SecLevel (..), decideSameValueTypes, decideSegmentFlows)
 import Validation.Policy (ghostModuleName)
 import Validation.Reflect (NonEmptyMems (..), memsNonEmpty)
 import Validation.Shape
@@ -38,6 +38,10 @@ data InstantiationError
       UnsupportedImport Text Text
     | -- | the import's declared type is not the host function's
       ImportTypeMismatch Text
+    | {- | the policy declares an import callable from a secret context or with secret arguments,
+      which the host, whose effects are observable, cannot be
+      -}
+      ImportNotPublic Text
     | -- | a WASI import requires the module to have a memory
       WasiNeedsMemory
     | -- | a data segment does not fit in memory 0 (or there is no memory)
@@ -67,7 +71,7 @@ instantiate (SomeModule shapeS m) = case shapeS of
 link :: Maybe (NonEmptyMems (ModuleMems shape)) -> Sing fts -> FunctionSpace shape fts -> Either InstantiationError (FuncSpaceInst shape fts)
 link _ SNil NoFunctions = Right FsNil
 link mems (SCons _ rest) (Defined f more) = FsCons (WasmFunc f) <$> link mems rest more
-link mems (SCons (SLabelledFuncType _ psS rsS) rest) (Imported moduleName fieldName more)
+link mems (SCons (SLabelledFuncType boundS psS rsS) rest) (Imported moduleName fieldName more)
     | moduleName == ghostModuleName = FsCons GhostFunc <$> link mems rest more
     | moduleName /= wasiModuleName = Left (UnsupportedImport moduleName fieldName)
     | otherwise = case resolveWasiImport fieldName of
@@ -76,10 +80,13 @@ link mems (SCons (SLabelledFuncType _ psS rsS) rest) (Imported moduleName fieldN
             -- Every host function is bound at public (its type is 'PublicFunc'); the match on the
             -- bound is what tells the type checker so, since 'SomeWasiFunc' hides the type.
             SLabelledFuncType SLow hostPsS hostRsS -> do
-                argsAgree <- note (ImportTypeMismatch fieldName) (decideSameValueTypes psS hostPsS)
+                _ <- note (ImportTypeMismatch fieldName) (decideSameValueTypes psS hostPsS)
                 resultsAgree <- note (ImportTypeMismatch fieldName) (decideSameValueTypes hostRsS rsS)
+                argsPublic <- note (ImportNotPublic fieldName) (decideSegmentFlows psS hostPsS)
                 NonEmptyMems <- note WasiNeedsMemory mems
-                FsCons (HostFunc wasiFunc argsAgree resultsAgree) <$> link mems rest more
+                case boundS of
+                    SLow -> FsCons (HostFunc wasiFunc argsPublic resultsAgree) <$> link mems rest more
+                    SHigh -> Left (ImportNotPublic fieldName)
             SLabelledFuncType SHigh _ _ -> Left (ImportTypeMismatch fieldName)
 
 -- | Every memory at its declared minimum size, from the shape.
