@@ -22,6 +22,7 @@ import Data.Text qualified as T
 import Data.Word (Word64)
 import GHC.Float (castDoubleToWord64, castFloatToWord32, castWord32ToFloat, castWord64ToDouble)
 import System.Directory (createDirectoryIfMissing, doesFileExist, findExecutable, getTemporaryDirectory)
+import System.Environment (lookupEnv)
 import System.Exit (ExitCode (..))
 import System.FilePath ((<.>), (</>))
 import System.Process (readProcessWithExitCode)
@@ -33,7 +34,8 @@ import Runtime.Instantiate (InstantiationError (..), instantiate)
 import Runtime.Module (Invocation (..), RunError (..), SomeModuleInst, Value (..), invokeExport, readGlobalExport, valueType)
 import Runtime.Trap (Trap (..))
 import Syntax.Types (ValType (..))
-import Validation.Elaborate (elaborateModule)
+import Validation.Elaborate (elaborateModuleWith)
+import Validation.Policy (Policy (..), Restrictions (..), emptyPolicy)
 
 {- | Assertions we know we cannot meet, by script and line, with the reason. They are reported
   as skipped, not failed, so a regression elsewhere still shows.
@@ -316,12 +318,19 @@ runCommand dir state cmd = case cmd.kind of
                     | otherwise -> Failed ("rejected at the wrong stage: " ++ describeRejection rejection)
                 Right _ -> Failed ("accepted a module the spec rejects: " ++ maybe "" T.unpack cmd.trapText)
 
+{- | Decode, validate and instantiate a module. With @WASM_IFC_SECWASM_RESTRICTIONS@ set in the
+  environment, validation applies SecWasm's restrictions ("Validation.Policy").
+-}
 loadModule :: FilePath -> IO (Either Rejection SomeModuleInst)
 loadModule path = do
     bytes <- BL.readFile path
+    restricted <- lookupEnv "WASM_IFC_SECWASM_RESTRICTIONS"
+    let policy = case restricted of
+            Nothing -> emptyPolicy
+            Just _ -> emptyPolicy {restrictions = SecWasmRestrictions}
     pure $ do
         raw <- first AtDecode (decodeModule bytes)
-        validated <- first (AtValidation . show) (elaborateModule raw)
+        validated <- first (AtValidation . show) (elaborateModuleWith policy raw)
         first AtInstantiation (instantiate validated)
 
 -- | Perform an action: @invoke@ an exported function, or @get@ an exported global.

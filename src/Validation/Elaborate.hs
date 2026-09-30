@@ -43,6 +43,7 @@ import Syntax.Instructions (
     ConvertOp (..),
     CountOp (..),
     Expr (..),
+    FallThrough (..),
     FloatBinOp (..),
     FloatUnOp (..),
     Instr (..),
@@ -52,7 +53,7 @@ import Syntax.Instructions (
 import Syntax.Module
 import Syntax.Types
 import Syntax.TypesIFC
-import Validation.Policy (Assembled (..), Policy, PolicyError, assemble, emptyPolicy, modulePolicy)
+import Validation.Policy (Assembled (..), Policy, PolicyError, Restrictions (..), assemble, emptyPolicy, modulePolicy)
 import Validation.Ref (resolveLocal)
 import Validation.Reflect
 import Validation.Shape
@@ -146,6 +147,8 @@ data ElabEnv (shape :: ModuleShape) (ret :: LabelledResultType) (locals :: [Labe
     -- ^ the level a load declares when nothing annotates it (see "Validation.Policy")
     , declassifyAllowed :: Bool
     -- ^ whether the policy enables 'Declassify'
+    , restrictions :: Restrictions
+    -- ^ whether calls and @br_if@ follow SecWasm's restrictions (see "Validation.Policy")
     }
 
 {- | The result of elaborating a whole instruction sequence that started from pc stack @pcIn@
@@ -377,14 +380,16 @@ elabInstr env pcsIn@(SCons pc _) stackIn instr = case instr of
                 SomeSing (SLabelledFuncType boundS psS rsS) -> do
                     SomeCoercion sS flows witness <- prefixFlows "call_indirect" psS rest
                     calledFrom <- requireFlow "call_indirect" (sJoin pc lidx) boundS
-                    Right (Produces (sameLengthAs pcsIn) pcsIn (rsS %++ sS) (ICallIndirect calledFrom flows witness (SLabelledFuncType boundS psS rsS)))
+                    atCallPc <- argumentsAtCallPc env "call_indirect" pc psS
+                    Right (Produces (sameLengthAs pcsIn) pcsIn (rsS %++ sS) (ICallIndirect calledFrom flows atCallPc witness (SLabelledFuncType boundS psS rsS)))
         _ -> Left (StackUnderflow "call_indirect")
     Call (FunctionIdx f) -> case lookupFuncRef (funcTypesSing (env.shape)) f of
         Nothing -> Left (IndexOutOfRange Functions f)
         Just (SomeFuncRef boundS psS rsS fix) -> do
             SomeCoercion sS flows witness <- prefixFlows "call" psS stackIn
             calledFrom <- requireFlow "call" pc boundS
-            Right (Produces (sameLengthAs pcsIn) pcsIn (rsS %++ sS) (ICall calledFrom flows witness fix))
+            atCallPc <- argumentsAtCallPc env "call" pc psS
+            Right (Produces (sameLengthAs pcsIn) pcsIn (rsS %++ sS) (ICall calledFrom flows atCallPc witness fix))
     {- Integer bitwise / shift / count (integer types only) -}
     And st -> do
         isInt <- requireInt st
@@ -494,9 +499,11 @@ elabInstr env pcsIn@(SCons pc _) stackIn instr = case instr of
             case mkBranchTarget (sJoin pc lc) (env.labels) pcsIn l of
                 Nothing -> Left (IndexOutOfRange Labels l)
                 Just (SomeBranchTarget rsS pcsOut same target) -> do
-                    SomeCoercion _ flows witness <- prefixFlows "br_if" rsS rest
+                    SomeCoercion sS flows witness <- prefixFlows "br_if" rsS rest
                     carried <- requireCarried "br_if" (sJoin pc lc) rsS
-                    Right (Produces same pcsOut rest (IBrIf carried flows witness target))
+                    Right $ case env.restrictions of
+                        LiftFree -> Produces same pcsOut rest (IBrIf carried flows witness KeepsLevels target)
+                        SecWasmRestrictions -> Produces same pcsOut (rsS %++ sS) (IBrIf carried flows witness TakesTargetType target)
         _ -> Left (StackUnderflow "br_if")
     BrTable targets (LabelIdx d) -> case stackIn of
         SCons (sc :%~ lc) rest -> case decideEquality sc SI32 of
@@ -515,6 +522,14 @@ elabInstr env pcsIn@(SCons pc _) stackIn instr = case instr of
         carried <- requireCarried "return" pc (env.results)
         Right (Transfers (raiseAllSameLength pc pcsIn) (sRaiseAll pc pcsIn) (IReturn carried flows witness))
     Unreachable -> Right (Transfers (sameLengthAs pcsIn) pcsIn IUnreachable)
+
+{- | The arguments of a call under the policy's restrictions: at any level without them, at
+  least the pc at the call with them.
+-}
+argumentsAtCallPc :: ElabEnv shape ret locals labels -> Text -> Sing (pc :: SecLevel) -> Sing (ps :: [LabelledValType]) -> Either ElabError (ArgumentsAtCallPc pc ps)
+argumentsAtCallPc env name pc psS = case env.restrictions of
+    LiftFree -> Right ArgumentsAtAnyLevel
+    SecWasmRestrictions -> ArgumentsAtLeastPc <$> requireCarried name pc psS
 
 -- | Push a label's result type onto the elaboration environment's label context.
 
@@ -1104,7 +1119,7 @@ elaborateModuleWith given raw = do
     let m = assembled.annotated
     case reflectCtx assembled.functionTypes assembled.globalTypes memTypes tableLimits (length m.dataSegments) of
         SomeModuleShape ctxS@(SModuleShape ftsS gsS msS tsS _) -> do
-            functions <- elaborateFuncs ctxS (m.types) assembled.declassify ftsS (zip assembled.loadDefaults (map Left m.imports ++ map Right m.functions))
+            functions <- elaborateFuncs ctxS (m.types) assembled.declassify assembled.typingRestrictions ftsS (zip assembled.loadDefaults (map Left m.imports ++ map Right m.functions))
             globals <- elaborateGlobals gsS (m.globals)
             dataSegments <- traverse (elaborateData (memsNonEmpty msS)) (zip [0 ..] m.dataSegments)
             elementSegments <- traverse (elaborateElements ftsS (tablesNonEmpty tsS)) (zip [0 ..] m.elementSegments)
@@ -1161,29 +1176,31 @@ elaborateFuncs ::
     SModuleShape shape ->
     [FuncType] ->
     Bool ->
+    Restrictions ->
     Sing fts ->
     [(SecLevel, Either RawImport RawFunction)] ->
     Either ElabError (FunctionSpace shape fts)
-elaborateFuncs _ _ _ SNil [] = Right NoFunctions
-elaborateFuncs ctxS types declassify (SCons ft fs) ((loadDefault, entry) : rest) = do
-    fs' <- elaborateFuncs ctxS types declassify fs rest
+elaborateFuncs _ _ _ _ SNil [] = Right NoFunctions
+elaborateFuncs ctxS types declassify restrictions (SCons ft fs) ((loadDefault, entry) : rest) = do
+    fs' <- elaborateFuncs ctxS types declassify restrictions fs rest
     case entry of
         Left (RawImport moduleName fieldName (ImportFunc _)) -> Right (Imported moduleName fieldName fs')
-        Right f -> (`Defined` fs') <$> elaborateFunctionIn ctxS types loadDefault declassify ft f
-elaborateFuncs _ _ _ _ _ = Left (Malformed "function/signature count mismatch")
+        Right f -> (`Defined` fs') <$> elaborateFunctionIn ctxS types loadDefault declassify restrictions ft f
+elaborateFuncs _ _ _ _ _ _ = Left (Malformed "function/signature count mismatch")
 
 elaborateFunctionIn ::
     SModuleShape shape ->
     [FuncType] ->
     SecLevel ->
     Bool ->
+    Restrictions ->
     SLabelledFuncType ft ->
     RawFunction ->
     Either ElabError (Function shape ft)
-elaborateFunctionIn ctxS types loadDefault declassify (SLabelledFuncType boundS psS rsS) (RawFunction _ declaredT body) =
+elaborateFunctionIn ctxS types loadDefault declassify restrictions (SLabelledFuncType boundS psS rsS) (RawFunction _ declaredT body) =
     case reflectStack declaredT of
         SomeStack declS ->
-            let env = ElabEnv ctxS types rsS (sReverseOnto psS declS) (SCons rsS SNil) loadDefault declassify
+            let env = ElabEnv ctxS types rsS (sReverseOnto psS declS) (SCons rsS SNil) loadDefault declassify restrictions
              in do
                     elaborated <- elabSeq env (SCons boundS SNil) SNil body
                     case elaborated of

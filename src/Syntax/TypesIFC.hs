@@ -153,6 +153,19 @@ data AllAtLeast (l :: SecLevel) (rs :: [LabelledValType]) where
     NothingCarried :: AllAtLeast l '[]
     CarriedAtLeast :: FlowsInto l lv -> AllAtLeast l rs -> AllAtLeast l ((t ':~ lv) ': rs)
 
+{- | Whether a call's arguments must be at least as secret as the pc at the call. SecWasm's
+  rule for calls demands exactly the parameters' labels, and its lift may have raised an
+  argument pushed before a secret branch up to the pc, so a program is typable in SecWasm only
+  if every argument can be at that level. Without the lift the requirement is not needed for
+  security ('Syntax.Instructions.IBlock' gives the argument); with the SecWasm restrictions of
+  the policy it is imposed, and this is its witness.
+-}
+data ArgumentsAtCallPc (pc :: SecLevel) (ps :: [LabelledValType]) where
+    -- | the lift-free rule: the arguments may be below the pc
+    ArgumentsAtAnyLevel :: ArgumentsAtCallPc pc ps
+    -- | the SecWasm restriction: every parameter is at least the pc
+    ArgumentsAtLeastPc :: AllAtLeast pc ps -> ArgumentsAtCallPc pc ps
+
 decideAllAtLeast :: Sing (l :: SecLevel) -> Sing (rs :: [LabelledValType]) -> Maybe (AllAtLeast l rs)
 decideAllAtLeast _ SNil = Just NothingCarried
 decideAllAtLeast l (SCons (_ :%~ lv) rest) = CarriedAtLeast <$> decideFlow l lv <*> decideAllAtLeast l rest

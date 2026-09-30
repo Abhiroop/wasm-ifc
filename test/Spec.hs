@@ -224,6 +224,25 @@ spec = do
             elabRunModule declassifying [] `shouldBe` Right ["1"]
             elabRunModule (declassifying {customSections = []}) [] `shouldSatisfy` errorContaining "DeclassifyNotAllowed"
 
+    describe "SecWasm's restrictions (secwasm-restrictions)" $ do
+        let restricted = ("secwasm-restrictions\n" <>)
+            -- (block (result i32) (i32.const 7) (local.get $c) (br_if 0) <rest>)
+            afterCoercion rest = singleFunctionModule [] [I32, I32] [I32] [I32] [Block (FuncType [] [I32]) ([Const SI32 7, LocalGet (LocalIdx 0), BrIf (LabelIdx 0)] ++ rest)]
+            -- a value that a br_if coerced up, written to a public local when the branch is not taken
+            coercedThenWritten = afterCoercion [LocalSet (LocalIdx 2), LocalGet (LocalIdx 1), Br (LabelIdx 0)]
+            -- a public argument pushed before a secret branch, passed to a public parameter after it
+            argumentBeforeBranch = twoFunctions (FuncType [I32] []) [Nop] (FuncType [I32] []) [Const SI32 7, Block (FuncType [I32] []) [LocalGet (LocalIdx 0), BrIf (LabelIdx 0), Call (FunctionIdx 0)]]
+        it "without them, a br_if that is not taken leaves the carried value at its own level" $ do
+            elabRunWithPolicy "export f : L H -> H" coercedThenWritten [0, 5] `shouldBe` Right ["5"]
+            elabRunWithPolicy "export f : L H -> H" coercedThenWritten [1, 5] `shouldBe` Right ["7"]
+        it "with them, the value takes the target's type on both paths" $ do
+            elabRunWithPolicy (restricted "export f : L H -> H") coercedThenWritten [0, 5] `shouldSatisfy` errorContaining "IllegalFlow \"local.set\" High Low"
+            elabRunWithPolicy (restricted "export f : L H -> H") (afterCoercion [LocalGet (LocalIdx 1), Add SI32]) [0, 5] `shouldBe` Right ["12"]
+            elabRunWithPolicy (restricted "export f : L H -> H") (afterCoercion [LocalGet (LocalIdx 1), Add SI32]) [1, 5] `shouldBe` Right ["7"]
+        it "without them, a call may take an argument below the pc; with them, it may not" $ do
+            elabRunWithPolicy "func 0 : L -{H}->\nexport f : H ->" argumentBeforeBranch [0] `shouldBe` Right []
+            elabRunWithPolicy (restricted "func 0 : L -{H}->\nexport f : H ->") argumentBeforeBranch [0] `shouldSatisfy` errorContaining "IllegalFlow \"call\" High Low"
+
     describe "the ifc import namespace (annotations as calls)" $ do
         let ghost name ft = RawImport "ifc" name (ImportFunc ft)
             loadSecret = ghost "load_secret_i32" (FuncType [I32] [I32])

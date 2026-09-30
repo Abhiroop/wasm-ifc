@@ -4,7 +4,9 @@
   configuration asks for, and its exit code, standard output and standard error are checked
   against it. The root directory is copied for each run, since programs write into it.
 
-  The suite is a git submodule under @test/wasi/testsuite@, pinned to a commit.
+  The suite is a git submodule under @test/wasi/testsuite@, pinned to a commit. With
+  @WASM_IFC_SECWASM_RESTRICTIONS@ set in the environment, every program runs with
+  @--secwasm-restrictions@.
 -}
 module Main (main) where
 
@@ -29,6 +31,7 @@ import System.Directory (
     pathIsSymbolicLink,
     removePathForcibly,
  )
+import System.Environment (lookupEnv)
 import System.Exit (ExitCode (..))
 import System.FilePath (takeBaseName, takeExtension, (</>))
 import System.Process (CreateProcess (..), proc, readCreateProcessWithExitCode)
@@ -104,7 +107,9 @@ runTest bin dir program = do
             pure ["--dir", (scratch </> "root") ++ "::/"]
     let envOptions = concat [["--env", T.unpack k ++ "=" ++ T.unpack v] | (k, v) <- Map.toList config.env]
         argv = dirOptions ++ envOptions ++ [program] ++ map T.unpack config.args
-    (code, out, err) <- readCreateProcessWithExitCode (proc bin ("run" : argv)) {cwd = Just dir} ""
+    restricted <- lookupEnv "WASM_IFC_SECWASM_RESTRICTIONS"
+    let options = maybe [] (const ["--secwasm-restrictions"]) restricted
+    (code, out, err) <- readCreateProcessWithExitCode (proc bin ("run" : options ++ argv)) {cwd = Just dir} ""
     let actualCode = case code of
             ExitSuccess -> 0
             ExitFailure n -> n

@@ -42,6 +42,7 @@
   > stdout : L
   > preopen /data : H          ; a preopened directory (by guest name) and all it contains
   > allow-declassify
+  > secwasm-restrictions       ; impose the two restrictions SecWasm's lift needs (see 'Restrictions')
 
   The arrow may carry a level, @-{H}->@: the function's bound, the most secret context it may
   be called from (SecWasm's @→ℓ@; see 'Syntax.TypesIFC.LabelledFuncType'). A plain @->@ is
@@ -72,6 +73,7 @@
 module Validation.Policy (
     Policy (..),
     FunctionLevels (..),
+    Restrictions (..),
     PolicyError (..),
     emptyPolicy,
     parsePolicy,
@@ -130,6 +132,7 @@ data Policy = Policy
     , loadDefaultsByIndex :: Map Word32 SecLevel
     , loadDefaultsByExport :: Map Text SecLevel
     , declassifyAllowed :: Bool
+    , restrictions :: Restrictions
     , streamLevels :: Map Text SecLevel
     -- ^ by @stdin@, @stdout@, @stderr@
     , preopenLevels :: Map Text SecLevel
@@ -138,7 +141,25 @@ data Policy = Policy
     deriving stock (Eq, Show)
 
 emptyPolicy :: Policy
-emptyPolicy = Policy Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty [] Nothing Map.empty Map.empty False Map.empty Map.empty
+emptyPolicy = Policy Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty [] Nothing Map.empty Map.empty False LiftFree Map.empty Map.empty
+
+{- | Which typing rules the validator applies where SecWasm's lift makes a difference. This
+  system does not lift the values on the stack when a branch raises the pc (see
+  'Syntax.Instructions.IBlock'), which lets it accept two shapes of program that SecWasm
+  rejects: a call that passes a value pushed before a secret branch to a public parameter, and
+  a public value that a @br_if@ coerced for its target but that stays public when the branch is
+  not taken. Both are secure. The restrictions reject them, so that every accepted program is
+  also typable in SecWasm, which is what a proof by inclusion into SecWasm needs.
+-}
+data Restrictions
+    = -- | the lift-free rules
+      LiftFree
+    | {- | the lift-free rules restricted to what SecWasm accepts: a call's arguments are at
+      least the pc ('Syntax.TypesIFC.ArgumentsAtLeastPc'), and a @br_if@ gives the values it
+      carries the target's type on both paths ('Syntax.Instructions.TakesTargetType')
+      -}
+      SecWasmRestrictions
+    deriving stock (Eq, Show)
 
 data PolicyError
     = -- | a line that is not a statement: its number and text
@@ -168,6 +189,7 @@ parsePolicy source = foldM statement emptyPolicy (zip [1 ..] (T.lines source))
     statement policy (lineNo, raw) = case T.words (T.takeWhile (/= ';') raw) of
         [] -> Right policy
         ["allow-declassify"] -> Right policy {declassifyAllowed = True}
+        ["secwasm-restrictions"] -> Right policy {restrictions = SecWasmRestrictions}
         ws -> case break (== ":") ws of
             (headWords, ":" : body) -> declaration policy lineNo headWords body
             _ -> Left (PolicySyntax lineNo raw)
@@ -272,6 +294,7 @@ mergePolicies a b = do
             , loadDefaultsByIndex
             , loadDefaultsByExport
             , declassifyAllowed = a.declassifyAllowed || b.declassifyAllowed
+            , restrictions = if SecWasmRestrictions `elem` [a.restrictions, b.restrictions] then SecWasmRestrictions else LiftFree
             , streamLevels
             , preopenLevels
             }
@@ -306,6 +329,7 @@ data Assembled = Assembled
     , loadDefaults :: [SecLevel]
     -- ^ one per entry of the function index space
     , declassify :: Bool
+    , typingRestrictions :: Restrictions
     , annotated :: RawModule
     }
 
@@ -376,6 +400,7 @@ assemble policy m = do
             , globalTypes
             , loadDefaults
             , declassify = policy.declassifyAllowed
+            , typingRestrictions = policy.restrictions
             , annotated = withFunctions (zipWith (annotateFunction ghosts) [fromIntegral (length m.imports) ..] m.functions)
             }
   where

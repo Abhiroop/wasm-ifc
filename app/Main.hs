@@ -23,7 +23,7 @@ import Syntax.Types (FuncTypeOf (..), ValType (..))
 import Syntax.TypesIFC (SecLevel (..))
 import System.FilePath (takeFileName)
 import Validation.Elaborate (elaborateModuleWith)
-import Validation.Policy (Policy (..), emptyPolicy, modulePolicy, parsePolicy)
+import Validation.Policy (Policy (..), Restrictions (..), emptyPolicy, modulePolicy, parsePolicy)
 
 main :: IO ()
 main = do
@@ -63,6 +63,9 @@ usage =
         , ""
         , "Options:  --policy FILE         the module's security policy (levels of its interface, memory"
         , "                                accesses and regions); merged with the module's own ifc section"
+        , "          --secwasm-restrictions"
+        , "                                accept only programs SecWasm's rules also type (the policy"
+        , "                                statement of the same name)"
         , "          --dir HOST[::GUEST]   preopen a host directory under the guest name (default: the same)"
         , "          --env NAME=VALUE      an environment variable for the program"
         , ""
@@ -71,17 +74,19 @@ usage =
         , "host calls are served; proc_exit's code becomes the exit code."
         ]
 
--- | The @--dir@ and @--env@ options before the module path.
+-- | The options before the module path.
 data Options = Options
     { dirs :: [Preopen]
     , vars :: [(Text, Text)]
     , policyFile :: Maybe FilePath
+    , restrictionsFlag :: Restrictions
     }
 
 parseOptions :: [String] -> Either String (Options, [String])
-parseOptions = go (Options [] [] Nothing)
+parseOptions = go (Options [] [] Nothing LiftFree)
   where
     go options ("--policy" : file : rest) = go options {policyFile = Just file} rest
+    go options ("--secwasm-restrictions" : rest) = go options {restrictionsFlag = SecWasmRestrictions} rest
     go options ("--dir" : spec : rest) =
         let (host, guest) = case T.splitOn "::" (T.pack spec) of
                 [h, g] -> (T.unpack h, g)
@@ -125,13 +130,16 @@ runUnderWasi cfg wasmModule name args printResults = do
 -}
 withValidated :: Options -> FilePath -> (Policy -> SomeModule -> IO ()) -> IO ()
 withValidated options path action = do
-    policy <- case options.policyFile of
+    policyFromFile <- case options.policyFile of
         Nothing -> pure emptyPolicy
         Just file -> do
             policyText <- try (TIO.readFile file) :: IO (Either IOException Text)
             case policyText of
                 Left ioErr -> die ("Cannot read " ++ file ++ ": " ++ show ioErr)
                 Right text -> either (\e -> die ("Policy error: " ++ show e)) pure (parsePolicy text)
+    let policy = case options.restrictionsFlag of
+            LiftFree -> policyFromFile
+            SecWasmRestrictions -> policyFromFile {restrictions = SecWasmRestrictions}
     readResult <- try (BL.readFile path) :: IO (Either IOException BL.ByteString)
     case readResult of
         Left ioErr -> die ("Cannot read " ++ path ++ ": " ++ show ioErr)

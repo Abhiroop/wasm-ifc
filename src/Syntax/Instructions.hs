@@ -30,6 +30,7 @@ module Syntax.Instructions (
     -- * Intrinsically-typed AST
     Instr (..),
     Expr (..),
+    FallThrough (..),
 
     -- * Smart constructors (empty-result label variants)
     call,
@@ -222,6 +223,16 @@ convertEnds I32Extend16S = (I32IsNum, I32IsNum)
 convertEnds I64Extend8S = (I64IsNum, I64IsNum)
 convertEnds I64Extend16S = (I64IsNum, I64IsNum)
 convertEnds I64Extend32S = (I64IsNum, I64IsNum)
+
+{- | What a @br_if@ that is not taken leaves of the values its target would have received. The
+  lift-free rule leaves them as they were. SecWasm's rule gives them the target's type on both
+  paths, so that a value coerced up for the branch stays coerced when the branch is not taken;
+  with the SecWasm restrictions of the policy the validator chooses that one (see
+  'Syntax.TypesIFC.ArgumentsAtCallPc' for the other restriction).
+-}
+data FallThrough (rs :: [LabelledValType]) (s :: [LabelledValType]) (full :: [LabelledValType]) (out :: [LabelledValType]) where
+    KeepsLevels :: FallThrough rs s full full
+    TakesTargetType :: FallThrough rs s full (rs ++ s)
 
 -- | Same-type operation groups, so the GADT (and interpreter) stay compact.
 data BitwiseOp = BwAnd | BwOr | BwXor | BwShl | BwShr Signedness | BwRotl | BwRotr
@@ -418,6 +429,7 @@ data
     ICall ::
         FlowsInto pc bound ->
         SegmentFlows args ps ->
+        ArgumentsAtCallPc pc ps ->
         Append args s full ->
         Elem ('LabelledFuncType bound ps rs) (ModuleFuncs m) ->
         Instr m f l (pc ': pcs) (pc ': pcs) full (rs ++ s)
@@ -428,6 +440,7 @@ data
         (ModuleTables m ~ (table ': tables)) =>
         FlowsInto (Join pc lv) bound ->
         SegmentFlows args ps ->
+        ArgumentsAtCallPc pc ps ->
         Append args s full ->
         Sing ('LabelledFuncType bound ps rs) ->
         Instr m f l (pc ': pcs) (pc ': pcs) (('I32 ':~ lv) ': full) (rs ++ s)
@@ -491,8 +504,9 @@ data
         AllAtLeast (Join pc lv) rs ->
         SegmentFlows carried rs ->
         Append carried s full ->
+        FallThrough rs s full out ->
         BranchTarget (Join pc lv) rs labels (pc ': pcs) pcs' ->
-        Instr m f labels (pc ': pcs) pcs' (('I32 ':~ lv) ': full) full
+        Instr m f labels (pc ': pcs) pcs' (('I32 ':~ lv) ': full) out
     IBrTable ::
         AllAtLeast (Join pc lv) rs ->
         SegmentFlows carried rs ->
@@ -541,7 +555,7 @@ call ::
     forall ps rs s m f l pcs.
     SingI ps =>
     Elem ('LabelledFuncType 'Low ps rs) (ModuleFuncs m) -> Instr m f l ('Low ': pcs) ('Low ': pcs) (ps ++ s) (rs ++ s)
-call = ICall LowFlowsAnywhere (segmentSelf (sing @ps)) (appendFromSing @ps @s (sing @ps))
+call = ICall LowFlowsAnywhere (segmentSelf (sing @ps)) ArgumentsAtAnyLevel (appendFromSing @ps @s (sing @ps))
 
 {- | Specialised forms for the common case of an empty-result block/loop and a branch to
   an empty-result label. With @rs ~ '[]@ fixed, @rs ++ s@ reduces to @s@, so these infer
@@ -558,4 +572,4 @@ br_ :: BranchTarget pc '[] labels (pc ': pcs) pcs' -> Instr m f labels (pc ': pc
 br_ = IBr NothingCarried NoValuesFlow ANil
 
 brIf_ :: BranchTarget (Join pc lv) '[] labels (pc ': pcs) pcs' -> Instr m f labels (pc ': pcs) pcs' (('I32 ':~ lv) ': s) s
-brIf_ = IBrIf NothingCarried NoValuesFlow ANil
+brIf_ = IBrIf NothingCarried NoValuesFlow ANil KeepsLevels

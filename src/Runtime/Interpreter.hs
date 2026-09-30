@@ -127,6 +127,7 @@ import Syntax.Instructions (
     BitwiseOp (..),
     CountOp (..),
     Expr (..),
+    FallThrough (..),
     FloatBinOp (..),
     FloatUnOp (..),
     Instr (..),
@@ -435,8 +436,8 @@ step funcs (Config store locals stack code control) = case code of
         IRelabelResults flows -> stepped store locals (relabelStack flows stack) rest control
         {- Calls: enter the callee (see 'enterCall'); an indirect call first reads the table entry
            and checks its type against the expected one, trapping if they differ -}
-        ICall _ flows witness ix -> enterCall funcs store locals flows witness ix stack rest control
-        ICallIndirect _ flows witness (SLabelledFuncType expectedBound expectedParams expectedResults) -> case stack of
+        ICall _ flows _ witness ix -> enterCall funcs store locals flows witness ix stack rest control
+        ICallIndirect _ flows _ witness (SLabelledFuncType expectedBound expectedParams expectedResults) -> case stack of
             index :# below' -> case tableLookup (firstTable store.tables) index of
                 Left trap -> Left trap
                 Right (SomeFuncRef boundS paramsS resultsS ix) ->
@@ -459,12 +460,16 @@ step funcs (Config store locals stack code control) = case code of
                             else Config store locals (relabelStack flows params) elseArm (BlockLabel below rest control)
         {- Branches: unwind the control stack to the targeted frame -}
         IBr _ flows witness target -> let (vs, _) = splitStack witness stack in Right (unwind store locals target (relabelStack flows vs) control)
-        IBrIf _ flows witness target -> case stack of
+        IBrIf _ flows witness fallThrough target -> case stack of
             cond :# below'
                 | cond /= 0 ->
                     let (vs, _) = splitStack witness below'
                      in Right (unwind store locals target (relabelStack flows vs) control)
-                | otherwise -> stepped store locals below' rest control
+                | otherwise -> case fallThrough of
+                    KeepsLevels -> stepped store locals below' rest control
+                    TakesTargetType ->
+                        let (vs, below) = splitStack witness below'
+                         in stepped store locals (appendStack (relabelStack flows vs) below) rest control
         IBrTable _ flows witness targets def -> case stack of
             idx :# below' ->
                 let target = case drop (fromIntegral idx) targets of t : _ -> t; [] -> def
