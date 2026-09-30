@@ -39,6 +39,37 @@ def secwasm_study():
     return programs
 
 
+WASI_C = ROOT / "test/wasi/testsuite/tests/c/testsuite/wasm32-wasip1"
+
+
+def wasi_c_study():
+    """The C programs of the wasi-testsuite, their files secret: once with a secret standard
+    output (can the rules type them?), once with a public one (their output may depend on the
+    files, so they must be rejected or trap unless it does not)."""
+    programs = []
+    for wasm in sorted(WASI_C.glob("*.wasm")):
+        config_path = wasm.with_suffix(".json")
+        config = json.loads(config_path.read_text()) if config_path.exists() else {}
+        dirs = [{"guest": "/", "copy": str(WASI_C / config["root"])}] if "root" in config else []
+        for stdout in ("H", "L"):
+            programs.append({
+                "name": f"{wasm.stem} (stdout {stdout})", "wasm": str(wasm), "dirs": dirs, "args": config.get("args", []),
+                "policy_text": f"preopen / : H\nstdout : {stdout}\nstderr : {stdout}\n", "declare": True,
+            })
+    return programs
+
+
+def polybench_study():
+    """Ten PolyBench/C kernels at the MINI size, their data secret where main writes it, and the
+    arrays they print secret: can the rules type computation over secret data in memory?"""
+    kernels = ["2mm", "3mm", "atax", "gemm", "jacobi-2d", "seidel-2d", "floyd-warshall", "nussinov", "correlation", "lu"]
+    policy = "stdout : H\nstderr : H\nstore-default func {main} : H\nload-default func {main} : H\nload-default func {print_array} : H\n"
+    silent = "store-default func {main} : H\nload-default func {main} : H\n"
+    return [{"name": k, "wasm": f"polybench/{k}.wasm", "policy_text": policy, "declare": True} for k in kernels] + [
+        {"name": f"{k} (printing compiled out)", "wasm": f"polybench/{k}-silent.wasm", "policy_text": silent, "declare": True} for k in kernels
+    ]
+
+
 STUDIES = {
     "password": [
         {"name": "password", "wasm": "password/password.wasm", "policy": "password/checker.policy", "dirs": PASSWORD_DIRS, "expect": "ran"},
@@ -47,6 +78,8 @@ STUDIES = {
         {"name": "password-naive", "wasm": "password/password-naive.wasm", "policy": "password/checker.policy", "dirs": PASSWORD_DIRS, "expect": "rejected"},
     ],
     "secwasm": secwasm_study(),
+    "wasi-c": wasi_c_study(),
+    "polybench": polybench_study(),
 }
 
 
@@ -56,10 +89,6 @@ def run(command, **kwargs):
 
 def binary():
     return run(["cabal", "list-bin", "exe:wasm-ifc"], cwd=ROOT, check=True).stdout.strip()
-
-
-def policy_lines(path):
-    return sum(1 for line in path.read_text().splitlines() if line.split(";", 1)[0].strip())
 
 
 def explain(wasm_ifc, policy, wasm, restricted=False):
@@ -83,44 +112,80 @@ def site_of(error):
     return None
 
 
-def evaluate(wasm_ifc, program):
-    wasm = BUILD / program["wasm"]
-    policy = HERE / program["policy"]
-    with tempfile.TemporaryDirectory() as scratch:
-        dirs = []
-        for i, d in enumerate(program.get("dirs", [])):
-            host = Path(scratch) / f"dir{i}"
+def function_indices(wasm):
+    """The function names of the module's name section, with their indices (wabt's wasm-objdump)."""
+    listing = run(["wasm-objdump", "-x", str(wasm)]).stdout
+    return {m.group(2): int(m.group(1)) for m in re.finditer(r"^ - func\[(\d+)\] sig=\d+ <([^>]+)>", listing, re.M)}
+
+
+def attempt(wasm_ifc, program, wasm, policy, scratch):
+    """One run in fresh directories: the result, the time, and the files the run created."""
+    run_dir = Path(tempfile.mkdtemp(dir=scratch))
+    dirs = []
+    for i, d in enumerate(program.get("dirs", [])):
+        host = run_dir / f"dir{i}"
+        if "copy" in d:
+            shutil.copytree(d["copy"], host)
+        else:
             host.mkdir()
             for name, content in d["files"].items():
                 (host / name).write_text(content)
-            dirs += ["--dir", f"{host}::{d['guest']}"]
-        started = time.monotonic()
-        if "invoke" in program:
-            command = [wasm_ifc, "invoke", "--policy", str(policy), str(wasm), program["invoke"], *program.get("args", [])]
-        else:
-            command = [wasm_ifc, "run", "--policy", str(policy), *dirs, str(wasm), *program.get("args", [])]
-        result = run(command)
-        elapsed = time.monotonic() - started
-        written = {}
-        for i, d in enumerate(program.get("dirs", [])):
-            host = Path(scratch) / f"dir{i}"
-            for f in sorted(host.iterdir()):
+        dirs += ["--dir", f"{host}::{d['guest']}"]
+    started = time.monotonic()
+    if "invoke" in program:
+        command = [wasm_ifc, "invoke", "--policy", str(policy), str(wasm), program["invoke"], *program.get("args", [])]
+    else:
+        command = [wasm_ifc, "run", "--policy", str(policy), *dirs, str(wasm), *program.get("args", [])]
+    result = run(command)
+    elapsed = time.monotonic() - started
+    written = {}
+    for i, d in enumerate(program.get("dirs", [])):
+        if "files" in d:
+            for f in sorted((run_dir / f"dir{i}").iterdir()):
                 if f.name not in d["files"]:
                     written[f"{d['guest']}/{f.name}"] = f.read_text(errors="replace")
+    return result, elapsed, written
+
+
+def evaluate(wasm_ifc, program):
+    wasm = Path(program["wasm"]) if Path(program["wasm"]).is_absolute() else BUILD / program["wasm"]
+    declared = []
+    with tempfile.TemporaryDirectory() as scratch:
+        if "policy_text" in program:
+            policy = Path(scratch) / "policy"
+            base = program["policy_text"]
+            if "{" in base:
+                base = base.format(**function_indices(wasm))
+        else:
+            policy = HERE / program["policy"]
+            base = policy.read_text()
+        # With "declare", every load that traps on a secret byte is declared secret, as a user
+        # reading the traps would do, until the program runs through or fails otherwise.
+        while True:
+            if "policy_text" in program:
+                policy.write_text(base + "".join(line + "\n" for line in declared))
+            result, elapsed, written = attempt(wasm_ifc, program, wasm, policy, scratch)
+            trap = re.search(r"declare it with `(load \d+ \d+) : H`", result.stderr)
+            if program.get("declare") and trap and len(declared) < 500:
+                declared.append(trap.group(1) + " : H")
+                continue
+            break
+        final_policy = policy.read_text()
+        lift_free = explain(wasm_ifc, policy, wasm)
+        restricted = explain(wasm_ifc, policy, wasm, restricted=True)
     error = result.stderr.strip()
-    if error.startswith("Validation error"):
+    if error.startswith("Validation error") or error.startswith("Policy error"):
         outcome = "rejected"
     elif error.startswith("trap"):
         outcome = "trapped"
     else:
         outcome = "ran"
-    lift_free = explain(wasm_ifc, policy, wasm)
-    restricted = explain(wasm_ifc, policy, wasm, restricted=True)
     return {
         "name": program["name"],
-        "wasm": program["wasm"],
-        "policy": program["policy"],
-        "policy_lines": policy_lines(policy),
+        "wasm": str(wasm.relative_to(ROOT)) if wasm.is_relative_to(ROOT) else str(wasm),
+        "policy": program.get("policy") or final_policy,
+        "policy_lines": sum(1 for line in base.splitlines() if line.split(";", 1)[0].strip()),
+        "loads_declared_from_traps": len(declared),
         "outcome": outcome,
         "expected": program.get("expect"),
         "as_expected": program.get("expect") in (None, outcome),

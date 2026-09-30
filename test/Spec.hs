@@ -203,6 +203,9 @@ spec = do
                 `shouldSatisfy` errorContaining "IllegalFlow \"result\" High Low"
         it "a secret parameter may be dropped" $
             elabRunWithPolicy "export f : H -> L" (singleFunctionModule [] [I32] [I32] [] [LocalGet (LocalIdx 0), Drop, Const SI32 1]) [1] `shouldBe` Right ["1"]
+        it "a function's store default declares its stores secret" $
+            elabRunWithPolicy "store-default func 0 : H" (withMemory [] [I32] [] [Const SI32 0, Const SI32 7, Store SI32 (MemArg 0 0), Const SI32 0, Load SI32 (MemArg 0 0)]) []
+                `shouldSatisfy` trapContaining "SecretRead (AccessAt 0 1)"
         it "a store declared secret by position makes a later public read trap" $
             elabRunWithPolicy "store 0 0 : H" (withMemory [] [I32] [] [Const SI32 0, Const SI32 7, Store SI32 (MemArg 0 0), Const SI32 0, Load SI32 (MemArg 0 0)]) []
                 `shouldSatisfy` trapContaining "SecretRead (AccessAt 0 1)"

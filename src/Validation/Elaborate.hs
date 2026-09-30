@@ -1339,7 +1339,7 @@ elaborateUnder :: Assembled -> Choices -> Either ElabError SomeModule
 elaborateUnder assembled choices =
     case reflectCtx choices.chosenFunctionTypes assembled.globalTypes memTypes tableLimits (length m.dataSegments) of
         SomeModuleShape ctxS@(SModuleShape ftsS gsS msS tsS _) -> do
-            functions <- elaborateFuncs ctxS assembled.sectionTypes assembled.declassify assembled.typingRestrictions ftsS (zip3 [0 ..] assembled.loadDefaults (map Left m.imports ++ map (\(i, f) -> Right (f, Map.findWithDefault [] i choices.localLevels)) (zip [importCount ..] m.functions)))
+            functions <- gathered (elaborateFuncs ctxS assembled.sectionTypes assembled.declassify assembled.typingRestrictions ftsS entries)
             globals <- elaborateGlobals gsS (m.globals)
             dataSegments <- traverse (elaborateData (memsNonEmpty msS)) (zip [0 ..] m.dataSegments)
             elementSegments <- traverse (elaborateElements ftsS (tablesNonEmpty tsS)) (zip [0 ..] m.elementSegments)
@@ -1348,6 +1348,15 @@ elaborateUnder assembled choices =
             Right (SomeModule ctxS (Module {functions, globals, dataSegments, secretRegions = assembled.secretRegions, elementSegments, exports = m.exports, start}))
   where
     m = assembled.annotated
+    entries = zip3 [0 ..] assembled.loadDefaults (map Left m.imports ++ map (\(i, f) -> Right (f, Map.findWithDefault [] i choices.localLevels)) (zip [importCount ..] m.functions))
+    -- A repairable failure raises what every function's failure names, not only the first's,
+    -- which saves an elaboration per label; labels only rise, so this reaches the same labels.
+    gathered :: Either ElabError a -> Either ElabError a
+    gathered result = case result of
+        Left (LevelTooLow raises failure) -> case reflectCtx choices.chosenFunctionTypes assembled.globalTypes memTypes tableLimits (length m.dataSegments) of
+            SomeModuleShape ctxS@(SModuleShape ftsS _ _ _ _) ->
+                Left (LevelTooLow (raises ++ concat [more | LevelTooLow more _ <- functionErrors ctxS assembled.sectionTypes assembled.declassify assembled.typingRestrictions ftsS entries]) failure)
+        other -> other
     importCount = fromIntegral (length m.imports)
     tableLimits = [t.limits | t <- m.tables]
     memTypes = map (\(RawMemory mt) -> mt) (m.memories)
@@ -1410,6 +1419,23 @@ elaborateFuncs ctxS types declassify restrictions (SCons ft fs) ((index, loadDef
         Left (RawImport moduleName fieldName (ImportFunc _)) -> Right (Imported moduleName fieldName fs')
         Right (f, localLevels) -> (`Defined` fs') <$> elaborateFunctionIn ctxS types loadDefault declassify restrictions index localLevels ft f
 elaborateFuncs _ _ _ _ _ _ = Left (Malformed "function/signature count mismatch")
+
+-- | The failure of every defined function that fails, each elaborated on its own.
+functionErrors ::
+    SModuleShape shape ->
+    [LabelledFuncType] ->
+    Bool ->
+    Restrictions ->
+    Sing (fts :: [LabelledFuncType]) ->
+    [(Word32, SecLevel, Either RawImport (RawFunction, [SecLevel]))] ->
+    [ElabError]
+functionErrors ctxS types declassify restrictions (SCons ft fs) ((index, loadDefault, entry) : rest) =
+    failure ++ functionErrors ctxS types declassify restrictions fs rest
+  where
+    failure = case entry of
+        Right (f, localLevels) -> either pure (const []) (elaborateFunctionIn ctxS types loadDefault declassify restrictions index localLevels ft f)
+        Left _ -> []
+functionErrors _ _ _ _ _ _ = []
 
 elaborateFunctionIn ::
     SModuleShape shape ->

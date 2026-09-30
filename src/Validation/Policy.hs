@@ -17,7 +17,9 @@
       'Validation.Elaborate.elaborateModuleInferring').
     * /Stores/: never need a declaration. The validator infers the lowest level the rule allows,
       the join of the pc, the address and the value. A declaration by site overrides it, and is
-      meant to be rare.
+      meant to be rare; a function's default (@store-default func@) declares the level of every
+      store of the function that has no site declaration, which is how a program's own data is
+      made secret where it is written.
     * /Loads/: the one thing nothing can infer, since the level is what the site expects to
       read. A site declaration wins; otherwise a region declaration for a constant address;
       otherwise the function's default; otherwise the module's default, which is public unless
@@ -46,6 +48,7 @@
   > region 0x1000 0x1400 : H   ; addresses in [0x1000, 0x1400) hold secrets; overlapping regions must agree
   > load-default : L
   > load-default func 3 : H
+  > store-default func 3 : H   ; the stores of function 3 without a site declaration write secret bytes
   > load-default export check : H
   > stdin : H                  ; the standard streams' levels, for the WASI host
   > stdout : L
@@ -137,6 +140,7 @@ data Policy = Policy
     -- ^ half-open address ranges
     , loadDefault :: Maybe SecLevel
     , loadDefaultsByIndex :: Map Word32 SecLevel
+    , storeDefaultsByIndex :: Map Word32 SecLevel
     , loadDefaultsByExport :: Map Text SecLevel
     , declassifyAllowed :: Bool
     , restrictions :: Restrictions
@@ -148,7 +152,7 @@ data Policy = Policy
     deriving stock (Eq, Show)
 
 emptyPolicy :: Policy
-emptyPolicy = Policy Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty [] Nothing Map.empty Map.empty False LiftFree Map.empty Map.empty
+emptyPolicy = Policy Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty [] Nothing Map.empty Map.empty Map.empty False LiftFree Map.empty Map.empty
 
 {- | Which typing rules the validator applies where SecWasm's lift makes a difference. This
   system does not lift the values on the stack when a branch raises the pc (see
@@ -249,6 +253,10 @@ parsePolicy source = foldM statement emptyPolicy (zip [1 ..] (T.lines source))
             i <- number lineNo ix
             l <- oneLevel lineNo body
             Right policy {loadDefaultsByIndex = Map.insert i l policy.loadDefaultsByIndex}
+        ["store-default", "func", ix] -> do
+            i <- number lineNo ix
+            l <- oneLevel lineNo body
+            Right policy {storeDefaultsByIndex = Map.insert i l policy.storeDefaultsByIndex}
         ["load-default", "export", name] -> do
             l <- oneLevel lineNo body
             Right policy {loadDefaultsByExport = Map.insert name l policy.loadDefaultsByExport}
@@ -292,6 +300,7 @@ mergePolicies a b = do
     loads <- agreeing "load" a.loads b.loads
     stores <- agreeing "store" a.stores b.stores
     loadDefaultsByIndex <- agreeing "load-default func" a.loadDefaultsByIndex b.loadDefaultsByIndex
+    storeDefaultsByIndex <- agreeing "store-default func" a.storeDefaultsByIndex b.storeDefaultsByIndex
     loadDefaultsByExport <- agreeing "load-default export" a.loadDefaultsByExport b.loadDefaultsByExport
     streamLevels <- agreeing "stream" a.streamLevels b.streamLevels
     preopenLevels <- agreeing "preopen" a.preopenLevels b.preopenLevels
@@ -311,6 +320,7 @@ mergePolicies a b = do
             , regions = a.regions ++ b.regions
             , loadDefault
             , loadDefaultsByIndex
+            , storeDefaultsByIndex
             , loadDefaultsByExport
             , declassifyAllowed = a.declassifyAllowed || b.declassifyAllowed
             , restrictions = if SecWasmRestrictions `elem` [a.restrictions, b.restrictions] then SecWasmRestrictions else LiftFree
@@ -415,6 +425,7 @@ assemble policy m = do
     mapM_ (notAGhost ghosts) ([(e.name, i) | e <- m.exports, ExportFunc (FunctionIdx i) <- [e.desc]] ++ [("start", i) | Just (FunctionIdx i) <- [m.start]] ++ [("elem", i) | seg <- m.elementSegments, FunctionIdx i <- seg.functions])
     mapM_ (knownFunction . fst) (Map.toList policy.functionsByIndex)
     mapM_ (knownFunction . fst) (Map.toList policy.loadDefaultsByIndex)
+    mapM_ (knownFunction . fst) (Map.toList policy.storeDefaultsByIndex)
     mapM_ (knownExport . fst) (Map.toList policy.exportedFunctions)
     mapM_ (knownExport . fst) (Map.toList policy.loadDefaultsByExport)
     mapM_ knownImport (Map.keys policy.importedFunctions)
@@ -558,7 +569,9 @@ assemble policy m = do
     atSite i n constantAddress access =
         let declared = case Map.lookup (i, n) (siteMap access) of
                 Just l -> Just l
-                Nothing -> constantAddress >>= \k -> regionLevel (fromIntegral k + offsetOf access) (widthOf access)
+                Nothing
+                    | isStore access -> Map.lookup i policy.storeDefaultsByIndex
+                    | otherwise -> constantAddress >>= \k -> regionLevel (fromIntegral k + offsetOf access) (widthOf access)
             annotated = maybe access (`Annotated` access) declared
          in if isLoad access then AtSite (AccessAt i n) annotated else annotated
     -- (An access the module already annotates, as a hand-built one may, counts as well.)
