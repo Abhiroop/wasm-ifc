@@ -259,6 +259,14 @@ spec = do
             let caller = [LocalGet (LocalIdx 0), If (FuncType [] []) [Call (FunctionIdx 0)] [], Const SI32 0]
                 program = twoFunctions (FuncType [] []) [Nop] (FuncType [I32] [I32]) caller
             fmap (.raisedFunctions) (inferred "export f : H -> L" program) `shouldBe` Right [(0, LabelledFuncType High [] [])]
+        it "a local reused for a secret and then for a public value is split, so the public use stays public" $ do
+            let reused = singleFunctionModule [] [I32, I32] [I32] [I32] [LocalGet (LocalIdx 0), LocalSet (LocalIdx 2), LocalGet (LocalIdx 2), Drop, LocalGet (LocalIdx 1), LocalSet (LocalIdx 2), LocalGet (LocalIdx 2)]
+            elabRunWithPolicy "export f : H L -> L" reused [7, 9] `shouldBe` Right ["9"]
+            fmap (.raisedLocals) (inferred "export f : H L -> L" reused) `shouldBe` Right [(0, 0)]
+        it "the webs of a local meet where its definitions reach a common use" $ do
+            let joined = singleFunctionModule [] [I32, I32] [I32] [I32] [LocalGet (LocalIdx 1), LocalSet (LocalIdx 2), LocalGet (LocalIdx 0), If (FuncType [] []) [LocalGet (LocalIdx 0), LocalSet (LocalIdx 2)] [], LocalGet (LocalIdx 2)]
+            elabRunWithPolicy "export f : H L -> L" joined [7, 9] `shouldSatisfy` errorContaining "IllegalFlow \"result\" High Low"
+            elabRunWithPolicy "export f : H L -> H" joined [0, 9] `shouldBe` Right ["9"]
         it "the interface is not inferred: an export, a declared function, a table entry stay as declared" $ do
             elabRunWithPolicy "export f : H -> L" secretThroughLocal [5] `shouldSatisfy` errorContaining "IllegalFlow \"result\" High Low"
             elabRunWithPolicy "func 0 : L -> L\nexport f : H -> H" helper [5] `shouldSatisfy` errorContaining "IllegalFlow \"call\" High Low"
@@ -350,7 +358,7 @@ spec = do
         it "trap when the entry's function has another type" $
             elabRunModule (tableModule [Const SI32 2, CallIndirect (TypeIdx 0)]) [] `shouldSatisfy` trapContaining "IndirectCallTypeMismatch"
         it "need a table in the module" $
-            void (elaborateModule (singleFunctionModule [] [] [I32] [] [Const SI32 0, CallIndirect (TypeIdx 0)]))
+            first unplaced (void (elaborateModule (singleFunctionModule [] [] [I32] [] [Const SI32 0, CallIndirect (TypeIdx 0)])))
                 `shouldBe` Left (NoTable "call_indirect")
         it "reject an element segment that does not fit" $
             void (load ((tableModule [Const SI32 0]) {elementSegments = [RawElementSegment [Const SI32 2] [FunctionIdx 0, FunctionIdx 0]]}))
@@ -464,7 +472,7 @@ spec = do
             elabRunModule (withData [RawDataSegment Passive "xyz"] (singleFunctionModule [onePageMemory] [] [I32] [] [DataDrop (DataIdx 0), Const SI32 0, Const SI32 0, Const SI32 0, MemoryInit (DataIdx 0), Const SI32 10, Const SI32 0, Const SI32 1, MemoryInit (DataIdx 0), Const SI32 0])) []
                 `shouldSatisfy` trapContaining "OutOfBoundsMemoryAccess"
         it "memory.init must name an existing segment" $
-            void (elaborateModule (singleFunctionModule [onePageMemory] [] [] [] [Const SI32 0, Const SI32 0, Const SI32 0, MemoryInit (DataIdx 3)]))
+            first unplaced (void (elaborateModule (singleFunctionModule [onePageMemory] [] [] [] [Const SI32 0, Const SI32 0, Const SI32 0, MemoryInit (DataIdx 3)])))
                 `shouldBe` Left (IndexOutOfRange DataSegments 3)
 
     describe "memory.grow (the old size on success, -1 when it cannot grow)" $ do
@@ -555,6 +563,9 @@ spec = do
             elabRun [] [I32, I64] [] [Const SI32 1, Const SI64 2] [] `shouldBe` Right ["1", "2"]
 
     describe "elaborator rejects ill-typed / malformed modules" $ do
+        it "names the function and the instruction, counted in code order, where an error arose" $
+            void (elaborateModule (twoFunctions (FuncType [] []) [Nop] (FuncType [] []) [Nop, Block (FuncType [] []) [Nop], If (FuncType [] []) [Nop] [Nop, Const SI32 1, Add SI32]]))
+                `shouldBe` Left (InFunction 1 (AtInstruction 3 (StackUnderflow "if")))
         it "stack underflow (add with no operands)" $
             elabError [] [I32] [] [Add SI32] `shouldSatisfy` isLeft
         it "result type mismatch (empty body, i32 result declared)" $
@@ -632,13 +643,13 @@ spec = do
                     otherSecret <- forAll (Gen.word32 Range.linearBounded)
                     let m = compileModule generated
                     case (observe m secret public, observe m otherSecret public) of
-                        (Right (Just first), Right (Just second)) -> do
+                        (Right (Just oneRun), Right (Just otherRun)) -> do
                             label "accepted, both runs finished"
                             classify "accepted, finished, holding a value across a conditional branch" (holdsValueAcrossBranch generated)
-                            first.result === second.result
-                            first.publicGlobal === second.publicGlobal
-                            [(a, i) | (i, (a, Low), (_, Low)) <- zip3 [0 :: Int ..] first.memory second.memory]
-                                === [(b, i) | (i, (_, Low), (b, Low)) <- zip3 [0 :: Int ..] first.memory second.memory]
+                            oneRun.result === otherRun.result
+                            oneRun.publicGlobal === otherRun.publicGlobal
+                            [(a, i) | (i, (a, Low), (_, Low)) <- zip3 [0 :: Int ..] oneRun.memory otherRun.memory]
+                                === [(b, i) | (i, (_, Low), (b, Low)) <- zip3 [0 :: Int ..] oneRun.memory otherRun.memory]
                         (Right _, Right _) -> label "accepted, a run trapped"
                         _ -> label "rejected"
     describe "generated well-typed programs (i32 arithmetic with if/else over two parameters)" $ do
@@ -691,7 +702,14 @@ elabErrorWithMemory = elabErrorIn [onePageMemory]
 
 elabErrorIn :: [RawMemory] -> [ValType] -> [ValType] -> [ValType] -> [RawInstr] -> Either ElabError ()
 elabErrorIn memories params results locals body =
-    void (elaborateModule (singleFunctionModule memories params results locals body))
+    first unplaced (void (elaborateModule (singleFunctionModule memories params results locals body)))
+
+-- | An error without the function and instruction it arose at: the rule alone.
+unplaced :: ElabError -> ElabError
+unplaced err = case err of
+    InFunction _ inner -> unplaced inner
+    AtInstruction _ inner -> unplaced inner
+    _ -> err
 
 singleFunctionModule :: [RawMemory] -> [ValType] -> [ValType] -> [ValType] -> [RawInstr] -> RawModule
 singleFunctionModule memories params results locals body =

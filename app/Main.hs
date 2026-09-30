@@ -24,7 +24,7 @@ import Syntax.Module (SomeModule)
 import Syntax.Types (FuncTypeOf (..), ValType (..))
 import Syntax.TypesIFC (SecLevel (..))
 import System.FilePath (takeFileName)
-import Validation.Elaborate (elaborateModuleWith)
+import Validation.Elaborate (Inferred (..), elaborateModuleTraced, elaborateModuleWith)
 import Validation.Policy (Policy (..), Restrictions (..), emptyPolicy, modulePolicy, parsePolicy)
 
 main :: IO ()
@@ -33,6 +33,9 @@ main = do
     case args of
         ("check" : rest) -> case parseOptions rest of
             Right (options, [path]) -> withValidated options path (\_ _ -> putStrLn "ok")
+            _ -> die usage
+        ("explain" : rest) -> case parseOptions rest of
+            Right (options, [path]) -> explain options path
             _ -> die usage
         ("get" : rest) -> case parseOptions rest of
             Right (options, [path, name]) -> withModule options path $ \_ wasmModule -> do
@@ -65,6 +68,7 @@ usage =
     unlines
         [ "Usage:"
         , "  wasm-ifc check  [options] <file.wasm>                    decode and validate (no instantiation)"
+        , "  wasm-ifc explain [options] <file.wasm>                   validate, and show what inference raised"
         , "  wasm-ifc invoke [options] <file.wasm> <export> [args...] run an exported function"
         , "  wasm-ifc get    [options] <file.wasm> <global>           print an exported global"
         , "  wasm-ifc run    [options] <file.wasm> [program args...]  run a WASI program (its _start export)"
@@ -135,12 +139,9 @@ runUnderWasi cfg wasmModule name args printResults = do
         Right (Exited 0) -> exitSuccess
         Right (Exited code) -> exitWith (ExitFailure code)
 
-{- | Decode and validate a module from disk, then hand it to the action. All the fallible
-  work is a pure @Either String@; IO is only reading the file and printing. Any failure is
-  reported and exits non-zero (via 'die').
--}
-withValidated :: Options -> FilePath -> (Policy -> SomeModule -> IO ()) -> IO ()
-withValidated options path action = do
+-- | The policy the options name (none: the empty policy), with the restrictions they ask for.
+readPolicy :: Options -> IO Policy
+readPolicy options = do
     policyFromFile <- case options.policyFile of
         Nothing -> pure emptyPolicy
         Just file -> do
@@ -148,9 +149,17 @@ withValidated options path action = do
             case policyText of
                 Left ioErr -> die ("Cannot read " ++ file ++ ": " ++ show ioErr)
                 Right text -> either (\e -> die ("Policy error: " ++ show e)) pure (parsePolicy text)
-    let policy = case options.restrictionsFlag of
-            LiftFree -> policyFromFile
-            SecWasmRestrictions -> policyFromFile {restrictions = SecWasmRestrictions}
+    pure $ case options.restrictionsFlag of
+        LiftFree -> policyFromFile
+        SecWasmRestrictions -> policyFromFile {restrictions = SecWasmRestrictions}
+
+{- | Decode and validate a module from disk, then hand it to the action. All the fallible
+  work is a pure @Either String@; IO is only reading the file and printing. Any failure is
+  reported and exits non-zero (via 'die').
+-}
+withValidated :: Options -> FilePath -> (Policy -> SomeModule -> IO ()) -> IO ()
+withValidated options path action = do
+    policy <- readPolicy options
     readResult <- try (BL.readFile path) :: IO (Either IOException BL.ByteString)
     case readResult of
         Left ioErr -> die ("Cannot read " ++ path ++ ": " ++ show ioErr)
@@ -165,6 +174,21 @@ withValidated options path action = do
         inForce <- first (\e -> "Policy error: " ++ show e) (modulePolicy policy raw)
         validated <- first (\e -> "Validation error: " ++ show e) (elaborateModuleWith policy raw)
         Right (inForce, validated)
+
+{- | Validate the module and show what inference raised on the way, accepted or not: the
+  labels it settled, and the raises of each attempt that failed, in order.
+-}
+explain :: Options -> FilePath -> IO ()
+explain options path = do
+    policy <- readPolicy options
+    bytes <- either (\e -> die ("Cannot read " ++ path ++ ": " ++ show e)) pure =<< (try (BL.readFile path) :: IO (Either IOException BL.ByteString))
+    raw <- either (die . ("Decode error: " ++)) pure (decodeModule bytes)
+    let (inferred, result) = elaborateModuleTraced policy raw
+    putStrLn (either (\e -> "rejected: " ++ show e) (const "accepted") result)
+    putStrLn ("attempts: " ++ show inferred.attempts)
+    mapM_ (\(f, i) -> putStrLn ("secret local: function " ++ show f ++ ", local " ++ show i)) inferred.raisedLocals
+    mapM_ (\(f, ft) -> putStrLn ("raised function " ++ show f ++ ": " ++ show ft)) inferred.raisedFunctions
+    mapM_ (\(n, raises) -> putStrLn ("attempt " ++ show n ++ " raised " ++ show raises)) (zip [1 :: Int ..] inferred.history)
 
 -- | 'withValidated', then instantiate: the module ready to have an export invoked.
 withModule :: Options -> FilePath -> (Policy -> SomeModuleInst -> IO ()) -> IO ()

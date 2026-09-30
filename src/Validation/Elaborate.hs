@@ -3,6 +3,7 @@
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeOperators #-}
 
 {- | Elaboration: type-checking a decoded module and, where it succeeds, building the
@@ -23,6 +24,7 @@ module Validation.Elaborate (
     elaborateModuleWith,
     Inferred (..),
     elaborateModuleInferring,
+    elaborateModuleTraced,
 ) where
 
 import Control.Monad (foldM, when)
@@ -58,6 +60,7 @@ import Syntax.Instructions (
 import Syntax.Module
 import Syntax.Types
 import Syntax.TypesIFC
+import Validation.LocalWebs (splitModuleLocals)
 import Validation.Policy (Assembled (..), Policy, PolicyError, Restrictions (..), assemble, emptyPolicy, modulePolicy)
 import Validation.Ref (resolveLocal)
 import Validation.Reflect
@@ -132,6 +135,14 @@ data ElabError
       'elaborateModuleWith')
       -}
       LevelTooLow [Raise] ElabError
+    | {- | where the error arose: the instruction's position in its function's body, counting
+      every instruction in code order from zero (a block, loop or @if@ counts once and before
+      its body, an @else@ arm after its @then@ arm, @end@ and @else@ not at all; the order in
+      which @wasm2wat@ lists them)
+      -}
+      AtInstruction Int ElabError
+    | -- | the function, by index, in whose body the error arose
+      InFunction Word32 ElabError
     deriving stock (Eq, Show)
 
 {- | A label that inference chose and may raise: of a local variable (by its index in the
@@ -173,6 +184,10 @@ data ElabEnv (shape :: ModuleShape) (ret :: LabelledResultType) (locals :: [Labe
     -- ^ whether calls and @br_if@ follow SecWasm's restrictions (see "Validation.Policy")
     , functionIndex :: Word32
     -- ^ the index of the function being elaborated, which the raises of inference name
+    , firstPosition :: Int
+    -- ^ the position (see 'AtInstruction') of the first instruction of the sequence elaborated
+    , position :: Int
+    -- ^ the position of the instruction elaborated
     }
 
 {- | The result of elaborating a whole instruction sequence that started from pc stack @pcIn@
@@ -283,16 +298,43 @@ elabSeq ::
     Either ElabError (ElaboratedExpr shape ret locals labels (pc ': pcs) stackIn)
 elabSeq _ pcs stackIn [] = Right (Reachable (sameLengthAs pcs) pcs stackIn INil)
 elabSeq env pcs stackIn (raw : rest) = do
-    elaboratedInstr <- elabInstr env pcs stackIn raw
+    elaboratedInstr <- first (placeAt env.firstPosition) (elabInstr env {position = env.firstPosition} pcs stackIn raw)
     case elaboratedInstr of
         Produces same@(BothLonger _) pcs'@(SCons _ _) stackOut instr -> do
-            rest' <- elabSeq env pcs' stackOut rest
+            rest' <- elabSeq env {firstPosition = env.firstPosition + instructionCount raw} pcs' stackOut rest
             pure $ case rest' of
                 Reachable same' pcOut stackOut' seq' -> Reachable (thenSameLength same same') pcOut stackOut' (instr :. seq')
                 Diverged same' pcOut final poly -> Diverged (thenSameLength same same') pcOut final (instr :. poly)
         Transfers same pcOut transfer -> do
             final <- validateDead env pcs rest
             pure (Diverged same pcOut final (transfer :. INil))
+
+{- | An error placed at an instruction, unless an instruction nested in it already placed it; a
+  'LevelTooLow' stays outermost, where inference looks for it.
+-}
+placeAt :: Int -> ElabError -> ElabError
+placeAt here err = case err of
+    LevelTooLow raises inner -> LevelTooLow raises (placeAt here inner)
+    AtInstruction {} -> err
+    _ -> AtInstruction here err
+
+-- | An error placed in a function (see 'placeAt').
+placeIn :: Word32 -> ElabError -> ElabError
+placeIn function err = case err of
+    LevelTooLow raises inner -> LevelTooLow raises (placeIn function inner)
+    _ -> InFunction function err
+
+-- | How many instructions an instruction is in the count of 'AtInstruction': itself and its bodies.
+instructionCount :: RawInstr -> Int
+instructionCount raw = case raw of
+    Block _ body -> 1 + sum (map instructionCount body)
+    Loop _ body -> 1 + sum (map instructionCount body)
+    If _ thenBody elseBody -> 1 + sum (map instructionCount thenBody) + sum (map instructionCount elseBody)
+    _ -> 1
+
+-- | The environment of a body that starts right after the instruction elaborated, or after the given instructions (an @else@ arm, after its @then@ arm).
+bodyAfter :: [RawInstr] -> ElabEnv shape ret locals labels -> ElabEnv shape ret locals labels
+bodyAfter before env = env {firstPosition = env.position + 1 + sum (map instructionCount before)}
 
 -- *** Single instructions ***
 
@@ -530,14 +572,14 @@ elabInstr env pcsIn@(SCons pc _) stackIn instr = case instr of
     Block (FuncType psT rsT) body ->
         blockParams "block" psT stackIn $ \psS sS witness ->
             inferResults rsT pc $ \rsS ->
-                elabBodyChecked (pushLabel rsS env) (SCons pc pcsIn) psS rsS body $ \(BodyResult (BothLonger same) (SCons _ pcsOut) bodySeq) ->
+                elabBodyChecked (pushLabel rsS (bodyAfter [] env)) (SCons pc pcsIn) psS rsS body $ \(BodyResult (BothLonger same) (SCons _ pcsOut) bodySeq) ->
                     Right (Produces same pcsOut (rsS %++ sS) (IBlock (segmentSelf psS) witness bodySeq))
     Loop (FuncType psT rsT) body ->
         blockParams "loop" psT stackIn $ \psIn sS witness ->
             loopParams psIn $ \psS entry ->
                 loopAt pc $ \pcLoop entryFlows ->
                     inferResults rsT pcLoop $ \rsS ->
-                        elabBodyChecked (pushLabel psS env) (SCons pcLoop pcsIn) psS rsS body $ \(BodyResult (BothLonger same) (SCons pcBody pcsOut) bodySeq) -> do
+                        elabBodyChecked (pushLabel psS (bodyAfter [] env)) (SCons pcLoop pcsIn) psS rsS body $ \(BodyResult (BothLonger same) (SCons pcBody pcsOut) bodySeq) -> do
                             backFlows <- requireFlow "loop" pcBody pcLoop
                             Right (Produces same pcsOut (rsS %++ sS) (ILoop entryFlows backFlows entry witness bodySeq))
     If (FuncType psT rsT) thenBody elseBody -> case stackIn of
@@ -545,8 +587,8 @@ elabInstr env pcsIn@(SCons pc _) stackIn instr = case instr of
             Refl <- note (OperandMismatch "if" I32 (valTypeOf sc)) (decideEquality sc SI32)
             blockParams "if" psT rest $ \psS sS witness ->
                 inferResults rsT (sJoin pc lc) $ \rsS ->
-                    elabBodyChecked (pushLabel rsS env) (SCons (sJoin pc lc) pcsIn) psS rsS thenBody $ \(BodyResult (BothLonger sameThen) (SCons _ pcsThen) thenSeq) ->
-                        elabBodyChecked (pushLabel rsS env) (SCons (sJoin pc lc) pcsIn) psS rsS elseBody $ \(BodyResult (BothLonger sameElse) (SCons _ pcsElse) elseSeq) ->
+                    elabBodyChecked (pushLabel rsS (bodyAfter [] env)) (SCons (sJoin pc lc) pcsIn) psS rsS thenBody $ \(BodyResult (BothLonger sameThen) (SCons _ pcsThen) thenSeq) ->
+                        elabBodyChecked (pushLabel rsS (bodyAfter thenBody env)) (SCons (sJoin pc lc) pcsIn) psS rsS elseBody $ \(BodyResult (BothLonger sameElse) (SCons _ pcsElse) elseSeq) ->
                             Right (Produces (joinEachSameLength sameThen sameElse) (sJoinEach pcsThen pcsElse) (rsS %++ sS) (IIf (segmentSelf psS) witness thenSeq elseSeq))
         _ -> Left (StackUnderflow "if")
     {- Branches (unconditional ones diverge). What a branch carries may be lower than the label's
@@ -731,6 +773,8 @@ levelOnly :: ElabError -> Bool
 levelOnly e = case e of
     IllegalFlow {} -> True
     LevelTooLow {} -> True
+    AtInstruction _ inner -> levelOnly inner
+    InFunction _ inner -> levelOnly inner
     _ -> False
 
 {- | The pc a loop body is checked at: the current pc if the body keeps it, and 'High if a
@@ -1202,6 +1246,8 @@ data Inferred = Inferred
     , raisedFunctions :: [(Word32, LabelledFuncType)]
     , attempts :: Int
     -- ^ how many times the module was elaborated
+    , history :: [[Raise]]
+    -- ^ the raises of each attempt that failed and was repaired, in order
     }
     deriving stock (Eq, Show)
 
@@ -1226,28 +1272,38 @@ data Choices = Choices
   typable. Raising a function's bound raises its results too, which must be at least the bound.
 -}
 elaborateModuleInferring :: Policy -> RawModule -> Either ElabError (SomeModule, Inferred)
-elaborateModuleInferring given raw = do
-    validateStructure raw
-    assembled <- first BadPolicy (modulePolicy given raw >>= (`assemble` raw))
-    let importCount = fromIntegral (length raw.imports)
-        initial =
-            Choices
-                { chosenFunctionTypes = assembled.functionTypes
-                , localLevels = Map.fromList [(i, map (const Low) declared) | (i, RawFunction _ declared _) <- zip [importCount ..] assembled.annotated.functions]
-                }
-        settle count choices = case elaborateUnder assembled choices of
-            Right validated -> Right (validated, report count initial choices)
-            Left (LevelTooLow raises failure) -> case applyRaises assembled.inferableFunctions choices raises of
-                Just raised -> settle (count + 1) raised
-                Nothing -> Left failure
-            Left failure -> Left failure
-    settle 1 initial
+elaborateModuleInferring given raw = case elaborateModuleTraced given raw of
+    (inferred, result) -> fmap (,inferred) result
+
+{- | 'elaborateModuleInferring', with the report of what inference raised whether or not the
+  module is accepted in the end: what a user needs to see why it was not.
+-}
+elaborateModuleTraced :: Policy -> RawModule -> (Inferred, Either ElabError SomeModule)
+elaborateModuleTraced given raw = case validateStructure raw >> first BadPolicy (modulePolicy given raw >>= (`assemble` raw)) of
+    Left err -> (Inferred [] [] 0 [], Left err)
+    Right assembledAsWritten ->
+        -- Each web of a local gets a local of its own, and so a label of its own ("Validation.LocalWebs").
+        let assembled = assembledAsWritten {annotated = splitModuleLocals assembledAsWritten.annotated}
+            importCount = fromIntegral (length raw.imports)
+            initial =
+                Choices
+                    { chosenFunctionTypes = assembled.functionTypes
+                    , localLevels = Map.fromList [(i, map (const Low) declared) | (i, RawFunction _ declared _) <- zip [importCount ..] assembled.annotated.functions]
+                    }
+            settle count history choices = case elaborateUnder assembled choices of
+                Right validated -> (report count history initial choices, Right validated)
+                Left (LevelTooLow raises failure) -> case applyRaises assembled.inferableFunctions choices raises of
+                    Just raised -> settle (count + 1) (history ++ [raises]) raised
+                    Nothing -> (report count history initial choices, Left failure)
+                Left failure -> (report count history initial choices, Left failure)
+         in settle 1 [] initial
   where
-    report count initial final =
+    report count history initial final =
         Inferred
             { raisedLocals = [(f, i) | (f, levels) <- Map.toList final.localLevels, (i, High) <- zip [0 ..] levels]
             , raisedFunctions = [(f, after) | (f, before, after) <- zip3 [0 ..] initial.chosenFunctionTypes final.chosenFunctionTypes, before /= after]
             , attempts = count
+            , history
             }
 
 {- | Raise the labels a failure names, where inference chose them; 'Nothing' if none of them
@@ -1369,8 +1425,8 @@ elaborateFunctionIn ::
 elaborateFunctionIn ctxS types loadDefault declassify restrictions index localLevels (SLabelledFuncType boundS psS rsS) (RawFunction _ declaredT body) =
     case toSing (zipWith (:~) declaredT (localLevels ++ repeat Low)) of
         SomeSing declS ->
-            let env = ElabEnv ctxS types rsS (sReverseOnto psS declS) (SCons rsS SNil) loadDefault declassify restrictions index
-             in do
+            let env = ElabEnv ctxS types rsS (sReverseOnto psS declS) (SCons rsS SNil) loadDefault declassify restrictions index 0 0
+             in first (placeIn index) $ do
                     elaborated <- elabSeq env (SCons boundS SNil) SNil body
                     case elaborated of
                         Reachable _ _ soS bodySeq -> do
