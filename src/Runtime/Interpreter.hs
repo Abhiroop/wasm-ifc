@@ -134,7 +134,7 @@ import Syntax.Instructions (
  )
 import Syntax.Types
 import Syntax.TypesIFC
-import Validation.Shape (Append (..), BranchTarget (..), DataShape (..), Elem (..), FrameShape (..), ModuleData, ModuleFuncs, ModuleGlobals, ModuleMems, ModuleShape, ModuleTables, SomeFuncRef (..))
+import Validation.Shape (Append (..), BranchTarget (..), DataShape (..), Elem (..), FrameShape (..), ModuleData, ModuleFuncs, ModuleGlobals, ModuleMems, ModuleShape, ModuleTables, SomeFuncRef (..), withinReach)
 
 -- *** Module and runtime state ***
 
@@ -476,9 +476,9 @@ step funcs (Config store locals stack code control) = case code of
                     TakesTargetType ->
                         let (vs, below) = splitStack witness below'
                          in stepped store locals (appendStack (relabelStack flows vs) below) rest control
-        IBrTable _ flows witness targets def -> case stack of
+        IBrTable _ flows witness reach targets def -> case stack of
             idx :# below' ->
-                let target = case drop (fromIntegral idx) targets of t : _ -> t; [] -> def
+                let target = withinReach reach (case drop (fromIntegral idx) targets of t : _ -> t; [] -> def)
                     (vs, _) = splitStack witness below'
                  in Right (unwindTo store locals target (relabelStack flows vs) control)
         IReturn _ flows witness ->

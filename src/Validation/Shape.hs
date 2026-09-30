@@ -101,6 +101,24 @@ data BranchTarget l rs labels pcs pcs' where
     TargetHere :: BranchTarget l rs (rs ': labels) (p ': pcs) (Join l p ': pcs)
     TargetThere :: BranchTarget l rs labels pcs pcs' -> BranchTarget l rs (other ': labels) (p ': pcs) (Join l p ': pcs')
 
+{- | How far a @br_table@ reaches into the label context: the labels its targets may name,
+  @reach@, which are the innermost ones down to its deepest target, and what it does to the pc
+  stack. As for a single branch ('BranchTarget'), the entries of the blocks the table may leave
+  are raised by @l@, here those of every label in @reach@, and the entries below are untouched.
+  The targets are 'Elem's into @reach@, so no target can lie deeper than the raise.
+-}
+type TableReach :: SecLevel -> [[LabelledValType]] -> [SecLevel] -> [SecLevel] -> [[LabelledValType]] -> Type
+data TableReach l labels pcs pcs' reach where
+    ReachesHere :: TableReach l (label ': labels) (p ': pcs) (Join l p ': pcs) '[label]
+    ReachesThere :: TableReach l labels pcs pcs' reach -> TableReach l (label ': labels) (p ': pcs) (Join l p ': pcs') (label ': reach)
+
+-- | A target within a table's reach, as the label in the whole context it names.
+withinReach :: TableReach l labels pcs pcs' reach -> Elem rs reach -> Elem rs labels
+withinReach ReachesHere Here = Here
+withinReach ReachesHere (There beyond) = case beyond of {}
+withinReach (ReachesThere _) Here = Here
+withinReach (ReachesThere reach) (There ix) = There (withinReach reach ix)
+
 {- | @∃bound ps rs. (Sing bound, Sing ps, Sing rs, Elem ('LabelledFuncType bound ps rs) fts)@ — a
   function reference resolved against the signature, carrying its bound and its parameter and
   result shapes: what a table entry, an element segment and the runtime's export lookup hold.

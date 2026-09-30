@@ -41,6 +41,8 @@ module Validation.Reflect (
     joinEachSameLength,
     SomeBranchTarget (..),
     mkBranchTarget,
+    SomeTableReach (..),
+    mkTableReach,
     -- module-signature witnesses
     SomeModuleShape (..),
     SomeGlobalRef (..),
@@ -230,6 +232,24 @@ mkBranchTarget l (SCons _ labels) (SCons p ps) n =
     (\(SomeBranchTarget rs ps' same target) -> SomeBranchTarget rs (SCons (sJoin l p) ps') (BothLonger same) (TargetThere target))
         <$> mkBranchTarget l labels ps (n - 1)
 mkBranchTarget _ _ _ _ = Nothing
+
+{- | @∃reach pcs'. (Sing reach, Sing pcs', SameLength pcs pcs', TableReach l labels pcs pcs' reach)@:
+  the reach of a @br_table@ whose deepest target is the label at the given depth.
+-}
+data SomeTableReach (l :: SecLevel) (labels :: [LabelledResultType]) (pcs :: [SecLevel]) where
+    SomeTableReach ::
+        Sing (reach :: [LabelledResultType]) ->
+        Sing pcs' ->
+        SameLength pcs pcs' ->
+        TableReach l labels pcs pcs' reach ->
+        SomeTableReach l labels pcs
+
+mkTableReach :: Sing (l :: SecLevel) -> Sing (labels :: [LabelledResultType]) -> Sing (pcs :: [SecLevel]) -> Word32 -> Maybe (SomeTableReach l labels pcs)
+mkTableReach l (SCons label _) (SCons p ps) 0 = Just (SomeTableReach (SCons label SNil) (SCons (sJoin l p) ps) (BothLonger (sameLengthAs ps)) ReachesHere)
+mkTableReach l (SCons label labels) (SCons p ps) n =
+    (\(SomeTableReach reach ps' same inner) -> SomeTableReach (SCons label reach) (SCons (sJoin l p) ps') (BothLonger same) (ReachesThere inner))
+        <$> mkTableReach l labels ps (n - 1)
+mkTableReach _ _ _ _ = Nothing
 
 {- *** Module-signature reflection ***
 

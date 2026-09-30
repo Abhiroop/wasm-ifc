@@ -505,18 +505,22 @@ elabInstr env pcsIn@(SCons pc _) stackIn instr = case instr of
                         LiftFree -> Produces same pcsOut rest (IBrIf carried flows witness KeepsLevels target)
                         SecWasmRestrictions -> Produces same pcsOut (rsS %++ sS) (IBrIf carried flows witness TakesTargetType target)
         _ -> Left (StackUnderflow "br_if")
-    BrTable targets (LabelIdx d) -> case stackIn of
-        SCons (sc :%~ lc) rest -> case decideEquality sc SI32 of
-            Nothing -> Left (OperandMismatch "br_table" I32 (valTypeOf sc))
-            Just Refl -> case mkLabelElem (env.labels) d of
-                Nothing -> Left (IndexOutOfRange Labels d)
-                Just (SomeLabel rsS defIx) -> case mapM (resolveTarget env rsS) targets of
-                    Left err -> Left err
-                    Right targetIxs -> do
-                        SomeCoercion _ flows witness <- prefixFlows "br_table" rsS rest
-                        carried <- requireCarried "br_table" (sJoin pc lc) rsS
-                        Right (Transfers (raiseAllSameLength (sJoin pc lc) pcsIn) (sRaiseAll (sJoin pc lc) pcsIn) (IBrTable carried flows witness targetIxs defIx))
-        _ -> Left (StackUnderflow "br_table")
+    -- The table reaches down to its deepest target, default included.
+    BrTable targets (LabelIdx d) ->
+        let deepest = maximum (d : [t | LabelIdx t <- targets])
+         in case stackIn of
+                SCons (sc :%~ lc) rest -> case decideEquality sc SI32 of
+                    Nothing -> Left (OperandMismatch "br_table" I32 (valTypeOf sc))
+                    Just Refl -> case mkTableReach (sJoin pc lc) (env.labels) pcsIn deepest of
+                        Nothing -> Left (IndexOutOfRange Labels deepest)
+                        Just (SomeTableReach reachS pcsOut same reach) -> case mkLabelElem reachS d of
+                            Nothing -> Left (IndexOutOfRange Labels d)
+                            Just (SomeLabel rsS defIx) -> do
+                                targetIxs <- mapM (resolveTarget reachS rsS) targets
+                                SomeCoercion _ flows witness <- prefixFlows "br_table" rsS rest
+                                carried <- requireCarried "br_table" (sJoin pc lc) rsS
+                                Right (Transfers same pcsOut (IBrTable carried flows witness reach targetIxs defIx))
+                _ -> Left (StackUnderflow "br_table")
     Return -> do
         SomeCoercion _ flows witness <- prefixFlows "return" (env.results) stackIn
         carried <- requireCarried "return" pc (env.results)
@@ -673,9 +677,9 @@ loopAt pc k = case k pc (case pc of SLow -> LowFlowsAnywhere; SHigh -> HighFlows
     Right a -> Right a
     Left _ -> k SHigh (case pc of SLow -> LowFlowsAnywhere; SHigh -> HighFlowsToHigh)
 
--- | Resolve one @br_table@ target, checking it carries the same result type as the rest.
-resolveTarget :: ElabEnv shape ret locals labels -> Sing rs -> LabelIdx -> Either ElabError (Elem rs labels)
-resolveTarget env rsS (LabelIdx t) = case mkLabelElem (env.labels) t of
+-- | Resolve one @br_table@ target within its reach, checking it carries the same result type as the rest.
+resolveTarget :: Sing (reach :: [LabelledResultType]) -> Sing rs -> LabelIdx -> Either ElabError (Elem rs reach)
+resolveTarget reachS rsS (LabelIdx t) = case mkLabelElem reachS t of
     Nothing -> Left (IndexOutOfRange Labels t)
     Just (SomeLabel rsS' targetIx) -> case decideEquality rsS' rsS of
         Just Refl -> Right targetIx

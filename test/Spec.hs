@@ -229,6 +229,24 @@ spec = do
             elabRunModule declassifying [] `shouldBe` Right ["1"]
             elabRunModule (declassifying {customSections = []}) [] `shouldSatisfy` errorContaining "DeclassifyNotAllowed"
 
+    describe "br_table raises the pc down to its deepest target" $ do
+        let noResult = FuncType [] []
+            -- a function with a secret parameter and a public local, returning that local
+            withSecret body = singleFunctionModule [] [I32] [I32] [I32] (body ++ [LocalGet (LocalIdx 1)])
+            publicWrite = [Const SI32 1, LocalSet (LocalIdx 1)]
+        it "a public write after the blocks the table may leave is accepted" $
+            elabRunWithPolicy "export f : H -> L" (withSecret (Block noResult [LocalGet (LocalIdx 0), BrTable [LabelIdx 0] (LabelIdx 0)] : publicWrite)) [3]
+                `shouldBe` Right ["1"]
+        it "a public write inside a block the table may leave is rejected" $
+            elabRunWithPolicy "export f : H -> L" (withSecret [Block noResult (Block noResult [LocalGet (LocalIdx 0), BrTable [LabelIdx 0] (LabelIdx 1)] : publicWrite)]) [3]
+                `shouldSatisfy` errorContaining "IllegalFlow \"local.set\" High Low"
+        it "SecWasm's printed rule leaks here, since the default target is deeper than the table is long" $
+            elabRunWithPolicy
+                "export f : H -> L"
+                (withSecret [Block noResult (Block noResult [Block noResult [Block noResult [LocalGet (LocalIdx 0), BrTable [LabelIdx 0] (LabelIdx 3)]]] : publicWrite)])
+                [3]
+                `shouldSatisfy` errorContaining "IllegalFlow \"local.set\" High Low"
+
     describe "SecWasm's restrictions (secwasm-restrictions)" $ do
         let restricted = ("secwasm-restrictions\n" <>)
             -- (block (result i32) (i32.const 7) (local.get $c) (br_if 0) <rest>)

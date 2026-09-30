@@ -61,6 +61,7 @@ import Validation.Shape (
     ModuleMems,
     ModuleShape,
     ModuleTables,
+    TableReach,
     appendFromSing,
  )
 
@@ -493,9 +494,10 @@ data
        the operands) is otherwise free. The decision to branch is as secret as the pc, joined
        with the condition's level if there is one. The values carried must be at least that
        secret ('AllAtLeast'), may be lower than the label's types ('SegmentFlows'), and the pc
-       entries of the blocks the branch may leave are raised by it ('BranchTarget'). @br_table@
-       and @return@ raise every entry, which is more than needed for @br_table@ when all its
-       targets are near. -}
+       entries of the blocks the branch may leave are raised by it ('BranchTarget'). A
+       @br_table@ may leave every block down to its deepest target, so it raises their entries
+       ('TableReach'), and its targets can only name labels within that reach. @return@ leaves
+       every block and raises every entry. -}
     IBr ::
         AllAtLeast pc rs ->
         SegmentFlows carried rs ->
@@ -513,9 +515,10 @@ data
         AllAtLeast (Join pc lv) rs ->
         SegmentFlows carried rs ->
         Append carried s full ->
-        [Elem rs labels] ->
-        Elem rs labels ->
-        Instr m f labels (pc ': pcs) (RaiseAll (Join pc lv) (pc ': pcs)) (('I32 ':~ lv) ': full) anyOut
+        TableReach (Join pc lv) labels (pc ': pcs) pcs' reach ->
+        [Elem rs reach] ->
+        Elem rs reach ->
+        Instr m f labels (pc ': pcs) pcs' (('I32 ':~ lv) ': full) anyOut
     IReturn ::
         AllAtLeast pc (FrameReturn f) ->
         SegmentFlows carried (FrameReturn f) ->

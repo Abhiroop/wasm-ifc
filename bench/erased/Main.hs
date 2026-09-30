@@ -690,7 +690,7 @@ eraseInstr instr = case instr of
     IIf _ witness thenArm elseArm -> EIf (widthOf witness) (eraseExpr thenArm) (eraseExpr elseArm)
     IBr _ _ witness target -> EBr (widthOf witness) (targetIndex target)
     IBrIf _ _ witness _ target -> EBrIf (widthOf witness) (targetIndex target)
-    IBrTable _ _ witness targets def -> EBrTable (widthOf witness) (map positionOf targets) (positionOf def)
+    IBrTable _ _ witness _ targets def -> EBrTable (widthOf witness) (map positionOf targets) (positionOf def)
     IReturn _ _ witness -> EReturn (widthOf witness)
     INop -> ENop
     IUnreachable -> EUnreachable
