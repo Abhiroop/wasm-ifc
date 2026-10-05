@@ -18,6 +18,7 @@
 module Validation.Elaborate (
     ElabError (..),
     Raise (..),
+    BlockRaise (..),
     OperandKind (..),
     IndexSpace (..),
     elaborateModule,
@@ -143,6 +144,17 @@ data ElabError
       AtInstruction Int ElabError
     | -- | the function, by index, in whose body the error arose
       InFunction Word32 ElabError
+    | {- | an 'IllegalFlow' that a label the validator chose for an enclosing block, loop or
+      @if@ may repair by being secret; it never leaves the function it arose in
+      -}
+      BlockTooLow BlockRaise ElabError
+    deriving stock (Eq, Show)
+
+{- | What the validator chose for a block, loop or @if@ and may choose higher: the labels of its
+  own results, the pc a loop's body is checked at, or the types of the labels a branch names,
+  by their depth from the branch (0 is the innermost).
+-}
+data BlockRaise = OwnResults | LoopPc | LabelsAt [Word32]
     deriving stock (Eq, Show)
 
 {- | A label that inference chose and may raise: of a local variable (by its index in the
@@ -274,15 +286,47 @@ raisesToAtLeast raise level expected = case fromSing level of
     labels = fromSing expected
     count = length labels
 
-{- | The raises of a branch's function results, if one of its targets is the function body's
-  own label (the outermost), whose type is the function's results; none otherwise.
+{- | An 'IllegalFlow' of the values a branch carries, as what may repair it: the function's
+  results (the given raises), if one of its targets is the function body's own label, the
+  outermost, whose type they are; otherwise the types of the labels it names, which the
+  blocks that own them chose.
 -}
-bodyRaises :: ElabEnv shape ret locals labels -> [Word32] -> [Raise] -> [Raise]
-bodyRaises env targets raises
-    | outermost `elem` targets = raises
-    | otherwise = []
+blameBranch :: ElabEnv shape ret locals labels -> [Word32] -> [Raise] -> Either ElabError a -> Either ElabError a
+blameBranch env targets raises result
+    | outermost `elem` targets = blame raises result
+    | otherwise = forBlock (LabelsAt targets) result
   where
     outermost = fromIntegral (length (fromSing env.labels)) - 1
+
+-- | An 'IllegalFlow' as one that a choice of an enclosing block may repair ('BlockTooLow').
+forBlock :: BlockRaise -> Either ElabError a -> Either ElabError a
+forBlock raise result = case result of
+    Left err@(IllegalFlow {}) -> Left (BlockTooLow raise err)
+    _ -> result
+
+{- | An error as the instructions around a block see it: one about the block's own choices is
+  final once the block has tried both, and one about the labels a branch names is one label
+  nearer.
+-}
+leaveBlock :: ElabError -> ElabError
+leaveBlock err = case err of
+    BlockTooLow (LabelsAt depths) inner -> case [depth - 1 | depth <- depths, depth > 0] of
+        [] -> inner
+        outer -> BlockTooLow (LabelsAt outer) inner
+    BlockTooLow _ inner -> inner
+    _ -> err
+
+-- | Whether raising the results of the block the error has just reached may repair it.
+aboutOwnResults :: ElabError -> Bool
+aboutOwnResults err = case err of
+    BlockTooLow OwnResults _ -> True
+    _ -> False
+
+-- | Whether raising the type of the label of the block the error has just reached may repair it.
+aboutOwnLabel :: ElabError -> Bool
+aboutOwnLabel err = case err of
+    BlockTooLow (LabelsAt depths) _ -> 0 `elem` depths
+    _ -> False
 
 -- | Require that the values a branch carries are at least as secret as the decision to branch.
 requireCarried :: Text -> Sing (l :: SecLevel) -> Sing (rs :: [LabelledValType]) -> Either ElabError (AllAtLeast l rs)
@@ -315,6 +359,7 @@ elabSeq env pcs stackIn (raw : rest) = do
 placeAt :: Int -> ElabError -> ElabError
 placeAt here err = case err of
     LevelTooLow raises inner -> LevelTooLow raises (placeAt here inner)
+    BlockTooLow raise inner -> BlockTooLow raise (placeAt here inner)
     AtInstruction {} -> err
     _ -> AtInstruction here err
 
@@ -322,6 +367,7 @@ placeAt here err = case err of
 placeIn :: Word32 -> ElabError -> ElabError
 placeIn function err = case err of
     LevelTooLow raises inner -> LevelTooLow raises (placeIn function inner)
+    BlockTooLow _ inner -> placeIn function inner
     _ -> InFunction function err
 
 -- | How many instructions an instruction is in the count of 'AtInstruction': itself and its bodies.
@@ -570,30 +616,30 @@ elabInstr env pcsIn@(SCons pc _) stackIn instr = case instr of
     Nop -> Right (Produces (sameLengthAs pcsIn) pcsIn stackIn INop)
     {- Structured control -}
     Block (FuncType psT rsT) body ->
-        blockParams "block" psT stackIn $ \psS sS witness ->
-            inferResults rsT pc $ \rsS ->
+        first leaveBlock $ blockParams "block" psT stackIn $ \psS sS witness ->
+            inferResults (\e -> aboutOwnResults e || aboutOwnLabel e) rsT pc $ \rsS ->
                 elabBodyChecked (pushLabel rsS (bodyAfter [] env)) (SCons pc pcsIn) psS rsS body $ \(BodyResult (BothLonger same) (SCons pcBody pcsOut) bodySeq) -> do
-                    atStart <- requireCarried "block result" pc rsS
-                    atEnd <- resultsAtEndPc env "block result" pcBody rsS
+                    atStart <- forBlock OwnResults (requireCarried "block result" pc rsS)
+                    atEnd <- forBlock OwnResults (resultsAtEndPc env "block result" pcBody rsS)
                     Right (Produces same pcsOut (rsS %++ sS) (IBlock atStart atEnd (segmentSelf psS) witness bodySeq))
     Loop (FuncType psT rsT) body ->
-        blockParams "loop" psT stackIn $ \psIn sS witness ->
+        first leaveBlock $ blockParams "loop" psT stackIn $ \psIn sS witness ->
             loopParams psIn $ \psS entry ->
                 loopAt pc $ \pcLoop entryFlows ->
-                    inferResults rsT pcLoop $ \rsS ->
+                    inferResults aboutOwnResults rsT pcLoop $ \rsS ->
                         elabBodyChecked (pushLabel psS (bodyAfter [] env)) (SCons pcLoop pcsIn) psS rsS body $ \(BodyResult (BothLonger same) (SCons pcBody pcsOut) bodySeq) -> do
-                            backFlows <- requireFlow "loop" pcBody pcLoop
-                            atStart <- requireCarried "loop result" pcLoop rsS
+                            backFlows <- forBlock LoopPc (requireFlow "loop" pcBody pcLoop)
+                            atStart <- forBlock OwnResults (requireCarried "loop result" pcLoop rsS)
                             Right (Produces same pcsOut (rsS %++ sS) (ILoop atStart entryFlows backFlows entry witness bodySeq))
     If (FuncType psT rsT) thenBody elseBody -> case stackIn of
         SCons (sc :%~ lc) rest -> do
             Refl <- note (OperandMismatch "if" I32 (valTypeOf sc)) (decideEquality sc SI32)
-            blockParams "if" psT rest $ \psS sS witness ->
-                inferResults rsT (sJoin pc lc) $ \rsS ->
+            first leaveBlock $ blockParams "if" psT rest $ \psS sS witness ->
+                inferResults (\e -> aboutOwnResults e || aboutOwnLabel e) rsT (sJoin pc lc) $ \rsS ->
                     elabBodyChecked (pushLabel rsS (bodyAfter [] env)) (SCons (sJoin pc lc) pcsIn) psS rsS thenBody $ \(BodyResult (BothLonger sameThen) (SCons pcThen pcsThen) thenSeq) ->
                         elabBodyChecked (pushLabel rsS (bodyAfter thenBody env)) (SCons (sJoin pc lc) pcsIn) psS rsS elseBody $ \(BodyResult (BothLonger sameElse) (SCons pcElse pcsElse) elseSeq) -> do
-                            atStart <- requireCarried "if result" (sJoin pc lc) rsS
-                            atEnd <- resultsAtEndPc env "if result" (sJoin pcThen pcElse) rsS
+                            atStart <- forBlock OwnResults (requireCarried "if result" (sJoin pc lc) rsS)
+                            atEnd <- forBlock OwnResults (resultsAtEndPc env "if result" (sJoin pcThen pcElse) rsS)
                             Right (Produces (joinEachSameLength sameThen sameElse) (sJoinEach pcsThen pcsElse) (rsS %++ sS) (IIf atStart atEnd (segmentSelf psS) witness thenSeq elseSeq))
         _ -> Left (StackUnderflow "if")
     {- Branches (unconditional ones diverge). What a branch carries may be lower than the label's
@@ -601,8 +647,8 @@ elabInstr env pcsIn@(SCons pc _) stackIn instr = case instr of
     Br (LabelIdx l) -> case mkBranchTarget pc (env.labels) pcsIn l of
         Nothing -> Left (IndexOutOfRange Labels l)
         Just (SomeBranchTarget rsS pcsOut same target) -> do
-            SomeCoercion _ flows witness <- blame (bodyRaises env [l] (raisesWhereBelow (RaiseResult env.functionIndex) rsS stackIn)) (prefixFlows "br" rsS stackIn)
-            carried <- blame (bodyRaises env [l] (raisesToAtLeast (RaiseResult env.functionIndex) pc rsS)) (requireCarried "br" pc rsS)
+            SomeCoercion _ flows witness <- blameBranch env [l] (raisesWhereBelow (RaiseResult env.functionIndex) rsS stackIn) (prefixFlows "br" rsS stackIn)
+            carried <- blameBranch env [l] (raisesToAtLeast (RaiseResult env.functionIndex) pc rsS) (requireCarried "br" pc rsS)
             Right (Transfers same pcsOut (IBr carried flows witness target))
     BrIf (LabelIdx l) -> case stackIn of
         SCons (sc :%~ lc) rest -> do
@@ -610,8 +656,8 @@ elabInstr env pcsIn@(SCons pc _) stackIn instr = case instr of
             case mkBranchTarget (sJoin pc lc) (env.labels) pcsIn l of
                 Nothing -> Left (IndexOutOfRange Labels l)
                 Just (SomeBranchTarget rsS pcsOut same target) -> do
-                    SomeCoercion sS flows witness <- blame (bodyRaises env [l] (raisesWhereBelow (RaiseResult env.functionIndex) rsS rest)) (prefixFlows "br_if" rsS rest)
-                    carried <- blame (bodyRaises env [l] (raisesToAtLeast (RaiseResult env.functionIndex) (sJoin pc lc) rsS)) (requireCarried "br_if" (sJoin pc lc) rsS)
+                    SomeCoercion sS flows witness <- blameBranch env [l] (raisesWhereBelow (RaiseResult env.functionIndex) rsS rest) (prefixFlows "br_if" rsS rest)
+                    carried <- blameBranch env [l] (raisesToAtLeast (RaiseResult env.functionIndex) (sJoin pc lc) rsS) (requireCarried "br_if" (sJoin pc lc) rsS)
                     Right $ case env.restrictions of
                         LiftFree -> Produces same pcsOut rest (IBrIf carried flows witness KeepsLevels target)
                         SecWasmRestrictions -> Produces same pcsOut (rsS %++ sS) (IBrIf carried flows witness TakesTargetType target)
@@ -628,8 +674,8 @@ elabInstr env pcsIn@(SCons pc _) stackIn instr = case instr of
                             Nothing -> Left (IndexOutOfRange Labels d)
                             Just (SomeLabel rsS defIx) -> do
                                 targetIxs <- mapM (resolveTarget reachS rsS) targets
-                                SomeCoercion _ flows witness <- blame (bodyRaises env (d : [t | LabelIdx t <- targets]) (raisesWhereBelow (RaiseResult env.functionIndex) rsS rest)) (prefixFlows "br_table" rsS rest)
-                                carried <- blame (bodyRaises env (d : [t | LabelIdx t <- targets]) (raisesToAtLeast (RaiseResult env.functionIndex) (sJoin pc lc) rsS)) (requireCarried "br_table" (sJoin pc lc) rsS)
+                                SomeCoercion _ flows witness <- blameBranch env (d : [t | LabelIdx t <- targets]) (raisesWhereBelow (RaiseResult env.functionIndex) rsS rest) (prefixFlows "br_table" rsS rest)
+                                carried <- blameBranch env (d : [t | LabelIdx t <- targets]) (raisesToAtLeast (RaiseResult env.functionIndex) (sJoin pc lc) rsS) (requireCarried "br_table" (sJoin pc lc) rsS)
                                 Right (Transfers same pcsOut (IBrTable carried flows witness reach targetIxs defIx))
                 _ -> Left (StackUnderflow "br_table")
     Return -> do
@@ -699,7 +745,7 @@ elabBodyChecked env pcsIn psS rsS body k = do
     body' <- elabSeq env pcsIn psS body
     case body' of
         Reachable same pcsOut soS seq' -> do
-            ended <- endAt "block result" soS rsS seq'
+            ended <- forBlock OwnResults (endAt "block result" soS rsS seq')
             k (BodyResult same pcsOut ended)
         Diverged same pcsOut final poly -> do
             checkDeadResult final rsS
@@ -758,13 +804,15 @@ blockParams name psT stackIn k = case takePrefix (length psT) stackIn of
 {- | The levels of a block's results, which a decoded block type does not say: the pc the body
   runs at first, since everything it pushes is at least that, and secret if the body turns out
   to produce or branch out with something more secret. Over two levels these are all the
-  candidates, so this is a fixed point in at most two attempts.
+  candidates, so this is a fixed point in at most two attempts. The second attempt is made
+  only for a failure that secret results may repair (the predicate): any other failure would
+  recur, and retrying it in every enclosing block would cost time exponential in the nesting.
 -}
-inferResults :: [ValType] -> Sing (pc :: SecLevel) -> (forall rs. Sing (rs :: [LabelledValType]) -> Either ElabError a) -> Either ElabError a
-inferResults rsT pc k = case pc of
+inferResults :: (ElabError -> Bool) -> [ValType] -> Sing (pc :: SecLevel) -> (forall rs. Sing (rs :: [LabelledValType]) -> Either ElabError a) -> Either ElabError a
+inferResults repairable rsT pc k = case pc of
     SHigh -> attempt High
     SLow -> case attempt Low of
-        Left e | levelOnly e -> attempt High
+        Left e | repairable e -> attempt High
         result -> result
   where
     attempt level = case reflectStackAt level (stackOrder rsT) of
@@ -778,18 +826,9 @@ loopParams ::
     (forall ps. Sing ps -> SegmentFlows psIn ps -> Either ElabError a) ->
     Either ElabError a
 loopParams psIn k = case k psIn (segmentSelf psIn) of
-    Left e | levelOnly e -> case reflectStackAt High (stackToList psIn) of
+    Left e | aboutOwnLabel e -> case reflectStackAt High (stackToList psIn) of
         SomeStack psHigh -> maybe (Left e) (k psHigh) (decideSegmentFlows psIn psHigh)
     result -> result
-
--- | Whether an error is about levels alone, so that trying higher ones may resolve it.
-levelOnly :: ElabError -> Bool
-levelOnly e = case e of
-    IllegalFlow {} -> True
-    LevelTooLow {} -> True
-    AtInstruction _ inner -> levelOnly inner
-    InFunction _ inner -> levelOnly inner
-    _ -> False
 
 {- | The pc a loop body is checked at: the current pc if the body keeps it, and 'High if a
   branch inside raises it, because the body may run again under what it left. With two levels
@@ -797,8 +836,8 @@ levelOnly e = case e of
 -}
 loopAt :: Sing (pc :: SecLevel) -> (forall pcLoop. Sing pcLoop -> FlowsInto pc pcLoop -> Either ElabError a) -> Either ElabError a
 loopAt pc k = case k pc (case pc of SLow -> LowFlowsAnywhere; SHigh -> HighFlowsToHigh) of
-    Right a -> Right a
-    Left _ -> k SHigh (case pc of SLow -> LowFlowsAnywhere; SHigh -> HighFlowsToHigh)
+    Left (BlockTooLow LoopPc _) -> k SHigh (case pc of SLow -> LowFlowsAnywhere; SHigh -> HighFlowsToHigh)
+    result -> result
 
 -- | Resolve one @br_table@ target within its reach, checking it carries the same result type as the rest.
 resolveTarget :: Sing (reach :: [LabelledResultType]) -> Sing rs -> LabelIdx -> Either ElabError (Elem rs reach)
@@ -1176,7 +1215,11 @@ validateFrame env pcsIn@(SCons pc _) labelT psT rsT body =
   where
     -- Dead code is never run, so its pc does not matter for security; it is still checked as
     -- code, at the pc it would have had, and at 'High for a loop that would raise its own.
-    orElseTry a b = either (const b) Right a
+    orElseTry a b = either (const (first unblocked b)) Right a
+    -- A choice that fails in dead code fails for good: no live block is to try again for it.
+    unblocked err = case err of
+        BlockTooLow _ inner -> inner
+        _ -> err
 
 {- | The polymorphic stack after a frame (block/loop/if/call) in dead code: its parameters are
   popped and its results pushed. Both lists are in stack order (top first).
