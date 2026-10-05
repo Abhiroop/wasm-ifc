@@ -1,21 +1,18 @@
-/* The password checker of the paper's overview (section 3), written for information-flow
+/* password.c with its secret input and output through libc's read and write, as C is usually
+ * written. Since the host boundary rule is complete, it is rejected: read returns the byte
+ * count, which is secret like the file, and the check of read's result is then a branch on a
+ * secret, after which nothing may call the host (casestudies/README.md).
+ *
+ * The password checker of the paper's overview (section 3), written for information-flow
  * control: it reads a password from a file in /secrets, compares a hash of it with a dictionary
  * of weak passwords, shows the verdict on its standard output, and appends a record of the run
  * to a log in /log that is shared with the developer. The password must not reach the log.
  *
- * Two things keep it typable. First, its secret input and output go to the host directly
- * (__wasi_fd_read, __wasi_fd_write) and not through libc's read and write. The host reports
- * whether a read failed (a status, public) and how many bytes it read (a count, secret like the
- * file) as two values, and libc's read merges them into one, so that the usual check of read's
- * result is a branch on a secret; libc's write is one function for every caller, so that a
- * secret buffer passed to it once makes its buffers secret for the public log too.
- * password-libc.c is the same program through libc, and is rejected.
- *
- * Second, unlike password-naive.c, the code that handles the password does not branch on it:
- * the hash runs over the whole buffer and masks the bytes past the end, the comparisons are
- * combined arithmetically, and the verdict is chosen by an offset rather than by a branch. A
- * branch on a secret raises the pc of the rest of its block, and a call to the host needs a
- * public pc.
+ * Unlike password-naive.c, the code that handles the password does not branch on it: the hash
+ * runs over the whole buffer and masks the bytes past the end, the comparisons are combined
+ * arithmetically, and the verdict is chosen by an offset rather than by a branch. A branch on a
+ * secret raises the pc of the rest of its block, and a call to the host (every write) needs a
+ * public pc; the compiler freely moves a write into the block of such a branch.
  *
  * LEAK selects a variant that leaks:
  *   (none)          the log records only public information: the number of entries checked
@@ -26,7 +23,6 @@
 #include <stdint.h>
 #include <string.h>
 #include <unistd.h>
-#include <wasi/api.h>
 
 /* djb2 hashes of the dictionary's weak passwords: "123456", "password", "qwerty", "letmein". */
 static const uint32_t weak[] = {0x7dd1705au, 0x17f6dc38u, 0x1818ae71u, 0x715ae1b3u};
@@ -63,13 +59,9 @@ static int put_number(int at, uint32_t n) {
 int main(void) {
     int in = open("/secrets/password", O_RDONLY);
     if (in < 0) return 1;
-    /* Ask the host directly, so that "did the read fail" (the status, public) and "how many
-       bytes" (the count, secret like the file) stay two values; libc's read merges them. */
-    __wasi_iovec_t buffer = {(uint8_t *)password, sizeof password};
-    __wasi_size_t count;
-    __wasi_errno_t status = __wasi_fd_read((__wasi_fd_t)in, &buffer, 1, &count);
+    int count = (int)read(in, password, sizeof password);
     close(in);
-    if (status != 0) return 1;
+    if (count < 0) return 1;
 
     /* Drop one trailing newline. */
     uint32_t length = (uint32_t)count;
@@ -80,12 +72,7 @@ int main(void) {
     uint32_t matched = 0;
     for (unsigned i = 0; i < ENTRIES; i++) matched |= (uint32_t)(hash == weak[i]);
 
-    /* The verdict goes to the host directly as well: libc's write is one function for every
-       caller, and passing it a secret pointer here would make its buffers secret for the public
-       log below too. */
-    __wasi_ciovec_t verdict = {(const uint8_t *)verdicts + 5 * matched, 3 + 2 * matched};
-    __wasi_size_t written;
-    (void)__wasi_fd_write(1, &verdict, 1, &written);
+    write(1, verdicts + 5 * matched, 3 + 2 * matched);
 
     int log = open("/log/runs.log", O_WRONLY | O_CREAT | O_APPEND, 0644);
     if (log < 0) return 1;

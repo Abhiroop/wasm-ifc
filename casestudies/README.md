@@ -27,20 +27,24 @@ log in `/log` (public).
 
 | Program | Outcome | Policy lines |
 |---|---|---|
-| `password.c` (branch-free), `checker.policy` | traps in libc's `read`, at the load of the byte count (`load 12 3`) | 4 |
+| `password.c` | runs, prints the verdict, logs `checked 4` | 4 |
+| `-DLEAK_CONTROL` (logs the verdict, chosen by a branch) | traps when the record reaches the log | 4 |
+| `-DLEAK_MEMORY` (logs the hash) | traps when the record reaches the log | 4 |
+| `password-libc.c` (the same through libc's `read` and `write`) | traps in `read`, at the load of the byte count (`load 12 3`) | 4 |
 | the same, with that load declared (`checker-count-declared.policy`) | rejected: `open` is called under a secret pc | 5 |
-| `-DLEAK_CONTROL`, `-DLEAK_MEMORY` | trap at the same load, before the leak is reached | 4 |
-| `password-naive.c` (the same program written plainly) | rejected: a call under a secret pc | 4 |
+| `password-naive.c` (written plainly, with branches on the hash) | rejected: a call under a secret pc | 4 |
 
-The first two rows changed when the host boundary rule was completed (the commit after
-3614d3c). Before, the driver stored the byte count of a read as a public value; the
-branch-free checker then ran under the four-line policy, printed its verdict and logged
-`checked 4`, and its two leaking variants trapped when the record reached the public log
-(`results/2026-09-30-624a05a.json`). Now the count of a read from a secret file is secret, as
-the paper's rule says. `read` returns it, `main` checks it (`if (count < 0) return 1;`), and
-that branch raises the pc of the rest of `main`, where the log is opened and written. The
-first call under the raised pc, `open`, is rejected at the write of `__stack_pointer` in its
-prologue. This is the paper's "statuses and errors" case: C checks the result of every read.
+`password.c` keeps the length of the password secret and still checks whether the read
+failed. It can, because it asks the host directly: `fd_read` reports the status (public) and
+the number of bytes read (secret, like the file) as two values. libc's `read` merges them into
+one return value, `-1` or the count, so the usual `if (count < 0) return 1;` is a branch on a
+secret, which raises the pc of the rest of `main`, where the log is opened and written:
+`password-libc.c` is rejected for that reason (the paper's "statuses and errors" case). The
+verdict goes to the host directly too, because libc's `write` is one function for all its
+callers, and a secret buffer passed to it once makes the buffers it hands to the host secret
+for the public log as well. Before the host boundary rule was complete the driver stored byte
+counts as public values, and the libc version ran (`results/2026-09-30-624a05a.json`); that
+result predates the rule and should not be cited.
 
 What it took, in the order we met it:
 
