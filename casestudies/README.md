@@ -66,7 +66,7 @@ says it should, and every counterexample as the repaired rules say:
 | Examples 1 and 3 | trap: a load declared public reads a secret byte |
 | Examples 4, 5, 6 (expr 3), 6 (expr 4) and 8 | rejected, with the rule and the instruction |
 | Finding 1 (the printed `br_table` rule's leak) | rejected |
-| Findings 2, 3, 4, 6 and 7 (programs the printed rules cannot type) | run |
+| Findings 2, 3, 4, 5 (the `br_table` block of §4.2), 6 and 7 (programs the printed rules cannot type) | run |
 
 Two of the examples return a secret; as the command-line interface does not deliver a secret
 result, they store it in a secret global instead. Example 1 declares its load public, as
