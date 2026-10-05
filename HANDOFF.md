@@ -287,6 +287,13 @@ on the same inputs and requires the same result, public global and memory (2,000
    the count (`load 12 3`); with that load declared the module is rejected statically. The
    earlier result (it ran; the leaks trapped at the log) is from before the rule was complete
    (`casestudies/results/2026-09-30-624a05a.json`) and should not be cited for the final system.
+   **Resolved for the checker without giving up the length (af3f83a):** `password.c` now calls
+   `__wasi_fd_read` and `__wasi_fd_write` directly for its secret input and output. The host
+   reports the status (public) and the byte count (secret) as two values, so checking the
+   status is a public branch; libc's `read` merges them. It runs under the four-line policy and
+   its leaking variants trap at the log. The version through libc is `password-libc.c`, with
+   its rejection. Daniel's position (2026-10-05): the length of a secret is sensitive, so a
+   policy does not get a way to declare it public.
 
 ## Not done yet
 

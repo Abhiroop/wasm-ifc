@@ -35,8 +35,9 @@ are summarised here, not repeated.
   as public, as part of the descriptor table.
 - [ ] **P2** The error check after a read: the byte count of a read from a secret descriptor is
   secret, so C's check of `read`'s result raises the pc of what follows, and the password
-  checker of `casestudies/` is rejected (`casestudies/README.md`). **decision**: let a policy
-  declare the length of a secret channel public, or allow host calls under a secret pc (below).
+  checker of `casestudies/` through libc is rejected (`casestudies/README.md`). The checker
+  itself now asks the host directly, where the status and the count are two values. Declaring
+  a secret channel's length public was considered and declined (the length is sensitive).
 - [ ] **P3** Typed obligations cover the two checks of the pure machine (`Runtime/Obligation.hs`).
   The host driver's checks (`Runtime/Wasi.hs`: bytes handed to a descriptor) are plain code,
   with no evidence type.

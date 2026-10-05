@@ -1,11 +1,93 @@
 {
-  "commit": "fb8fea7",
+  "commit": "af3f83a",
   "date": "2026-10-05",
   "studies": {
     "password": [
       {
         "name": "password",
         "wasm": "casestudies/build/password/password.wasm",
+        "policy": "password/checker.policy",
+        "policy_lines": 4,
+        "loads_declared_from_traps": 0,
+        "outcome": "ran",
+        "expected": "ran",
+        "as_expected": true,
+        "exit_code": 0,
+        "error": null,
+        "site": null,
+        "stdout": "weak\n",
+        "files_written": {
+          "/log/runs.log": "checked 4\n"
+        },
+        "inference": {
+          "verdict": "accepted",
+          "attempts": 8,
+          "secret_locals": 3,
+          "raised_functions": []
+        },
+        "secwasm_restrictions": "accepted",
+        "lift_shape": false,
+        "seconds": 0.235
+      },
+      {
+        "name": "password-leak-control",
+        "wasm": "casestudies/build/password/password-leak-control.wasm",
+        "policy": "password/checker.policy",
+        "policy_lines": 4,
+        "loads_declared_from_traps": 0,
+        "outcome": "trapped",
+        "expected": "trapped",
+        "as_expected": true,
+        "exit_code": 1,
+        "error": "trap: InformationFlowViolation",
+        "site": null,
+        "stdout": "weak\n",
+        "files_written": {
+          "/log/runs.log": ""
+        },
+        "inference": {
+          "verdict": "accepted",
+          "attempts": 10,
+          "secret_locals": 3,
+          "raised_functions": [
+            "12: LabelledFuncType Low [I32 :~ Low,I32 :~ Low,I32 :~ High] [I32 :~ Low]"
+          ]
+        },
+        "secwasm_restrictions": "accepted",
+        "lift_shape": false,
+        "seconds": 0.221
+      },
+      {
+        "name": "password-leak-memory",
+        "wasm": "casestudies/build/password/password-leak-memory.wasm",
+        "policy": "password/checker.policy",
+        "policy_lines": 4,
+        "loads_declared_from_traps": 0,
+        "outcome": "trapped",
+        "expected": "trapped",
+        "as_expected": true,
+        "exit_code": 1,
+        "error": "trap: InformationFlowViolation",
+        "site": null,
+        "stdout": "weak\n",
+        "files_written": {
+          "/log/runs.log": ""
+        },
+        "inference": {
+          "verdict": "accepted",
+          "attempts": 13,
+          "secret_locals": 4,
+          "raised_functions": [
+            "12: LabelledFuncType Low [I32 :~ Low,I32 :~ Low,I32 :~ High] [I32 :~ Low]"
+          ]
+        },
+        "secwasm_restrictions": "accepted",
+        "lift_shape": false,
+        "seconds": 0.299
+      },
+      {
+        "name": "password-libc",
+        "wasm": "casestudies/build/password/password-libc.wasm",
         "policy": "password/checker.policy",
         "policy_lines": 4,
         "loads_declared_from_traps": 0,
@@ -30,69 +112,11 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.17
+        "seconds": 0.195
       },
       {
-        "name": "password-leak-control",
-        "wasm": "casestudies/build/password/password-leak-control.wasm",
-        "policy": "password/checker.policy",
-        "policy_lines": 4,
-        "loads_declared_from_traps": 0,
-        "outcome": "trapped",
-        "expected": "trapped",
-        "as_expected": true,
-        "exit_code": 1,
-        "error": "trap: a load read a secret byte where the policy declares none; declare it with `load 12 3 : H`",
-        "site": {
-          "function": 12,
-          "load": 3
-        },
-        "stdout": "",
-        "files_written": {},
-        "inference": {
-          "verdict": "accepted",
-          "attempts": 9,
-          "secret_locals": 3,
-          "raised_functions": [
-            "13: LabelledFuncType Low [I32 :~ Low,I32 :~ High,I32 :~ High] [I32 :~ Low]"
-          ]
-        },
-        "secwasm_restrictions": "accepted",
-        "lift_shape": false,
-        "seconds": 0.194
-      },
-      {
-        "name": "password-leak-memory",
-        "wasm": "casestudies/build/password/password-leak-memory.wasm",
-        "policy": "password/checker.policy",
-        "policy_lines": 4,
-        "loads_declared_from_traps": 0,
-        "outcome": "trapped",
-        "expected": "trapped",
-        "as_expected": true,
-        "exit_code": 1,
-        "error": "trap: a load read a secret byte where the policy declares none; declare it with `load 12 3 : H`",
-        "site": {
-          "function": 12,
-          "load": 3
-        },
-        "stdout": "",
-        "files_written": {},
-        "inference": {
-          "verdict": "accepted",
-          "attempts": 12,
-          "secret_locals": 4,
-          "raised_functions": [
-            "13: LabelledFuncType Low [I32 :~ Low,I32 :~ High,I32 :~ High] [I32 :~ Low]"
-          ]
-        },
-        "secwasm_restrictions": "accepted",
-        "lift_shape": false,
-        "seconds": 0.24
-      },
-      {
-        "name": "password (count declared)",
-        "wasm": "casestudies/build/password/password.wasm",
+        "name": "password-libc (count declared)",
+        "wasm": "casestudies/build/password/password-libc.wasm",
         "policy": "password/checker-count-declared.policy",
         "policy_lines": 5,
         "loads_declared_from_traps": 0,
@@ -122,7 +146,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 24 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
         "lift_shape": false,
-        "seconds": 0.267
+        "seconds": 0.335
       },
       {
         "name": "password-naive",
@@ -155,7 +179,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 24 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
         "lift_shape": false,
-        "seconds": 0.287
+        "seconds": 0.318
       }
     ],
     "secwasm": [
@@ -181,7 +205,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.005
+        "seconds": 0.004
       },
       {
         "name": "example1",
@@ -208,7 +232,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.003
+        "seconds": 0.005
       },
       {
         "name": "example2",
@@ -232,7 +256,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.003
+        "seconds": 0.01
       },
       {
         "name": "example3",
@@ -259,7 +283,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.005
+        "seconds": 0.008
       },
       {
         "name": "example4",
@@ -287,7 +311,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 0 (AtInstruction 4 (IllegalFlow \"memory.grow\" High Low))",
         "lift_shape": false,
-        "seconds": 0.004
+        "seconds": 0.006
       },
       {
         "name": "example5",
@@ -315,7 +339,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 0 (AtInstruction 6 (IllegalFlow \"memory.grow\" High Low))",
         "lift_shape": false,
-        "seconds": 0.008
+        "seconds": 0.007
       },
       {
         "name": "example6-expr3",
@@ -343,7 +367,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 0 (AtInstruction 10 (IllegalFlow \"global.set\" High Low))",
         "lift_shape": false,
-        "seconds": 0.005
+        "seconds": 0.004
       },
       {
         "name": "example6-expr4",
@@ -371,7 +395,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 0 (AtInstruction 10 (IllegalFlow \"global.set\" High Low))",
         "lift_shape": false,
-        "seconds": 0.004
+        "seconds": 0.005
       },
       {
         "name": "example6-expr5",
@@ -419,7 +443,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.008
+        "seconds": 0.004
       },
       {
         "name": "example8",
@@ -447,7 +471,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 0 (AtInstruction 7 (IllegalFlow \"global.set\" High Low))",
         "lift_shape": false,
-        "seconds": 0.004
+        "seconds": 0.008
       },
       {
         "name": "finding1-br-table-leak",
@@ -475,7 +499,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 0 (AtInstruction 7 (IllegalFlow \"global.set\" High Low))",
         "lift_shape": false,
-        "seconds": 0.004
+        "seconds": 0.008
       },
       {
         "name": "finding2-if-early-exit",
@@ -499,7 +523,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.005
+        "seconds": 0.008
       },
       {
         "name": "finding3-exact-labels",
@@ -523,7 +547,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.005
+        "seconds": 0.01
       },
       {
         "name": "finding4-unreachable",
@@ -547,7 +571,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.008
+        "seconds": 0.007
       },
       {
         "name": "finding5-br-table-values-below",
@@ -571,7 +595,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.003
+        "seconds": 0.008
       },
       {
         "name": "finding6-repeated-targets",
@@ -595,7 +619,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.008
+        "seconds": 0.007
       },
       {
         "name": "finding7-branch-out-of-body",
@@ -619,7 +643,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.006
+        "seconds": 0.005
       }
     ],
     "wasi-c": [
@@ -645,7 +669,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.031
+        "seconds": 0.049
       },
       {
         "name": "clock_getres-monotonic (stdout L)",
@@ -669,7 +693,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.026
+        "seconds": 0.03
       },
       {
         "name": "clock_getres-realtime (stdout H)",
@@ -693,7 +717,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.025
+        "seconds": 0.039
       },
       {
         "name": "clock_getres-realtime (stdout L)",
@@ -717,7 +741,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.023
+        "seconds": 0.037
       },
       {
         "name": "clock_gettime-monotonic (stdout H)",
@@ -741,7 +765,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.032
+        "seconds": 0.029
       },
       {
         "name": "clock_gettime-monotonic (stdout L)",
@@ -765,7 +789,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.027
+        "seconds": 0.03
       },
       {
         "name": "clock_gettime-realtime (stdout H)",
@@ -789,7 +813,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.025
+        "seconds": 0.031
       },
       {
         "name": "clock_gettime-realtime (stdout L)",
@@ -813,7 +837,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.026
+        "seconds": 0.028
       },
       {
         "name": "fdopendir-with-access (stdout H)",
@@ -879,7 +903,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 81 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
         "lift_shape": false,
-        "seconds": 1.192
+        "seconds": 1.331
       },
       {
         "name": "fdopendir-with-access (stdout L)",
@@ -945,7 +969,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 81 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
         "lift_shape": false,
-        "seconds": 1.119
+        "seconds": 1.306
       },
       {
         "name": "fopen-with-access (stdout H)",
@@ -969,7 +993,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.045
+        "seconds": 0.049
       },
       {
         "name": "fopen-with-access (stdout L)",
@@ -993,7 +1017,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.049
+        "seconds": 0.05
       },
       {
         "name": "fopen-with-no-access (stdout H)",
@@ -1017,7 +1041,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.044
+        "seconds": 0.084
       },
       {
         "name": "fopen-with-no-access (stdout L)",
@@ -1041,7 +1065,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.046
+        "seconds": 0.057
       },
       {
         "name": "lseek (stdout H)",
@@ -1067,7 +1091,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 53 (IllegalFlow \"result\" High Low)",
         "lift_shape": false,
-        "seconds": 0.577
+        "seconds": 0.616
       },
       {
         "name": "lseek (stdout L)",
@@ -1093,7 +1117,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 53 (IllegalFlow \"result\" High Low)",
         "lift_shape": false,
-        "seconds": 0.541
+        "seconds": 0.721
       },
       {
         "name": "pread-with-access (stdout H)",
@@ -1124,7 +1148,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 38 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
         "lift_shape": false,
-        "seconds": 0.296
+        "seconds": 0.358
       },
       {
         "name": "pread-with-access (stdout L)",
@@ -1155,7 +1179,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 38 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
         "lift_shape": false,
-        "seconds": 0.334
+        "seconds": 0.347
       },
       {
         "name": "pwrite-with-access (stdout H)",
@@ -1186,7 +1210,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 53 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
         "lift_shape": false,
-        "seconds": 0.327
+        "seconds": 0.393
       },
       {
         "name": "pwrite-with-access (stdout L)",
@@ -1217,7 +1241,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 53 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
         "lift_shape": false,
-        "seconds": 0.337
+        "seconds": 0.352
       },
       {
         "name": "pwrite-with-append (stdout H)",
@@ -1248,7 +1272,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 38 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
         "lift_shape": false,
-        "seconds": 0.377
+        "seconds": 0.345
       },
       {
         "name": "pwrite-with-append (stdout L)",
@@ -1279,7 +1303,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 38 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
         "lift_shape": false,
-        "seconds": 0.335
+        "seconds": 0.34
       },
       {
         "name": "sock_shutdown-invalid_fd (stdout H)",
@@ -1303,7 +1327,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.026
+        "seconds": 0.038
       },
       {
         "name": "sock_shutdown-invalid_fd (stdout L)",
@@ -1351,7 +1375,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.026
+        "seconds": 0.034
       },
       {
         "name": "sock_shutdown-not_sock (stdout L)",
@@ -1375,7 +1399,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.026
+        "seconds": 0.038
       },
       {
         "name": "stat-dev-ino (stdout H)",
@@ -1405,7 +1429,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 33 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
         "lift_shape": false,
-        "seconds": 0.296
+        "seconds": 0.341
       },
       {
         "name": "stat-dev-ino (stdout L)",
@@ -1435,7 +1459,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 33 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
         "lift_shape": false,
-        "seconds": 0.327
+        "seconds": 0.331
       }
     ],
     "polybench": [
@@ -1475,7 +1499,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 64 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
         "lift_shape": false,
-        "seconds": 0.797
+        "seconds": 0.832
       },
       {
         "name": "3mm",
@@ -1513,7 +1537,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 64 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
         "lift_shape": false,
-        "seconds": 0.769
+        "seconds": 0.78
       },
       {
         "name": "atax",
@@ -1551,7 +1575,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 64 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
         "lift_shape": false,
-        "seconds": 0.809
+        "seconds": 0.843
       },
       {
         "name": "gemm",
@@ -1589,7 +1613,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 64 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
         "lift_shape": false,
-        "seconds": 0.765
+        "seconds": 0.81
       },
       {
         "name": "jacobi-2d",
@@ -1627,7 +1651,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 64 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
         "lift_shape": false,
-        "seconds": 0.784
+        "seconds": 0.771
       },
       {
         "name": "seidel-2d",
@@ -1665,7 +1689,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 64 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
         "lift_shape": false,
-        "seconds": 0.767
+        "seconds": 0.869
       },
       {
         "name": "floyd-warshall",
@@ -1703,7 +1727,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 64 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
         "lift_shape": false,
-        "seconds": 0.804
+        "seconds": 0.878
       },
       {
         "name": "nussinov",
@@ -1741,7 +1765,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 64 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
         "lift_shape": false,
-        "seconds": 0.842
+        "seconds": 0.912
       },
       {
         "name": "correlation",
@@ -1779,7 +1803,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 64 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
         "lift_shape": false,
-        "seconds": 0.818
+        "seconds": 0.861
       },
       {
         "name": "lu",
@@ -1817,7 +1841,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 64 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
         "lift_shape": false,
-        "seconds": 0.705
+        "seconds": 0.813
       },
       {
         "name": "2mm (printing compiled out)",
@@ -1841,7 +1865,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.494
+        "seconds": 0.557
       },
       {
         "name": "3mm (printing compiled out)",
@@ -1865,7 +1889,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.621
+        "seconds": 0.628
       },
       {
         "name": "atax (printing compiled out)",
@@ -1889,7 +1913,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.127
+        "seconds": 0.126
       },
       {
         "name": "gemm (printing compiled out)",
@@ -1937,7 +1961,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.119
+        "seconds": 0.116
       },
       {
         "name": "seidel-2d (printing compiled out)",
@@ -1961,7 +1985,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.289
+        "seconds": 0.275
       },
       {
         "name": "floyd-warshall (printing compiled out)",
@@ -1985,7 +2009,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.461
+        "seconds": 0.499
       },
       {
         "name": "nussinov (printing compiled out)",
@@ -2009,7 +2033,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.335
+        "seconds": 0.345
       },
       {
         "name": "correlation (printing compiled out)",
@@ -2033,7 +2057,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.341
+        "seconds": 0.363
       },
       {
         "name": "lu (printing compiled out)",
@@ -2057,7 +2081,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.303
+        "seconds": 0.313
       },
       {
         "name": "2mm (stack pointer preserved)",
@@ -2115,7 +2139,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 63 (AtInstruction 126 (IllegalFlow \"call_indirect\" High Low))",
         "lift_shape": false,
-        "seconds": 10.524
+        "seconds": 10.784
       },
       {
         "name": "3mm (stack pointer preserved)",
@@ -2173,7 +2197,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 63 (AtInstruction 126 (IllegalFlow \"call_indirect\" High Low))",
         "lift_shape": false,
-        "seconds": 10.44
+        "seconds": 10.892
       },
       {
         "name": "atax (stack pointer preserved)",
@@ -2231,7 +2255,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 63 (AtInstruction 126 (IllegalFlow \"call_indirect\" High Low))",
         "lift_shape": false,
-        "seconds": 10.399
+        "seconds": 10.79
       },
       {
         "name": "gemm (stack pointer preserved)",
@@ -2289,7 +2313,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 63 (AtInstruction 126 (IllegalFlow \"call_indirect\" High Low))",
         "lift_shape": false,
-        "seconds": 10.869
+        "seconds": 10.919
       },
       {
         "name": "jacobi-2d (stack pointer preserved)",
@@ -2347,7 +2371,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 63 (AtInstruction 126 (IllegalFlow \"call_indirect\" High Low))",
         "lift_shape": false,
-        "seconds": 10.776
+        "seconds": 10.887
       },
       {
         "name": "seidel-2d (stack pointer preserved)",
@@ -2405,7 +2429,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 63 (AtInstruction 126 (IllegalFlow \"call_indirect\" High Low))",
         "lift_shape": false,
-        "seconds": 10.307
+        "seconds": 10.406
       },
       {
         "name": "floyd-warshall (stack pointer preserved)",
@@ -2463,7 +2487,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 63 (AtInstruction 126 (IllegalFlow \"call_indirect\" High Low))",
         "lift_shape": false,
-        "seconds": 10.131
+        "seconds": 10.567
       },
       {
         "name": "nussinov (stack pointer preserved)",
@@ -2521,7 +2545,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 63 (AtInstruction 126 (IllegalFlow \"call_indirect\" High Low))",
         "lift_shape": false,
-        "seconds": 10.337
+        "seconds": 10.924
       },
       {
         "name": "correlation (stack pointer preserved)",
@@ -2579,7 +2603,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 63 (AtInstruction 126 (IllegalFlow \"call_indirect\" High Low))",
         "lift_shape": false,
-        "seconds": 10.229
+        "seconds": 10.91
       },
       {
         "name": "lu (stack pointer preserved)",
@@ -2637,7 +2661,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 63 (AtInstruction 126 (IllegalFlow \"call_indirect\" High Low))",
         "lift_shape": false,
-        "seconds": 10.252
+        "seconds": 10.853
       }
     ],
     "frames": [
@@ -2667,7 +2691,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.257
+        "seconds": 0.237
       },
       {
         "name": "frames (even key)",
@@ -2695,7 +2719,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.25
+        "seconds": 0.265
       },
       {
         "name": "frames (stack pointer not preserved)",
@@ -2726,7 +2750,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 12 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
         "lift_shape": false,
-        "seconds": 0.061
+        "seconds": 0.057
       }
     ]
   }
