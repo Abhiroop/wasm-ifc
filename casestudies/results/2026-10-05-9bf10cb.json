@@ -1,0 +1,2064 @@
+{
+  "commit": "9bf10cb",
+  "date": "2026-10-05",
+  "studies": {
+    "password": [
+      {
+        "name": "password",
+        "wasm": "casestudies/build/password/password.wasm",
+        "policy": "password/checker.policy",
+        "policy_lines": 4,
+        "loads_declared_from_traps": 0,
+        "outcome": "trapped",
+        "expected": "trapped",
+        "as_expected": true,
+        "exit_code": 1,
+        "error": "trap: a load read a secret byte where the policy declares none; declare it with `load 12 3 : H`",
+        "site": {
+          "function": 12,
+          "load": 3
+        },
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "accepted",
+          "attempts": 8,
+          "secret_locals": 6,
+          "raised_functions": [
+            "13: LabelledFuncType Low [I32 :~ Low,I32 :~ High,I32 :~ High] [I32 :~ Low]"
+          ]
+        },
+        "secwasm_restrictions": "accepted",
+        "lift_shape": false,
+        "seconds": 0.229
+      },
+      {
+        "name": "password-leak-control",
+        "wasm": "casestudies/build/password/password-leak-control.wasm",
+        "policy": "password/checker.policy",
+        "policy_lines": 4,
+        "loads_declared_from_traps": 0,
+        "outcome": "trapped",
+        "expected": "trapped",
+        "as_expected": true,
+        "exit_code": 1,
+        "error": "trap: a load read a secret byte where the policy declares none; declare it with `load 12 3 : H`",
+        "site": {
+          "function": 12,
+          "load": 3
+        },
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "accepted",
+          "attempts": 9,
+          "secret_locals": 7,
+          "raised_functions": [
+            "13: LabelledFuncType Low [I32 :~ Low,I32 :~ High,I32 :~ High] [I32 :~ Low]"
+          ]
+        },
+        "secwasm_restrictions": "accepted",
+        "lift_shape": false,
+        "seconds": 0.125
+      },
+      {
+        "name": "password-leak-memory",
+        "wasm": "casestudies/build/password/password-leak-memory.wasm",
+        "policy": "password/checker.policy",
+        "policy_lines": 4,
+        "loads_declared_from_traps": 0,
+        "outcome": "trapped",
+        "expected": "trapped",
+        "as_expected": true,
+        "exit_code": 1,
+        "error": "trap: a load read a secret byte where the policy declares none; declare it with `load 12 3 : H`",
+        "site": {
+          "function": 12,
+          "load": 3
+        },
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "accepted",
+          "attempts": 12,
+          "secret_locals": 10,
+          "raised_functions": [
+            "13: LabelledFuncType Low [I32 :~ Low,I32 :~ High,I32 :~ High] [I32 :~ Low]"
+          ]
+        },
+        "secwasm_restrictions": "accepted",
+        "lift_shape": false,
+        "seconds": 0.328
+      },
+      {
+        "name": "password (count declared)",
+        "wasm": "casestudies/build/password/password.wasm",
+        "policy": "password/checker-count-declared.policy",
+        "policy_lines": 5,
+        "loads_declared_from_traps": 0,
+        "outcome": "rejected",
+        "expected": "rejected",
+        "as_expected": true,
+        "exit_code": 1,
+        "error": "Validation error: InFunction 24 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+        "site": {
+          "function": 24,
+          "instruction": 4,
+          "rule": "IllegalFlow \"global.set\" High Low"
+        },
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "rejected: InFunction 24 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+          "attempts": 15,
+          "secret_locals": 13,
+          "raised_functions": [
+            "9: LabelledFuncType Low [I32 :~ High,I32 :~ Low,I32 :~ Low,I32 :~ Low,I32 :~ Low] [I32 :~ Low]",
+            "12: LabelledFuncType Low [I32 :~ Low,I32 :~ Low,I32 :~ Low] [I32 :~ High]",
+            "13: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "20: LabelledFuncType Low [I32 :~ High,I32 :~ Low,I32 :~ Low,I32 :~ Low] [I32 :~ Low]",
+            "24: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]"
+          ]
+        },
+        "secwasm_restrictions": "rejected: InFunction 24 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+        "lift_shape": false,
+        "seconds": 0.225
+      },
+      {
+        "name": "password-naive",
+        "wasm": "casestudies/build/password/password-naive.wasm",
+        "policy": "password/checker.policy",
+        "policy_lines": 4,
+        "loads_declared_from_traps": 0,
+        "outcome": "rejected",
+        "expected": "rejected",
+        "as_expected": true,
+        "exit_code": 1,
+        "error": "Validation error: InFunction 24 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+        "site": {
+          "function": 24,
+          "instruction": 4,
+          "rule": "IllegalFlow \"global.set\" High Low"
+        },
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "rejected: InFunction 24 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+          "attempts": 15,
+          "secret_locals": 12,
+          "raised_functions": [
+            "9: LabelledFuncType Low [I32 :~ High,I32 :~ Low,I32 :~ Low,I32 :~ Low,I32 :~ Low] [I32 :~ Low]",
+            "13: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "20: LabelledFuncType Low [I32 :~ High,I32 :~ Low,I32 :~ Low,I32 :~ Low] [I32 :~ Low]",
+            "24: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]"
+          ]
+        },
+        "secwasm_restrictions": "rejected: InFunction 24 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+        "lift_shape": false,
+        "seconds": 0.264
+      }
+    ],
+    "secwasm": [
+      {
+        "name": "fig2a",
+        "wasm": "casestudies/build/secwasm/fig2a.wasm",
+        "policy": "secwasm/fig2a.policy",
+        "policy_lines": 0,
+        "loads_declared_from_traps": 0,
+        "outcome": "ran",
+        "expected": "ran",
+        "as_expected": true,
+        "exit_code": 0,
+        "error": null,
+        "site": null,
+        "stdout": "0\n",
+        "files_written": {},
+        "inference": {
+          "verdict": "accepted",
+          "attempts": 1,
+          "secret_locals": 0,
+          "raised_functions": []
+        },
+        "secwasm_restrictions": "accepted",
+        "lift_shape": false,
+        "seconds": 0.003
+      },
+      {
+        "name": "example1",
+        "wasm": "casestudies/build/secwasm/example1.wasm",
+        "policy": "secwasm/example1.policy",
+        "policy_lines": 2,
+        "loads_declared_from_traps": 0,
+        "outcome": "trapped",
+        "expected": "trapped",
+        "as_expected": true,
+        "exit_code": 1,
+        "error": "trap: a load read a secret byte where the policy declares none; declare it with `load 0 0 : H`",
+        "site": {
+          "function": 0,
+          "load": 0
+        },
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "accepted",
+          "attempts": 1,
+          "secret_locals": 0,
+          "raised_functions": []
+        },
+        "secwasm_restrictions": "accepted",
+        "lift_shape": false,
+        "seconds": 0.005
+      },
+      {
+        "name": "example2",
+        "wasm": "casestudies/build/secwasm/example2.wasm",
+        "policy": "secwasm/example2.policy",
+        "policy_lines": 3,
+        "loads_declared_from_traps": 0,
+        "outcome": "ran",
+        "expected": "ran",
+        "as_expected": true,
+        "exit_code": 0,
+        "error": null,
+        "site": null,
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "accepted",
+          "attempts": 1,
+          "secret_locals": 0,
+          "raised_functions": []
+        },
+        "secwasm_restrictions": "accepted",
+        "lift_shape": false,
+        "seconds": 0.005
+      },
+      {
+        "name": "example3",
+        "wasm": "casestudies/build/secwasm/example3.wasm",
+        "policy": "secwasm/example3.policy",
+        "policy_lines": 2,
+        "loads_declared_from_traps": 0,
+        "outcome": "trapped",
+        "expected": "trapped",
+        "as_expected": true,
+        "exit_code": 1,
+        "error": "trap: a load read a secret byte where the policy declares none; declare it with `load 0 1 : H`",
+        "site": {
+          "function": 0,
+          "load": 1
+        },
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "accepted",
+          "attempts": 1,
+          "secret_locals": 0,
+          "raised_functions": []
+        },
+        "secwasm_restrictions": "accepted",
+        "lift_shape": false,
+        "seconds": 0.006
+      },
+      {
+        "name": "example4",
+        "wasm": "casestudies/build/secwasm/example4.wasm",
+        "policy": "secwasm/example4.policy",
+        "policy_lines": 1,
+        "loads_declared_from_traps": 0,
+        "outcome": "rejected",
+        "expected": "rejected",
+        "as_expected": true,
+        "exit_code": 1,
+        "error": "Validation error: InFunction 0 (AtInstruction 4 (IllegalFlow \"memory.grow\" High Low))",
+        "site": {
+          "function": 0,
+          "instruction": 4,
+          "rule": "IllegalFlow \"memory.grow\" High Low"
+        },
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "rejected: InFunction 0 (AtInstruction 4 (IllegalFlow \"memory.grow\" High Low))",
+          "attempts": 1,
+          "secret_locals": 0,
+          "raised_functions": []
+        },
+        "secwasm_restrictions": "rejected: InFunction 0 (AtInstruction 4 (IllegalFlow \"memory.grow\" High Low))",
+        "lift_shape": false,
+        "seconds": 0.005
+      },
+      {
+        "name": "example5",
+        "wasm": "casestudies/build/secwasm/example5.wasm",
+        "policy": "secwasm/example5.policy",
+        "policy_lines": 1,
+        "loads_declared_from_traps": 0,
+        "outcome": "rejected",
+        "expected": "rejected",
+        "as_expected": true,
+        "exit_code": 1,
+        "error": "Validation error: InFunction 0 (AtInstruction 6 (IllegalFlow \"memory.grow\" High Low))",
+        "site": {
+          "function": 0,
+          "instruction": 6,
+          "rule": "IllegalFlow \"memory.grow\" High Low"
+        },
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "rejected: InFunction 0 (AtInstruction 6 (IllegalFlow \"memory.grow\" High Low))",
+          "attempts": 1,
+          "secret_locals": 0,
+          "raised_functions": []
+        },
+        "secwasm_restrictions": "rejected: InFunction 0 (AtInstruction 6 (IllegalFlow \"memory.grow\" High Low))",
+        "lift_shape": false,
+        "seconds": 0.005
+      },
+      {
+        "name": "example6-expr3",
+        "wasm": "casestudies/build/secwasm/example6-expr3.wasm",
+        "policy": "secwasm/example6-expr3.policy",
+        "policy_lines": 2,
+        "loads_declared_from_traps": 0,
+        "outcome": "rejected",
+        "expected": "rejected",
+        "as_expected": true,
+        "exit_code": 1,
+        "error": "Validation error: InFunction 0 (AtInstruction 10 (IllegalFlow \"global.set\" High Low))",
+        "site": {
+          "function": 0,
+          "instruction": 10,
+          "rule": "IllegalFlow \"global.set\" High Low"
+        },
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "rejected: InFunction 0 (AtInstruction 10 (IllegalFlow \"global.set\" High Low))",
+          "attempts": 1,
+          "secret_locals": 0,
+          "raised_functions": []
+        },
+        "secwasm_restrictions": "rejected: InFunction 0 (AtInstruction 10 (IllegalFlow \"global.set\" High Low))",
+        "lift_shape": false,
+        "seconds": 0.005
+      },
+      {
+        "name": "example6-expr4",
+        "wasm": "casestudies/build/secwasm/example6-expr4.wasm",
+        "policy": "secwasm/example6-expr4.policy",
+        "policy_lines": 2,
+        "loads_declared_from_traps": 0,
+        "outcome": "rejected",
+        "expected": "rejected",
+        "as_expected": true,
+        "exit_code": 1,
+        "error": "Validation error: InFunction 0 (AtInstruction 10 (IllegalFlow \"global.set\" High Low))",
+        "site": {
+          "function": 0,
+          "instruction": 10,
+          "rule": "IllegalFlow \"global.set\" High Low"
+        },
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "rejected: InFunction 0 (AtInstruction 10 (IllegalFlow \"global.set\" High Low))",
+          "attempts": 1,
+          "secret_locals": 0,
+          "raised_functions": []
+        },
+        "secwasm_restrictions": "rejected: InFunction 0 (AtInstruction 10 (IllegalFlow \"global.set\" High Low))",
+        "lift_shape": false,
+        "seconds": 0.004
+      },
+      {
+        "name": "example6-expr5",
+        "wasm": "casestudies/build/secwasm/example6-expr5.wasm",
+        "policy": "secwasm/example6-expr5.policy",
+        "policy_lines": 2,
+        "loads_declared_from_traps": 0,
+        "outcome": "ran",
+        "expected": "ran",
+        "as_expected": true,
+        "exit_code": 0,
+        "error": null,
+        "site": null,
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "accepted",
+          "attempts": 1,
+          "secret_locals": 0,
+          "raised_functions": []
+        },
+        "secwasm_restrictions": "accepted",
+        "lift_shape": false,
+        "seconds": 0.005
+      },
+      {
+        "name": "example7",
+        "wasm": "casestudies/build/secwasm/example7.wasm",
+        "policy": "secwasm/example7.policy",
+        "policy_lines": 2,
+        "loads_declared_from_traps": 0,
+        "outcome": "ran",
+        "expected": "ran",
+        "as_expected": true,
+        "exit_code": 0,
+        "error": null,
+        "site": null,
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "accepted",
+          "attempts": 1,
+          "secret_locals": 0,
+          "raised_functions": []
+        },
+        "secwasm_restrictions": "accepted",
+        "lift_shape": false,
+        "seconds": 0.004
+      },
+      {
+        "name": "example8",
+        "wasm": "casestudies/build/secwasm/example8.wasm",
+        "policy": "secwasm/example8.policy",
+        "policy_lines": 1,
+        "loads_declared_from_traps": 0,
+        "outcome": "rejected",
+        "expected": "rejected",
+        "as_expected": true,
+        "exit_code": 1,
+        "error": "Validation error: InFunction 0 (AtInstruction 7 (IllegalFlow \"global.set\" High Low))",
+        "site": {
+          "function": 0,
+          "instruction": 7,
+          "rule": "IllegalFlow \"global.set\" High Low"
+        },
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "rejected: InFunction 0 (AtInstruction 7 (IllegalFlow \"global.set\" High Low))",
+          "attempts": 1,
+          "secret_locals": 0,
+          "raised_functions": []
+        },
+        "secwasm_restrictions": "rejected: InFunction 0 (AtInstruction 7 (IllegalFlow \"global.set\" High Low))",
+        "lift_shape": false,
+        "seconds": 0.004
+      },
+      {
+        "name": "finding1-br-table-leak",
+        "wasm": "casestudies/build/secwasm/finding1-br-table-leak.wasm",
+        "policy": "secwasm/finding1-br-table-leak.policy",
+        "policy_lines": 1,
+        "loads_declared_from_traps": 0,
+        "outcome": "rejected",
+        "expected": "rejected",
+        "as_expected": true,
+        "exit_code": 1,
+        "error": "Validation error: InFunction 0 (AtInstruction 7 (IllegalFlow \"global.set\" High Low))",
+        "site": {
+          "function": 0,
+          "instruction": 7,
+          "rule": "IllegalFlow \"global.set\" High Low"
+        },
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "rejected: InFunction 0 (AtInstruction 7 (IllegalFlow \"global.set\" High Low))",
+          "attempts": 1,
+          "secret_locals": 0,
+          "raised_functions": []
+        },
+        "secwasm_restrictions": "rejected: InFunction 0 (AtInstruction 7 (IllegalFlow \"global.set\" High Low))",
+        "lift_shape": false,
+        "seconds": 0.004
+      },
+      {
+        "name": "finding2-if-early-exit",
+        "wasm": "casestudies/build/secwasm/finding2-if-early-exit.wasm",
+        "policy": "secwasm/finding2-if-early-exit.policy",
+        "policy_lines": 1,
+        "loads_declared_from_traps": 0,
+        "outcome": "ran",
+        "expected": "ran",
+        "as_expected": true,
+        "exit_code": 0,
+        "error": null,
+        "site": null,
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "accepted",
+          "attempts": 1,
+          "secret_locals": 0,
+          "raised_functions": []
+        },
+        "secwasm_restrictions": "accepted",
+        "lift_shape": false,
+        "seconds": 0.004
+      },
+      {
+        "name": "finding3-exact-labels",
+        "wasm": "casestudies/build/secwasm/finding3-exact-labels.wasm",
+        "policy": "secwasm/finding3-exact-labels.policy",
+        "policy_lines": 2,
+        "loads_declared_from_traps": 0,
+        "outcome": "ran",
+        "expected": "ran",
+        "as_expected": true,
+        "exit_code": 1,
+        "error": "the results of f are secret under the policy, so they are not delivered",
+        "site": null,
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "accepted",
+          "attempts": 1,
+          "secret_locals": 0,
+          "raised_functions": []
+        },
+        "secwasm_restrictions": "accepted",
+        "lift_shape": false,
+        "seconds": 0.005
+      },
+      {
+        "name": "finding4-unreachable",
+        "wasm": "casestudies/build/secwasm/finding4-unreachable.wasm",
+        "policy": "secwasm/finding4-unreachable.policy",
+        "policy_lines": 0,
+        "loads_declared_from_traps": 0,
+        "outcome": "ran",
+        "expected": "ran",
+        "as_expected": true,
+        "exit_code": 0,
+        "error": null,
+        "site": null,
+        "stdout": "7\n",
+        "files_written": {},
+        "inference": {
+          "verdict": "accepted",
+          "attempts": 1,
+          "secret_locals": 0,
+          "raised_functions": []
+        },
+        "secwasm_restrictions": "accepted",
+        "lift_shape": false,
+        "seconds": 0.003
+      },
+      {
+        "name": "finding5-br-table-values-below",
+        "wasm": "casestudies/build/secwasm/finding5-br-table-values-below.wasm",
+        "policy": "secwasm/finding5-br-table-values-below.policy",
+        "policy_lines": 0,
+        "loads_declared_from_traps": 0,
+        "outcome": "ran",
+        "expected": "ran",
+        "as_expected": true,
+        "exit_code": 0,
+        "error": null,
+        "site": null,
+        "stdout": "7\n",
+        "files_written": {},
+        "inference": {
+          "verdict": "accepted",
+          "attempts": 1,
+          "secret_locals": 0,
+          "raised_functions": []
+        },
+        "secwasm_restrictions": "accepted",
+        "lift_shape": false,
+        "seconds": 0.003
+      },
+      {
+        "name": "finding6-repeated-targets",
+        "wasm": "casestudies/build/secwasm/finding6-repeated-targets.wasm",
+        "policy": "secwasm/finding6-repeated-targets.policy",
+        "policy_lines": 0,
+        "loads_declared_from_traps": 0,
+        "outcome": "ran",
+        "expected": "ran",
+        "as_expected": true,
+        "exit_code": 0,
+        "error": null,
+        "site": null,
+        "stdout": "3\n",
+        "files_written": {},
+        "inference": {
+          "verdict": "accepted",
+          "attempts": 1,
+          "secret_locals": 0,
+          "raised_functions": []
+        },
+        "secwasm_restrictions": "accepted",
+        "lift_shape": false,
+        "seconds": 0.005
+      },
+      {
+        "name": "finding7-branch-out-of-body",
+        "wasm": "casestudies/build/secwasm/finding7-branch-out-of-body.wasm",
+        "policy": "secwasm/finding7-branch-out-of-body.policy",
+        "policy_lines": 0,
+        "loads_declared_from_traps": 0,
+        "outcome": "ran",
+        "expected": "ran",
+        "as_expected": true,
+        "exit_code": 0,
+        "error": null,
+        "site": null,
+        "stdout": "9\n",
+        "files_written": {},
+        "inference": {
+          "verdict": "accepted",
+          "attempts": 1,
+          "secret_locals": 0,
+          "raised_functions": []
+        },
+        "secwasm_restrictions": "accepted",
+        "lift_shape": false,
+        "seconds": 0.005
+      }
+    ],
+    "wasi-c": [
+      {
+        "name": "clock_getres-monotonic (stdout H)",
+        "wasm": "test/wasi/testsuite/tests/c/testsuite/wasm32-wasip1/clock_getres-monotonic.wasm",
+        "policy": "preopen / : H\nstdout : H\nstderr : H\n",
+        "policy_lines": 3,
+        "loads_declared_from_traps": 0,
+        "outcome": "ran",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 0,
+        "error": null,
+        "site": null,
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "accepted",
+          "attempts": 1,
+          "secret_locals": 0,
+          "raised_functions": []
+        },
+        "secwasm_restrictions": "accepted",
+        "lift_shape": false,
+        "seconds": 0.126
+      },
+      {
+        "name": "clock_getres-monotonic (stdout L)",
+        "wasm": "test/wasi/testsuite/tests/c/testsuite/wasm32-wasip1/clock_getres-monotonic.wasm",
+        "policy": "preopen / : H\nstdout : L\nstderr : L\n",
+        "policy_lines": 3,
+        "loads_declared_from_traps": 0,
+        "outcome": "ran",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 0,
+        "error": null,
+        "site": null,
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "accepted",
+          "attempts": 1,
+          "secret_locals": 0,
+          "raised_functions": []
+        },
+        "secwasm_restrictions": "accepted",
+        "lift_shape": false,
+        "seconds": 0.131
+      },
+      {
+        "name": "clock_getres-realtime (stdout H)",
+        "wasm": "test/wasi/testsuite/tests/c/testsuite/wasm32-wasip1/clock_getres-realtime.wasm",
+        "policy": "preopen / : H\nstdout : H\nstderr : H\n",
+        "policy_lines": 3,
+        "loads_declared_from_traps": 0,
+        "outcome": "ran",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 0,
+        "error": null,
+        "site": null,
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "accepted",
+          "attempts": 1,
+          "secret_locals": 0,
+          "raised_functions": []
+        },
+        "secwasm_restrictions": "accepted",
+        "lift_shape": false,
+        "seconds": 0.095
+      },
+      {
+        "name": "clock_getres-realtime (stdout L)",
+        "wasm": "test/wasi/testsuite/tests/c/testsuite/wasm32-wasip1/clock_getres-realtime.wasm",
+        "policy": "preopen / : H\nstdout : L\nstderr : L\n",
+        "policy_lines": 3,
+        "loads_declared_from_traps": 0,
+        "outcome": "ran",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 0,
+        "error": null,
+        "site": null,
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "accepted",
+          "attempts": 1,
+          "secret_locals": 0,
+          "raised_functions": []
+        },
+        "secwasm_restrictions": "accepted",
+        "lift_shape": false,
+        "seconds": 0.106
+      },
+      {
+        "name": "clock_gettime-monotonic (stdout H)",
+        "wasm": "test/wasi/testsuite/tests/c/testsuite/wasm32-wasip1/clock_gettime-monotonic.wasm",
+        "policy": "preopen / : H\nstdout : H\nstderr : H\n",
+        "policy_lines": 3,
+        "loads_declared_from_traps": 0,
+        "outcome": "ran",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 0,
+        "error": null,
+        "site": null,
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "accepted",
+          "attempts": 1,
+          "secret_locals": 0,
+          "raised_functions": []
+        },
+        "secwasm_restrictions": "accepted",
+        "lift_shape": false,
+        "seconds": 0.095
+      },
+      {
+        "name": "clock_gettime-monotonic (stdout L)",
+        "wasm": "test/wasi/testsuite/tests/c/testsuite/wasm32-wasip1/clock_gettime-monotonic.wasm",
+        "policy": "preopen / : H\nstdout : L\nstderr : L\n",
+        "policy_lines": 3,
+        "loads_declared_from_traps": 0,
+        "outcome": "ran",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 0,
+        "error": null,
+        "site": null,
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "accepted",
+          "attempts": 1,
+          "secret_locals": 0,
+          "raised_functions": []
+        },
+        "secwasm_restrictions": "accepted",
+        "lift_shape": false,
+        "seconds": 0.089
+      },
+      {
+        "name": "clock_gettime-realtime (stdout H)",
+        "wasm": "test/wasi/testsuite/tests/c/testsuite/wasm32-wasip1/clock_gettime-realtime.wasm",
+        "policy": "preopen / : H\nstdout : H\nstderr : H\n",
+        "policy_lines": 3,
+        "loads_declared_from_traps": 0,
+        "outcome": "ran",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 0,
+        "error": null,
+        "site": null,
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "accepted",
+          "attempts": 1,
+          "secret_locals": 0,
+          "raised_functions": []
+        },
+        "secwasm_restrictions": "accepted",
+        "lift_shape": false,
+        "seconds": 0.109
+      },
+      {
+        "name": "clock_gettime-realtime (stdout L)",
+        "wasm": "test/wasi/testsuite/tests/c/testsuite/wasm32-wasip1/clock_gettime-realtime.wasm",
+        "policy": "preopen / : H\nstdout : L\nstderr : L\n",
+        "policy_lines": 3,
+        "loads_declared_from_traps": 0,
+        "outcome": "ran",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 0,
+        "error": null,
+        "site": null,
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "accepted",
+          "attempts": 1,
+          "secret_locals": 0,
+          "raised_functions": []
+        },
+        "secwasm_restrictions": "accepted",
+        "lift_shape": false,
+        "seconds": 0.104
+      },
+      {
+        "name": "fdopendir-with-access (stdout H)",
+        "wasm": "test/wasi/testsuite/tests/c/testsuite/wasm32-wasip1/fdopendir-with-access.wasm",
+        "policy": "preopen / : H\nstdout : H\nstderr : H\nload 19 0 : H\n",
+        "policy_lines": 3,
+        "loads_declared_from_traps": 1,
+        "outcome": "rejected",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 1,
+        "error": "Validation error: InFunction 81 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+        "site": {
+          "function": 81,
+          "instruction": 4,
+          "rule": "IllegalFlow \"global.set\" High Low"
+        },
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "rejected: InFunction 81 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+          "attempts": 70,
+          "secret_locals": 253,
+          "raised_functions": [
+            "13: LabelledFuncType Low [I32 :~ High,I32 :~ Low,I32 :~ Low,I32 :~ Low,I32 :~ Low] [I32 :~ Low]",
+            "15: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "18: LabelledFuncType Low [I32 :~ Low] [I32 :~ High]",
+            "20: LabelledFuncType High [I32 :~ High] []",
+            "22: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "24: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "28: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "29: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "30: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I64 :~ High,I32 :~ High] [I32 :~ High]",
+            "33: LabelledFuncType Low [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ Low] [I32 :~ Low]",
+            "35: LabelledFuncType High [I32 :~ High] []",
+            "36: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "37: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "38: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "39: LabelledFuncType Low [I32 :~ Low,I32 :~ Low,I32 :~ Low] [I32 :~ High]",
+            "40: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "42: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "43: LabelledFuncType Low [I32 :~ Low,I32 :~ Low,I32 :~ Low,I32 :~ Low] [I32 :~ High]",
+            "44: LabelledFuncType Low [I32 :~ Low,I32 :~ Low,I32 :~ Low] [I32 :~ High]",
+            "56: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "57: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "58: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "59: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "63: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "64: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "65: LabelledFuncType Low [I32 :~ Low,I32 :~ Low,I32 :~ High,I32 :~ Low] [I32 :~ Low]",
+            "69: LabelledFuncType Low [I32 :~ Low,I32 :~ Low] [I32 :~ High]",
+            "73: LabelledFuncType Low [I32 :~ Low,I32 :~ Low] [I32 :~ High]",
+            "75: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "77: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] []",
+            "80: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "81: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "83: LabelledFuncType High [I32 :~ High] []",
+            "84: LabelledFuncType High [I32 :~ High] []",
+            "85: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "86: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "87: LabelledFuncType High [I32 :~ High,I32 :~ High] []"
+          ]
+        },
+        "secwasm_restrictions": "rejected: InFunction 81 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+        "lift_shape": false,
+        "seconds": 1.262
+      },
+      {
+        "name": "fdopendir-with-access (stdout L)",
+        "wasm": "test/wasi/testsuite/tests/c/testsuite/wasm32-wasip1/fdopendir-with-access.wasm",
+        "policy": "preopen / : H\nstdout : L\nstderr : L\nload 19 0 : H\n",
+        "policy_lines": 3,
+        "loads_declared_from_traps": 1,
+        "outcome": "rejected",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 1,
+        "error": "Validation error: InFunction 81 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+        "site": {
+          "function": 81,
+          "instruction": 4,
+          "rule": "IllegalFlow \"global.set\" High Low"
+        },
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "rejected: InFunction 81 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+          "attempts": 70,
+          "secret_locals": 253,
+          "raised_functions": [
+            "13: LabelledFuncType Low [I32 :~ High,I32 :~ Low,I32 :~ Low,I32 :~ Low,I32 :~ Low] [I32 :~ Low]",
+            "15: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "18: LabelledFuncType Low [I32 :~ Low] [I32 :~ High]",
+            "20: LabelledFuncType High [I32 :~ High] []",
+            "22: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "24: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "28: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "29: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "30: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I64 :~ High,I32 :~ High] [I32 :~ High]",
+            "33: LabelledFuncType Low [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ Low] [I32 :~ Low]",
+            "35: LabelledFuncType High [I32 :~ High] []",
+            "36: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "37: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "38: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "39: LabelledFuncType Low [I32 :~ Low,I32 :~ Low,I32 :~ Low] [I32 :~ High]",
+            "40: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "42: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "43: LabelledFuncType Low [I32 :~ Low,I32 :~ Low,I32 :~ Low,I32 :~ Low] [I32 :~ High]",
+            "44: LabelledFuncType Low [I32 :~ Low,I32 :~ Low,I32 :~ Low] [I32 :~ High]",
+            "56: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "57: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "58: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "59: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "63: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "64: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "65: LabelledFuncType Low [I32 :~ Low,I32 :~ Low,I32 :~ High,I32 :~ Low] [I32 :~ Low]",
+            "69: LabelledFuncType Low [I32 :~ Low,I32 :~ Low] [I32 :~ High]",
+            "73: LabelledFuncType Low [I32 :~ Low,I32 :~ Low] [I32 :~ High]",
+            "75: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "77: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] []",
+            "80: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "81: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "83: LabelledFuncType High [I32 :~ High] []",
+            "84: LabelledFuncType High [I32 :~ High] []",
+            "85: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "86: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "87: LabelledFuncType High [I32 :~ High,I32 :~ High] []"
+          ]
+        },
+        "secwasm_restrictions": "rejected: InFunction 81 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+        "lift_shape": false,
+        "seconds": 1.226
+      },
+      {
+        "name": "fopen-with-access (stdout H)",
+        "wasm": "test/wasi/testsuite/tests/c/testsuite/wasm32-wasip1/fopen-with-access.wasm",
+        "policy": "preopen / : H\nstdout : H\nstderr : H\n",
+        "policy_lines": 3,
+        "loads_declared_from_traps": 0,
+        "outcome": "ran",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 0,
+        "error": null,
+        "site": null,
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "accepted",
+          "attempts": 1,
+          "secret_locals": 0,
+          "raised_functions": []
+        },
+        "secwasm_restrictions": "accepted",
+        "lift_shape": false,
+        "seconds": 0.107
+      },
+      {
+        "name": "fopen-with-access (stdout L)",
+        "wasm": "test/wasi/testsuite/tests/c/testsuite/wasm32-wasip1/fopen-with-access.wasm",
+        "policy": "preopen / : H\nstdout : L\nstderr : L\n",
+        "policy_lines": 3,
+        "loads_declared_from_traps": 0,
+        "outcome": "ran",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 0,
+        "error": null,
+        "site": null,
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "accepted",
+          "attempts": 1,
+          "secret_locals": 0,
+          "raised_functions": []
+        },
+        "secwasm_restrictions": "accepted",
+        "lift_shape": false,
+        "seconds": 0.108
+      },
+      {
+        "name": "fopen-with-no-access (stdout H)",
+        "wasm": "test/wasi/testsuite/tests/c/testsuite/wasm32-wasip1/fopen-with-no-access.wasm",
+        "policy": "preopen / : H\nstdout : H\nstderr : H\n",
+        "policy_lines": 3,
+        "loads_declared_from_traps": 0,
+        "outcome": "ran",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 0,
+        "error": null,
+        "site": null,
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "accepted",
+          "attempts": 1,
+          "secret_locals": 0,
+          "raised_functions": []
+        },
+        "secwasm_restrictions": "accepted",
+        "lift_shape": false,
+        "seconds": 0.091
+      },
+      {
+        "name": "fopen-with-no-access (stdout L)",
+        "wasm": "test/wasi/testsuite/tests/c/testsuite/wasm32-wasip1/fopen-with-no-access.wasm",
+        "policy": "preopen / : H\nstdout : L\nstderr : L\n",
+        "policy_lines": 3,
+        "loads_declared_from_traps": 0,
+        "outcome": "ran",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 0,
+        "error": null,
+        "site": null,
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "accepted",
+          "attempts": 1,
+          "secret_locals": 0,
+          "raised_functions": []
+        },
+        "secwasm_restrictions": "accepted",
+        "lift_shape": false,
+        "seconds": 0.09
+      },
+      {
+        "name": "lseek (stdout H)",
+        "wasm": "test/wasi/testsuite/tests/c/testsuite/wasm32-wasip1/lseek.wasm",
+        "policy": "preopen / : H\nstdout : H\nstderr : H\nload 51 2 : H\n",
+        "policy_lines": 3,
+        "loads_declared_from_traps": 1,
+        "outcome": "rejected",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 1,
+        "error": "Validation error: InFunction 53 (IllegalFlow \"result\" High Low)",
+        "site": null,
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "rejected: InFunction 53 (IllegalFlow \"result\" High Low)",
+          "attempts": 7,
+          "secret_locals": 5,
+          "raised_functions": [
+            "51: LabelledFuncType Low [I32 :~ Low,I32 :~ Low,I32 :~ Low] [I32 :~ High]"
+          ]
+        },
+        "secwasm_restrictions": "rejected: InFunction 53 (IllegalFlow \"result\" High Low)",
+        "lift_shape": false,
+        "seconds": 0.636
+      },
+      {
+        "name": "lseek (stdout L)",
+        "wasm": "test/wasi/testsuite/tests/c/testsuite/wasm32-wasip1/lseek.wasm",
+        "policy": "preopen / : H\nstdout : L\nstderr : L\nload 51 2 : H\n",
+        "policy_lines": 3,
+        "loads_declared_from_traps": 1,
+        "outcome": "rejected",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 1,
+        "error": "Validation error: InFunction 53 (IllegalFlow \"result\" High Low)",
+        "site": null,
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "rejected: InFunction 53 (IllegalFlow \"result\" High Low)",
+          "attempts": 7,
+          "secret_locals": 5,
+          "raised_functions": [
+            "51: LabelledFuncType Low [I32 :~ Low,I32 :~ Low,I32 :~ Low] [I32 :~ High]"
+          ]
+        },
+        "secwasm_restrictions": "rejected: InFunction 53 (IllegalFlow \"result\" High Low)",
+        "lift_shape": false,
+        "seconds": 0.483
+      },
+      {
+        "name": "pread-with-access (stdout H)",
+        "wasm": "test/wasi/testsuite/tests/c/testsuite/wasm32-wasip1/pread-with-access.wasm",
+        "policy": "preopen / : H\nstdout : H\nstderr : H\nload 15 5 : H\nload 14 14 : H\n",
+        "policy_lines": 3,
+        "loads_declared_from_traps": 2,
+        "outcome": "rejected",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 1,
+        "error": "Validation error: InFunction 38 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+        "site": {
+          "function": 38,
+          "instruction": 4,
+          "rule": "IllegalFlow \"global.set\" High Low"
+        },
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "rejected: InFunction 38 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+          "attempts": 4,
+          "secret_locals": 2,
+          "raised_functions": [
+            "15: LabelledFuncType Low [I32 :~ Low,I32 :~ Low,I32 :~ Low,I64 :~ Low] [I32 :~ High]",
+            "38: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] []"
+          ]
+        },
+        "secwasm_restrictions": "rejected: InFunction 38 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+        "lift_shape": false,
+        "seconds": 0.326
+      },
+      {
+        "name": "pread-with-access (stdout L)",
+        "wasm": "test/wasi/testsuite/tests/c/testsuite/wasm32-wasip1/pread-with-access.wasm",
+        "policy": "preopen / : H\nstdout : L\nstderr : L\nload 15 5 : H\nload 14 14 : H\n",
+        "policy_lines": 3,
+        "loads_declared_from_traps": 2,
+        "outcome": "rejected",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 1,
+        "error": "Validation error: InFunction 38 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+        "site": {
+          "function": 38,
+          "instruction": 4,
+          "rule": "IllegalFlow \"global.set\" High Low"
+        },
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "rejected: InFunction 38 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+          "attempts": 4,
+          "secret_locals": 2,
+          "raised_functions": [
+            "15: LabelledFuncType Low [I32 :~ Low,I32 :~ Low,I32 :~ Low,I64 :~ Low] [I32 :~ High]",
+            "38: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] []"
+          ]
+        },
+        "secwasm_restrictions": "rejected: InFunction 38 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+        "lift_shape": false,
+        "seconds": 0.224
+      },
+      {
+        "name": "pwrite-with-access (stdout H)",
+        "wasm": "test/wasi/testsuite/tests/c/testsuite/wasm32-wasip1/pwrite-with-access.wasm",
+        "policy": "preopen / : H\nstdout : H\nstderr : H\nload 20 5 : H\nload 18 13 : H\n",
+        "policy_lines": 3,
+        "loads_declared_from_traps": 2,
+        "outcome": "rejected",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 1,
+        "error": "Validation error: InFunction 53 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+        "site": {
+          "function": 53,
+          "instruction": 4,
+          "rule": "IllegalFlow \"global.set\" High Low"
+        },
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "rejected: InFunction 53 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+          "attempts": 4,
+          "secret_locals": 2,
+          "raised_functions": [
+            "20: LabelledFuncType Low [I32 :~ Low,I32 :~ Low,I32 :~ Low,I64 :~ Low] [I32 :~ High]",
+            "53: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] []"
+          ]
+        },
+        "secwasm_restrictions": "rejected: InFunction 53 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+        "lift_shape": false,
+        "seconds": 0.214
+      },
+      {
+        "name": "pwrite-with-access (stdout L)",
+        "wasm": "test/wasi/testsuite/tests/c/testsuite/wasm32-wasip1/pwrite-with-access.wasm",
+        "policy": "preopen / : H\nstdout : L\nstderr : L\nload 20 5 : H\nload 18 13 : H\n",
+        "policy_lines": 3,
+        "loads_declared_from_traps": 2,
+        "outcome": "rejected",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 1,
+        "error": "Validation error: InFunction 53 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+        "site": {
+          "function": 53,
+          "instruction": 4,
+          "rule": "IllegalFlow \"global.set\" High Low"
+        },
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "rejected: InFunction 53 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+          "attempts": 4,
+          "secret_locals": 2,
+          "raised_functions": [
+            "20: LabelledFuncType Low [I32 :~ Low,I32 :~ Low,I32 :~ Low,I64 :~ Low] [I32 :~ High]",
+            "53: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] []"
+          ]
+        },
+        "secwasm_restrictions": "rejected: InFunction 53 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+        "lift_shape": false,
+        "seconds": 0.229
+      },
+      {
+        "name": "pwrite-with-append (stdout H)",
+        "wasm": "test/wasi/testsuite/tests/c/testsuite/wasm32-wasip1/pwrite-with-append.wasm",
+        "policy": "preopen / : H\nstdout : H\nstderr : H\nload 16 3 : H\nload 13 5 : H\n",
+        "policy_lines": 3,
+        "loads_declared_from_traps": 2,
+        "outcome": "rejected",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 1,
+        "error": "Validation error: InFunction 38 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+        "site": {
+          "function": 38,
+          "instruction": 4,
+          "rule": "IllegalFlow \"global.set\" High Low"
+        },
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "rejected: InFunction 38 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+          "attempts": 4,
+          "secret_locals": 2,
+          "raised_functions": [
+            "16: LabelledFuncType Low [I32 :~ Low,I32 :~ Low,I32 :~ Low] [I32 :~ High]",
+            "38: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] []"
+          ]
+        },
+        "secwasm_restrictions": "rejected: InFunction 38 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+        "lift_shape": false,
+        "seconds": 0.196
+      },
+      {
+        "name": "pwrite-with-append (stdout L)",
+        "wasm": "test/wasi/testsuite/tests/c/testsuite/wasm32-wasip1/pwrite-with-append.wasm",
+        "policy": "preopen / : H\nstdout : L\nstderr : L\nload 16 3 : H\nload 13 5 : H\n",
+        "policy_lines": 3,
+        "loads_declared_from_traps": 2,
+        "outcome": "rejected",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 1,
+        "error": "Validation error: InFunction 38 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+        "site": {
+          "function": 38,
+          "instruction": 4,
+          "rule": "IllegalFlow \"global.set\" High Low"
+        },
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "rejected: InFunction 38 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+          "attempts": 4,
+          "secret_locals": 2,
+          "raised_functions": [
+            "16: LabelledFuncType Low [I32 :~ Low,I32 :~ Low,I32 :~ Low] [I32 :~ High]",
+            "38: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] []"
+          ]
+        },
+        "secwasm_restrictions": "rejected: InFunction 38 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+        "lift_shape": false,
+        "seconds": 0.208
+      },
+      {
+        "name": "sock_shutdown-invalid_fd (stdout H)",
+        "wasm": "test/wasi/testsuite/tests/c/testsuite/wasm32-wasip1/sock_shutdown-invalid_fd.wasm",
+        "policy": "preopen / : H\nstdout : H\nstderr : H\n",
+        "policy_lines": 3,
+        "loads_declared_from_traps": 0,
+        "outcome": "ran",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 0,
+        "error": null,
+        "site": null,
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "accepted",
+          "attempts": 1,
+          "secret_locals": 0,
+          "raised_functions": []
+        },
+        "secwasm_restrictions": "accepted",
+        "lift_shape": false,
+        "seconds": 0.077
+      },
+      {
+        "name": "sock_shutdown-invalid_fd (stdout L)",
+        "wasm": "test/wasi/testsuite/tests/c/testsuite/wasm32-wasip1/sock_shutdown-invalid_fd.wasm",
+        "policy": "preopen / : H\nstdout : L\nstderr : L\n",
+        "policy_lines": 3,
+        "loads_declared_from_traps": 0,
+        "outcome": "ran",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 0,
+        "error": null,
+        "site": null,
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "accepted",
+          "attempts": 1,
+          "secret_locals": 0,
+          "raised_functions": []
+        },
+        "secwasm_restrictions": "accepted",
+        "lift_shape": false,
+        "seconds": 0.174
+      },
+      {
+        "name": "sock_shutdown-not_sock (stdout H)",
+        "wasm": "test/wasi/testsuite/tests/c/testsuite/wasm32-wasip1/sock_shutdown-not_sock.wasm",
+        "policy": "preopen / : H\nstdout : H\nstderr : H\n",
+        "policy_lines": 3,
+        "loads_declared_from_traps": 0,
+        "outcome": "ran",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 0,
+        "error": null,
+        "site": null,
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "accepted",
+          "attempts": 1,
+          "secret_locals": 0,
+          "raised_functions": []
+        },
+        "secwasm_restrictions": "accepted",
+        "lift_shape": false,
+        "seconds": 0.127
+      },
+      {
+        "name": "sock_shutdown-not_sock (stdout L)",
+        "wasm": "test/wasi/testsuite/tests/c/testsuite/wasm32-wasip1/sock_shutdown-not_sock.wasm",
+        "policy": "preopen / : H\nstdout : L\nstderr : L\n",
+        "policy_lines": 3,
+        "loads_declared_from_traps": 0,
+        "outcome": "ran",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 0,
+        "error": null,
+        "site": null,
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "accepted",
+          "attempts": 1,
+          "secret_locals": 0,
+          "raised_functions": []
+        },
+        "secwasm_restrictions": "accepted",
+        "lift_shape": false,
+        "seconds": 0.071
+      },
+      {
+        "name": "stat-dev-ino (stdout H)",
+        "wasm": "test/wasi/testsuite/tests/c/testsuite/wasm32-wasip1/stat-dev-ino.wasm",
+        "policy": "preopen / : H\nstdout : H\nstderr : H\nload 13 2 : H\nload 13 4 : H\nload 13 6 : H\nload 13 11 : H\nload 13 16 : H\nload 13 18 : H\nload 13 20 : H\nload 13 29 : H\nload 12 11 : H\n",
+        "policy_lines": 3,
+        "loads_declared_from_traps": 9,
+        "outcome": "rejected",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 1,
+        "error": "Validation error: InFunction 33 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+        "site": {
+          "function": 33,
+          "instruction": 4,
+          "rule": "IllegalFlow \"global.set\" High Low"
+        },
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "rejected: InFunction 33 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+          "attempts": 4,
+          "secret_locals": 4,
+          "raised_functions": [
+            "33: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] []"
+          ]
+        },
+        "secwasm_restrictions": "rejected: InFunction 33 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+        "lift_shape": false,
+        "seconds": 0.249
+      },
+      {
+        "name": "stat-dev-ino (stdout L)",
+        "wasm": "test/wasi/testsuite/tests/c/testsuite/wasm32-wasip1/stat-dev-ino.wasm",
+        "policy": "preopen / : H\nstdout : L\nstderr : L\nload 13 2 : H\nload 13 4 : H\nload 13 6 : H\nload 13 11 : H\nload 13 16 : H\nload 13 18 : H\nload 13 20 : H\nload 13 29 : H\nload 12 11 : H\n",
+        "policy_lines": 3,
+        "loads_declared_from_traps": 9,
+        "outcome": "rejected",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 1,
+        "error": "Validation error: InFunction 33 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+        "site": {
+          "function": 33,
+          "instruction": 4,
+          "rule": "IllegalFlow \"global.set\" High Low"
+        },
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "rejected: InFunction 33 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+          "attempts": 4,
+          "secret_locals": 4,
+          "raised_functions": [
+            "33: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] []"
+          ]
+        },
+        "secwasm_restrictions": "rejected: InFunction 33 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+        "lift_shape": false,
+        "seconds": 0.214
+      }
+    ],
+    "polybench": [
+      {
+        "name": "2mm",
+        "wasm": "casestudies/build/polybench/2mm.wasm",
+        "policy": "stdout : H\nstderr : H\nstore-default func 10 : H\nload-default func 10 : H\nload-default func 11 : H\n",
+        "policy_lines": 5,
+        "loads_declared_from_traps": 0,
+        "outcome": "rejected",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 1,
+        "error": "Validation error: InFunction 64 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+        "site": {
+          "function": 64,
+          "instruction": 4,
+          "rule": "IllegalFlow \"global.set\" High Low"
+        },
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "rejected: InFunction 64 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+          "attempts": 13,
+          "secret_locals": 41,
+          "raised_functions": [
+            "26: LabelledFuncType Low [I32 :~ High,I32 :~ Low,I32 :~ Low] [I32 :~ Low]",
+            "27: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "30: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "33: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "34: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "35: LabelledFuncType Low [I32 :~ Low,I32 :~ High] [I32 :~ High]",
+            "37: LabelledFuncType Low [I32 :~ Low,I32 :~ Low,I32 :~ Low,I32 :~ High] [I32 :~ Low]",
+            "63: LabelledFuncType Low [I32 :~ High,I32 :~ Low,I32 :~ Low] [I32 :~ Low]",
+            "64: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]"
+          ]
+        },
+        "secwasm_restrictions": "rejected: InFunction 64 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+        "lift_shape": false,
+        "seconds": 0.855
+      },
+      {
+        "name": "3mm",
+        "wasm": "casestudies/build/polybench/3mm.wasm",
+        "policy": "stdout : H\nstderr : H\nstore-default func 10 : H\nload-default func 10 : H\nload-default func 11 : H\n",
+        "policy_lines": 5,
+        "loads_declared_from_traps": 0,
+        "outcome": "rejected",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 1,
+        "error": "Validation error: InFunction 64 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+        "site": {
+          "function": 64,
+          "instruction": 4,
+          "rule": "IllegalFlow \"global.set\" High Low"
+        },
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "rejected: InFunction 64 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+          "attempts": 13,
+          "secret_locals": 41,
+          "raised_functions": [
+            "26: LabelledFuncType Low [I32 :~ High,I32 :~ Low,I32 :~ Low] [I32 :~ Low]",
+            "27: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "30: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "33: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "34: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "35: LabelledFuncType Low [I32 :~ Low,I32 :~ High] [I32 :~ High]",
+            "37: LabelledFuncType Low [I32 :~ Low,I32 :~ Low,I32 :~ Low,I32 :~ High] [I32 :~ Low]",
+            "63: LabelledFuncType Low [I32 :~ High,I32 :~ Low,I32 :~ Low] [I32 :~ Low]",
+            "64: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]"
+          ]
+        },
+        "secwasm_restrictions": "rejected: InFunction 64 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+        "lift_shape": false,
+        "seconds": 0.805
+      },
+      {
+        "name": "atax",
+        "wasm": "casestudies/build/polybench/atax.wasm",
+        "policy": "stdout : H\nstderr : H\nstore-default func 10 : H\nload-default func 10 : H\nload-default func 11 : H\n",
+        "policy_lines": 5,
+        "loads_declared_from_traps": 0,
+        "outcome": "rejected",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 1,
+        "error": "Validation error: InFunction 64 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+        "site": {
+          "function": 64,
+          "instruction": 4,
+          "rule": "IllegalFlow \"global.set\" High Low"
+        },
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "rejected: InFunction 64 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+          "attempts": 13,
+          "secret_locals": 32,
+          "raised_functions": [
+            "26: LabelledFuncType Low [I32 :~ High,I32 :~ Low,I32 :~ Low] [I32 :~ Low]",
+            "27: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "30: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "33: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "34: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "35: LabelledFuncType Low [I32 :~ Low,I32 :~ High] [I32 :~ High]",
+            "37: LabelledFuncType Low [I32 :~ Low,I32 :~ Low,I32 :~ Low,I32 :~ High] [I32 :~ Low]",
+            "63: LabelledFuncType Low [I32 :~ High,I32 :~ Low,I32 :~ Low] [I32 :~ Low]",
+            "64: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]"
+          ]
+        },
+        "secwasm_restrictions": "rejected: InFunction 64 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+        "lift_shape": false,
+        "seconds": 0.95
+      },
+      {
+        "name": "gemm",
+        "wasm": "casestudies/build/polybench/gemm.wasm",
+        "policy": "stdout : H\nstderr : H\nstore-default func 10 : H\nload-default func 10 : H\nload-default func 11 : H\n",
+        "policy_lines": 5,
+        "loads_declared_from_traps": 0,
+        "outcome": "rejected",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 1,
+        "error": "Validation error: InFunction 64 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+        "site": {
+          "function": 64,
+          "instruction": 4,
+          "rule": "IllegalFlow \"global.set\" High Low"
+        },
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "rejected: InFunction 64 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+          "attempts": 13,
+          "secret_locals": 29,
+          "raised_functions": [
+            "26: LabelledFuncType Low [I32 :~ High,I32 :~ Low,I32 :~ Low] [I32 :~ Low]",
+            "27: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "30: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "33: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "34: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "35: LabelledFuncType Low [I32 :~ Low,I32 :~ High] [I32 :~ High]",
+            "37: LabelledFuncType Low [I32 :~ Low,I32 :~ Low,I32 :~ Low,I32 :~ High] [I32 :~ Low]",
+            "63: LabelledFuncType Low [I32 :~ High,I32 :~ Low,I32 :~ Low] [I32 :~ Low]",
+            "64: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]"
+          ]
+        },
+        "secwasm_restrictions": "rejected: InFunction 64 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+        "lift_shape": false,
+        "seconds": 0.558
+      },
+      {
+        "name": "jacobi-2d",
+        "wasm": "casestudies/build/polybench/jacobi-2d.wasm",
+        "policy": "stdout : H\nstderr : H\nstore-default func 10 : H\nload-default func 10 : H\nload-default func 11 : H\n",
+        "policy_lines": 5,
+        "loads_declared_from_traps": 0,
+        "outcome": "rejected",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 1,
+        "error": "Validation error: InFunction 64 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+        "site": {
+          "function": 64,
+          "instruction": 4,
+          "rule": "IllegalFlow \"global.set\" High Low"
+        },
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "rejected: InFunction 64 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+          "attempts": 13,
+          "secret_locals": 29,
+          "raised_functions": [
+            "26: LabelledFuncType Low [I32 :~ High,I32 :~ Low,I32 :~ Low] [I32 :~ Low]",
+            "27: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "30: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "33: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "34: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "35: LabelledFuncType Low [I32 :~ Low,I32 :~ High] [I32 :~ High]",
+            "37: LabelledFuncType Low [I32 :~ Low,I32 :~ Low,I32 :~ Low,I32 :~ High] [I32 :~ Low]",
+            "63: LabelledFuncType Low [I32 :~ High,I32 :~ Low,I32 :~ Low] [I32 :~ Low]",
+            "64: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]"
+          ]
+        },
+        "secwasm_restrictions": "rejected: InFunction 64 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+        "lift_shape": false,
+        "seconds": 1.089
+      },
+      {
+        "name": "seidel-2d",
+        "wasm": "casestudies/build/polybench/seidel-2d.wasm",
+        "policy": "stdout : H\nstderr : H\nstore-default func 10 : H\nload-default func 10 : H\nload-default func 11 : H\n",
+        "policy_lines": 5,
+        "loads_declared_from_traps": 0,
+        "outcome": "rejected",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 1,
+        "error": "Validation error: InFunction 64 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+        "site": {
+          "function": 64,
+          "instruction": 4,
+          "rule": "IllegalFlow \"global.set\" High Low"
+        },
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "rejected: InFunction 64 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+          "attempts": 13,
+          "secret_locals": 36,
+          "raised_functions": [
+            "26: LabelledFuncType Low [I32 :~ High,I32 :~ Low,I32 :~ Low] [I32 :~ Low]",
+            "27: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "30: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "33: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "34: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "35: LabelledFuncType Low [I32 :~ Low,I32 :~ High] [I32 :~ High]",
+            "37: LabelledFuncType Low [I32 :~ Low,I32 :~ Low,I32 :~ Low,I32 :~ High] [I32 :~ Low]",
+            "63: LabelledFuncType Low [I32 :~ High,I32 :~ Low,I32 :~ Low] [I32 :~ Low]",
+            "64: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]"
+          ]
+        },
+        "secwasm_restrictions": "rejected: InFunction 64 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+        "lift_shape": false,
+        "seconds": 0.898
+      },
+      {
+        "name": "floyd-warshall",
+        "wasm": "casestudies/build/polybench/floyd-warshall.wasm",
+        "policy": "stdout : H\nstderr : H\nstore-default func 10 : H\nload-default func 10 : H\nload-default func 11 : H\n",
+        "policy_lines": 5,
+        "loads_declared_from_traps": 0,
+        "outcome": "rejected",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 1,
+        "error": "Validation error: InFunction 64 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+        "site": {
+          "function": 64,
+          "instruction": 4,
+          "rule": "IllegalFlow \"global.set\" High Low"
+        },
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "rejected: InFunction 64 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+          "attempts": 13,
+          "secret_locals": 33,
+          "raised_functions": [
+            "26: LabelledFuncType Low [I32 :~ High,I32 :~ Low,I32 :~ Low] [I32 :~ Low]",
+            "27: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "30: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "33: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "34: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "35: LabelledFuncType Low [I32 :~ Low,I32 :~ High] [I32 :~ High]",
+            "37: LabelledFuncType Low [I32 :~ Low,I32 :~ Low,I32 :~ Low,I32 :~ High] [I32 :~ Low]",
+            "63: LabelledFuncType Low [I32 :~ High,I32 :~ Low,I32 :~ Low] [I32 :~ Low]",
+            "64: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]"
+          ]
+        },
+        "secwasm_restrictions": "rejected: InFunction 64 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+        "lift_shape": false,
+        "seconds": 0.878
+      },
+      {
+        "name": "nussinov",
+        "wasm": "casestudies/build/polybench/nussinov.wasm",
+        "policy": "stdout : H\nstderr : H\nstore-default func 10 : H\nload-default func 10 : H\nload-default func 11 : H\n",
+        "policy_lines": 5,
+        "loads_declared_from_traps": 0,
+        "outcome": "rejected",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 1,
+        "error": "Validation error: InFunction 64 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+        "site": {
+          "function": 64,
+          "instruction": 4,
+          "rule": "IllegalFlow \"global.set\" High Low"
+        },
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "rejected: InFunction 64 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+          "attempts": 13,
+          "secret_locals": 39,
+          "raised_functions": [
+            "26: LabelledFuncType Low [I32 :~ High,I32 :~ Low,I32 :~ Low] [I32 :~ Low]",
+            "27: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "30: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "33: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "34: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "35: LabelledFuncType Low [I32 :~ Low,I32 :~ High] [I32 :~ High]",
+            "37: LabelledFuncType Low [I32 :~ Low,I32 :~ Low,I32 :~ Low,I32 :~ High] [I32 :~ Low]",
+            "63: LabelledFuncType Low [I32 :~ High,I32 :~ Low,I32 :~ Low] [I32 :~ Low]",
+            "64: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]"
+          ]
+        },
+        "secwasm_restrictions": "rejected: InFunction 64 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+        "lift_shape": false,
+        "seconds": 1.206
+      },
+      {
+        "name": "correlation",
+        "wasm": "casestudies/build/polybench/correlation.wasm",
+        "policy": "stdout : H\nstderr : H\nstore-default func 10 : H\nload-default func 10 : H\nload-default func 11 : H\n",
+        "policy_lines": 5,
+        "loads_declared_from_traps": 0,
+        "outcome": "rejected",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 1,
+        "error": "Validation error: InFunction 64 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+        "site": {
+          "function": 64,
+          "instruction": 4,
+          "rule": "IllegalFlow \"global.set\" High Low"
+        },
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "rejected: InFunction 64 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+          "attempts": 13,
+          "secret_locals": 41,
+          "raised_functions": [
+            "26: LabelledFuncType Low [I32 :~ High,I32 :~ Low,I32 :~ Low] [I32 :~ Low]",
+            "27: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "30: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "33: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "34: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "35: LabelledFuncType Low [I32 :~ Low,I32 :~ High] [I32 :~ High]",
+            "37: LabelledFuncType Low [I32 :~ Low,I32 :~ Low,I32 :~ Low,I32 :~ High] [I32 :~ Low]",
+            "63: LabelledFuncType Low [I32 :~ High,I32 :~ Low,I32 :~ Low] [I32 :~ Low]",
+            "64: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]"
+          ]
+        },
+        "secwasm_restrictions": "rejected: InFunction 64 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+        "lift_shape": false,
+        "seconds": 0.91
+      },
+      {
+        "name": "lu",
+        "wasm": "casestudies/build/polybench/lu.wasm",
+        "policy": "stdout : H\nstderr : H\nstore-default func 10 : H\nload-default func 10 : H\nload-default func 11 : H\n",
+        "policy_lines": 5,
+        "loads_declared_from_traps": 0,
+        "outcome": "rejected",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 1,
+        "error": "Validation error: InFunction 64 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+        "site": {
+          "function": 64,
+          "instruction": 4,
+          "rule": "IllegalFlow \"global.set\" High Low"
+        },
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "rejected: InFunction 64 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+          "attempts": 13,
+          "secret_locals": 33,
+          "raised_functions": [
+            "26: LabelledFuncType Low [I32 :~ High,I32 :~ Low,I32 :~ Low] [I32 :~ Low]",
+            "27: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "30: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "33: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "34: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "35: LabelledFuncType Low [I32 :~ Low,I32 :~ High] [I32 :~ High]",
+            "37: LabelledFuncType Low [I32 :~ Low,I32 :~ Low,I32 :~ Low,I32 :~ High] [I32 :~ Low]",
+            "63: LabelledFuncType Low [I32 :~ High,I32 :~ Low,I32 :~ Low] [I32 :~ Low]",
+            "64: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]"
+          ]
+        },
+        "secwasm_restrictions": "rejected: InFunction 64 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+        "lift_shape": false,
+        "seconds": 0.628
+      },
+      {
+        "name": "2mm (printing compiled out)",
+        "wasm": "casestudies/build/polybench/2mm-silent.wasm",
+        "policy": "store-default func 10 : H\nload-default func 10 : H\n",
+        "policy_lines": 2,
+        "loads_declared_from_traps": 0,
+        "outcome": "ran",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 0,
+        "error": null,
+        "site": null,
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "accepted",
+          "attempts": 21,
+          "secret_locals": 20,
+          "raised_functions": []
+        },
+        "secwasm_restrictions": "accepted",
+        "lift_shape": false,
+        "seconds": 0.585
+      },
+      {
+        "name": "3mm (printing compiled out)",
+        "wasm": "casestudies/build/polybench/3mm-silent.wasm",
+        "policy": "store-default func 10 : H\nload-default func 10 : H\n",
+        "policy_lines": 2,
+        "loads_declared_from_traps": 0,
+        "outcome": "ran",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 0,
+        "error": null,
+        "site": null,
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "accepted",
+          "attempts": 23,
+          "secret_locals": 22,
+          "raised_functions": []
+        },
+        "secwasm_restrictions": "accepted",
+        "lift_shape": false,
+        "seconds": 0.662
+      },
+      {
+        "name": "atax (printing compiled out)",
+        "wasm": "casestudies/build/polybench/atax-silent.wasm",
+        "policy": "store-default func 10 : H\nload-default func 10 : H\n",
+        "policy_lines": 2,
+        "loads_declared_from_traps": 0,
+        "outcome": "ran",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 0,
+        "error": null,
+        "site": null,
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "accepted",
+          "attempts": 4,
+          "secret_locals": 3,
+          "raised_functions": []
+        },
+        "secwasm_restrictions": "accepted",
+        "lift_shape": false,
+        "seconds": 0.072
+      },
+      {
+        "name": "gemm (printing compiled out)",
+        "wasm": "casestudies/build/polybench/gemm-silent.wasm",
+        "policy": "store-default func 10 : H\nload-default func 10 : H\n",
+        "policy_lines": 2,
+        "loads_declared_from_traps": 0,
+        "outcome": "ran",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 0,
+        "error": null,
+        "site": null,
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "accepted",
+          "attempts": 1,
+          "secret_locals": 0,
+          "raised_functions": []
+        },
+        "secwasm_restrictions": "accepted",
+        "lift_shape": false,
+        "seconds": 0.092
+      },
+      {
+        "name": "jacobi-2d (printing compiled out)",
+        "wasm": "casestudies/build/polybench/jacobi-2d-silent.wasm",
+        "policy": "store-default func 10 : H\nload-default func 10 : H\n",
+        "policy_lines": 2,
+        "loads_declared_from_traps": 0,
+        "outcome": "ran",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 0,
+        "error": null,
+        "site": null,
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "accepted",
+          "attempts": 1,
+          "secret_locals": 0,
+          "raised_functions": []
+        },
+        "secwasm_restrictions": "accepted",
+        "lift_shape": false,
+        "seconds": 0.099
+      },
+      {
+        "name": "seidel-2d (printing compiled out)",
+        "wasm": "casestudies/build/polybench/seidel-2d-silent.wasm",
+        "policy": "store-default func 10 : H\nload-default func 10 : H\n",
+        "policy_lines": 2,
+        "loads_declared_from_traps": 0,
+        "outcome": "ran",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 0,
+        "error": null,
+        "site": null,
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "accepted",
+          "attempts": 8,
+          "secret_locals": 7,
+          "raised_functions": []
+        },
+        "secwasm_restrictions": "accepted",
+        "lift_shape": false,
+        "seconds": 0.157
+      },
+      {
+        "name": "floyd-warshall (printing compiled out)",
+        "wasm": "casestudies/build/polybench/floyd-warshall-silent.wasm",
+        "policy": "store-default func 10 : H\nload-default func 10 : H\n",
+        "policy_lines": 2,
+        "loads_declared_from_traps": 0,
+        "outcome": "ran",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 0,
+        "error": null,
+        "site": null,
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "accepted",
+          "attempts": 5,
+          "secret_locals": 4,
+          "raised_functions": []
+        },
+        "secwasm_restrictions": "accepted",
+        "lift_shape": false,
+        "seconds": 0.397
+      },
+      {
+        "name": "nussinov (printing compiled out)",
+        "wasm": "casestudies/build/polybench/nussinov-silent.wasm",
+        "policy": "store-default func 10 : H\nload-default func 10 : H\n",
+        "policy_lines": 2,
+        "loads_declared_from_traps": 0,
+        "outcome": "ran",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 0,
+        "error": null,
+        "site": null,
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "accepted",
+          "attempts": 11,
+          "secret_locals": 10,
+          "raised_functions": []
+        },
+        "secwasm_restrictions": "accepted",
+        "lift_shape": false,
+        "seconds": 0.382
+      },
+      {
+        "name": "correlation (printing compiled out)",
+        "wasm": "casestudies/build/polybench/correlation-silent.wasm",
+        "policy": "store-default func 10 : H\nload-default func 10 : H\n",
+        "policy_lines": 2,
+        "loads_declared_from_traps": 0,
+        "outcome": "ran",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 0,
+        "error": null,
+        "site": null,
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "accepted",
+          "attempts": 13,
+          "secret_locals": 12,
+          "raised_functions": []
+        },
+        "secwasm_restrictions": "accepted",
+        "lift_shape": false,
+        "seconds": 0.218
+      },
+      {
+        "name": "lu (printing compiled out)",
+        "wasm": "casestudies/build/polybench/lu-silent.wasm",
+        "policy": "store-default func 10 : H\nload-default func 10 : H\n",
+        "policy_lines": 2,
+        "loads_declared_from_traps": 0,
+        "outcome": "ran",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 0,
+        "error": null,
+        "site": null,
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "accepted",
+          "attempts": 5,
+          "secret_locals": 4,
+          "raised_functions": []
+        },
+        "secwasm_restrictions": "accepted",
+        "lift_shape": false,
+        "seconds": 0.281
+      }
+    ]
+  }
+}
