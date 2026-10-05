@@ -572,8 +572,10 @@ elabInstr env pcsIn@(SCons pc _) stackIn instr = case instr of
     Block (FuncType psT rsT) body ->
         blockParams "block" psT stackIn $ \psS sS witness ->
             inferResults rsT pc $ \rsS ->
-                elabBodyChecked (pushLabel rsS (bodyAfter [] env)) (SCons pc pcsIn) psS rsS body $ \(BodyResult (BothLonger same) (SCons _ pcsOut) bodySeq) ->
-                    Right (Produces same pcsOut (rsS %++ sS) (IBlock (segmentSelf psS) witness bodySeq))
+                elabBodyChecked (pushLabel rsS (bodyAfter [] env)) (SCons pc pcsIn) psS rsS body $ \(BodyResult (BothLonger same) (SCons pcBody pcsOut) bodySeq) -> do
+                    atStart <- requireCarried "block result" pc rsS
+                    atEnd <- resultsAtEndPc env "block result" pcBody rsS
+                    Right (Produces same pcsOut (rsS %++ sS) (IBlock atStart atEnd (segmentSelf psS) witness bodySeq))
     Loop (FuncType psT rsT) body ->
         blockParams "loop" psT stackIn $ \psIn sS witness ->
             loopParams psIn $ \psS entry ->
@@ -581,15 +583,18 @@ elabInstr env pcsIn@(SCons pc _) stackIn instr = case instr of
                     inferResults rsT pcLoop $ \rsS ->
                         elabBodyChecked (pushLabel psS (bodyAfter [] env)) (SCons pcLoop pcsIn) psS rsS body $ \(BodyResult (BothLonger same) (SCons pcBody pcsOut) bodySeq) -> do
                             backFlows <- requireFlow "loop" pcBody pcLoop
-                            Right (Produces same pcsOut (rsS %++ sS) (ILoop entryFlows backFlows entry witness bodySeq))
+                            atStart <- requireCarried "loop result" pcLoop rsS
+                            Right (Produces same pcsOut (rsS %++ sS) (ILoop atStart entryFlows backFlows entry witness bodySeq))
     If (FuncType psT rsT) thenBody elseBody -> case stackIn of
         SCons (sc :%~ lc) rest -> do
             Refl <- note (OperandMismatch "if" I32 (valTypeOf sc)) (decideEquality sc SI32)
             blockParams "if" psT rest $ \psS sS witness ->
                 inferResults rsT (sJoin pc lc) $ \rsS ->
-                    elabBodyChecked (pushLabel rsS (bodyAfter [] env)) (SCons (sJoin pc lc) pcsIn) psS rsS thenBody $ \(BodyResult (BothLonger sameThen) (SCons _ pcsThen) thenSeq) ->
-                        elabBodyChecked (pushLabel rsS (bodyAfter thenBody env)) (SCons (sJoin pc lc) pcsIn) psS rsS elseBody $ \(BodyResult (BothLonger sameElse) (SCons _ pcsElse) elseSeq) ->
-                            Right (Produces (joinEachSameLength sameThen sameElse) (sJoinEach pcsThen pcsElse) (rsS %++ sS) (IIf (segmentSelf psS) witness thenSeq elseSeq))
+                    elabBodyChecked (pushLabel rsS (bodyAfter [] env)) (SCons (sJoin pc lc) pcsIn) psS rsS thenBody $ \(BodyResult (BothLonger sameThen) (SCons pcThen pcsThen) thenSeq) ->
+                        elabBodyChecked (pushLabel rsS (bodyAfter thenBody env)) (SCons (sJoin pc lc) pcsIn) psS rsS elseBody $ \(BodyResult (BothLonger sameElse) (SCons pcElse pcsElse) elseSeq) -> do
+                            atStart <- requireCarried "if result" (sJoin pc lc) rsS
+                            atEnd <- resultsAtEndPc env "if result" (sJoin pcThen pcElse) rsS
+                            Right (Produces (joinEachSameLength sameThen sameElse) (sJoinEach pcsThen pcsElse) (rsS %++ sS) (IIf atStart atEnd (segmentSelf psS) witness thenSeq elseSeq))
         _ -> Left (StackUnderflow "if")
     {- Branches (unconditional ones diverge). What a branch carries may be lower than the label's
        types; the witness relabels it on the way. -}
@@ -640,6 +645,15 @@ argumentsAtCallPc :: ElabEnv shape ret locals labels -> Text -> Sing (pc :: SecL
 argumentsAtCallPc env name pc psS = case env.restrictions of
     LiftFree -> Right ArgumentsAtAnyLevel
     SecWasmRestrictions -> ArgumentsAtLeastPc <$> requireCarried name pc psS
+
+{- | The results of a block or conditional under the policy's restrictions: at any level
+  without them, at least the pc the body ends with with them. A failure is one about levels,
+  so the inference of the results tries secret ones next.
+-}
+resultsAtEndPc :: ElabEnv shape ret locals labels -> Text -> Sing (pcEnd :: SecLevel) -> Sing (rs :: [LabelledValType]) -> Either ElabError (ResultsAtEndPc pcEnd rs)
+resultsAtEndPc env name pcEnd rsS = case env.restrictions of
+    LiftFree -> Right ResultsAtAnyLevel
+    SecWasmRestrictions -> ResultsAtLeastEndPc <$> requireCarried name pcEnd rsS
 
 -- | Push a label's result type onto the elaboration environment's label context.
 

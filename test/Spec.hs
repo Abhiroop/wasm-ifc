@@ -309,6 +309,15 @@ spec = do
             elabRunWithPolicy (restricted "export f : L H -> H") coercedThenWritten [0, 5] `shouldSatisfy` errorContaining "IllegalFlow \"global.set\" High Low"
             elabRunWithPolicy (restricted "export f : L H -> H") (afterCoercion [LocalGet (LocalIdx 1), Add SI32]) [0, 5] `shouldBe` Right ["12"]
             elabRunWithPolicy (restricted "export f : L H -> H") (afterCoercion [LocalGet (LocalIdx 1), Add SI32]) [1, 5] `shouldBe` Right ["7"]
+        it "without them, a block's result may stay below the pc its body ends with; with them, it may not" $ do
+            -- (block (block (result i32) (i32.const 0) (local.get $c) (br_if 0) <write the constant to a public global>
+            --                            (local.get $yH) (br_if 1)) (drop))
+            let resultBelowEndPc =
+                    (singleFunctionModule [] [I32, I32] [] [I32] [Block (FuncType [] []) [Block (FuncType [] [I32]) [Const SI32 0, LocalGet (LocalIdx 0), BrIf (LabelIdx 0), LocalTee (LocalIdx 2), LocalGet (LocalIdx 2), GlobalSet (GlobalIdx 0), LocalGet (LocalIdx 1), BrIf (LabelIdx 1)], Drop]])
+                        { globals = [RawGlobal (GlobalType Mutable I32) [Const SI32 0]]
+                        }
+            elabRunWithPolicy "export f : L H ->" resultBelowEndPc [0, 1] `shouldBe` Right []
+            elabRunWithPolicy (restricted "export f : L H ->") resultBelowEndPc [0, 1] `shouldSatisfy` errorContaining "IllegalFlow \"global.set\" High Low"
         it "without them, a call may take an argument below the pc; with them, it may not" $ do
             elabRunWithPolicy "func 0 : L -{H}->\nexport f : H ->" argumentBeforeBranch [0] `shouldBe` Right []
             elabRunWithPolicy (restricted "func 0 : L -{H}->\nexport f : H ->") argumentBeforeBranch [0] `shouldSatisfy` errorContaining "IllegalFlow \"call\" High Low"

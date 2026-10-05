@@ -157,17 +157,20 @@ emptyPolicy = Policy Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty
 {- | Which typing rules the validator applies where SecWasm's lift makes a difference. This
   system does not lift the values on the stack when a branch raises the pc (see
   'Syntax.Instructions.IBlock'), which lets it accept two shapes of program that SecWasm
-  rejects: a call that passes a value pushed before a secret branch to a public parameter, and
-  a public value that a @br_if@ coerced for its target but that stays public when the branch is
-  not taken. Both are secure. The restrictions reject them, so that every accepted program is
+  rejects: a call that passes a value pushed before a secret branch to a public parameter, a
+  public value that a @br_if@ coerced for its target but that stays public when the branch is
+  not taken, and a block whose result stays public although a branch out of its body to an
+  enclosing block was taken under a secret condition. All three are secure. The restrictions reject them, so that every accepted program is
   also typable in SecWasm, which is what a proof by inclusion into SecWasm needs.
 -}
 data Restrictions
     = -- | the lift-free rules
       LiftFree
     | {- | the lift-free rules restricted to what SecWasm accepts: a call's arguments are at
-      least the pc ('Syntax.TypesIFC.ArgumentsAtLeastPc'), and a @br_if@ gives the values it
-      carries the target's type on both paths ('Syntax.Instructions.TakesTargetType')
+      least the pc ('Syntax.TypesIFC.ArgumentsAtLeastPc'), a @br_if@ gives the values it
+      carries the target's type on both paths ('Syntax.Instructions.TakesTargetType'), and the
+      results of a block or conditional are at least the pc its body ends with
+      ('Syntax.TypesIFC.ResultsAtLeastEndPc')
       -}
       SecWasmRestrictions
     deriving stock (Eq, Show)

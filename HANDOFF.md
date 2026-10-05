@@ -47,6 +47,19 @@ on this machine (Linux, GHC 9.12.2); commits are on `implement`.
   (the policy's `load F N`) or `GhostCallAt function call`; the CLI prints the declaration that
   would make the load secret. `InformationFlowViolation` remains for host writes.
 
+**5b. A witness for Property (E), and (E⁺) as the third restriction**
+- `IBlock`, `ILoop` and `IIf` carry `AllAtLeast` for the pc their body starts with (`pc`,
+  `pcLoop`, `Join pc lv`), so Property (E) holds for every typed program, not only for the
+  elaborator's output.
+- `IBlock` and `IIf` also carry `ResultsAtEndPc pcEnd rs` (`ResultsAtAnyLevel` |
+  `ResultsAtLeastEndPc (AllAtLeast pcEnd rs)`), with `pcEnd` the top pc entry the body ends
+  with (`pcBody`, `Join pcThen pcElse`): Property (E⁺), imposed under `secwasm-restrictions`.
+  Program C of `app:findings` is a unit test: accepted without the flag, rejected with it.
+- With the flag on (three restrictions): spec suite 23,306 passed, 0 failed, 960 skipped;
+  wasi-testsuite 72 of 72.
+
+**5c.** `casestudies/secwasm/finding5-br-table-values-below`: the block of §4.2, verdict "runs".
+
 ## Phase 1
 
 **6. Inference of locals and internal functions** (8500ebe, d9cb140, 624a05a)

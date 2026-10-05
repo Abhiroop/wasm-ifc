@@ -472,16 +472,23 @@ data
        is raised, and once the pc has fallen back the decision no longer determines whether
        the value is there. The difference matters for the proof, which cannot reuse the paper's
        lemma as stated, and for nothing the validator accepts or rejects.
+       The results are at least as secret as the pc the body starts with ('AllAtLeast'): what a
+       body pushes is at least that, so nothing is lost, and stating it makes every typed block
+       one that SecWasm's rule also types (the paper's Property E). Under SecWasm's
+       restrictions they are also at least the pc the body ends with ('ResultsAtEndPc').
        A body may produce its results at lower levels than the block declares: the validator
        then ends it with an 'IRelabelResults', which is also how the two arms of an @if@ meet at
        one type. The validator chooses a block's result levels itself, since a decoded block type
        has none: it tries the pc the body runs at, then secret. -}
     IBlock ::
+        AllAtLeast pc rs ->
+        ResultsAtEndPc pcBody rs ->
         SegmentFlows psIn ps ->
         Append psIn s full ->
         Expr m f (rs ': l) (pc ': pc ': pcs) (pcBody ': pcs') ps rs ->
         Instr m f l (pc ': pcs) pcs' full (rs ++ s)
     ILoop ::
+        AllAtLeast pcLoop rs ->
         FlowsInto pc pcLoop ->
         FlowsInto pcBody pcLoop ->
         SegmentFlows psIn ps ->
@@ -489,6 +496,8 @@ data
         Expr m f (ps ': l) (pcLoop ': pc ': pcs) (pcBody ': pcs') ps rs ->
         Instr m f l (pc ': pcs) pcs' full (rs ++ s)
     IIf ::
+        AllAtLeast (Join pc lv) rs ->
+        ResultsAtEndPc (Join pcThen pcElse) rs ->
         SegmentFlows psIn ps ->
         Append psIn s full ->
         Expr m f (rs ': l) (Join pc lv ': pc ': pcs) (pcThen ': pcsThen) ps rs ->
@@ -572,10 +581,10 @@ call = ICall LowFlowsAnywhere (segmentSelf (sing @ps)) ArgumentsAtAnyLevel (appe
   form is for a public pc, where its two flow witnesses are trivial.
 -}
 block_ :: Expr m f ('[] ': l) (pc ': pc ': pcs) (pcBody ': pcs') '[] '[] -> Instr m f l (pc ': pcs) pcs' s s
-block_ = IBlock NoValuesFlow ANil
+block_ = IBlock NothingCarried ResultsAtAnyLevel NoValuesFlow ANil
 
 loop_ :: Expr m f ('[] ': l) ('Low ': 'Low ': pcs) ('Low ': pcs') '[] '[] -> Instr m f l ('Low ': pcs) pcs' s s
-loop_ = ILoop LowFlowsAnywhere LowFlowsAnywhere NoValuesFlow ANil
+loop_ = ILoop NothingCarried LowFlowsAnywhere LowFlowsAnywhere NoValuesFlow ANil
 
 br_ :: BranchTarget pc '[] labels (pc ': pcs) pcs' -> Instr m f labels (pc ': pcs) pcs' s anyOut
 br_ = IBr NothingCarried NoValuesFlow ANil

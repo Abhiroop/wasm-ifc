@@ -451,13 +451,13 @@ step funcs (Config store locals stack code control) = case code of
                             Nothing -> Left IndirectCallBelowBound
                         _ -> Left IndirectCallTypeMismatch
         {- Structured control: push the matching frame and run the body -}
-        IBlock flows witness body ->
+        IBlock _ _ flows witness body ->
             let (params, below) = splitStack witness stack
              in Right (Stepped (Config store locals (relabelStack flows params) body (BlockLabel below rest control)))
-        ILoop _ _ flows witness body ->
+        ILoop _ _ _ flows witness body ->
             let (params, below) = splitStack witness stack
              in Right (Stepped (Config store locals (relabelStack flows params) body (LoopLabel below body rest control)))
-        IIf flows witness thenArm elseArm -> case stack of
+        IIf _ _ flows witness thenArm elseArm -> case stack of
             cond :# below' ->
                 let (params, below) = splitStack witness below'
                  in Right . Stepped $

@@ -166,6 +166,20 @@ data ArgumentsAtCallPc (pc :: SecLevel) (ps :: [LabelledValType]) where
     -- | the SecWasm restriction: every parameter is at least the pc
     ArgumentsAtLeastPc :: AllAtLeast pc ps -> ArgumentsAtCallPc pc ps
 
+{- | Whether the results of a block or conditional must be at least as secret as the pc its
+  body ends with. They are always at least the pc the body starts with (the 'AllAtLeast' of
+  'Syntax.Instructions.IBlock'). A branch out of the body to an enclosing block, taken under a
+  secret condition, raises the pc the body ends with and leaves the results alone; SecWasm's
+  lift raises them as well, so a proof by inclusion into SecWasm needs them raised here too.
+  This is the third of the SecWasm restrictions of the policy, beside 'ArgumentsAtCallPc' and
+  'Syntax.Instructions.FallThrough'.
+-}
+data ResultsAtEndPc (pcEnd :: SecLevel) (rs :: [LabelledValType]) where
+    -- | the lift-free rule: nothing is asked of the pc the body ends with
+    ResultsAtAnyLevel :: ResultsAtEndPc pcEnd rs
+    -- | the SecWasm restriction: every result is at least the pc the body ends with
+    ResultsAtLeastEndPc :: AllAtLeast pcEnd rs -> ResultsAtEndPc pcEnd rs
+
 decideAllAtLeast :: Sing (l :: SecLevel) -> Sing (rs :: [LabelledValType]) -> Maybe (AllAtLeast l rs)
 decideAllAtLeast _ SNil = Just NothingCarried
 decideAllAtLeast l (SCons (_ :%~ lv) rest) = CarriedAtLeast <$> decideFlow l lv <*> decideAllAtLeast l rest
