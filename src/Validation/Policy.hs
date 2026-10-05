@@ -56,6 +56,7 @@
   > allow-declassify
   > secwasm-restrictions       ; impose the restrictions SecWasm's lift needs (see 'Restrictions')
   > no-local-splitting         ; type the locals as written, without splitting them into webs
+  > preserved global 0         ; a public global that code under a secret pc may change and must restore
 
   The arrow may carry a level, @-{H}->@: the function's bound, the most secret context it may
   be called from (SecWasm's @→ℓ@; see 'Syntax.TypesIFC.LabelledFuncType'). A plain @->@ is
@@ -115,7 +116,7 @@ import Syntax.Immediates (AccessSite (..), MemArg (..))
 import Syntax.Indices (FunctionIdx (..), GlobalIdx (..))
 import Syntax.Instructions (RawInstr (..))
 import Syntax.Module
-import Syntax.Types (FuncType, FuncTypeOf (..), GlobalTypeOf (..), SValType (..), ValType (..))
+import Syntax.Types (FuncType, FuncTypeOf (..), GlobalTypeOf (..), Mutability (..), SValType (..), ValType (..))
 import Syntax.TypesIFC (LabelledFuncType (..), LabelledGlobalType, LabelledValType (..), SecLevel (..), join)
 
 -- | The levels of a function's parameters and results, in declared order, and its bound.
@@ -150,12 +151,18 @@ data Policy = Policy
     , streamLevels :: Map Text SecLevel
     -- ^ by @stdin@, @stdout@, @stderr@
     , preopenLevels :: Map Text SecLevel
-    -- ^ by the directory's guest name
+    , preservedGlobals :: [Word32]
+    {- ^ the globals, by index, that code may write where the pc is secret, provided it restores
+    them ('Syntax.Types.Preserved'): the stack pointer of compiled C, global 0 of what wasi-sdk
+    emits, which every function that needs a frame lowers on entry and raises on exit
+    -}
     }
+    -- \^ by the directory's guest name
+
     deriving stock (Eq, Show)
 
 emptyPolicy :: Policy
-emptyPolicy = Policy Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty [] Nothing Map.empty Map.empty Map.empty False LiftFree SplitIntoWebs Map.empty Map.empty
+emptyPolicy = Policy Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty [] Nothing Map.empty Map.empty Map.empty False LiftFree SplitIntoWebs Map.empty Map.empty []
 
 {- | Whether the validator splits every local into its webs before typing
   ("Validation.LocalWebs"), which it does unless the policy says otherwise. Typing the locals
@@ -202,6 +209,8 @@ data PolicyError
       are observable, so it may be called only from a public context with public arguments
       -}
       PolicyImportNotPublic Text
+    | -- | a global declared preserved that the module declares immutable
+      PolicyPreservedNotMutable Word32
     | -- | a region whose end is not above its start
       PolicyEmptyRegion Word32 Word32
     | -- | an @ifc@ import with a name this stage does not know, or the wrong type for it
@@ -221,6 +230,9 @@ parsePolicy source = foldM statement emptyPolicy (zip [1 ..] (T.lines source))
         ["allow-declassify"] -> Right policy {declassifyAllowed = True}
         ["secwasm-restrictions"] -> Right policy {restrictions = SecWasmRestrictions}
         ["no-local-splitting"] -> Right policy {localSplitting = LocalsAsWritten}
+        ["preserved", "global", ix] -> do
+            i <- number lineNo ix
+            Right policy {preservedGlobals = policy.preservedGlobals ++ [i | i `notElem` policy.preservedGlobals]}
         ws -> case break (== ":") ws of
             (headWords, ":" : body) -> declaration policy lineNo headWords body
             _ -> Left (PolicySyntax lineNo raw)
@@ -341,6 +353,7 @@ mergePolicies a b = do
             , localSplitting = if LocalsAsWritten `elem` [a.localSplitting, b.localSplitting] then LocalsAsWritten else SplitIntoWebs
             , streamLevels
             , preopenLevels
+            , preservedGlobals = a.preservedGlobals ++ [i | i <- b.preservedGlobals, i `notElem` a.preservedGlobals]
             }
   where
     agreeing :: (Ord k, Show k, Eq v) => Text -> Map k v -> Map k v -> Either PolicyError (Map k v)
@@ -447,6 +460,7 @@ assemble policy m = do
     mapM_ knownImport (Map.keys policy.importedFunctions)
     mapM_ publicImport (Map.toList policy.importedFunctions)
     mapM_ (knownGlobal . fst) (Map.toList policy.globalsByIndex)
+    mapM_ knownGlobal policy.preservedGlobals
     mapM_ (knownType . fst) (Map.toList policy.typesByIndex)
     mapM_ knownExportedGlobal (Map.keys policy.exportedGlobals)
     functionTypes <- traverse functionType (zip [0 ..] signatures)
@@ -524,11 +538,20 @@ assemble policy m = do
             unless (length fl.params == length ps && length fl.results == length rs) (Left (PolicyArity what))
             unless (all (\l -> join fl.bound l == l) fl.results) (Left (PolicyResultsBelowBound what))
             Right (labelFuncType fl ft)
-    globalType (i, GlobalType mutability t) = case maybeToList (Map.lookup i policy.globalsByIndex) ++ mapMaybe (`Map.lookup` policy.exportedGlobals) (globalExportNames i) of
-        [] -> Right (GlobalType mutability (t :~ Low))
-        l : others
-            | all (== l) others -> Right (GlobalType mutability (t :~ l))
-            | otherwise -> Left (PolicyConflict ("global " <> T.pack (show i)))
+    globalType (i, GlobalType mutability t) = do
+        level <- case maybeToList (Map.lookup i policy.globalsByIndex) ++ mapMaybe (`Map.lookup` policy.exportedGlobals) (globalExportNames i) of
+            [] -> Right Low
+            l : others
+                | all (== l) others -> Right l
+                | otherwise -> Left (PolicyConflict ("global " <> T.pack (show i)))
+        -- A preserved global is a mutable public one: a secret global may be written under a
+        -- secret pc as it is, and an immutable one is never written.
+        if i `elem` policy.preservedGlobals
+            then do
+                unless (mutability == Mutable) (Left (PolicyPreservedNotMutable i))
+                unless (level == Low) (Left (PolicyConflict ("preserved global " <> T.pack (show i))))
+                Right (GlobalType Preserved (t :~ Low))
+            else Right (GlobalType mutability (t :~ level))
     globalExportNames i = [e.name | e <- m.exports, ExportGlobal (GlobalIdx j) <- [e.desc], j == i]
     functionLoadDefault i = case maybeToList (Map.lookup i policy.loadDefaultsByIndex) ++ mapMaybe (`Map.lookup` policy.loadDefaultsByExport) (exportNamesOf i) of
         [] -> Right (fromMaybe Low policy.loadDefault)

@@ -43,6 +43,8 @@ module Runtime.Stack (
     setLocal,
     getGlobal,
     setGlobal,
+    recordPreserved,
+    stillRestored,
     firstMem,
     setFirstMem,
 ) where
@@ -64,7 +66,7 @@ import Syntax.Immediates (HostType)
 import Syntax.Types
 import Syntax.TypesIFC
 import Validation.Ref (LocalRef, localPosition, localType)
-import Validation.Shape (Append (..), DataShape (..), Elem (..), MemShape, ReverseOnto, TableShape)
+import Validation.Shape (Append (..), DataShape (..), Elem (..), MemShape, PreservedGlobals (..), PreservedOf, Recorded (..), RecordedGlobals, ReverseOnto, TableShape)
 
 {- | The operand stack (head = top of stack), indexed by the types it holds.
 
@@ -211,6 +213,29 @@ getGlobal (There ix) (GCons _ rest) = getGlobal ix rest
 setGlobal :: Elem ('GlobalType mut (t ':~ l)) gs -> HostType t -> GlobalSpaceInst gs -> GlobalSpaceInst gs
 setGlobal Here v (GCons _ rest) = GCons v rest
 setGlobal (There ix) v (GCons x rest) = GCons x (setGlobal ix v rest)
+
+{- | The values of the preserved globals, or 'Nothing' if the module has none (the usual case,
+  and then nothing is recorded and nothing compared).
+-}
+recordPreserved :: PreservedOf gs -> GlobalSpaceInst gs -> Maybe (RecordedGlobals gs)
+recordPreserved which globals
+    | anyPreserved which = Just (record which globals)
+    | otherwise = Nothing
+  where
+    anyPreserved :: PreservedOf gs' -> Bool
+    anyPreserved NoGlobalsLeft = False
+    anyPreserved (NotPreserved _ rest) = anyPreserved rest
+    anyPreserved (PreservedHere _ _) = True
+    record :: PreservedOf gs' -> GlobalSpaceInst gs' -> RecordedGlobals gs'
+    record NoGlobalsLeft GNil = NoGlobalsLeft
+    record (NotPreserved why rest) (GCons _ values) = NotPreserved why (record rest values)
+    record (PreservedHere t rest) (GCons value values) = PreservedHere (Recorded t (packValue t value)) (record rest values)
+
+-- | Whether every preserved global holds the value recorded for it, bit for bit.
+stillRestored :: RecordedGlobals gs -> GlobalSpaceInst gs -> Bool
+stillRestored NoGlobalsLeft GNil = True
+stillRestored (NotPreserved _ rest) (GCons _ values) = stillRestored rest values
+stillRestored (PreservedHere (Recorded t word) rest) (GCons value values) = packValue t value == word && stillRestored rest values
 
 {- | A module's linear memories, indexed by their declared shapes. Being a non-empty 'MemSpaceInst'
   (@m ': ms@) is the runtime counterpart of the @ModuleMems shape ~ (m ': ms)@ constraint the

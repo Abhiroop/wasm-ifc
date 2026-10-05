@@ -678,6 +678,8 @@ eraseInstr instr = case instr of
     ILocalTee _ _ ref -> ELocalTee (localPosition ref) (fromSing (localType ref))
     IGlobalGet ix -> EGlobalGet (positionOf ix)
     IGlobalSet _ _ ix -> EGlobalSet (positionOf ix)
+    IGlobalSetPreserved _ ix -> EGlobalSet (positionOf ix)
+    IRequireRestored _ -> ENop
     ILoad _ _ nt memArg -> ELoad (numType nt) memArg
     IRelabel _ -> ENop
     IRelabelResults _ -> ENop
@@ -685,9 +687,9 @@ eraseInstr instr = case instr of
     IStore _ _ nt memArg -> EStore (numType nt) memArg
     ICall _ _ _ witness ix -> ECall (widthOf witness) (positionOf ix)
     ICallIndirect _ _ _ witness (SLabelledFuncType _ params results) -> ECallIndirect (widthOf witness) (FuncType (unlabelledTypes params) (unlabelledTypes results))
-    IBlock _ _ _ witness body -> EBlock (widthOf witness) (eraseExpr body)
-    ILoop _ _ _ _ witness body -> ELoop (widthOf witness) (eraseExpr body)
-    IIf _ _ _ witness thenArm elseArm -> EIf (widthOf witness) (eraseExpr thenArm) (eraseExpr elseArm)
+    IBlock _ _ _ _ witness body -> EBlock (widthOf witness) (eraseExpr body)
+    ILoop _ _ _ _ _ witness body -> ELoop (widthOf witness) (eraseExpr body)
+    IIf _ _ _ _ witness thenArm elseArm -> EIf (widthOf witness) (eraseExpr thenArm) (eraseExpr elseArm)
     IBr _ _ witness target -> EBr (widthOf witness) (targetIndex target)
     IBrIf _ _ witness _ target -> EBrIf (widthOf witness) (targetIndex target)
     IBrTable _ _ witness _ targets def -> EBrTable (widthOf witness) (map positionOf targets) (positionOf def)
@@ -723,7 +725,7 @@ targetIndex (TargetThere rest) = S (targetIndex rest)
 
 eraseFunctions :: FuncSpaceInst mod fts -> Funcs
 eraseFunctions FsNil = NoFuncs
-eraseFunctions (FsCons (WasmFunc (Function _ declared body)) rest) = FuncCons (WasmFunction (unlabelledTypes declared) (eraseExpr body)) (eraseFunctions rest)
+eraseFunctions (FsCons (WasmFunc (Function _ declared _ body)) rest) = FuncCons (WasmFunction (unlabelledTypes declared) (eraseExpr body)) (eraseFunctions rest)
 eraseFunctions (FsCons HostFunc {} rest) = FuncCons HostFunction (eraseFunctions rest)
 eraseFunctions (FsCons GhostFunc rest) = FuncCons HostFunction (eraseFunctions rest)
 

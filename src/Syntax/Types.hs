@@ -143,7 +143,12 @@ data MemType = MemType
 
 {- data TableType = TableType Limits RefType deriving stock (Eq, Show) -}
 
-data Mutability = Immutable | Mutable deriving stock (Eq, Show)
+{- | Whether a global may be written. 'Preserved' is a mutable global that a security policy
+  marks ("Validation.Policy"): code may change it where a secret decided the control flow,
+  provided it has its old value again when that code ends, which the machine checks. A decoded
+  module has none; the stack pointer of compiled C is the one that needs it.
+-}
+data Mutability = Immutable | Mutable | Preserved deriving stock (Eq, Show)
 
 -- | A global's type, generic in its value type for the same reason as 'FuncTypeOf'.
 data GlobalTypeOf v = GlobalType Mutability v deriving stock (Eq, Show)

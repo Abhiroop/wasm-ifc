@@ -386,6 +386,7 @@ trapText CallStackExhausted = "call stack exhausted"
 trapText InformationFlowViolation = "information flow violation"
 trapText IndirectCallBelowBound = "indirect call below bound"
 trapText (SecretRead _) = "secret read"
+trapText GlobalNotRestored = "global not restored"
 
 numericTypes :: [Text]
 numericTypes = ["i32", "i64", "f32", "f64"]

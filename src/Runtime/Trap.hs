@@ -38,6 +38,10 @@ data Trap
       run-time check
       -}
       IndirectCallBelowBound
+    | {- | a preserved global ('Syntax.Types.Preserved') does not hold, where the code in which a
+      secret decided the control flow ends, the value it held where that code began
+      -}
+      GlobalNotRestored
     | {- | a @call@ or @call_indirect@ that would nest activations past the interpreter's bound
       ('callDepthBound' in "Runtime.Interpreter")
       -}

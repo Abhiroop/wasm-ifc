@@ -130,4 +130,14 @@ Ten PolyBench/C kernels at the MINI size, their data secret where `main` writes 
 (`<kernel>-silent.wasm`), all ten are accepted and run under those two lines, with no further
 declaration, and also under SecWasm's restrictions. Printing the results with `fprintf` is
 rejected in every kernel: `printf_core` branches on the secret value, and the functions it
-calls then run under a secret pc and write `__stack_pointer`.
+calls then run under a secret pc and write `__stack_pointer`. With the stack pointer declared
+preserved (`preserved global 0`), validation gets past those functions and is rejected where
+`vfprintf` writes its buffer out, an indirect call that ends in a host call under a secret pc.
+
+## A helper called under a secret pc (`frames/`)
+
+`frames.c` reads a key from `/secrets`, calls a helper with a stack frame if the key's first
+byte is odd, and reports `done` on its standard output. The helper calls another function, so
+it lowers the shadow-stack pointer on entry and raises it on exit (a leaf function uses the
+stack without moving the pointer). With `preserved global 0` the program runs for an odd and
+an even key; without it, the module is rejected at the helper's first write of the pointer.

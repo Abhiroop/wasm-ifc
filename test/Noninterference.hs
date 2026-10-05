@@ -47,6 +47,10 @@ data Stmt
     | SetGlobal Word32 Expr
     | StoreAt Expr Expr
     | DropValue Expr
+    | -- | a write to the preserved global (global 2)
+      SetPreserved Expr
+    | -- | lower the preserved global by this much, run the statements, and raise it again
+      Borrowing Word32 [Stmt]
     | IfThen Expr [Stmt] [Stmt]
     | BlockOf [Stmt]
     | -- | a loop that runs its body a fixed number of times, counting in its own local
@@ -148,6 +152,8 @@ genStmt size scope
             , SetGlobal <$> Gen.element [0, 1] <*> expr
             , StoreAt <$> expr <*> expr
             , DropValue <$> expr
+            , SetPreserved <$> expr
+            , Borrowing <$> Gen.element [4, 16] <*> (if size <= 0 then pure [] else genStmts (size - 1) scope)
             ]
     branchIf _ = BranchIf <$> Gen.element scope.targets <*> expr
     branchTable = BranchTable <$> Gen.list (Range.linear 0 3) (Gen.element scope.targets) <*> Gen.element scope.targets <*> expr
@@ -171,7 +177,7 @@ genExpr size scope
         Gen.choice
             [ Literal <$> Gen.word32 (Range.linear 0 64)
             , GetLocal <$> Gen.element scope.readable
-            , GetGlobal <$> Gen.element [0, 1]
+            , GetGlobal <$> Gen.element [0, 1, 2]
             ]
 
 -- | The module, with the policy of 'policyText'.
@@ -184,12 +190,12 @@ compileModule generated =
             [ RawFunction helperType [I32, I32, I32, I32] (body generated.helperBody)
             , RawFunction mainType [I32, I32, I32, I32] (secretIntoMemory ++ body generated.mainBody)
             ]
-        , globals = [RawGlobal (GlobalType Mutable I32) [Const SI32 0], RawGlobal (GlobalType Mutable I32) [Const SI32 0]]
+        , globals = [RawGlobal (GlobalType Mutable I32) [Const SI32 0], RawGlobal (GlobalType Mutable I32) [Const SI32 0], RawGlobal (GlobalType Mutable I32) [Const SI32 1000]]
         , memories = [RawMemory (MemType AddrI32 (Limits 1 (Just 1)))]
         , tables = []
         , elementSegments = []
         , dataSegments = []
-        , exports = [Export "f" (ExportFunc (FunctionIdx 1)), Export "public" (ExportGlobal (GlobalIdx 0))]
+        , exports = [Export "f" (ExportFunc (FunctionIdx 1)), Export "public" (ExportGlobal (GlobalIdx 0)), Export "preserved" (ExportGlobal (GlobalIdx 2))]
         , start = Nothing
         , customSections = []
         }
@@ -202,12 +208,17 @@ compileModule generated =
 
 -- | The policy the generated modules are checked under.
 policyText :: Text
-policyText = "export f : H L -> L\nglobal 1 : H\nregion 32 64 : H\n"
+policyText = "export f : H L -> L\nglobal 1 : H\nregion 32 64 : H\npreserved global 2\n"
 
 compileStmt :: Stmt -> [RawInstr]
 compileStmt stmt = case stmt of
     SetLocal i e -> compileExpr e ++ [LocalSet (LocalIdx i)]
     SetGlobal g e -> compileExpr e ++ [GlobalSet (GlobalIdx g)]
+    SetPreserved e -> compileExpr e ++ [GlobalSet (GlobalIdx 2)]
+    Borrowing amount body ->
+        [GlobalGet (GlobalIdx 2), Const SI32 amount, Sub SI32, GlobalSet (GlobalIdx 2)]
+            ++ concatMap compileStmt body
+            ++ [GlobalGet (GlobalIdx 2), Const SI32 amount, Add SI32, GlobalSet (GlobalIdx 2)]
     StoreAt address value -> compileAddress address ++ compileExpr value ++ [Store SI32 (MemArg 0 0)]
     DropValue e -> compileExpr e ++ [Drop]
     IfThen c t e -> compileExpr c ++ [If noResult (concatMap compileStmt t) (concatMap compileStmt e)]
@@ -258,6 +269,8 @@ withPublicLoads generated = GeneratedModule (body generated.helperBody) (body ge
         SetGlobal g e -> SetGlobal g (expr e)
         StoreAt a v -> StoreAt (expr a) (expr v)
         DropValue e -> DropValue (expr e)
+        SetPreserved e -> SetPreserved (expr e)
+        Borrowing amount b -> Borrowing amount (map stmt b)
         IfThen c t e -> IfThen (expr c) (map stmt t) (map stmt e)
         BlockOf b -> BlockOf (map stmt b)
         LoopTimes counter times b -> LoopTimes counter times (map stmt b)
@@ -284,6 +297,8 @@ holdsValueAcrossBranch generated = any bodyHolds [generated.helperBody, generate
         SetGlobal _ e -> exprHolds e
         StoreAt a v -> exprHolds a || exprHolds v
         DropValue e -> exprHolds e
+        SetPreserved e -> exprHolds e
+        Borrowing _ body -> any stmtHolds body
         IfThen c t e -> exprHolds c || any stmtHolds t || any stmtHolds e
         BlockOf body -> any stmtHolds body
         LoopTimes _ _ body -> any stmtHolds body
@@ -305,10 +320,11 @@ holdsValueAcrossBranch generated = any bodyHolds [generated.helperBody, generate
         LoopTimes _ _ body -> any branches body
         _ -> False
 
--- | What the attacker sees of a run that finished: the result, the public global, and memory.
+-- | What the attacker sees of a run that finished: the result, the public globals (the preserved one is public), and memory.
 data Observation = Observation
     { result :: [Value]
     , publicGlobal :: Value
+    , preservedGlobal :: Value
     , memory :: [(Word8, SecLevel)]
     }
     deriving stock (Show)
@@ -331,4 +347,8 @@ observeUnder text m secret public = do
         _ -> Nothing
   where
     observed :: SomeModuleInst -> [Value] -> Maybe Observation
-    observed after results = Observation results <$> either (const Nothing) Just (readGlobalExport after "public") <*> readMemoryLevels after 0 64
+    observed after results =
+        Observation results
+            <$> either (const Nothing) Just (readGlobalExport after "public")
+            <*> either (const Nothing) Just (readGlobalExport after "preserved")
+            <*> readMemoryLevels after 0 64

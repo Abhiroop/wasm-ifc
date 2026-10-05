@@ -295,6 +295,51 @@ spec = do
                 [3]
                 `shouldSatisfy` errorContaining "IllegalFlow \"global.set\" High Low"
 
+    describe "preserved globals (a public global that code under a secret pc may change and must restore)" $ do
+        let stackPointer m = m {globals = [RawGlobal (GlobalType Mutable I32) [Const SI32 1000]]}
+            lower = [GlobalGet (GlobalIdx 0), Const SI32 16, Sub SI32, GlobalSet (GlobalIdx 0)]
+            raise = [GlobalGet (GlobalIdx 0), Const SI32 16, Add SI32, GlobalSet (GlobalIdx 0)]
+            noResult = FuncType [] []
+            preserving = ("preserved global 0\n" <>)
+            -- f(secret): if (secret) helper(); return the global, where helper lowers and raises it
+            helperInBranch = stackPointer (twoFunctions noResult (lower ++ raise) (FuncType [I32] [I32]) [LocalGet (LocalIdx 0), If noResult [Call (FunctionIdx 0)] [], GlobalGet (GlobalIdx 0)])
+            -- f(secret): if (secret) lower the global; return it
+            notRestored = stackPointer (singleFunctionModule [] [I32] [I32] [] [LocalGet (LocalIdx 0), If noResult lower [], GlobalGet (GlobalIdx 0)])
+            -- g(secret) lowers the global, returns early if secret (after `beforeReturn`), and raises it at its end
+            earlyReturn beforeReturn =
+                stackPointer
+                    ( twoFunctions
+                        (FuncType [I32] [I32])
+                        (lower ++ [LocalGet (LocalIdx 0), If noResult (beforeReturn ++ [Const SI32 1, Return]) []] ++ raise ++ [Const SI32 0])
+                        (FuncType [I32] [I32])
+                        [LocalGet (LocalIdx 0), Call (FunctionIdx 0), Drop, GlobalGet (GlobalIdx 0)]
+                    )
+            -- the invoked function itself returns early under a secret pc without raising the global
+            entryNotRestored = stackPointer (singleFunctionModule [] [I32] [] [] (lower ++ [LocalGet (LocalIdx 0), If noResult [Return] []] ++ raise))
+        it "a function that lowers and raises the global may be called under a secret pc" $ do
+            elabRunWithPolicy (preserving "export f : H -> L") helperInBranch [1] `shouldBe` Right ["1000"]
+            elabRunWithPolicy (preserving "export f : H -> L") helperInBranch [0] `shouldBe` Right ["1000"]
+            elabRunWithPolicy "export f : H -> L" helperInBranch [1] `shouldSatisfy` errorContaining "IllegalFlow \"global.set\" High Low"
+        it "a conditional on a secret that leaves the global changed traps where it ends" $ do
+            elabRunWithPolicy (preserving "export f : H -> L") notRestored [1] `shouldSatisfy` trapContaining "GlobalNotRestored"
+            elabRunWithPolicy (preserving "export f : H -> L") notRestored [0] `shouldBe` Right ["1000"]
+        it "a function that returns early under a secret pc is compared with the value at its call" $ do
+            elabRunWithPolicy (preserving "export f : H -> L") (earlyReturn raise) [1] `shouldBe` Right ["1000"]
+            elabRunWithPolicy (preserving "export f : H -> L") (earlyReturn raise) [0] `shouldBe` Right ["1000"]
+            elabRunWithPolicy (preserving "export f : H -> L") (earlyReturn []) [1] `shouldSatisfy` trapContaining "GlobalNotRestored"
+            elabRunWithPolicy (preserving "export f : H -> L") (earlyReturn []) [0] `shouldBe` Right ["1000"]
+        it "the invoked function is held to the same" $ do
+            elabRunWithPolicy (preserving "export f : H ->") entryNotRestored [1] `shouldSatisfy` trapContaining "GlobalNotRestored"
+            elabRunWithPolicy (preserving "export f : H ->") entryNotRestored [0] `shouldBe` Right []
+        it "under a public pc the ordinary rule holds: a secret value may not be written" $
+            elabRunWithPolicy (preserving "export f : H -> L") (stackPointer (singleFunctionModule [] [I32] [I32] [] [LocalGet (LocalIdx 0), GlobalSet (GlobalIdx 0), Const SI32 0])) [1]
+                `shouldSatisfy` errorContaining "IllegalFlow \"global.set\" High Low"
+        it "a preserved global is a mutable public global the module has" $ do
+            let immutable = (singleFunctionModule [] [] [] [] []) {globals = [RawGlobal (GlobalType Immutable I32) [Const SI32 0]]}
+            elabRunWithPolicy "preserved global 0" immutable [] `shouldSatisfy` errorContaining "PolicyPreservedNotMutable 0"
+            elabRunWithPolicy "preserved global 0\nglobal 0 : H" (stackPointer (singleFunctionModule [] [] [] [] [])) [] `shouldSatisfy` errorContaining "PolicyConflict \"preserved global 0\""
+            elabRunWithPolicy "preserved global 3" (stackPointer (singleFunctionModule [] [] [] [] [])) [] `shouldSatisfy` errorContaining "PolicyUnknown \"global 3\""
+
     describe "SecWasm's restrictions (secwasm-restrictions)" $ do
         let restricted = ("secwasm-restrictions\n" <>)
             -- (block (result i32) (i32.const 7) (local.get $c) (br_if 0) <rest>)
@@ -671,9 +716,10 @@ spec = do
 
     describe "noninterference over generated programs (test/Noninterference.hs)" $ do
         -- A leak can be rare among the generated programs: a mutant that skips the load check
-        -- first failed after 1,666 cases, so this runs more than the default hundred;
+        -- first failed after 1,666 cases, and one that skips the comparison of the preserved
+        -- global after 5,057, so this runs many more than the default hundred;
         -- WASM_IFC_NI_CASES sets the count for a longer campaign.
-        cases <- runIO (maybe 2000 read <$> lookupEnv "WASM_IFC_NI_CASES")
+        cases <- runIO (maybe 10000 read <$> lookupEnv "WASM_IFC_NI_CASES")
         modifyMaxSuccess (const cases) $
             it "two runs that differ only in their secrets, and both finish, agree on everything public" $
                 hedgehog $ do
@@ -688,6 +734,7 @@ spec = do
                             classify "accepted, finished, holding a value across a conditional branch" (holdsValueAcrossBranch generated)
                             oneRun.result === otherRun.result
                             oneRun.publicGlobal === otherRun.publicGlobal
+                            oneRun.preservedGlobal === otherRun.preservedGlobal
                             [(a, i) | (i, (a, Low), (_, Low)) <- zip3 [0 :: Int ..] oneRun.memory otherRun.memory]
                                 === [(b, i) | (i, (_, Low), (b, Low)) <- zip3 [0 :: Int ..] oneRun.memory otherRun.memory]
                         (Right _, Right _) -> label "accepted, a run trapped"

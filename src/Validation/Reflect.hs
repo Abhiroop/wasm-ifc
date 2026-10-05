@@ -52,6 +52,7 @@ module Validation.Reflect (
     reflectCtx,
     funcTypesSing,
     globalTypesSing,
+    preservedOf,
     memShapesSing,
     tableShapesSing,
     dataShapesSing,
@@ -288,6 +289,15 @@ reflectCtx funcTypes globalTypes memTypes tableLimits dataCount =
 -- | The five index spaces of a module-shape singleton.
 funcTypesSing :: SModuleShape shape -> Sing (ModuleFuncs shape)
 funcTypesSing (SModuleShape fts _ _ _ _) = fts
+
+-- | Which globals of a global space are preserved, from its singleton.
+preservedOf :: Sing (gs :: [LabelledGlobalType]) -> PreservedOf gs
+preservedOf SNil = NoGlobalsLeft
+preservedOf (SCons (SGlobalType mutability (t :%~ level)) rest) = case (mutability, level) of
+    (SImmutable, _) -> NotPreserved ImmutableNeedsNone (preservedOf rest)
+    (SMutable, _) -> NotPreserved MutableNeedsNone (preservedOf rest)
+    (SPreserved, SHigh) -> NotPreserved SecretNeedsNone (preservedOf rest)
+    (SPreserved, SLow) -> PreservedHere t (preservedOf rest)
 
 globalTypesSing :: SModuleShape shape -> Sing (ModuleGlobals shape)
 globalTypesSing (SModuleShape _ gs _ _ _) = gs

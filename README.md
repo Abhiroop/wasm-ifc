@@ -45,6 +45,10 @@ program as calls to an import module `ifc` (`secret_i32`, `load_secret_i32`, `de
 …), which a plain runtime serves with a shim and this one rewrites into the instructions they
 stand for. Whatever the policy does not declare is public.
 
+A policy can also declare a public global preserved (`preserved global 0`, the stack pointer
+of compiled C). Code may then change it where a secret decided the control flow, and the
+machine checks, where that code ends, that the global has its old value again.
+
 At the host boundary an import is called from a public context with public arguments, and its
 results take the policy's levels. Every byte a host call takes from memory is checked against
 the level of the file descriptor it concerns, and the run traps if the byte is more secret:

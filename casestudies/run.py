@@ -67,6 +67,21 @@ def polybench_study():
     silent = "store-default func {main} : H\nload-default func {main} : H\n"
     return [{"name": k, "wasm": f"polybench/{k}.wasm", "policy_text": policy, "declare": True} for k in kernels] + [
         {"name": f"{k} (printing compiled out)", "wasm": f"polybench/{k}-silent.wasm", "policy_text": silent, "declare": True} for k in kernels
+    ] + [
+        {"name": f"{k} (stack pointer preserved)", "wasm": f"polybench/{k}.wasm", "policy_text": policy + "preserved global 0\n", "declare": True} for k in kernels
+    ]
+
+
+def frames_study():
+    """A helper with a stack frame called under a secret pc (casestudies/frames/): with the
+    shadow-stack pointer declared preserved, and without."""
+    base = "preopen /secrets : H\nload-default func {__original_main} : H\nload-default func {fold} : H\nload-default func {step} : H\n"
+    odd = [{"guest": "/secrets", "files": {"key": "odd-key-material"}}]
+    even = [{"guest": "/secrets", "files": {"key": "plain-key-bytes!"}}]
+    return [
+        {"name": "frames (odd key)", "wasm": "frames/frames.wasm", "policy_text": base + "preserved global 0\n", "dirs": odd, "declare": True, "expect": "ran"},
+        {"name": "frames (even key)", "wasm": "frames/frames.wasm", "policy_text": base + "preserved global 0\n", "dirs": even, "declare": True, "expect": "ran"},
+        {"name": "frames (stack pointer not preserved)", "wasm": "frames/frames.wasm", "policy_text": base, "dirs": odd, "declare": True, "expect": "rejected"},
     ]
 
 
@@ -84,6 +99,7 @@ STUDIES = {
     "secwasm": secwasm_study(),
     "wasi-c": wasi_c_study(),
     "polybench": polybench_study(),
+    "frames": frames_study(),
 }
 
 

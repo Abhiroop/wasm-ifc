@@ -29,8 +29,10 @@ import Data.List.Singletons (type (++))
 import Data.Singletons.Base.TH (SList (SCons, SNil), Sing, genSingletons)
 import Numeric.Natural (Natural)
 
-import Syntax.Types (AddrType, GlobalTypeOf)
-import Syntax.TypesIFC (Join, LabelledFuncType (..), LabelledValType, SecLevel)
+import Data.Type.Equality ((:~:) (Refl))
+import Data.Word (Word64)
+import Syntax.Types (AddrType, GlobalTypeOf (..), Mutability (..), SValType, ValType)
+import Syntax.TypesIFC (FlowsInto, Join, LabelledFuncType (..), LabelledValType (..), SecLevel (..))
 
 {- *** Stack order ***
 
@@ -59,6 +61,11 @@ type Append :: forall {k}. [k] -> [k] -> [k] -> Type
 data Append a b c where
     ANil :: Append '[] b b
     ACons :: Append a b c -> Append (x ': a) b (x ': c)
+
+-- | What an 'Append' witness is evidence of, as an equation.
+appendIs :: Append a b c -> (a ++ b) :~: c
+appendIs ANil = Refl
+appendIs (ACons rest) = case appendIs rest of Refl -> Refl
 
 {- | Build the 'Append' witness for a prefix from its singleton. The witness is just the spine
   of the prefix, so the suffix @b@ is whatever the use site fixes. The smart constructors in
@@ -118,6 +125,60 @@ withinReach ReachesHere Here = Here
 withinReach ReachesHere (There beyond) = case beyond of {}
 withinReach (ReachesThere _) Here = Here
 withinReach (ReachesThere reach) (There ix) = There (withinReach reach ix)
+
+{- *** Preserved globals ***
+
+   A region of code in which the pc is secret must leave public state as it found it. For most
+   state the typing rules guarantee that by forbidding the write. A /preserved/ global
+   ('Syntax.Types.Preserved') may be written there, and the machine guarantees the same by
+   comparing: where a block, loop, conditional or call in which the pc may end up secret
+   begins, it records the preserved globals, and where control comes out of it, they must hold
+   the recorded values, or the run traps. The witnesses below say where that has to happen
+   ('Restores', 'ReturnsWith') and which globals it concerns ('PreservedGlobals').
+-}
+
+-- | Why a global needs no comparison: it is not preserved, or it is secret, and then code under a secret pc may write it anyway.
+data NoRestoreNeeded (mut :: Mutability) (l :: SecLevel) where
+    ImmutableNeedsNone :: NoRestoreNeeded 'Immutable l
+    MutableNeedsNone :: NoRestoreNeeded 'Mutable l
+    SecretNeedsNone :: NoRestoreNeeded 'Preserved 'High
+
+{- | The preserved globals of a module's global space, every one of them: each global is either
+  one that needs no comparison or a preserved public one, which carries a @payload@ at its
+  value type. With the type's singleton as payload this says which globals to record
+  ('PreservedOf'); with a recorded word, what they must hold ('RecordedGlobals').
+-}
+type PreservedGlobals :: (ValType -> Type) -> [GlobalTypeOf LabelledValType] -> Type
+data PreservedGlobals payload gs where
+    NoGlobalsLeft :: PreservedGlobals payload '[]
+    NotPreserved :: NoRestoreNeeded mut l -> PreservedGlobals payload gs -> PreservedGlobals payload ('GlobalType mut (t ':~ l) ': gs)
+    PreservedHere :: payload t -> PreservedGlobals payload gs -> PreservedGlobals payload ('GlobalType 'Preserved (t ':~ 'Low) ': gs)
+
+-- | Which globals of a global space are preserved.
+type PreservedOf = PreservedGlobals SValType
+
+-- | The value a preserved global had when it was recorded, as its machine word.
+data Recorded (t :: ValType) = Recorded !(SValType t) !Word64
+
+-- | The values the preserved globals of a global space had at some point.
+type RecordedGlobals = PreservedGlobals Recorded
+
+{- | Whether control coming out of a block, loop or conditional has to find the preserved
+  globals as they were at its start. It has to if the pc drops there: @pcEnd@ is the most
+  secret pc of the construct's own entry and the first of @pcsAfter@ the pc in force after it.
+  A proof that the first flows into the second says the pc does not drop.
+-}
+data Restores (pcEnd :: SecLevel) (pcsAfter :: [SecLevel]) (gs :: [GlobalTypeOf LabelledValType]) where
+    PcDoesNotDrop :: FlowsInto pcEnd pcAfter -> Restores pcEnd (pcAfter ': pcs) gs
+    PreservedRestored :: PreservedOf gs -> Restores pcEnd pcsAfter gs
+
+{- | The same for a function, whose body ends with the pc stack @pcOut@: if its pc is public
+  when it returns, whichever way it returns, nothing has to be compared; otherwise the
+  preserved globals must hold at the return what they held at the call.
+-}
+data ReturnsWith (pcOut :: [SecLevel]) (gs :: [GlobalTypeOf LabelledValType]) where
+    ReturnsUnderPublicPc :: ReturnsWith ('Low ': pcs) gs
+    RestoresOnReturn :: PreservedOf gs -> ReturnsWith pcOut gs
 
 {- | @∃bound ps rs. (Sing bound, Sing ps, Sing rs, Elem ('LabelledFuncType bound ps rs) fts)@ — a
   function reference resolved against the signature, carrying its bound and its parameter and

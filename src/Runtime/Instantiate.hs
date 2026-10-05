@@ -147,7 +147,7 @@ remainingData (SCons SDataShape rest) [] = DCons Nothing (remainingData rest [])
 runStart :: ModuleInst shape -> Maybe (Elem ('LabelledFuncType 'Low '[] '[]) (ModuleFuncs shape)) -> Either InstantiationError (ModuleInst shape)
 runStart inst Nothing = Right inst
 runStart inst (Just funcIx) = do
-    outcome <- first StartFunctionTrapped (runFunction inst (getFunc funcIx inst.functions) VNil)
+    outcome <- first StartFunctionTrapped (runFunction SNil inst (getFunc funcIx inst.functions) VNil)
     case outcome of
         Completed started _ -> Right started
         NeedsHost _ -> Left StartFunctionNeedsHost

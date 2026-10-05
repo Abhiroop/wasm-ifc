@@ -113,7 +113,8 @@ import GHC.Float (castDoubleToWord64, castFloatToWord32, castWord32ToFloat, cast
 import Data.ByteString qualified as BS
 import Data.List.Singletons (type (++))
 import Data.Maybe (fromMaybe)
-import Data.Singletons (fromSing)
+import Data.Singletons (Sing, fromSing)
+import Data.Type.Equality ((:~:) (Refl))
 import Runtime.Convert (convertVal)
 import Runtime.Host (WasiFunc)
 import Runtime.MemInst (LoadFailure (..), MemInst, checkedWord, copyWithinAt, fillBytesAt, growMemory, loadChecked, memoryPages, storeWordAt, writeBytesAt)
@@ -135,7 +136,8 @@ import Syntax.Instructions (
  )
 import Syntax.Types
 import Syntax.TypesIFC
-import Validation.Shape (Append (..), BranchTarget (..), DataShape (..), Elem (..), FrameShape (..), ModuleData, ModuleFuncs, ModuleGlobals, ModuleMems, ModuleShape, ModuleTables, withinReach)
+import Validation.Reflect (appendNil)
+import Validation.Shape (Append (..), BranchTarget (..), DataShape (..), Elem (..), FrameShape (..), ModuleData, ModuleFuncs, ModuleGlobals, ModuleMems, ModuleShape, ModuleTables, PreservedOf, Restores (..), ReturnsWith (..), appendIs, withinReach)
 
 -- *** Module and runtime state ***
 
@@ -453,6 +455,12 @@ stepInstr funcs store locals stack instr rest control = case instr of
     IGlobalGet ix -> stepped NothingToCheck store locals (getGlobal ix (store.globals) :# stack) rest control
     IGlobalSet _ _ ix -> case stack of
         v :# r -> stepped NothingToCheck (storeSetGlobal ix v store) locals r rest control
+    IGlobalSetPreserved _ ix -> case stack of
+        v :# r -> stepped NothingToCheck (storeSetGlobal ix v store) locals r rest control
+    {- The preserved globals must hold what was recorded where the construct began -}
+    IRequireRestored recorded
+        | stillRestored recorded store.globals -> stepped NothingToCheck store locals stack rest control
+        | otherwise -> Left GlobalNotRestored
     {- Memory -}
     ILoad level site nt memArg -> case stack of
         addr :# r ->
@@ -482,19 +490,24 @@ stepInstr funcs store locals stack instr rest control = case instr of
             Right checked -> enteredCallee checked $ \ix ->
                 enterCall (CalleeWasWithin checked) funcs store locals flows witness ix below' rest control
     {- Structured control: push the matching frame and run the body -}
-    IBlock _ _ flows witness body ->
+    -- (What follows the construct is forced before the label holds it: left lazy, every block
+    -- entered would allocate the suspended choice of 'restoring'.)
+    IBlock _ _ restores flows witness body ->
         let (params, below) = splitStack witness stack
-         in Right (Stepped NothingToCheck (Config store locals (relabelStack flows params) body (BlockLabel below rest control)))
-    ILoop _ _ _ flows witness body ->
+            !after = restoring restores store rest
+         in Right (Stepped NothingToCheck (Config store locals (relabelStack flows params) body (BlockLabel below after control)))
+    ILoop _ restores _ _ flows witness body ->
         let (params, below) = splitStack witness stack
-         in Right (Stepped NothingToCheck (Config store locals (relabelStack flows params) body (LoopLabel below body rest control)))
-    IIf _ _ flows witness thenArm elseArm -> case stack of
+            !after = restoring restores store rest
+         in Right (Stepped NothingToCheck (Config store locals (relabelStack flows params) body (LoopLabel below body after control)))
+    IIf _ _ restores flows witness thenArm elseArm -> case stack of
         cond :# below' ->
             let (params, below) = splitStack witness below'
+                !after = restoring restores store rest
              in Right . Stepped NothingToCheck $
                     if cond /= 0
-                        then Config store locals (relabelStack flows params) thenArm (BlockLabel below rest control)
-                        else Config store locals (relabelStack flows params) elseArm (BlockLabel below rest control)
+                        then Config store locals (relabelStack flows params) thenArm (BlockLabel below after control)
+                        else Config store locals (relabelStack flows params) elseArm (BlockLabel below after control)
     {- Branches: unwind the control stack to the targeted frame -}
     IBr _ flows witness target -> let (vs, _) = splitStack witness stack in Right (unwind store locals target (relabelStack flows vs) control)
     IBrIf _ flows witness fallThrough target -> case stack of
@@ -540,12 +553,13 @@ enterCall ::
     Control mod res ret locals labels out ->
     Either Trap (StepResult check mod res)
 enterCall evidence funcs store locals flows witness ix stack rest control = case getFunc ix funcs of
-    WasmFunc (Function params declared body)
+    WasmFunc (Function params declared returns body)
         | depth > callDepthBound -> Left CallStackExhausted
         | otherwise ->
             let (args, below) = splitStack witness stack
                 calleeLocals = seedLocals flows params declared args
-             in Right (Stepped evidence (Config store calleeLocals VNil body (CallBoundary depth below locals rest control)))
+                !after = restoringOnReturn returns store rest
+             in Right (Stepped evidence (Config store calleeLocals VNil body (CallBoundary depth below locals after control)))
     HostFunc wasiFunc argsAgree resultsAgree ->
         let (args, below) = splitStack witness stack
             suspended = Suspended (appendFromSameValues resultsAgree) locals below rest control
@@ -562,6 +576,42 @@ appendFromSameValues (SameValue rest) = ACons (appendFromSameValues rest)
 appendNilSameValues :: SameValueTypes hostResults rs -> Append rs '[] rs
 appendNilSameValues NoValues = ANil
 appendNilSameValues (SameValue rest) = ACons (appendNilSameValues rest)
+
+{- | What follows a block, loop or conditional, behind the comparison of the preserved globals
+  if the construct has to restore them ('Restores'): their values now, at its start, are
+  recorded in an 'IRequireRestored' that runs first when control comes out of it, by falling
+  out of its end or by a branch to its label. A branch further out skips the comparison, and
+  the construct it lands behind has its own. A module without preserved globals records nothing.
+-}
+{-# INLINE restoring #-}
+restoring ::
+    Restores pcEnd pcsAfter (ModuleGlobals mod) ->
+    Store mod ->
+    Expr mod frame labels pcA pcB cur out ->
+    Expr mod frame labels pcA pcB cur out
+restoring restores store rest = case restores of
+    PcDoesNotDrop _ -> rest
+    PreservedRestored which -> comparingAfter which store rest
+
+-- | The same for what follows a call, if the callee may return under a secret pc ('ReturnsWith').
+{-# INLINE restoringOnReturn #-}
+restoringOnReturn ::
+    ReturnsWith pcOut (ModuleGlobals mod) ->
+    Store mod ->
+    Expr mod frame labels pcA pcB cur out ->
+    Expr mod frame labels pcA pcB cur out
+restoringOnReturn returns store rest = case returns of
+    ReturnsUnderPublicPc -> rest
+    RestoresOnReturn which -> comparingAfter which store rest
+
+comparingAfter ::
+    PreservedOf (ModuleGlobals mod) ->
+    Store mod ->
+    Expr mod frame labels pcA pcB cur out ->
+    Expr mod frame labels pcA pcB cur out
+comparingAfter which store rest = case recordPreserved which store.globals of
+    Nothing -> rest
+    Just recorded -> IRequireRestored recorded :. rest
 
 {- | The most activations the machine allows on the control stack at once; a call that would
   open one more traps with 'CallStackExhausted'. The spec leaves the bound to the implementation
@@ -801,12 +851,13 @@ data Outcome (mod :: ModuleShape) (rs :: LabelledResultType) where
   Calling a host function directly (an exported import) is a request straight away.
 -}
 runFunction ::
+    Sing (rs :: [LabelledValType]) ->
     ModuleInst mod ->
     FuncInst mod ('LabelledFuncType bound ps rs) ->
     ValueStack ps ->
     Either Trap (Outcome mod rs)
-runFunction tm (WasmFunc (Function params declared body)) args = do
-    halt <- run (tm.functions) (Config store locals VNil body EntryBoundary)
+runFunction resultTypes tm (WasmFunc (Function params declared returns body)) args = do
+    halt <- run (tm.functions) (Config store locals VNil body entry)
     Right $ case halt of
         Finished store' results ->
             Completed (storeToModule tm.functions store') results
@@ -814,10 +865,17 @@ runFunction tm (WasmFunc (Function params declared body)) args = do
   where
     store = moduleToStore tm
     locals = seedLocals (segmentSelf params) params declared args
-runFunction tm (HostFunc wasiFunc argsAgree resultsAgree) args =
+    -- The entry function is held to what every callee is: if it may return under a secret
+    -- pc, it returns behind a comparison of the preserved globals with their values now.
+    -- The comparison sits in a call boundary of its own, over the entry boundary.
+    entry = case appendIs (appendNil resultTypes) of
+        Refl -> case restoringOnReturn returns store INil of
+            INil -> EntryBoundary
+            comparison -> CallBoundary 1 VNil noLocals comparison EntryBoundary
+runFunction _ tm (HostFunc wasiFunc argsAgree resultsAgree) args =
     let store = moduleToStore tm
      in Right (NeedsHost (HostRequest wasiFunc (relabelStack argsAgree args) store resultsAgree (Suspended (appendNilSameValues resultsAgree) noLocals VNil INil EntryBoundary)))
-runFunction _ GhostFunc _ = Left InformationFlowViolation
+runFunction _ _ GhostFunc _ = Left InformationFlowViolation
 
 {- *** Numeric dispatch ***
 

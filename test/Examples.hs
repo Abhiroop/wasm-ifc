@@ -40,7 +40,7 @@ import Syntax.Types (
  )
 import Syntax.TypesIFC (AllAtLeast (..), DynamicCheck (..), FlowsInto (..), LabelledFuncType (..), LabelledValType (..), ResultsAtEndPc (..), SLabelledValType (..), SSecLevel (..), SecLevel (..), SegmentFlows (..))
 import Validation.Ref (LocalRef, resolveLocal)
-import Validation.Shape (Append (..), BranchTarget (..), Elem (..), FrameLocals, FrameShape (..), MemShape (..), ModuleShape (..))
+import Validation.Shape (Append (..), BranchTarget (..), Elem (..), FrameLocals, FrameShape (..), MemShape (..), ModuleShape (..), PreservedGlobals (..), Restores (..), ReturnsWith (..))
 
 {- | The single i32 a completed run produced. (These modules import nothing, so a call into
 the host cannot arise; the case is still spelled out because the type admits it.)
@@ -81,7 +81,7 @@ completedI32 (NeedsHost _) = Left "the example called into the host"
 
 factorial :: FuncInst shape ('LabelledFuncType 'Low '[PublicI32] '[PublicI32])
 factorial =
-    WasmFunc . Function (SCons publicI32 SNil) (SCons publicI32 SNil) $
+    WasmFunc . Function (SCons publicI32 SNil) (SCons publicI32 SNil) ReturnsUnderPublicPc $
         ( one
             :. setPublic acc
             :. block_
@@ -138,7 +138,7 @@ runSpinFor fuel = case runFor fuel FsNil (Config (moduleToStore emptyMod) noLoca
 
 runFactorial :: Word32 -> Either String Word32
 runFactorial input =
-    either (Left . show) completedI32 (runFunction emptyModule factorial (input :# VNil))
+    either (Left . show) completedI32 (runFunction (SCons publicI32 SNil) emptyModule factorial (input :# VNil))
   where
     emptyModule :: ModuleInst ('ModuleShape '[] '[] '[] '[] '[])
     emptyModule = ModuleInst FsNil GNil MNil TNil DNil
@@ -151,17 +151,17 @@ runFactorial input =
 type CallCtx = 'ModuleShape '[ 'LabelledFuncType 'Low '[PublicI32, PublicI32] '[PublicI32]] '[] '[] '[] '[]
 
 multiply :: FuncInst CallCtx ('LabelledFuncType 'Low '[PublicI32, PublicI32] '[PublicI32])
-multiply = WasmFunc . Function (SCons publicI32 (SCons publicI32 SNil)) SNil $ (ILocalGet (resolveLocal publicI32 Here) :. ILocalGet (resolveLocal publicI32 (There Here)) :. IMul I32IsNum :. INil)
+multiply = WasmFunc . Function (SCons publicI32 (SCons publicI32 SNil)) SNil ReturnsUnderPublicPc $ (ILocalGet (resolveLocal publicI32 Here) :. ILocalGet (resolveLocal publicI32 (There Here)) :. IMul I32IsNum :. INil)
 
 square :: FuncInst CallCtx ('LabelledFuncType 'Low '[PublicI32] '[PublicI32])
-square = WasmFunc . Function (SCons publicI32 SNil) SNil $ (ILocalGet (resolveLocal publicI32 Here) :. ILocalGet (resolveLocal publicI32 Here) :. call toMultiply :. INil)
+square = WasmFunc . Function (SCons publicI32 SNil) SNil ReturnsUnderPublicPc $ (ILocalGet (resolveLocal publicI32 Here) :. ILocalGet (resolveLocal publicI32 Here) :. call toMultiply :. INil)
   where
     -- function index 0 in the module signature
     toMultiply :: Elem ('LabelledFuncType 'Low '[PublicI32, PublicI32] '[PublicI32]) '[ 'LabelledFuncType 'Low '[PublicI32, PublicI32] '[PublicI32]]
     toMultiply = Here
 
 runSquare :: Word32 -> Either String Word32
-runSquare input = either (Left . show) completedI32 (runFunction callModule square (input :# VNil))
+runSquare input = either (Left . show) completedI32 (runFunction (SCons publicI32 SNil) callModule square (input :# VNil))
   where
     callModule :: ModuleInst CallCtx
     callModule = ModuleInst (FsCons multiply FsNil) GNil MNil TNil DNil
@@ -176,7 +176,7 @@ type GlobalCtx = 'ModuleShape '[] '[ 'GlobalType 'Mutable PublicI32] '[] '[] '[]
 
 increment :: FuncInst GlobalCtx ('LabelledFuncType 'Low '[] '[PublicI32])
 increment =
-    WasmFunc . Function SNil SNil $
+    WasmFunc . Function SNil SNil ReturnsUnderPublicPc $
         ( IGlobalGet Here
             :. one
             :. IAdd I32IsNum
@@ -186,7 +186,7 @@ increment =
         )
 
 runIncrement :: Word32 -> Either String Word32
-runIncrement initial = either (Left . show) completedI32 (runFunction globalModule increment VNil)
+runIncrement initial = either (Left . show) completedI32 (runFunction (SCons publicI32 SNil) globalModule increment VNil)
   where
     globalModule :: ModuleInst GlobalCtx
     globalModule = ModuleInst FsNil (GCons initial GNil) MNil TNil DNil
@@ -203,7 +203,7 @@ runIncrement initial = either (Left . show) completedI32 (runFunction globalModu
          In the first argument of ‘(:.)’, namely ‘IAdd I32IsNum’
 
    broken :: FuncInst shape ('FuncType '[ 'I32 ] '[ 'I32 ])
-   broken = WasmFunc . Function (SCons publicI32 SNil) SNil $ (ILocalGet (resolveLocal publicI32 Here) :. IAdd I32IsNum :. INil)
+   broken = WasmFunc . Function (SCons publicI32 SNil) SNil ReturnsUnderPublicPc $ (ILocalGet (resolveLocal publicI32 Here) :. IAdd I32IsNum :. INil)
 -}
 
 {- | A secret plus a public value. The type is the assertion: the sum is 'High, because a
@@ -225,9 +225,11 @@ secretPlusPublic = secret :. one :. IAdd I32IsNum :. INil
   store rules); a call is not yet, since calls are only allowed at a public pc until function
   types carry a bound (see the TODO on 'ICall').
 -}
-leakThroughControl :: Expr mod ('FrameShape '[PublicI32] '[]) '[ '[]] '[ 'Low] '[ 'Low] '[SecretI32] '[]
+leakThroughControl :: Expr ('ModuleShape '[] '[] '[] '[] '[]) ('FrameShape '[PublicI32] '[]) '[ '[]] '[ 'Low] '[ 'Low] '[SecretI32] '[]
 leakThroughControl =
-    IIf NothingCarried ResultsAtAnyLevel NoValuesFlow ANil (IConst @'Low I32IsNum 1 :. ILocalSet noSuchProof noSuchProof (resolveLocal publicI32 Here) :. INil) INil :. INil
+    -- The pc drops at the end of this conditional, so it must leave the preserved globals as
+    -- it found them; the module has no globals, hence none to compare.
+    IIf NothingCarried ResultsAtAnyLevel (PreservedRestored NoGlobalsLeft) NoValuesFlow ANil (IConst @'Low I32IsNum 1 :. ILocalSet noSuchProof noSuchProof (resolveLocal publicI32 Here) :. INil) INil :. INil
   where
     -- There is no closed term of this type; the program compiles only because this one is left
     -- undefined. Replace it with a constructor of 'FlowsInto' and GHC refuses. (Even the public

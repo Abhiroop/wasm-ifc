@@ -35,16 +35,17 @@ are summarised here, not repeated.
   as public, as part of the descriptor table.
 - [ ] **P2** The error check after a read: the byte count of a read from a secret descriptor is
   secret, so C's check of `read`'s result raises the pc of what follows, and the password
-  checker of `casestudies/` is rejected (`casestudies/README.md`). **decision**, together with
-  the shadow-stack pointer below.
+  checker of `casestudies/` is rejected (`casestudies/README.md`). **decision**: let a policy
+  declare the length of a secret channel public, or allow host calls under a secret pc (below).
 - [ ] **P3** Typed obligations cover the two checks of the pure machine (`Runtime/Obligation.hs`).
   The host driver's checks (`Runtime/Wasi.hs`: bytes handed to a descriptor) are plain code,
   with no evidence type.
-- [ ] **P2** The shadow-stack pointer (`__stack_pointer`, global 0 of every wasi-sdk binary) is
-  a public global that every non-leaf C function writes in its prologue, so no such function
-  can be called under a secret pc, although the pointer is always restored. This is what
-  rejects `printf` on secret data and an `assert` on secret data (`casestudies/README.md`).
-  A sound treatment needs a rule for balanced save and restore. **decision**
+- [ ] **P2** Host calls under a secret pc. An import has the bound `Low`, so output decided by
+  a secret is rejected even on a secret channel: this is what still rejects `printf` of a
+  secret and an `assert` on a secret, now that the stack pointer can be declared preserved
+  (`casestudies/README.md`). The general rule is the usual one for output, pc ⊔ data ⊑ channel,
+  with the channel looked up at run time; it is of use to compiled C only together with a
+  version of each libc wrapper per calling context. **decision**, after the deadline.
 - [ ] **P3** Inference is monomorphic: one label per parameter joins every call site's (a
   precision loss against WANILLA, `casestudies/README.md`).
 - [ ] **P3** A noninterference proof (Lean, delta 6). `Formalisation/` holds earlier Agda and

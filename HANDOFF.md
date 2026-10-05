@@ -231,13 +231,50 @@ on the same inputs and requires the same result, public global and memory (2,000
   table is in `BENCHMARKS.md`, "Allocation at the labelled build". With a secret in the policy,
   CoreMark is at +2.7 % in all, and validation takes 0.09 s where it takes 0.03 s without one.
 
+## Preserved globals (Daniel's decision of 2026-10-05; not in PLAN.md)
+
+- **Policy:** `preserved global N`. The global must be mutable and public; it gets the
+  mutability `Preserved` in the module's shape (`Syntax.Types.Mutability`).
+- **Static rule:** `IGlobalSetPreserved :: FlowsInto lv pc -> Elem ('GlobalType 'Preserved
+  (t ':~ 'Low)) … -> Instr …`: the pc premise of `global.set` is dropped and the value may be as
+  secret as the pc (under a public pc this is the ordinary rule). Reads are unchanged.
+- **Run-time rule:** a block, loop, conditional or call in which the pc may end up secret must
+  leave every preserved global as it found it. Where it has to is a witness: `IBlock`, `ILoop`
+  and `IIf` carry `Restores pcEnd pcsAfter gs` (`PcDoesNotDrop (FlowsInto pcEnd pcAfter)` |
+  `PreservedRestored (PreservedOf gs)`), and `Function` carries `ReturnsWith pcOut gs`
+  (`ReturnsUnderPublicPc` | `RestoresOnReturn (PreservedOf gs)`); `PreservedOf gs` enumerates
+  every global of the module, so none can be left out. The machine records the values at the
+  construct's start (`Runtime.Stack.recordPreserved`) and puts an `IRequireRestored` in front
+  of what follows it; a mismatch traps with `GlobalNotRestored`. The invoked function is held
+  to the same as a callee. The reference for a block is the value at its entry, and for a
+  call the value at the call, which is what makes an early return after a secret check pass.
+- **Not a typed obligation:** `IRequireRestored` has the check `NoDynamicCheck`; that the
+  machine inserts it is by inspection of three clauses of `stepInstr` and `enterCall`.
+- **Cost:** without a `preserved` statement nothing is recorded or compared, and the
+  allocation tripwire is at the reference on all nine workloads.
+- **Tests:** six unit tests (a helper under a secret pc; a conditional that does not restore;
+  an early return, restored and not; the invoked function; the ordinary rule under a public
+  pc; policy errors). The two-run noninterference generator writes a preserved global, raw
+  and bracketed: 100,000 cases, no counterexample (38 % accepted and finished, 2 % trapped,
+  59 % rejected); a mutant whose comparison always succeeds fails after 5,057 cases, so the
+  suite now runs 10,000.
+- **Case studies:** `casestudies/frames/` (a non-leaf helper called if a secret byte is odd)
+  runs with `preserved global 0` and is rejected without it, at the helper's prologue. A leaf
+  function does not move the pointer, so only non-leaf functions are concerned. PolyBench with
+  `fprintf` gets past every prologue and is rejected later, at the indirect call through
+  which `vfprintf` writes its buffer out (function 63, instruction 126, `call_indirect`): a
+  host call under a secret pc.
+- **For the paper:** Daniel's view is that this can be an assumption of the theorem ("a module
+  restores a preserved global before the end of every secret region"), explicit in the policy
+  and checked by the implementation; the paper track decides.
+
 ## Findings that bear on the paper's claims
 
 1. **The shadow-stack pointer.** `__stack_pointer` is a public global that every non-leaf C
    function writes in its prologue and restores in its epilogue. SecWasm's rules forbid the
-   write under a secret pc, so no such function can be called in a secret context: this is
-   what rejects `printf` of a secret and `assert` on a secret. A sound treatment needs a rule
-   for balanced save and restore, or a secret stack pointer with its cost. Open (TODO.md).
+   write under a secret pc, so no such function can be called in a secret context. With the
+   global declared preserved (above) this is lifted. What then still rejects `printf` of a
+   secret and `assert` on a secret is the host call under a secret pc (TODO.md).
 2. **Branches on secrets before output.** The compiler moves output into the blocks of earlier
    branches; typable programs are written branch-free where they handle secrets (constant-time
    style). The password checker shows both versions.

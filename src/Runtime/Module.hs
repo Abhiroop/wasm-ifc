@@ -118,7 +118,7 @@ invokeExport (SomeModuleInst shapeS inst exports) name args = do
     SomeFuncRef _ psS rsS funcIx <- note (NoSuchExport name) (lookupFuncRef (funcTypesSing shapeS) idx)
     checkArguments (declaredOrder (unlabelledTypes psS)) args
     argStack <- note (ArgumentCount 0 0) (buildStack psS (stackOrder args))
-    outcome <- first Trapped (runFunction inst (getFunc funcIx inst.functions) argStack)
+    outcome <- first Trapped (runFunction rsS inst (getFunc funcIx inst.functions) argStack)
     pure $ case outcome of
         Completed inst' results -> Returned (SomeModuleInst shapeS inst' exports) (declaredOrder (toValues rsS results))
         NeedsHost request -> CalledHost (SomeHostRequest shapeS inst.functions exports rsS request)

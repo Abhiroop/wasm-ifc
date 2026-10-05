@@ -481,6 +481,15 @@ elabInstr env pcsIn@(SCons pc _) stackIn instr = case instr of
                     valueFlows <- requireFlow "global.set" lv lvar
                     Right (Produces (sameLengthAs pcsIn) pcsIn rest (IGlobalSet pcFlows valueFlows gix))
                 _ -> Left (StackUnderflow "global.set")
+            -- A preserved global: the value may be as secret as the pc, and the pc is not asked
+            -- to be public; the machine checks that the global is restored ('Restores').
+            SPreserved -> case (lvar, stackIn) of
+                (SLow, SCons (stop :%~ lv) rest) -> do
+                    Refl <- note (OperandMismatch "global.set" (valTypeOf st) (valTypeOf stop)) (decideEquality stop st)
+                    valueFlows <- requireFlow "global.set" lv pc
+                    Right (Produces (sameLengthAs pcsIn) pcsIn rest (IGlobalSetPreserved valueFlows gix))
+                (SHigh, _) -> Left (Malformed "a preserved global is public")
+                _ -> Left (StackUnderflow "global.set")
     {- Memory -}
     Load st memArg -> elabMemory env pcsIn stackIn Nothing Nothing (Load st memArg)
     Store st memArg -> elabMemory env pcsIn stackIn Nothing Nothing (Store st memArg)
@@ -621,7 +630,7 @@ elabInstr env pcsIn@(SCons pc _) stackIn instr = case instr of
                 elabBodyChecked (pushLabel rsS (bodyAfter [] env)) (SCons pc pcsIn) psS rsS body $ \(BodyResult (BothLonger same) (SCons pcBody pcsOut) bodySeq) -> do
                     atStart <- forBlock OwnResults (requireCarried "block result" pc rsS)
                     atEnd <- forBlock OwnResults (resultsAtEndPc env "block result" pcBody rsS)
-                    Right (Produces same pcsOut (rsS %++ sS) (IBlock atStart atEnd (segmentSelf psS) witness bodySeq))
+                    Right (Produces same pcsOut (rsS %++ sS) (IBlock atStart atEnd (restoresWhere env pcBody pcsOut) (segmentSelf psS) witness bodySeq))
     Loop (FuncType psT rsT) body ->
         first leaveBlock $ blockParams "loop" psT stackIn $ \psIn sS witness ->
             loopParams psIn $ \psS entry ->
@@ -630,7 +639,7 @@ elabInstr env pcsIn@(SCons pc _) stackIn instr = case instr of
                         elabBodyChecked (pushLabel psS (bodyAfter [] env)) (SCons pcLoop pcsIn) psS rsS body $ \(BodyResult (BothLonger same) (SCons pcBody pcsOut) bodySeq) -> do
                             backFlows <- forBlock LoopPc (requireFlow "loop" pcBody pcLoop)
                             atStart <- forBlock OwnResults (requireCarried "loop result" pcLoop rsS)
-                            Right (Produces same pcsOut (rsS %++ sS) (ILoop atStart entryFlows backFlows entry witness bodySeq))
+                            Right (Produces same pcsOut (rsS %++ sS) (ILoop atStart (restoresWhere env pcLoop pcsOut) entryFlows backFlows entry witness bodySeq))
     If (FuncType psT rsT) thenBody elseBody -> case stackIn of
         SCons (sc :%~ lc) rest -> do
             Refl <- note (OperandMismatch "if" I32 (valTypeOf sc)) (decideEquality sc SI32)
@@ -640,7 +649,7 @@ elabInstr env pcsIn@(SCons pc _) stackIn instr = case instr of
                         elabBodyChecked (pushLabel rsS (bodyAfter thenBody env)) (SCons (sJoin pc lc) pcsIn) psS rsS elseBody $ \(BodyResult (BothLonger sameElse) (SCons pcElse pcsElse) elseSeq) -> do
                             atStart <- forBlock OwnResults (requireCarried "if result" (sJoin pc lc) rsS)
                             atEnd <- forBlock OwnResults (resultsAtEndPc env "if result" (sJoin pcThen pcElse) rsS)
-                            Right (Produces (joinEachSameLength sameThen sameElse) (sJoinEach pcsThen pcsElse) (rsS %++ sS) (IIf atStart atEnd (segmentSelf psS) witness thenSeq elseSeq))
+                            Right (Produces (joinEachSameLength sameThen sameElse) (sJoinEach pcsThen pcsElse) (rsS %++ sS) (IIf atStart atEnd (restoresWhere env (sJoin pcThen pcElse) (sJoinEach pcsThen pcsElse)) (segmentSelf psS) witness thenSeq elseSeq))
         _ -> Left (StackUnderflow "if")
     {- Branches (unconditional ones diverge). What a branch carries may be lower than the label's
        types; the witness relabels it on the way. -}
@@ -691,6 +700,15 @@ argumentsAtCallPc :: ElabEnv shape ret locals labels -> Text -> Sing (pc :: SecL
 argumentsAtCallPc env name pc psS = case env.restrictions of
     LiftFree -> Right ArgumentsAtAnyLevel
     SecWasmRestrictions -> ArgumentsAtLeastPc <$> requireCarried name pc psS
+
+{- | Whether control coming out of a block, loop or conditional must find the preserved globals
+  restored: not if the pc its own entry ends with flows into the pc in force after it, and
+  otherwise yes, for every preserved global of the module.
+-}
+restoresWhere :: ElabEnv shape ret locals labels -> Sing (pcEnd :: SecLevel) -> Sing (pcsAfter :: [SecLevel]) -> Restores pcEnd pcsAfter (ModuleGlobals shape)
+restoresWhere env pcEnd pcsAfter = case pcsAfter of
+    SCons pcAfter _ | Just flows <- decideFlow pcEnd pcAfter -> PcDoesNotDrop flows
+    _ -> PreservedRestored (preservedOf (globalTypesSing env.shape))
 
 {- | The results of a block or conditional under the policy's restrictions: at any level
   without them, at least the pc the body ends with with them. A failure is one about levels,
@@ -1537,6 +1555,7 @@ functionErrors ctxS types declassify restrictions (SCons ft fs) ((index, loadDef
 functionErrors _ _ _ _ _ _ = []
 
 elaborateFunctionIn ::
+    forall shape ft.
     SModuleShape shape ->
     [LabelledFuncType] ->
     SecLevel ->
@@ -1554,12 +1573,19 @@ elaborateFunctionIn ctxS types loadDefault declassify restrictions index localLe
              in first (placeIn index) $ do
                     elaborated <- elabSeq env (SCons boundS SNil) SNil body
                     case elaborated of
-                        Reachable _ _ soS bodySeq -> do
+                        Reachable _ pcsOut soS bodySeq -> do
                             ended <- blame (raisesWhereBelow (RaiseResult index) rsS soS) (endAt "result" soS rsS bodySeq)
-                            Right (Function psS declS ended)
-                        Diverged _ _ final poly -> do
+                            Right (Function psS declS (returnsWith pcsOut) ended)
+                        Diverged _ pcsOut final poly -> do
                             checkDeadResult final rsS
-                            Right (Function psS declS poly)
+                            Right (Function psS declS (returnsWith pcsOut) poly)
+  where
+    -- The pc stack a body ends with has the function's own entry on top, which every way
+    -- of returning under a secret pc has raised.
+    returnsWith :: Sing (pcOut :: [SecLevel]) -> ReturnsWith pcOut (ModuleGlobals shape)
+    returnsWith pcsOut = case pcsOut of
+        SCons SLow _ -> ReturnsUnderPublicPc
+        _ -> RestoresOnReturn (preservedOf (globalTypesSing ctxS))
 
 elaborateGlobals :: Sing gs -> [RawGlobal] -> Either ElabError (GlobalSpace gs)
 elaborateGlobals = go 0

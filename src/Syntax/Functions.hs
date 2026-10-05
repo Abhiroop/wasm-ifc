@@ -22,7 +22,7 @@ import Data.Text (Text)
 import Syntax.Instructions (Expr, RawExpr)
 import Syntax.Types
 import Syntax.TypesIFC (LabelledFuncType (..), LabelledValType)
-import Validation.Shape (FrameShape (..), ModuleShape, ReverseOnto)
+import Validation.Shape (FrameShape (..), ModuleGlobals, ModuleShape, ReturnsWith, ReverseOnto)
 
 -- *** As decoded ***
 
@@ -53,6 +53,8 @@ data Function (mod :: ModuleShape) (ft :: LabelledFuncType) where
     Function ::
         Sing (ps :: [LabelledValType]) ->
         Sing (declared :: [LabelledValType]) ->
+        -- | whether the preserved globals must hold at its return what they held at the call
+        ReturnsWith pcOut (ModuleGlobals mod) ->
         FunctionBody mod (ReverseOnto ps declared) rs bound pcOut ->
         Function mod ('LabelledFuncType bound ps rs)
 

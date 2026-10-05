@@ -61,6 +61,8 @@ import Validation.Shape (
     ModuleMems,
     ModuleShape,
     ModuleTables,
+    RecordedGlobals,
+    Restores (..),
     TableReach,
     appendFromSing,
  )
@@ -405,6 +407,19 @@ data
         FlowsInto lv lvar ->
         Elem ('GlobalType 'Mutable (t ':~ lvar)) (ModuleGlobals m) ->
         Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck ((t ':~ lv) ': s) s
+    {- A write to a preserved global (a public one the policy marks, "Validation.Shape"): the
+       pc need not flow into the global, and the value may be as secret as the pc, so under a
+       public pc this is the ordinary rule and under a secret one anything may be written. What
+       makes that secure is checked at run time: the block, loop, conditional or call in which
+       the pc became secret must leave the global as it found it ('Restores', 'ReturnsWith'). -}
+    IGlobalSetPreserved ::
+        FlowsInto lv pc ->
+        Elem ('GlobalType 'Preserved (t ':~ 'Low)) (ModuleGlobals m) ->
+        Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck ((t ':~ lv) ': s) s
+    {- Trap unless the preserved globals hold the recorded values. No program contains this
+       instruction: the machine puts it in front of what follows a construct that has to
+       restore them, with the values it recorded at the construct's start. -}
+    IRequireRestored :: RecordedGlobals (ModuleGlobals m) -> Instr m f l p p 'NoDynamicCheck s s
     {- Memory (requires the module to declare a memory): the same rules as the narrow forms. -}
     ILoad ::
         (ModuleMems m ~ (mem ': mems)) =>
@@ -491,12 +506,14 @@ data
     IBlock ::
         AllAtLeast pc rs ->
         ResultsAtEndPc pcBody rs ->
+        Restores pcBody pcs' (ModuleGlobals m) ->
         SegmentFlows psIn ps ->
         Append psIn s full ->
         Expr m f (rs ': l) (pc ': pc ': pcs) (pcBody ': pcs') ps rs ->
         Instr m f l (pc ': pcs) pcs' 'NoDynamicCheck full (rs ++ s)
     ILoop ::
         AllAtLeast pcLoop rs ->
+        Restores pcLoop pcs' (ModuleGlobals m) ->
         FlowsInto pc pcLoop ->
         FlowsInto pcBody pcLoop ->
         SegmentFlows psIn ps ->
@@ -506,6 +523,7 @@ data
     IIf ::
         AllAtLeast (Join pc lv) rs ->
         ResultsAtEndPc (Join pcThen pcElse) rs ->
+        Restores (Join pcThen pcElse) (JoinEach pcsThen pcsElse) (ModuleGlobals m) ->
         SegmentFlows psIn ps ->
         Append psIn s full ->
         Expr m f (rs ': l) (Join pc lv ': pc ': pcs) (pcThen ': pcsThen) ps rs ->
@@ -588,11 +606,11 @@ call = ICall LowFlowsAnywhere (segmentSelf (sing @ps)) ArgumentsAtAnyLevel (appe
   cleanly — no @++@ for GHC to invert and no type applications needed at call sites. The loop
   form is for a public pc, where its two flow witnesses are trivial.
 -}
-block_ :: Expr m f ('[] ': l) (pc ': pc ': pcs) (pcBody ': pcs') '[] '[] -> Instr m f l (pc ': pcs) pcs' 'NoDynamicCheck s s
-block_ = IBlock NothingCarried ResultsAtAnyLevel NoValuesFlow ANil
+block_ :: Expr m f ('[] ': l) (pc ': pc ': pcs) ('Low ': pcAfter ': pcs') '[] '[] -> Instr m f l (pc ': pcs) (pcAfter ': pcs') 'NoDynamicCheck s s
+block_ = IBlock NothingCarried ResultsAtAnyLevel (PcDoesNotDrop LowFlowsAnywhere) NoValuesFlow ANil
 
-loop_ :: Expr m f ('[] ': l) ('Low ': 'Low ': pcs) ('Low ': pcs') '[] '[] -> Instr m f l ('Low ': pcs) pcs' 'NoDynamicCheck s s
-loop_ = ILoop NothingCarried LowFlowsAnywhere LowFlowsAnywhere NoValuesFlow ANil
+loop_ :: Expr m f ('[] ': l) ('Low ': 'Low ': pcs) ('Low ': pcAfter ': pcs') '[] '[] -> Instr m f l ('Low ': pcs) (pcAfter ': pcs') 'NoDynamicCheck s s
+loop_ = ILoop NothingCarried (PcDoesNotDrop LowFlowsAnywhere) LowFlowsAnywhere LowFlowsAnywhere NoValuesFlow ANil
 
 br_ :: BranchTarget pc '[] labels (pc ': pcs) pcs' -> Instr m f labels (pc ': pcs) pcs' 'NoDynamicCheck s anyOut
 br_ = IBr NothingCarried NoValuesFlow ANil
