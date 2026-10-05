@@ -1,0 +1,4 @@
+WrongOmitsCheck BytesBelow
+WrongOtherLevel High
+WrongForgedEvidence CheckedRead
+WrongIndirectCallUnchecked CalleeWithin

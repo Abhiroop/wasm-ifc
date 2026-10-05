@@ -137,6 +137,20 @@ publicGlobalType (GlobalType mutability t) = GlobalType mutability (public t)
 -}
 type PublicFunc ps rs = 'LabelledFuncType 'Low (PublicAll ps) (PublicAll rs)
 
+{- | The premise of an instruction's rule that only the machine can decide, when it runs the
+  instruction: SecWasm's two run-time checks. It is an index of the typed instruction
+  ('Syntax.Instructions.Instr'), so an instruction says which check its rule depends on, and
+  the machine's step for it has to present evidence that the check passed
+  ("Runtime.Obligation") before it may continue. Leaving a check out of the interpreter is
+  then a type error.
+
+    * 'BytesBelow' @ℓ@: the bytes a load reads are labelled at most @ℓ@, the level the load
+      declares (E-LOAD);
+    * 'CalleeWithin' @ℓ@: the function an indirect call finds in the table has the expected
+      labelled type and a bound that @ℓ@, the expected bound, flows into (E-CALL-INDIRECT).
+-}
+data DynamicCheck = NoDynamicCheck | BytesBelow SecLevel | CalleeWithin SecLevel
+
 {- | Evidence that level @l@ may flow into level @l'@: the lattice order. A witness rather than
   a class because validation of a decoded module has to construct it at run time, from
   singletons, with 'decideFlow'.

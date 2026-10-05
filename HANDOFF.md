@@ -137,6 +137,56 @@ on this machine (Linux, GHC 9.12.2); commits are on `implement`.
 
 ## Phase 2
 
+**10. Typed obligations on the main line** (delta 7)
+- Index: `data DynamicCheck = NoDynamicCheck | BytesBelow SecLevel | CalleeWithin SecLevel`
+  (`Syntax.TypesIFC`), the sixth index of `Instr`, after the two pc stacks:
+  `Instr mod frame labels pcIn pcOut check stackIn stackOut`. `ILoad` and `ILoadN` have
+  `'BytesBelow level`, `ICallIndirect` has `'CalleeWithin bound`, every other constructor
+  `'NoDynamicCheck`. `Expr` has no such index; `(:.)` hides it.
+- Evidence (`Runtime.Obligation`): `data CheckPassed (check :: DynamicCheck)` with
+  `NothingToCheck :: CheckPassed 'NoDynamicCheck`,
+  `BytesWereBelow :: CheckedRead level -> CheckPassed ('BytesBelow level)` and
+  `CalleeWasWithin :: CheckedCallee bound ps rs fts -> CheckPassed ('CalleeWithin bound)`.
+- The design is **"the value only with its evidence"**, for both checks, which differs from
+  §7's listing (`LabelsOfRead b`, `FlowsInto b lm`, `enterCall`) and closes its stated gap:
+  - `Runtime.MemInst.loadChecked :: MemInst m -> Sing level -> Int -> Int -> Either LoadFailure
+    (CheckedRead level)` reads the word, joins its bytes' labels and compares the join with
+    `level` (skipped when `level` is `High`). `CheckedRead` is abstract; `checkedWord` gives the
+    word. The interpreter imports no other read of memory, so every word a load pushes comes
+    out of a `CheckedRead` at some level, and the evidence must be one at the load's level.
+    (`loadWordUnchecked` remains exported for `bench/erased`.)
+  - `Runtime.TableInst.lookupChecked :: TableInst fts -> Word32 -> Sing ('LabelledFuncType lf
+    ps rs) -> Either Trap (CheckedCallee lf ps rs fts)` compares the entry's labelled
+    parameters and results with the expected ones and decides `lf ⊑ lt`. `CheckedCallee` is
+    abstract and holds `FlowsInto lf lt` and `Elem ('LabelledFuncType lt ps rs) fts` at the
+    same `lt`; `enteredCallee` gives the function. The interpreter imports no other lookup, so
+    the callee an indirect call enters is the one that was checked.
+  - Trusted code: `loadChecked` and `lookupChecked`. What still rests on inspection: that a
+    load's case pushes the word of the read it presents (it could make a second checked read
+    at another level and push that word), and that each check is the intended one.
+- The machine: `stepInstr :: … -> Instr mod frame labels pcIn pcOut check stackIn stackOut -> …
+  -> Either Trap (StepResult check mod res)`, with `Stepped :: !(CheckPassed check) -> !(Config
+  mod res) -> StepResult check mod res`, `HostCall :: !(CheckPassed check) -> HostRequest mod res
+  -> StepResult check mod res` (an indirect call may enter a host function) and `Done` at
+  `'NoDynamicCheck`. The evidence is strict, so it cannot be left undefined. `step` returns
+  `SomeStepResult`, which hides the index; the drivers `run` and `runFor` call `stepInstr`
+  themselves and drop the evidence.
+- "Must not compile": `test/obligations-must-not-compile.sh` (in `scripts/gate.sh`) type-checks
+  `test/obligations/Good.hs` and requires GHC to reject four wrong steps: continuing with
+  `NothingToCheck` ("Couldn't match type ‘NoDynamicCheck’ with ‘BytesBelow level’"); reading at
+  another level ("Expected: Sing level, Actual: SSecLevel High"); forging the evidence (the
+  constructor `CheckedRead` is not in scope); and continuing past an indirect call unchecked
+  ("Couldn't match type ‘NoDynamicCheck’ with ‘CalleeWithin bound’"). The paper's third wrong
+  version (`LowFlowsAnywhere`) has no counterpart, since the evidence holds no flow proof.
+- Cost, on this machine (Ryzen 5 3600, native Linux), `bench/tripwire.py`'s nine workloads,
+  against the same code without the index (9f53c0a with `enterCall` inlined, as it is now):
+  allocation +0.7 % to +2.0 % on eight and +4.4 % on `call-indirect` (0.2 to 2.7 bytes per
+  step); CPU time ratio 0.97 as a geometric mean over seven workloads (five interleaved runs
+  each, medians; individual ratios 0.90 to 1.03), which is parity. Inlining `enterCall`, done
+  in the same commit, lowers allocation against 9f53c0a itself by 16 % on `fib` and 9 % on
+  `call-indirect`. Passing the evidence as an argument of `stepped`, `stepBin` and `stepUn`
+  matters: with the helpers fixed at `'NoDynamicCheck`, allocation rose by 9 to 74 %.
+
 **11. The complete WASI boundary rule** (delta 2)
 - Taken from memory, checked against the descriptor's level (`InformationFlowViolation` if a
   byte is more secret): the data of `fd_write`/`fd_pwrite` (`gather`, as before), the iovec
@@ -185,5 +235,4 @@ on the same inputs and requires the same result, public global and memory (2,000
 ## Not done yet
 
 - Item 9: the cost of the labels (timing sweep, native Linux, suites at the submission commit).
-- Item 10: typed obligations on the main line.
 - Items 12–14: Lean; the rest of WebAssembly 3.0; WASI sockets.

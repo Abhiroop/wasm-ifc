@@ -20,8 +20,15 @@
   the page size that was 64 KiB for a 4-byte write, which the @memory-stream@ kernel in @bench/@
   measured as nearly all of its time (TODO.md §I, E6).
 
-  Loads and stores of a whole value go through 'loadWord' and 'storeWord', a little-endian word
-  at a time; the byte-list functions serve the bulk operations, data segments and the WASI host.
+  Loads and stores of a whole value go through 'loadChecked' and 'storeWord', a little-endian
+  word at a time; the byte-list functions serve the bulk operations, data segments and the WASI
+  host.
+
+  'loadChecked' is the one way the interpreter reads a value from memory, and half of the
+  trusted code behind SecWasm's run-time checks (the other half is
+  'Runtime.TableInst.lookupChecked'): it hands out the word only as a 'CheckedRead' at the
+  level it compared the bytes' labels with, and that value is the evidence a load's step has to
+  present ("Runtime.Obligation").
 -}
 module Runtime.MemInst (
     MemInst,
@@ -29,7 +36,11 @@ module Runtime.MemInst (
     growMemory,
     memoryPages,
     maxMemoryPages,
-    loadWord,
+    CheckedRead,
+    checkedWord,
+    LoadFailure (..),
+    loadChecked,
+    loadWordUnchecked,
     storeWord,
     readBytes,
     writeBytes,
@@ -53,8 +64,9 @@ import Data.Vector.Unboxed qualified as UV
 import Data.Vector.Unboxed.Mutable qualified as MV
 import Data.Word (Word32, Word64, Word8)
 
+import Data.Singletons (Sing)
 import Syntax.Types (Limits (..))
-import Syntax.TypesIFC (SecLevel (..))
+import Syntax.TypesIFC (SSecLevel (..), SecLevel (..))
 import Validation.Shape (MemShape)
 
 -- *** Linear memory ***
@@ -133,12 +145,48 @@ growMemory delta mem
 inBounds :: MemInst m -> Int -> Int -> Bool
 inBounds mem addr count = addr >= 0 && count >= 0 && addr + count <= fromIntegral mem.pageCount * pageSize
 
-{- | Read a little-endian word of @count@ bytes (1 to 8) at effective address @addr@,
-  zero-extended; 'Nothing' if the range falls outside the memory. A word inside one chunk —
-  every word but those straddling a chunk boundary — costs one chunk lookup and no list.
+{- | A word read from memory whose bytes are labelled at most @level@. The constructor stays in
+  this module and 'loadChecked' is its only use, so a value of this type exists only if those
+  bytes were read and their labels compared with @level@: it is both the word a load pushes and
+  the evidence that the load's check passed.
 -}
-loadWord :: MemInst m -> Int -> Int -> Maybe Word64
-loadWord mem addr count
+type CheckedRead :: SecLevel -> Type
+newtype CheckedRead level = CheckedRead Word64
+
+-- | The word of a checked read.
+checkedWord :: CheckedRead level -> Word64
+checkedWord (CheckedRead word) = word
+
+-- | Why a load yields no word.
+data LoadFailure
+    = -- | the range falls outside the memory
+      LoadOutOfBounds
+    | -- | a byte in the range is more secret than the level the load declares
+      LoadAboveLevel
+
+{- | A load with SecWasm's run-time check (E-LOAD): read a little-endian word of @count@ bytes
+  (1 to 8) at effective address @addr@, and compare the join of its bytes' labels with @level@,
+  the level the load declares. The comparison is skipped when the load declares 'High, since
+  nothing exceeds it.
+-}
+{-# INLINE loadChecked #-}
+loadChecked :: MemInst m -> Sing (level :: SecLevel) -> Int -> Int -> Either LoadFailure (CheckedRead level)
+loadChecked mem level addr count = case loadWordUnchecked mem addr count of
+    Nothing -> Left LoadOutOfBounds
+    Just word -> case level of
+        SHigh -> Right (CheckedRead word)
+        SLow -> case levelOfRange mem addr count of
+            Low -> Right (CheckedRead word)
+            High -> Left LoadAboveLevel
+
+{- | Read a little-endian word of @count@ bytes (1 to 8) at effective address @addr@,
+  zero-extended, whatever its bytes' labels; 'Nothing' if the range falls outside the memory. A
+  word inside one chunk — every word but those straddling a chunk boundary — costs one chunk
+  lookup and no list. Not for the interpreter, which reads through 'loadChecked': this is for
+  code outside the labelled machine (the benchmarks' erased copy).
+-}
+loadWordUnchecked :: MemInst m -> Int -> Int -> Maybe Word64
+loadWordUnchecked mem addr count
     | not (inBounds mem addr count) = Nothing
     | offset + count <= chunkSize = Just (maybe 0 assemble (IntMap.lookup chunkIx mem.chunks))
     | otherwise = Just (foldr (.|.) 0 [fromIntegral b `shiftL` (8 * i) | (i, b) <- zip [0 ..] (bytesAt mem addr count)])

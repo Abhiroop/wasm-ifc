@@ -82,10 +82,10 @@ import Runtime.Interpreter (
     numRem,
     storedWord,
  )
-import Runtime.MemInst (MemInst, copyWithin, fillBytes, growMemory, loadWord, memoryPages, storeWord, writeBytes)
+import Runtime.MemInst (MemInst, copyWithin, fillBytes, growMemory, loadWordUnchecked, memoryPages, storeWord, writeBytes)
 import Runtime.Module (SomeModuleInst (..))
 import Runtime.Stack (DataSpaceInst (..), GlobalSpaceInst (..), MemSpaceInst (..), TableSpaceInst (..))
-import Runtime.TableInst (tableLookup, tableSize)
+import Runtime.TableInst (tableEntryUnchecked, tableSize)
 import Runtime.Trap (Trap (..))
 import Syntax.Functions (Function (..))
 import Syntax.Immediates (HostType, MemArg, NarrowWidth, NumWithSign (..), Signedness (..), narrowBytes, narrowInt)
@@ -283,7 +283,7 @@ step funcs (Config store locals stack code control) = case code of
                 Nothing -> stepped store locals (VI32 growFailed :> r) rest control
             _ -> Left Stuck
         ELoadN (SomeNarrow it nw) sign memArg -> case (store.memory, stack) of
-            (Just mem, VI32 addr :> r) -> case loadWord mem (effectiveAddr addr memArg) (narrowBytes nw) of
+            (Just mem, VI32 addr :> r) -> case loadWordUnchecked mem (effectiveAddr addr memArg) (narrowBytes nw) of
                 Just word -> stepped store locals (taggedInt it (narrowLoadT nw sign word) :> r) rest control
                 Nothing -> Left (Trapped OutOfBoundsMemoryAccess)
             _ -> Left Stuck
@@ -336,7 +336,7 @@ step funcs (Config store locals stack code control) = case code of
             Empty -> Left Stuck
         {- Memory -}
         ELoad ty memArg -> case (store.memory, stack) of
-            (Just mem, VI32 addr :> r) -> case loadWord mem (effectiveAddr addr memArg) (byteWidth ty) of
+            (Just mem, VI32 addr :> r) -> case loadWordUnchecked mem (effectiveAddr addr memArg) (byteWidth ty) of
                 Just word -> stepped store locals (loaded ty word :> r) rest control
                 Nothing -> Left (Trapped OutOfBoundsMemoryAccess)
             _ -> Left Stuck
@@ -643,7 +643,7 @@ eraseExpr :: Expr m f l p q s o -> [Instruction]
 eraseExpr INil = []
 eraseExpr (instr :. rest) = eraseInstr instr : eraseExpr rest
 
-eraseInstr :: Instr m f l p q s o -> Instruction
+eraseInstr :: Instr m f l p q check s o -> Instruction
 eraseInstr instr = case instr of
     IConst nt v -> EConst (tagged nt v)
     IAdd nt -> EAdd (numType nt)
@@ -743,7 +743,7 @@ eraseGlobals (SCons (SGlobalType _ (valTypeS :%~ _)) rest) (GCons v vs) = valueO
 
 eraseTable :: TableSpaceInst fts ts -> Maybe Table
 eraseTable TNil = Nothing
-eraseTable (TCons t _) = Just (Table n (IntMap.fromList [(fromIntegral i, erased ref) | n > 0, i <- [0 .. n - 1], Right ref <- [tableLookup t i]]))
+eraseTable (TCons t _) = Just (Table n (IntMap.fromList [(fromIntegral i, erased ref) | n > 0, i <- [0 .. n - 1], Right ref <- [tableEntryUnchecked t i]]))
   where
     n = tableSize t
     erased (SomeFuncRef _ params results ix) = FuncRef (FuncType (unlabelledTypes params) (unlabelledTypes results)) (positionOf ix)

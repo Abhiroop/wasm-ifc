@@ -90,6 +90,7 @@ library
       , Validation.Policy
       , Runtime.MemInst
       , Runtime.TableInst
+      , Runtime.Obligation
       , Runtime.Trap
       , Runtime.Bytes
       , Runtime.Numeric

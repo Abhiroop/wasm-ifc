@@ -37,9 +37,9 @@ are summarised here, not repeated.
   secret, so C's check of `read`'s result raises the pc of what follows, and the password
   checker of `casestudies/` is rejected (`casestudies/README.md`). **decision**, together with
   the shadow-stack pointer below.
-- [ ] **P1** Typed obligations on the main line (delta 7): re-implement the check index of
-  `ifc-obligations` on the current instruction type, for loads and indirect calls, with the
-  load evidence tied to its address and width.
+- [ ] **P3** Typed obligations cover the two checks of the pure machine (`Runtime/Obligation.hs`).
+  The host driver's checks (`Runtime/Wasi.hs`: bytes handed to a descriptor) are plain code,
+  with no evidence type.
 - [ ] **P2** The shadow-stack pointer (`__stack_pointer`, global 0 of every wasi-sdk binary) is
   a public global that every non-leaf C function writes in its prologue, so no such function
   can be called under a secret pc, although the pointer is always restored. This is what

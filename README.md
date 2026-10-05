@@ -105,7 +105,12 @@ and internal functions are inferred; `explain` shows what inference raised. A tw
 noninterference property test runs over generated programs, and `casestudies/` runs compiled
 C programs and SecWasm's and WANILLA's examples under policies with secrets.
 
-Not yet: a noninterference proof; typed obligations for the run-time checks; imports of tables,
+SecWasm's two run-time checks are typed obligations: an instruction's type names the check
+its rule depends on, and the machine's step for it type-checks only with evidence that the
+checked memory read, or the checked table lookup, hands out (`Runtime.Obligation`;
+`test/obligations-must-not-compile.sh` checks that four wrong steps are rejected).
+
+Not yet: a noninterference proof; imports of tables,
 memories and globals; the `table.*` instructions; multiple memories; reference and SIMD types.
 The backlog is `TODO.md`; what the paper can cite is in `HANDOFF.md`.
 

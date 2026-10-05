@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Local gate: format, -Werror build, tests, lint, samples, cross-validate. One line per stage;
-# on failure it prints the first lines of the offending output and exits non-zero.
+# Local gate: format, -Werror build, tests, lint, typed obligations, samples, cross-validate. One
+# line per stage; on failure it prints the first lines of the offending output and exits non-zero.
 #
 #   ./scripts/gate.sh                      # everything (spec + wasi suites are slow)
 #   SUITES=wasm-ifc-test ./scripts/gate.sh # the fast core loop: unit tests only
@@ -15,6 +15,8 @@ grep -E "examples, 0 failures" "$LOG"
 if ! fourmolu --mode check src app test >"$LOG" 2>&1; then echo "FOURMOLU FAILED"; head -20 "$LOG"; exit 1; fi
 H=$(hlint src app test 2>&1); if [ "$H" != "No hints" ]; then echo "HLINT: $H" | head -30; exit 1; fi
 echo "lint ok"
+if ! ./test/obligations-must-not-compile.sh >"$LOG" 2>&1; then echo "OBLIGATIONS FAILED"; grep -E "FAIL" -A8 "$LOG" | head -30; exit 1; fi
+echo "obligations ok ($(grep -c '^ok' "$LOG") checks)"
 if ! ./samples/check.sh >"$LOG" 2>&1; then echo "SAMPLES FAILED"; grep -E "FAIL|passed" "$LOG" | head -20; exit 1; fi
 tail -1 "$LOG"
 if ! ./samples/validate.sh >"$LOG" 2>&1; then echo "VALIDATE FAILED"; head -20 "$LOG"; exit 1; fi

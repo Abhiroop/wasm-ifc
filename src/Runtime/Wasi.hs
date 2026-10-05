@@ -634,7 +634,7 @@ readInto mem descriptor = go mem 0
 
 {- | The bytes the iovecs point at, in order, for a write to the given descriptor: each byte's
   level must flow into the descriptor's. This is the host boundary's dynamic check, the
-  counterpart of a load's ('Runtime.Interpreter.checkedLoad'): a secret byte handed to a public
+  counterpart of a load's ('Runtime.MemInst.loadChecked'): a secret byte handed to a public
   descriptor is the leak the whole system exists to stop, and it ends the run as a trap. The
   same check covers every other byte a call takes from memory: the iovec arrays themselves
   ('peekIovecs'), paths ('peekPath'), the contents of a symbolic link and the subscriptions of

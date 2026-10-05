@@ -38,7 +38,7 @@ import Syntax.Types (
     SValType (..),
     ValType (..),
  )
-import Syntax.TypesIFC (AllAtLeast (..), FlowsInto (..), LabelledFuncType (..), LabelledValType (..), ResultsAtEndPc (..), SLabelledValType (..), SSecLevel (..), SecLevel (..), SegmentFlows (..))
+import Syntax.TypesIFC (AllAtLeast (..), DynamicCheck (..), FlowsInto (..), LabelledFuncType (..), LabelledValType (..), ResultsAtEndPc (..), SLabelledValType (..), SSecLevel (..), SecLevel (..), SegmentFlows (..))
 import Validation.Ref (LocalRef, resolveLocal)
 import Validation.Shape (Append (..), BranchTarget (..), Elem (..), FrameLocals, FrameShape (..), MemShape (..), ModuleShape (..))
 
@@ -59,13 +59,13 @@ publicI32 = SI32 :%~ SLow
 {- | The constant one, public. A constant's level is free in its type (see 'IConst'), so an
   example has to say which level it means wherever nothing else decides it.
 -}
-one :: Instr mod frame labels ('Low ': pcs) ('Low ': pcs) s (PublicI32 ': s)
+one :: Instr mod frame labels ('Low ': pcs) ('Low ': pcs) 'NoDynamicCheck s (PublicI32 ': s)
 one = IConst @'Low I32IsNum 1
 
 {- | Writing a public value to a public local at a public pc: both flow witnesses are the
   trivial one. Every example here runs at a public pc.
 -}
-setPublic :: LocalRef PublicI32 (FrameLocals frame) -> Instr mod frame labels ('Low ': pcs) ('Low ': pcs) (PublicI32 ': s) s
+setPublic :: LocalRef PublicI32 (FrameLocals frame) -> Instr mod frame labels ('Low ': pcs) ('Low ': pcs) 'NoDynamicCheck (PublicI32 ': s) s
 setPublic = ILocalSet LowFlowsAnywhere LowFlowsAnywhere
 
 completedI32 :: Outcome mod '[PublicI32] -> Either String Word32
@@ -213,7 +213,7 @@ runIncrement initial = either (Left . show) completedI32 (runFunction globalModu
 secretPlusPublic :: Expr mod frame labels ('Low ': pcs) ('Low ': pcs) '[] '[SecretI32]
 secretPlusPublic = secret :. one :. IAdd I32IsNum :. INil
   where
-    secret :: Instr mod frame labels ('Low ': pcs) ('Low ': pcs) s (SecretI32 ': s)
+    secret :: Instr mod frame labels ('Low ': pcs) ('Low ': pcs) 'NoDynamicCheck s (SecretI32 ': s)
     secret = IConst @'High I32IsNum 42
 
 {- | The leak the program counter label exists to stop. Under a secret condition, writing to a
@@ -261,9 +261,9 @@ type ExampleShape = 'ModuleShape '[] '[] '[ 'MemShape 'AddrI32 1 'Nothing] '[] '
 secretStore :: Expr ExampleShape frame labels ('Low ': pcs) ('Low ': pcs) '[] '[]
 secretStore = one :. secretValue :. store :. INil
   where
-    secretValue :: Instr ExampleShape frame labels ('Low ': pcs) ('Low ': pcs) s (SecretI32 ': s)
+    secretValue :: Instr ExampleShape frame labels ('Low ': pcs) ('Low ': pcs) 'NoDynamicCheck s (SecretI32 ': s)
     secretValue = IConst @'High I32IsNum 7
-    store :: Instr ExampleShape frame labels ('Low ': pcs) ('Low ': pcs) (SecretI32 ': PublicI32 ': s) s
+    store :: Instr ExampleShape frame labels ('Low ': pcs) ('Low ': pcs) 'NoDynamicCheck (SecretI32 ': PublicI32 ': s) s
     store = IStore SHigh HighFlowsToHigh I32IsNum (MemArg 2 0)
 
 -- | The instruction counts of 'secretPlusPublic', 'leakThroughControl' and 'secretStore'.

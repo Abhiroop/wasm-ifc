@@ -239,7 +239,7 @@ data ElaboratedInstr (shape :: ModuleShape) (ret :: LabelledResultType) (locals 
         SameLength pcIn pcOut ->
         Sing pcOut ->
         Sing stackOut ->
-        Instr shape ('FrameShape locals ret) labels pcIn pcOut stackIn stackOut ->
+        Instr shape ('FrameShape locals ret) labels pcIn pcOut check stackIn stackOut ->
         ElaboratedInstr shape ret locals labels pcIn stackIn
     {- | An unconditional transfer (@br@ / @return@ / @unreachable@): control leaves here, so any
     instructions after it are dead code and the output stack is unconstrained (the analogue
@@ -248,7 +248,7 @@ data ElaboratedInstr (shape :: ModuleShape) (ret :: LabelledResultType) (locals 
     Transfers ::
         SameLength pcIn pcOut ->
         Sing pcOut ->
-        (forall stackOut. Instr shape ('FrameShape locals ret) labels pcIn pcOut stackIn stackOut) ->
+        (forall stackOut. Instr shape ('FrameShape locals ret) labels pcIn pcOut 'NoDynamicCheck stackIn stackOut) ->
         ElaboratedInstr shape ret locals labels pcIn stackIn
 
 note :: ElabError -> Maybe a -> Either ElabError a
@@ -951,7 +951,7 @@ threeAddresses ::
     Text ->
     Sing stackIn ->
     Sing (pc ': pcs) ->
-    (forall s ln lsrc ldst. Sing (Join pc (Join ln (Join lsrc ldst))) -> Instr shape ('FrameShape locals ret) labels (pc ': pcs) (pc ': pcs) (('I32 ':~ ln) ': ('I32 ':~ lsrc) ': ('I32 ':~ ldst) ': s) s) ->
+    (forall s ln lsrc ldst. Sing (Join pc (Join ln (Join lsrc ldst))) -> Instr shape ('FrameShape locals ret) labels (pc ': pcs) (pc ': pcs) 'NoDynamicCheck (('I32 ':~ ln) ': ('I32 ':~ lsrc) ': ('I32 ':~ ldst) ': s) s) ->
     Either ElabError (ElaboratedInstr shape ret locals labels (pc ': pcs) stackIn)
 threeAddresses name stackIn pcsIn@(SCons pc _) typed = case stackIn of
     SCons (a :%~ ln) (SCons (b :%~ lsrc) (SCons (c :%~ ldst) rest)) -> do
@@ -998,7 +998,7 @@ consumeTwo ::
     Sing (r :: ValType) ->
     Sing (pc ': pcs) ->
     Sing stackIn ->
-    (forall s lv lv'. Instr shape ('FrameShape locals ret) labels (pc ': pcs) (pc ': pcs) ((t ':~ lv) ': (t ':~ lv') ': s) ((r ':~ Join pc (Join lv lv')) ': s)) ->
+    (forall s lv lv'. Instr shape ('FrameShape locals ret) labels (pc ': pcs) (pc ': pcs) 'NoDynamicCheck ((t ':~ lv) ': (t ':~ lv') ': s) ((r ':~ Join pc (Join lv lv')) ': s)) ->
     Either ElabError (ElaboratedInstr shape ret locals labels (pc ': pcs) stackIn)
 consumeTwo st sr pcsIn@(SCons pc _) stackIn typed = case stackIn of
     SCons (sa :%~ la) (SCons (sb :%~ lb) rest) -> do
@@ -1012,7 +1012,7 @@ sameTypeBinary ::
     Sing (t :: ValType) ->
     Sing (pc ': pcs) ->
     Sing stackIn ->
-    (forall s lv lv'. Instr shape ('FrameShape locals ret) labels (pc ': pcs) (pc ': pcs) ((t ':~ lv) ': (t ':~ lv') ': s) ((t ':~ Join pc (Join lv lv')) ': s)) ->
+    (forall s lv lv'. Instr shape ('FrameShape locals ret) labels (pc ': pcs) (pc ': pcs) 'NoDynamicCheck ((t ':~ lv) ': (t ':~ lv') ': s) ((t ':~ Join pc (Join lv lv')) ': s)) ->
     Either ElabError (ElaboratedInstr shape ret locals labels (pc ': pcs) stackIn)
 sameTypeBinary st = consumeTwo st st
 
@@ -1021,7 +1021,7 @@ sameTypeUnary ::
     Sing (t :: ValType) ->
     Sing (pc ': pcs) ->
     Sing stackIn ->
-    (forall s lv. Instr shape ('FrameShape locals ret) labels (pc ': pcs) (pc ': pcs) ((t ':~ lv) ': s) ((t ':~ Join pc lv) ': s)) ->
+    (forall s lv. Instr shape ('FrameShape locals ret) labels (pc ': pcs) (pc ': pcs) 'NoDynamicCheck ((t ':~ lv) ': s) ((t ':~ Join pc lv) ': s)) ->
     Either ElabError (ElaboratedInstr shape ret locals labels (pc ': pcs) stackIn)
 sameTypeUnary st pcsIn@(SCons pc _) stackIn typed = case stackIn of
     SCons (sa :%~ la) rest -> do
