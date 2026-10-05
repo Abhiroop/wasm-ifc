@@ -212,6 +212,25 @@ on this machine (Linux, GHC 9.12.2); commits are on `implement`.
 `no-local-splitting` types the locals as written; a property runs generated modules both ways
 on the same inputs and requires the same result, public global and memory (2,000 cases).
 
+**Merging split locals; the allocation reference** (95a0f15)
+- Splitting every local into its webs made frames several times larger, and a write to a local
+  copies the frame: at 9f53c0a CoreMark allocated 73 % more than on 15 September, 2mm 36 % more,
+  seidel-2d 10 % more, all from d9cb140 (the splitting). Now, once inference has settled the
+  labels, the webs of one local at the same label share a local again (`mergeWebs` in
+  `Validation.LocalWebs`), and the module is elaborated once more under those labels; a split
+  local needs at most one slot per label. A module whose policy names no secret is not split.
+- For the paper's description of splitting: any grouping of the webs of one local preserves
+  behaviour (the definition a use read last is in the use's own web), so the merge needs no
+  argument beyond the one for the splitting. The differential property runs each generated
+  module as written, split, and split and merged under alternating levels (2,000 cases).
+- The counts of secret locals in `casestudies/results/` from this commit on are counts of
+  merged locals, so they are lower than in the earlier files (the password checker: 2, was 6).
+- `bench/allocation.txt` is re-recorded at 95a0f15 for the labelled build without a policy:
+  against 15 September, CoreMark +1.2 %, 2mm +0.4 %, seidel-2d +0.4 %, `memory-random` +2.8 %
+  (the load evidence), `fib` −15.5 % and `call-indirect` −6.2 % (`enterCall` inlined); the full
+  table is in `BENCHMARKS.md`, "Allocation at the labelled build". With a secret in the policy,
+  CoreMark is at +2.7 % in all, and validation takes 0.09 s where it takes 0.03 s without one.
+
 ## Findings that bear on the paper's claims
 
 1. **The shadow-stack pointer.** `__stack_pointer` is a public global that every non-leaf C

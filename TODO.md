@@ -65,6 +65,9 @@ are summarised here, not repeated.
   with and without secrets in memory (`bench/README.md`).
 - [ ] **P3** `call_indirect`: avoid the allocation of the level-aware type check (number table
   entries' types at instantiation), then re-record `bench/allocation.txt`.
+- [ ] **P3** The front end under a policy that names a secret: splitting, inference and the
+  merge take three times the time of plain validation on CoreMark (0.09 s against 0.03 s). The
+  reaching-definitions pass keeps a set of definitions per local at every point.
 - [ ] **P3** Memory in `ST` against persistent chunks, now that bytes carry levels
   (`BENCHMARKS.md`, E6).
 - [ ] **P3** Retake the tables on native Linux before quoting them.

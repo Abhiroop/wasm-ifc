@@ -424,3 +424,39 @@ quoted directly. Ahead of ours at medium: WAMR 9×, Pulley 16×, wasm3 45×, was
 ~144× (5 programs), Cranelift ~288× (4 programs); on the kernels wabt 1.18× (20 kernels above
 the floor for both), ours ahead on `float`, `globals-2/4`, `locals-2/4`, `loop-arith(64)`.
 Every ratio in the E4 table above roughly halves; the fast runtimes themselves moved ≤10 %.
+
+## Allocation at the labelled build (2026-10-05)
+
+`bench/allocation.txt` is re-recorded at 95a0f15, on a Ryzen 5 3600 under native Linux. The
+reference it replaces was taken on 15 September at b1021b2, before the labels. Megabytes
+allocated by the tripwire's workloads, run without a policy:
+
+| Workload | 15 Sept (b1021b2) | 0395189 | 9f53c0a | 95a0f15 | 95a0f15 against 15 Sept |
+|---|---:|---:|---:|---:|---:|
+| fib | 2778.9 | 2800.5 | 2800.5 | 2348.1 | −15.5 % |
+| loop-arith | 540.2 | 540.3 | 540.3 | 544.3 | +0.7 % |
+| locals-16 | 760.2 | 760.2 | 520.3 | 768.3 | +1.1 % |
+| call-indirect | 708.3 | 728.3 | 728.3 | 664.3 | −6.2 % |
+| labels-16 | 868.2 | 868.3 | 868.3 | 876.3 | +0.9 % |
+| memory-random | 1184.6 | 1192.7 | 1217.3 | 1217.3 | +2.8 % |
+| coremark-100 | 6302.9 | 6249.1 | 10881.5 | 6376.0 | +1.2 % |
+| pb-2mm-small | 1025.9 | 1012.7 | 1391.7 | 1030.4 | +0.4 % |
+| pb-seidel-2d-small | 3103.7 | 3077.5 | 3410.9 | 3115.8 | +0.4 % |
+
+0395189 is the labelled build of 28 September, before inference; 9f53c0a is the build with
+every local split into its webs.
+
+- **Splitting locals cost up to 73 %** (9f53c0a). A write to a local copies the frame, and a
+  function split into one slot per web had several times the locals: CoreMark's allocation
+  rose by 73 %, 2mm's by 36 %, seidel-2d's by 10 %. All of it came in with d9cb140, the commit
+  that added the splitting; `locals-16` fell by 32 % in the same commit, because splitting
+  drops the declared locals that nothing reads. At 95a0f15 the webs of a local that received
+  the same label share a local again, and a module whose policy names no secret is not split.
+- **With a secret in the policy** the module is split, inferred and merged. CoreMark under a
+  policy that declares one unused function's loads secret allocates 6474.0 MB in all (+2.7 %
+  against 15 September), of which the front end is 146 MB against 48 MB without a policy;
+  validation takes 0.09 s against 0.03 s.
+- **The typed obligations** account for the rest: one evidence value per load
+  (`memory-random`, +2 points) and under a point elsewhere. `fib` and `call-indirect` allocate
+  less than before the labels because `enterCall` is inlined since 50011b8.
+

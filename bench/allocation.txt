@@ -1,11 +1,13 @@
 # Bytes allocated by each tripwire workload; written by bench/tripwire.py --record.
-# build: b1021b2-dirty, 2026-09-15
-fib 2778880336
-loop-arith 540226872
-locals-16 760219832
-call-indirect 708251888
-labels-16 868238184
-memory-random 1184563600
-coremark-100 6302903112
-pb-2mm-small 1025940672
-pb-seidel-2d-small 3103698584
+# build: 95a0f15, 2026-10-05
+# The labelled build with typed obligations, run without a policy (BENCHMARKS.md, "Allocation at
+# the labelled build"). The reference of 2026-09-15 (b1021b2) was the build before the labels.
+fib 2348134048
+loop-arith 544272968
+locals-16 768252288
+call-indirect 664302048
+labels-16 876319112
+memory-random 1217279160
+coremark-100 6375984160
+pb-2mm-small 1030392856
+pb-seidel-2d-small 3115822864
