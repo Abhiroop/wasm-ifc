@@ -18,17 +18,25 @@ are summarised here, not repeated.
   the paper's findings (`br_table` raises down to its deepest target); inference of stores,
   block results, loop parameters, local variables (split into webs first) and internal
   functions; SecWasm's two restrictions behind `secwasm-restrictions`; labelled types for
-  `call_indirect` with the run-time bound check `ℓf ⊑ ℓt`; public host imports; secret regions
-  labelled at instantiation; load traps that name their site.
+  `call_indirect` with the run-time bound check `ℓf ⊑ ℓt`; public host imports and the complete
+  host boundary rule (every byte a call takes is checked against its descriptor, every byte it
+  stores carries the descriptor's level); secret regions labelled at instantiation; load traps
+  that name their site.
 - Evidence: a two-run noninterference property test (100,000 cases, no counterexample); case
   studies with secrets in `casestudies/` (the password checker, SecWasm's examples, WANILLA's
   suite as an oracle, the wasi-testsuite's C programs, PolyBench).
 
 ## Information flow
 
-- [ ] **P1** The complete host boundary rule (paper delta 2): iovec arrays and poll
-  subscriptions checked against the descriptor, byte counts, file records and directory entries
-  labelled with it, paths public, error codes as in the model.
+- [ ] **P2** Error codes at the host boundary are as the host reports them. They depend on the
+  descriptor table, the operands and the names in a directory, which the paper's model treats
+  as public, and also on whether an operation on a secret file fails (a failed read or write),
+  which the model does not cover. `fd_fdstat_get` reports a descriptor's type, flags and rights
+  as public, as part of the descriptor table.
+- [ ] **P2** The error check after a read: the byte count of a read from a secret descriptor is
+  secret, so C's check of `read`'s result raises the pc of what follows, and the password
+  checker of `casestudies/` is rejected (`casestudies/README.md`). **decision**, together with
+  the shadow-stack pointer below.
 - [ ] **P1** Typed obligations on the main line (delta 7): re-implement the check index of
   `ifc-obligations` on the current instruction type, for loads and indirect calls, with the
   load evidence tied to its address and width.

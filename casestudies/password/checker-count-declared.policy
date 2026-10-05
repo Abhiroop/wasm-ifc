@@ -1,0 +1,7 @@
+; The checker's policy with the byte count that read() loads declared secret, as the trap under
+; checker.policy asks (the count of a read from a secret file is secret).
+preopen /secrets : H
+preopen /log : L
+stdout : H
+load-default func 11 : H       ; main (__original_main) reads the password's bytes
+load 12 3 : H                  ; read(): the byte count fd_read stored

@@ -35,7 +35,7 @@ import Runtime.Module (Invocation (..), RunError (..), SomeHostRequest (..), Som
 import Runtime.Numeric (intDiv32)
 import Runtime.Stack (ValueStack (..), retagStack)
 import Runtime.Trap (Trap (..))
-import Runtime.Wasi (Completion (..), DescriptorLevels (..), WasiConfig (..), publicDescriptors, runWithWasi)
+import Runtime.Wasi (Completion (..), DescriptorLevels (..), Preopen (..), WasiConfig (..), publicDescriptors, runWithWasi)
 import Syntax.Functions (RawFunction (..))
 import Syntax.Globals (RawGlobal (..))
 import Syntax.Immediates
@@ -403,6 +403,33 @@ spec = do
             fmap describeCompletion leaked `shouldBe` Left (Trapped InformationFlowViolation)
             allowed <- runWithWasi noHost {descriptorLevels = publicDescriptors {standardOutput = High}} program "f" []
             fmap describeCompletion allowed `shouldBe` Right "returned [I32Value 0]"
+        it "an iovec array with a secret byte cannot direct a write to a public descriptor" $ do
+            -- The data at 0 is public; the iovec at 8 has a secret pointer field.
+            let body = [Const SI32 8, Const SI32 0, Annotated High (Store SI32 (MemArg 0 0)), Const SI32 12, Const SI32 4, Store SI32 (MemArg 0 0), Const SI32 1, Const SI32 8, Const SI32 1, Const SI32 16, Call (FunctionIdx 0)]
+                program = either (error . show) id (load (wasiModule fdWriteImport body [I32]))
+            leaked <- runWithWasi noHost program "f" []
+            fmap describeCompletion leaked `shouldBe` Left (Trapped InformationFlowViolation)
+            allowed <- runWithWasi noHost {descriptorLevels = publicDescriptors {standardOutput = High}} program "f" []
+            fmap describeCompletion allowed `shouldBe` Right "returned [I32Value 0]"
+        it "the byte count of a read from a secret descriptor is secret" $ do
+            -- fd_read of no bytes from stdin (fd 0), then a public load of the count it stored at 16.
+            let body = [Const SI32 8, Const SI32 0, Store SI32 (MemArg 0 0), Const SI32 12, Const SI32 0, Store SI32 (MemArg 0 0), Const SI32 0, Const SI32 8, Const SI32 1, Const SI32 16, Call (FunctionIdx 0), Drop, Const SI32 16, Load SI32 (MemArg 0 0)]
+                program = either (error . show) id (load (wasiModule (wasiImport "fd_read" (FuncType [I32, I32, I32, I32] [I32])) body [I32]))
+            secret <- runWithWasi noHost {descriptorLevels = publicDescriptors {standardInput = High}} program "f" []
+            fmap describeCompletion secret `shouldBe` Left (Trapped (SecretRead (AccessAt 1 2)))
+            public <- runWithWasi noHost program "f" []
+            fmap describeCompletion public `shouldBe` Right "returned [I32Value 0]"
+        it "a path must be public" $ do
+            -- path_open in the preopened directory (fd 3) of the one-byte path at 0.
+            let pathOpen = wasiImport "path_open" (FuncType [I32, I32, I32, I32, I32, I64, I64, I32, I32] [I32])
+                open storePath = storePath ++ [Const SI32 3, Const SI32 0, Const SI32 0, Const SI32 1, Const SI32 0, Const SI64 0, Const SI64 0, Const SI32 0, Const SI32 16, Call (FunctionIdx 0)]
+                program storePath = either (error . show) id (load (wasiModule pathOpen (open storePath) [I32]))
+                cfg = WasiConfig [] [] [Preopen "/" "test"] publicDescriptors
+                name = [Const SI32 0, Const SI32 0x7A]
+            secret <- runWithWasi cfg (program (name ++ [Annotated High (StoreN SI32 1 (MemArg 0 0))])) "f" []
+            fmap describeCompletion secret `shouldBe` Left (Trapped InformationFlowViolation)
+            public <- runWithWasi cfg (program (name ++ [StoreN SI32 1 (MemArg 0 0)])) "f" []
+            fmap describeCompletion public `shouldBe` Right "returned [I32Value 44]"
         it "args_sizes_get reports the argument count and buffer size" $ do
             let cfg = WasiConfig ["prog", "xy"] [] [] publicDescriptors
                 body = [Const SI32 0, Const SI32 4, Call (FunctionIdx 0), Drop, Const SI32 0, Load SI32 (MemArg 0 0), Const SI32 4, Load SI32 (MemArg 0 0), Add SI32]

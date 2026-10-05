@@ -27,10 +27,20 @@ log in `/log` (public).
 
 | Program | Outcome | Policy lines |
 |---|---|---|
-| `password.c` (branch-free) | runs, prints the verdict, logs `checked 4` | 4 |
-| `-DLEAK_CONTROL` (logs the verdict, chosen by a branch) | traps when the record reaches the log | 4 |
-| `-DLEAK_MEMORY` (logs the hash) | traps when the record reaches the log | 4 |
-| `password-naive.c` (the same program written plainly) | rejected: a call to the host under a secret pc | 4 |
+| `password.c` (branch-free), `checker.policy` | traps in libc's `read`, at the load of the byte count (`load 12 3`) | 4 |
+| the same, with that load declared (`checker-count-declared.policy`) | rejected: `open` is called under a secret pc | 5 |
+| `-DLEAK_CONTROL`, `-DLEAK_MEMORY` | trap at the same load, before the leak is reached | 4 |
+| `password-naive.c` (the same program written plainly) | rejected: a call under a secret pc | 4 |
+
+The first two rows changed when the host boundary rule was completed (the commit after
+3614d3c). Before, the driver stored the byte count of a read as a public value; the
+branch-free checker then ran under the four-line policy, printed its verdict and logged
+`checked 4`, and its two leaking variants trapped when the record reached the public log
+(`results/2026-09-30-624a05a.json`). Now the count of a read from a secret file is secret, as
+the paper's rule says. `read` returns it, `main` checks it (`if (count < 0) return 1;`), and
+that branch raises the pc of the rest of `main`, where the log is opened and written. The
+first call under the raised pc, `open`, is rejected at the write of `__stack_pointer` in its
+prologue. This is the paper's "statuses and errors" case: C checks the result of every read.
 
 What it took, in the order we met it:
 
@@ -46,12 +56,16 @@ What it took, in the order we met it:
    branches, and the compiler moves the verdict's `write` into the blocks those branches target,
    so the call to the host happens under a secret pc and is rejected. The branch-free version
    combines the comparisons arithmetically and selects the verdict by an offset.
-4. **Both leaks are caught at the host boundary**, at run time, because the log record is built
-   in memory: the secret bytes reach `fd_write` on a public descriptor and the run traps before
-   they leave.
-5. **Declarations:** three lines for the channels and one for the loads of `main`
-   (`load-default func 11 : H`); declaring each trapping load instead takes five
-   (`declare-loads.py`). Inference raised six locals and one internal function (`write`).
+4. **Both leaks were caught at the host boundary**, at run time, while the byte count was
+   public, because the log record is built in memory: the secret bytes reached `fd_write` on a
+   public descriptor and the run trapped before they left.
+5. **Declarations** (while the byte count was public): three lines for the channels and one for
+   the loads of `main` (`load-default func 11 : H`); declaring each trapping load instead took
+   five (`declare-loads.py`). Inference raised six locals and one internal function (`write`).
+6. **The error check after the read.** With the byte count secret, the check of `read`'s
+   result raises the pc of everything after it. The program as written is no longer typable;
+   it would need the check removed or folded into branch-free code, or rules that let the host
+   and the shadow stack be used under a secret pc (`TODO.md`).
 
 ## SecWasm's examples and the counterexamples to its printed rules (`secwasm/`)
 
@@ -97,3 +111,23 @@ function parameter joins the labels of every call site; and an indirect call is 
 all-public type unless the policy declares the type-section entry, which the translation does
 not. The per-specification verdicts, policies and errors are in
 `results/<date>-<commit>-wanilla.json`.
+
+## The wasi-testsuite's C programs (`wasi-c` in `run.py`)
+
+The fourteen C programs of the wasi-testsuite, with the directory they are given secret
+(`preopen / : H`), once with secret and once with public standard streams; every load that
+traps on a secret byte is declared secret and the program run again (`"declare"` in `run.py`).
+Eight run in both configurations: they never load a byte that the host labelled secret. Six
+are rejected (`fdopendir-with-access`, `lseek`, `pread-with-access`, `pwrite-with-access`,
+`pwrite-with-append`, `stat-dev-ino`): each asserts on what a call reported about a secret
+file (data, a byte count, a position, an attribute), and the failure path of the assertion
+runs under a secret pc, where `__assert_fail` writes `__stack_pointer`.
+
+## PolyBench (`polybench/`)
+
+Ten PolyBench/C kernels at the MINI size, their data secret where `main` writes it
+(`store-default func main : H`, `load-default func main : H`). With the printing compiled out
+(`<kernel>-silent.wasm`), all ten are accepted and run under those two lines, with no further
+declaration, and also under SecWasm's restrictions. Printing the results with `fprintf` is
+rejected in every kernel: `printf_core` branches on the secret value, and the functions it
+calls then run under a secret pc and write `__stack_pointer`.

@@ -45,9 +45,14 @@ program as calls to an import module `ifc` (`secret_i32`, `load_secret_i32`, `de
 …), which a plain runtime serves with a shim and this one rewrites into the instructions they
 stand for. Whatever the policy does not declare is public.
 
-At the host boundary an import's scalar arguments and results take the policy's levels, and
-the bytes a host call reads or writes take the level of the file descriptor involved: a read
-marks the bytes it delivers, and a write of a byte more secret than its descriptor traps.
+At the host boundary an import is called from a public context with public arguments, and its
+results take the policy's levels. Every byte a host call takes from memory is checked against
+the level of the file descriptor it concerns, and the run traps if the byte is more secret:
+the data of a write, the arrays that list the buffers of a read or a write, and the contents
+of a symbolic link; paths and poll subscriptions must be public. Every byte a call stores
+about a descriptor carries its level: the data it read, the byte counts, file positions, file
+attributes and directory entries. Program arguments, the environment, clocks and random bytes
+are public.
 
 ### Layout
 
@@ -100,7 +105,7 @@ and internal functions are inferred; `explain` shows what inference raised. A tw
 noninterference property test runs over generated programs, and `casestudies/` runs compiled
 C programs and SecWasm's and WANILLA's examples under policies with secrets.
 
-Not yet: a noninterference proof; the complete host boundary rule; imports of tables,
+Not yet: a noninterference proof; typed obligations for the run-time checks; imports of tables,
 memories and globals; the `table.*` instructions; multiple memories; reference and SIMD types.
 The backlog is `TODO.md`; what the paper can cite is in `HANDOFF.md`.
 

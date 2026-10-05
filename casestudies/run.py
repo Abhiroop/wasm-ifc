@@ -72,9 +72,13 @@ def polybench_study():
 
 STUDIES = {
     "password": [
-        {"name": "password", "wasm": "password/password.wasm", "policy": "password/checker.policy", "dirs": PASSWORD_DIRS, "expect": "ran"},
+        # Under checker.policy the three branch-free variants trap in read(), on the byte count
+        # that fd_read stored: the count of a read from a secret file is secret.
+        {"name": "password", "wasm": "password/password.wasm", "policy": "password/checker.policy", "dirs": PASSWORD_DIRS, "expect": "trapped"},
         {"name": "password-leak-control", "wasm": "password/password-leak-control.wasm", "policy": "password/checker.policy", "dirs": PASSWORD_DIRS, "expect": "trapped"},
         {"name": "password-leak-memory", "wasm": "password/password-leak-memory.wasm", "policy": "password/checker.policy", "dirs": PASSWORD_DIRS, "expect": "trapped"},
+        # With that load declared, the error check on the count raises the pc of the rest of main.
+        {"name": "password (count declared)", "wasm": "password/password.wasm", "policy": "password/checker-count-declared.policy", "dirs": PASSWORD_DIRS, "expect": "rejected"},
         {"name": "password-naive", "wasm": "password/password-naive.wasm", "policy": "password/checker.policy", "dirs": PASSWORD_DIRS, "expect": "rejected"},
     ],
     "secwasm": secwasm_study(),

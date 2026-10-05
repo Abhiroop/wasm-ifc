@@ -125,9 +125,11 @@ data WasiConfig = WasiConfig
 
 {- | The security levels of what the host connects the module to: each standard stream, and
   each preopened directory by its guest name; whatever is opened under a directory inherits
-  its level. A descriptor's level is the level of the bytes read from it and the most secret
-  bytes that may be written to it ("Validation.Policy" carries these as @stdin : H@,
-  @stdout : H@, @stderr : H@ and @preopen /data : H@). Everything undeclared is public.
+  its level. A descriptor's level is the level of every byte a call stores about it (the data
+  read from it, byte counts, positions, attributes, directory entries) and the most secret
+  byte a call may take from memory on its behalf (the data written to it, the arrays that list
+  the buffers; see 'gather'). "Validation.Policy" carries the levels as @stdin : H@,
+  @stdout : H@, @stderr : H@ and @preopen /data : H@. Everything undeclared is public.
 -}
 data DescriptorLevels = DescriptorLevels
     { standardInput :: SecLevel
@@ -375,18 +377,47 @@ pokeWord32 mem addr = pokeBytes mem addr . bytesOfWord32
 pokeWord64 :: MemInst m -> Word32 -> Word64 -> Host (MemInst m)
 pokeWord64 mem addr = pokeBytes mem addr . bytesOfWord64
 
--- | A guest path or name: @len@ bytes of UTF-8 at @ptr@.
+{- | A word a call reports about a descriptor (a byte count, a file position), which is as
+  secret as the descriptor: how much a secret file held is itself a secret.
+-}
+pokeWord32At :: SecLevel -> MemInst m -> Word32 -> Word32 -> Host (MemInst m)
+pokeWord32At l mem addr = pokeBytesAt l mem addr . bytesOfWord32
+
+pokeWord64At :: SecLevel -> MemInst m -> Word32 -> Word64 -> Host (MemInst m)
+pokeWord64At l mem addr = pokeBytesAt l mem addr . bytesOfWord64
+
+{- | The bytes of a range must be at most the given level: the check of 'peekBytesAt' for bytes
+  a call has already read, where the level is only known afterwards.
+-}
+requireAtMost :: SecLevel -> MemInst m -> Word32 -> Word32 -> Host ()
+requireAtMost l mem addr len = case levelOfRange mem (fromIntegral addr) (fromIntegral len) of
+    High | l == Low -> throwE FlowViolation
+    _ -> pure ()
+
+{- | A guest path: @len@ public bytes of UTF-8 at @ptr@. A path decides which file a call
+  names and so how the descriptor table changes, which is public, so a secret byte in a path
+  is a flow violation.
+-}
+peekPath :: MemInst m -> Word32 -> Word32 -> Host Text
+peekPath mem ptr len = do
+    bytes <- peekBytesAt Low mem ptr (fromIntegral len)
+    except (either (const (Left Ilseq)) Right (decodeUtf8' (BS.pack bytes)))
+
+-- | @len@ bytes of UTF-8 at @ptr@, unchecked: the caller checks their level ('requireAtMost').
 peekString :: MemInst m -> Word32 -> Word32 -> Host Text
 peekString mem ptr len = do
     bytes <- peekBytes mem ptr (fromIntegral len)
     except (either (const (Left Ilseq)) Right (decodeUtf8' (BS.pack bytes)))
 
--- | The @(ptr, len)@ pairs of an iovec array.
-peekIovecs :: MemInst m -> Word32 -> Word32 -> Host [(Word32, Word32)]
-peekIovecs mem base count = forM [0 .. count - 1] $ \i -> do
-    ptr <- peekWord32 mem (base + i * 8)
-    len <- peekWord32 mem (base + i * 8 + 4)
-    pure (ptr, len)
+{- | The @(ptr, len)@ pairs of an iovec array, for a read from or a write to the given
+  descriptor. The array decides which bytes move and how many, which changes the descriptor's
+  state (its position, its contents), so the array's own bytes must flow into the descriptor's
+  level.
+-}
+peekIovecs :: Descriptor -> MemInst m -> Word32 -> Word32 -> Host [(Word32, Word32)]
+peekIovecs descriptor mem base count = forM [0 .. count - 1] $ \i -> do
+    entry <- peekBytesAt descriptor.level mem (base + i * 8) 8
+    pure (word32OfBytes (take 4 entry), word32OfBytes (drop 4 entry))
 
 -- *** Descriptors ***
 
@@ -460,10 +491,16 @@ resolvePath base guest
 
 -- | Resolve a guest path against a directory descriptor that must hold the given right.
 resolveIn :: WasiHost -> Word32 -> Int -> MemInst m -> Word32 -> Word32 -> Host GuestPath
-resolveIn host fd right mem ptr len = do
-    base <- lookupFd host fd >>= requireRight right >>= directoryOf
-    guest <- peekString mem ptr len
-    resolvePath base guest
+resolveIn host fd right mem ptr len = snd <$> resolveUnder host fd right mem ptr len
+
+-- | 'resolveIn', with the directory's descriptor, whose level what the call reports carries.
+resolveUnder :: WasiHost -> Word32 -> Int -> MemInst m -> Word32 -> Word32 -> Host (Descriptor, GuestPath)
+resolveUnder host fd right mem ptr len = do
+    directory <- lookupFd host fd >>= requireRight right
+    base <- directoryOf directory
+    guest <- peekPath mem ptr len
+    target <- resolvePath base guest
+    pure (directory, target)
 
 -- *** File status ***
 
@@ -497,10 +534,12 @@ statIfExists follow path = do
         Left e | errnoOf e `elem` [Noent, Notdir] -> pure Nothing
         Left e -> throwE (errnoOf e)
 
--- | The 64-byte @filestat@ layout.
-pokeStat :: MemInst m -> Word32 -> FileStatus -> Host (MemInst m)
-pokeStat mem addr st =
-    pokeBytes mem addr $
+{- | The 64-byte @filestat@ layout, at the level of the descriptor the file was reached
+  through: the size and the times of a secret file are secrets.
+-}
+pokeStat :: SecLevel -> MemInst m -> Word32 -> FileStatus -> Host (MemInst m)
+pokeStat l mem addr st =
+    pokeBytesAt l mem addr $
         concat
             [ bytesOfWord64 (fromIntegral (deviceID st))
             , bytesOfWord64 (fromIntegral (fileID st))
@@ -512,7 +551,10 @@ pokeStat mem addr st =
             , bytesOfWord64 (nanosOf (statusChangeTimeHiRes st))
             ]
 
--- | The 24-byte @fdstat@ layout.
+{- | The 24-byte @fdstat@ layout. It is public whatever the descriptor's level: the type, flags
+  and rights of a descriptor are the descriptor table's, which the module itself builds from
+  public paths and operands.
+-}
 pokeFdstat :: MemInst m -> Word32 -> Word8 -> Descriptor -> Host (MemInst m)
 pokeFdstat mem addr filetype descriptor =
     pokeBytes mem addr $
@@ -591,9 +633,14 @@ readInto mem descriptor = go mem 0
         if got < len then pure (m', total + got) else go m' (total + got) rest
 
 {- | The bytes the iovecs point at, in order, for a write to the given descriptor: each byte's
-  level must flow into the descriptor's. This is the host boundary's one dynamic check, the
+  level must flow into the descriptor's. This is the host boundary's dynamic check, the
   counterpart of a load's ('Runtime.Interpreter.checkedLoad'): a secret byte handed to a public
-  descriptor is the leak the whole system exists to stop, and it ends the run as a trap.
+  descriptor is the leak the whole system exists to stop, and it ends the run as a trap. The
+  same check covers every other byte a call takes from memory: the iovec arrays themselves
+  ('peekIovecs'), paths ('peekPath'), the contents of a symbolic link and the subscriptions of
+  a poll. In the other direction, every byte a call stores about a descriptor (what it read,
+  how much, a position, a file's attributes, a directory's entries) carries the descriptor's
+  level.
 -}
 gather :: Descriptor -> MemInst m -> [(Word32, Word32)] -> Host ByteString
 gather descriptor mem iovecs = BS.pack . concat <$> forM iovecs (\(ptr, len) -> peekBytesAt descriptor.level mem ptr (fromIntegral len))
@@ -677,7 +724,9 @@ runWasiCall host func args mem = case (func, args) of
         when (base .&. complement descriptor.rightsBase /= 0 || inheriting .&. complement descriptor.rightsInheriting /= 0) (throwE Notcapable)
         liftIO (replaceFd host fd descriptor {rightsBase = base, rightsInheriting = inheriting})
         pure mem
-    (FdFilestatGet, outPtr :# fd :# VNil) -> completing mem (lookupFd host fd >>= requireRight 21 >>= descriptorStatus >>= pokeStat mem outPtr)
+    (FdFilestatGet, outPtr :# fd :# VNil) -> completing mem $ do
+        descriptor <- lookupFd host fd >>= requireRight 21
+        descriptorStatus descriptor >>= pokeStat descriptor.level mem outPtr
     (FdFilestatSetSize, newSize :# fd :# VNil) -> completing mem $ do
         descriptor <- lookupFd host fd >>= requireRight 22
         fd' <- fileOf descriptor
@@ -696,9 +745,9 @@ runWasiCall host func args mem = case (func, args) of
     (FdPread, nreadPtr :# offset :# iovsLen :# iovsPtr :# fd :# VNil) -> completing mem $ do
         descriptor <- lookupFd host fd >>= requireRight rightFdRead >>= requireRight rightFdSeek
         fd' <- fileOf descriptor
-        iovecs <- peekIovecs mem iovsPtr iovsLen
+        iovecs <- peekIovecs descriptor mem iovsPtr iovsLen
         (mem', count) <- atOffset fd' offset (readInto mem descriptor iovecs)
-        pokeWord32 mem' nreadPtr count
+        pokeWord32At descriptor.level mem' nreadPtr count
     (FdPrestatGet, outPtr :# fd :# VNil) -> completing mem $ do
         name <- lookupFd host fd >>= preopenName
         pokeBytes mem outPtr (0 : replicate 3 0 ++ bytesOfWord32 (fromIntegral (BS.length (encodeUtf8 name))))
@@ -710,17 +759,17 @@ runWasiCall host func args mem = case (func, args) of
     (FdPwrite, nwrittenPtr :# offset :# iovsLen :# iovsPtr :# fd :# VNil) -> completing mem $ do
         descriptor <- lookupFd host fd >>= requireRight rightFdWrite >>= requireRight rightFdSeek
         fd' <- fileOf descriptor
-        iovecs <- peekIovecs mem iovsPtr iovsLen
+        iovecs <- peekIovecs descriptor mem iovsPtr iovsLen
         payload <- gather descriptor mem iovecs
         -- The position is left where it was. With the append flag the offset is ignored and
         -- the data goes to the end, as Linux does.
         written <- atOffset fd' offset (writeAll descriptor payload)
-        pokeWord32 mem nwrittenPtr (fromIntegral written)
+        pokeWord32At descriptor.level mem nwrittenPtr (fromIntegral written)
     (FdRead, nreadPtr :# iovsLen :# iovsPtr :# fd :# VNil) -> completing mem $ do
         descriptor <- lookupFd host fd >>= requireRight rightFdRead
-        iovecs <- peekIovecs mem iovsPtr iovsLen
+        iovecs <- peekIovecs descriptor mem iovsPtr iovsLen
         (mem', count) <- readInto mem descriptor iovecs
-        pokeWord32 mem' nreadPtr count
+        pokeWord32At descriptor.level mem' nreadPtr count
     (FdReaddir, bufusedPtr :# cookie :# bufLen :# bufPtr :# fd :# VNil) -> completing mem $ do
         descriptor <- lookupFd host fd >>= requireRight 14
         path <- directoryOf descriptor
@@ -730,7 +779,7 @@ runWasiCall host func args mem = case (func, args) of
             pure (dirent next (fromIntegral (fileID st)) (fileTypeOf st) name)
         let payload = take (fromIntegral bufLen) (concat (drop (fromIntegral cookie) entries))
         mem' <- pokeBytesAt descriptor.level mem bufPtr payload
-        pokeWord32 mem' bufusedPtr (fromIntegral (length payload))
+        pokeWord32At descriptor.level mem' bufusedPtr (fromIntegral (length payload))
     (FdRenumber, to :# fd :# VNil) -> completing mem $ do
         descriptor <- lookupFd host fd
         previous <- lookupFd host to
@@ -745,27 +794,27 @@ runWasiCall host func args mem = case (func, args) of
             2 -> pure SeekFromEnd
             _ -> throwE Inval
         position <- hostIO (fdSeek fd' mode (fromIntegral (toSigned64 offset)))
-        pokeWord64 mem newPtr (fromIntegral position)
+        pokeWord64At descriptor.level mem newPtr (fromIntegral position)
     (FdTell, outPtr :# fd :# VNil) -> completing mem $ do
         descriptor <- lookupFd host fd >>= requireRight rightFdTell
         fd' <- seekableFile descriptor
         position <- hostIO (fdSeek fd' RelativeSeek 0)
-        pokeWord64 mem outPtr (fromIntegral position)
+        pokeWord64At descriptor.level mem outPtr (fromIntegral position)
     (FdWrite, nwrittenPtr :# iovsLen :# iovsPtr :# fd :# VNil) -> completing mem $ do
         descriptor <- lookupFd host fd >>= requireRight rightFdWrite
-        iovecs <- peekIovecs mem iovsPtr iovsLen
+        iovecs <- peekIovecs descriptor mem iovsPtr iovsLen
         payload <- gather descriptor mem iovecs
         written <- writeAll descriptor payload
-        pokeWord32 mem nwrittenPtr (fromIntegral written)
+        pokeWord32At descriptor.level mem nwrittenPtr (fromIntegral written)
     (PathCreateDirectory, pathLen :# pathPtr :# fd :# VNil) -> completing mem $ do
         target <- resolveIn host fd 9 mem pathPtr pathLen
         hostIO (createDirectory target.host 0o755)
         pure mem
     (PathFilestatGet, outPtr :# pathLen :# pathPtr :# flags :# fd :# VNil) -> completing mem $ do
-        target <- resolveIn host fd 18 mem pathPtr pathLen
+        (directory, target) <- resolveUnder host fd 18 mem pathPtr pathLen
         st <- statPath (testBit flags 0) target.host
         when (target.mustBeDirectory && not (isDirectory st)) (throwE Notdir)
-        pokeStat mem outPtr st
+        pokeStat directory.level mem outPtr st
     (PathFilestatSetTimes, fstFlags :# mtim :# atim :# pathLen :# pathPtr :# flags :# fd :# VNil) -> completing mem $ do
         target <- resolveIn host fd 20 mem pathPtr pathLen
         times <- timesToSet atim mtim fstFlags
@@ -789,16 +838,16 @@ runWasiCall host func args mem = case (func, args) of
             when (testBit oflags 0) (void (requireRight 10 parent))
             when (testBit oflags 3) (void (requireRight 19 parent))
             base <- directoryOf parent
-            guest <- peekString mem pathPtr pathLen
+            guest <- peekPath mem pathPtr pathLen
             target <- resolvePath base guest
             opened <- openPath host parent target (testBit dirflags 0) oflags rightsBase inheriting (fromIntegral fdflags)
             pokeWord32 mem outPtr opened
     (PathReadlink, usedPtr :# bufLen :# bufPtr :# pathLen :# pathPtr :# fd :# VNil) -> completing mem $ do
-        target <- resolveIn host fd 15 mem pathPtr pathLen
+        (directory, target) <- resolveUnder host fd 15 mem pathPtr pathLen
         destination <- hostIO (readSymbolicLink target.host)
         let payload = take (fromIntegral bufLen) (BS.unpack (encodeUtf8 (T.pack destination)))
-        mem' <- pokeBytes mem bufPtr payload
-        pokeWord32 mem' usedPtr (fromIntegral (length payload))
+        mem' <- pokeBytesAt directory.level mem bufPtr payload
+        pokeWord32At directory.level mem' usedPtr (fromIntegral (length payload))
     (PathRemoveDirectory, pathLen :# pathPtr :# fd :# VNil) -> completing mem $ do
         target <- resolveIn host fd 25 mem pathPtr pathLen
         hostIO (removeDirectory target.host)
@@ -810,7 +859,9 @@ runWasiCall host func args mem = case (func, args) of
         pure mem
     (PathSymlink, newLen :# newPtr :# fd :# oldLen :# oldPtr :# VNil) -> completing mem $ do
         contents <- peekString mem oldPtr oldLen
-        link <- resolveIn host fd 24 mem newPtr newLen
+        (directory, link) <- resolveUnder host fd 24 mem newPtr newLen
+        -- What the link holds is written into the directory, so it must flow into its level.
+        requireAtMost directory.level mem oldPtr oldLen
         when (link.mustBeDirectory || T.null contents) (throwE Noent)
         when ("/" `T.isPrefixOf` contents) (throwE Perm)
         hostIO (createSymbolicLink (T.unpack contents) link.host)
@@ -939,6 +990,9 @@ openPath host parent target follow oflags requestedBase requestedInheriting flag
 -}
 pollOneoff :: WasiHost -> MemInst m -> Word32 -> Word32 -> Word32 -> Word32 -> Host (MemInst m)
 pollOneoff host mem inPtr outPtr count neventsPtr = do
+    -- The subscriptions decide how long the call waits and which events it reports, all of
+    -- which is public, so they must be.
+    requireAtMost Low mem inPtr (count * 48)
     subscriptions <- forM [0 .. count - 1] (peekSubscription . (inPtr +) . (* 48))
     fdEvents <- fmap concat . forM subscriptions $ \(userdata, kind) -> case kind of
         FdSubscription fd eventType -> do

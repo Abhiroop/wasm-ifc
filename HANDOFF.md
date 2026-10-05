@@ -77,6 +77,12 @@ on this machine (Linux, GHC 9.12.2); commits are on `implement`.
   the spec suite and the wasi-testsuite run through it. This is flow-sensitivity of locals at
   the granularity of live ranges, which PLAN.md lists as out of scope: the paper should decide
   how to present it (one box, as PLAN.md suggests, or as part of inference).
+- Block results, loop parameters and a loop's pc are retried at secret only for a failure
+  that concerns them (`BlockTooLow` with `OwnResults`, `LabelsAt` or `LoopPc`): the end of the
+  block's body, a branch that carries values to its label, or the loop's back edge. Before,
+  every enclosing block retried on any flow error, which cost time exponential in the nesting
+  depth for each failure (delta 12's "nested retries"); one wasi-testsuite program did not
+  finish validating in a minute and now takes a second.
 - Diagnostics: errors carry `InFunction f (AtInstruction n err)` (instructions counted in code
   order, as `wasm2wat` lists them); `elaborateModuleTraced` and the CLI's `explain` report what
   inference raised, per attempt.
@@ -114,9 +120,12 @@ on this machine (Linux, GHC 9.12.2); commits are on `implement`.
   table and import queries 33, memory or global imports 8, imported functions 3, globals
   relabelled on exit 2, integrity 3, unnamed 4). WANILLA lists results top of stack first.
 - **(d) The wasi-testsuite's C programs** with their files secret, stdout secret and public:
-  10 of 14 run in both configurations (none of them loads the secret files' bytes); 4 are
-  rejected, because an `assert` on data read from the secret file calls `__assert_fail` under a
-  secret pc, whose prologue writes `__stack_pointer`.
+  8 of 14 run in both configurations (none of them loads a byte the host labelled secret); 6
+  are rejected (`fdopendir-with-access`, `lseek`, `pread-with-access`, `pwrite-with-access`,
+  `pwrite-with-append`, `stat-dev-ino`), because an `assert` on what a call reported about a
+  secret file (data, a byte count, a position, an attribute) runs code under a secret pc that
+  writes `__stack_pointer`, or returns a secret where a public result is declared. Before the
+  boundary rule was complete (item 11), 10 ran and 4 were rejected.
 - **(d) PolyBench** (ten kernels, MINI), data secret where `main` writes it
   (`store-default func main : H`, a new statement), loads of `main` secret: with the printing
   compiled out, all ten type and run with two policy lines and no further declaration, also
@@ -125,6 +134,33 @@ on this machine (Linux, GHC 9.12.2); commits are on `implement`.
   secret pc and write `__stack_pointer`.
 - **(e) Lift shapes**: no program of (a)–(d) is accepted by the lift-free rules and rejected
   with `secwasm-restrictions` (`run.py`'s `lift_shape` is false throughout).
+
+## Phase 2
+
+**11. The complete WASI boundary rule** (delta 2)
+- Taken from memory, checked against the descriptor's level (`InformationFlowViolation` if a
+  byte is more secret): the data of `fd_write`/`fd_pwrite` (`gather`, as before), the iovec
+  arrays of `fd_read`, `fd_pread`, `fd_write`, `fd_pwrite` (`peekIovecs`), and the contents of
+  `path_symlink` against the directory's level. Paths of every `path_*` call (`peekPath`) and
+  the subscriptions of `poll_oneoff` must be public.
+- Stored, at the descriptor's level: the data and the byte counts of reads and writes
+  (`pokeWord32At`), the positions of `fd_seek` and `fd_tell`, the `filestat` of
+  `fd_filestat_get` and `path_filestat_get` (the directory's level), the entries and the size
+  of `fd_readdir`, the target of `path_readlink`.
+- Public: arguments, environment, clocks, random bytes, `prestat` data, the new descriptor of
+  `path_open`, poll events, and `fdstat` (a descriptor's type, flags and rights, which belong to
+  the descriptor table).
+- Error codes are unchanged, and are as the host reports them: they depend on the descriptor
+  table, the operands, and the names in a directory (public in the model of `def:swpp`), and
+  also on whether an operation on a secret file fails, which the model does not cover. The
+  paper should keep that limit stated.
+- Sockets still return `ENOTSOCK`, `proc_raise` `ENOSYS`.
+- Unit tests: a secret iovec array to a public descriptor traps; the count of a read from a
+  secret descriptor is secret; a secret path traps. Spec suite and wasi-testsuite unchanged.
+
+**Local splitting, checked differentially** (3614d3c): the policy statement
+`no-local-splitting` types the locals as written; a property runs generated modules both ways
+on the same inputs and requires the same result, public global and memory (2,000 cases).
 
 ## Findings that bear on the paper's claims
 
@@ -137,12 +173,17 @@ on this machine (Linux, GHC 9.12.2); commits are on `implement`.
    branches; typable programs are written branch-free where they handle secrets (constant-time
    style). The password checker shows both versions.
 3. **Local reuse** (item 6 above), fixed by splitting.
-4. **Error checks after reads** (§6.7 "Statuses and errors") did not arise in the password
-   checker because the driver still writes byte counts as public (delta 2 is open); they will,
-   once it labels them with the descriptor's label.
+4. **Error checks after reads** (§6.7 "Statuses and errors"). Since the boundary rule is
+   complete (item 11), the byte count of a read from a secret file is secret, and the
+   branch-free password checker is no longer typable as written: `if (count < 0) return 1;`
+   raises the pc of the rest of `main`, and the next call, `open`, is rejected at its write of
+   `__stack_pointer`. Under the four-line policy the run traps in libc's `read`, at the load of
+   the count (`load 12 3`); with that load declared the module is rejected statically. The
+   earlier result (it ran; the leaks trapped at the log) is from before the rule was complete
+   (`casestudies/results/2026-09-30-624a05a.json`) and should not be cited for the final system.
 
 ## Not done yet
 
 - Item 9: the cost of the labels (timing sweep, native Linux, suites at the submission commit).
-- Items 10–11: typed obligations on the main line; the complete WASI boundary rule.
+- Item 10: typed obligations on the main line.
 - Items 12–14: Lean; the rest of WebAssembly 3.0; WASI sockets.
