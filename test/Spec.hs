@@ -20,12 +20,12 @@ import Hedgehog.Gen qualified as Gen
 import Hedgehog.Range qualified as Range
 import System.Environment (lookupEnv)
 import Test.Hspec
-import Test.Hspec.Hedgehog (classify, forAll, hedgehog, label, modifyMaxSuccess, (===))
+import Test.Hspec.Hedgehog (annotate, classify, failure, forAll, hedgehog, label, modifyMaxSuccess, (===))
 
 import Codec.Wasm (decodeModule)
 import Data.Map.Strict qualified as Map
 import Examples (labelledSumLength, leakLength, runFactorial, runIncrement, runSpinFor, runSquare, secretStoreLength)
-import Noninterference (Observation (..), compileModule, genModule, holdsValueAcrossBranch, observe)
+import Noninterference (Observation (..), compileModule, genModule, holdsValueAcrossBranch, observe, observeUnder, withPublicLoads)
 import Runtime.Bytes (bytesOfWord32, bytesOfWord64, word32OfBytes, word64OfBytes)
 import Runtime.Convert (convertVal)
 import Runtime.Host (WasiFunc (..))
@@ -664,6 +664,29 @@ spec = do
                                 === [(b, i) | (i, (_, Low), (b, Low)) <- zip3 [0 :: Int ..] oneRun.memory otherRun.memory]
                         (Right _, Right _) -> label "accepted, a run trapped"
                         _ -> label "rejected"
+    describe "splitting locals into webs (Validation.LocalWebs) over generated programs" $ do
+        cases <- runIO (maybe 2000 read <$> lookupEnv "WASM_IFC_NI_CASES")
+        modifyMaxSuccess (const cases) $
+            it "a module behaves the same with its locals split and as written" $
+                hedgehog $ do
+                    generated <- forAll genModule
+                    a <- forAll (Gen.word32 Range.linearBounded)
+                    b <- forAll (Gen.word32 (Range.linear 0 64))
+                    -- No secrets at all, so both are accepted and only the behaviour is compared.
+                    let m = compileModule (withPublicLoads generated)
+                        split = observeUnder "" m a b
+                        asWritten = observeUnder "no-local-splitting\n" m a b
+                    case (split, asWritten) of
+                        (Right (Just one), Right (Just other)) -> do
+                            label "both runs finished"
+                            one.result === other.result
+                            one.publicGlobal === other.publicGlobal
+                            one.memory === other.memory
+                        (Right Nothing, Right Nothing) -> label "both runs trapped"
+                        _ -> do
+                            annotate (show (void split) ++ " / " ++ show (void asWritten))
+                            failure
+
     describe "generated well-typed programs (i32 arithmetic with if/else over two parameters)" $ do
         it "elaborate, run, and agree with a reference evaluator" $ hedgehog $ do
             program <- forAll (genProgram 4)

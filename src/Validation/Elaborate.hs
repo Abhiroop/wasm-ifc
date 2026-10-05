@@ -61,7 +61,7 @@ import Syntax.Module
 import Syntax.Types
 import Syntax.TypesIFC
 import Validation.LocalWebs (splitModuleLocals)
-import Validation.Policy (Assembled (..), Policy, PolicyError, Restrictions (..), assemble, emptyPolicy, modulePolicy)
+import Validation.Policy (Assembled (..), LocalSplitting (..), Policy, PolicyError, Restrictions (..), assemble, emptyPolicy, modulePolicy)
 import Validation.Ref (resolveLocal)
 import Validation.Reflect
 import Validation.Shape
@@ -1297,7 +1297,9 @@ elaborateModuleTraced given raw = case validateStructure raw >> first BadPolicy 
     Left err -> (Inferred [] [] 0 [], Left err)
     Right assembledAsWritten ->
         -- Each web of a local gets a local of its own, and so a label of its own ("Validation.LocalWebs").
-        let assembled = assembledAsWritten {annotated = splitModuleLocals assembledAsWritten.annotated}
+        let assembled = case assembledAsWritten.splitting of
+                SplitIntoWebs -> assembledAsWritten {annotated = splitModuleLocals assembledAsWritten.annotated}
+                LocalsAsWritten -> assembledAsWritten
             importCount = fromIntegral (length raw.imports)
             initial =
                 Choices

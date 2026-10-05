@@ -54,7 +54,8 @@
   > stdout : L
   > preopen /data : H          ; a preopened directory (by guest name) and all it contains
   > allow-declassify
-  > secwasm-restrictions       ; impose the two restrictions SecWasm's lift needs (see 'Restrictions')
+  > secwasm-restrictions       ; impose the restrictions SecWasm's lift needs (see 'Restrictions')
+  > no-local-splitting         ; type the locals as written, without splitting them into webs
 
   The arrow may carry a level, @-{H}->@: the function's bound, the most secret context it may
   be called from (SecWasm's @→ℓ@; see 'Syntax.TypesIFC.LabelledFuncType'). A plain @->@ is
@@ -82,6 +83,7 @@ module Validation.Policy (
     Policy (..),
     FunctionLevels (..),
     Restrictions (..),
+    LocalSplitting (..),
     PolicyError (..),
     emptyPolicy,
     parsePolicy,
@@ -144,6 +146,7 @@ data Policy = Policy
     , loadDefaultsByExport :: Map Text SecLevel
     , declassifyAllowed :: Bool
     , restrictions :: Restrictions
+    , localSplitting :: LocalSplitting
     , streamLevels :: Map Text SecLevel
     -- ^ by @stdin@, @stdout@, @stderr@
     , preopenLevels :: Map Text SecLevel
@@ -152,7 +155,14 @@ data Policy = Policy
     deriving stock (Eq, Show)
 
 emptyPolicy :: Policy
-emptyPolicy = Policy Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty [] Nothing Map.empty Map.empty Map.empty False LiftFree Map.empty Map.empty
+emptyPolicy = Policy Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty [] Nothing Map.empty Map.empty Map.empty False LiftFree SplitIntoWebs Map.empty Map.empty
+
+{- | Whether the validator splits every local into its webs before typing
+  ("Validation.LocalWebs"), which it does unless the policy says otherwise. Typing the locals
+  as written is for comparing the two: a function behaves the same either way.
+-}
+data LocalSplitting = SplitIntoWebs | LocalsAsWritten
+    deriving stock (Eq, Show)
 
 {- | Which typing rules the validator applies where SecWasm's lift makes a difference. This
   system does not lift the values on the stack when a branch raises the pc (see
@@ -210,6 +220,7 @@ parsePolicy source = foldM statement emptyPolicy (zip [1 ..] (T.lines source))
         [] -> Right policy
         ["allow-declassify"] -> Right policy {declassifyAllowed = True}
         ["secwasm-restrictions"] -> Right policy {restrictions = SecWasmRestrictions}
+        ["no-local-splitting"] -> Right policy {localSplitting = LocalsAsWritten}
         ws -> case break (== ":") ws of
             (headWords, ":" : body) -> declaration policy lineNo headWords body
             _ -> Left (PolicySyntax lineNo raw)
@@ -327,6 +338,7 @@ mergePolicies a b = do
             , loadDefaultsByExport
             , declassifyAllowed = a.declassifyAllowed || b.declassifyAllowed
             , restrictions = if SecWasmRestrictions `elem` [a.restrictions, b.restrictions] then SecWasmRestrictions else LiftFree
+            , localSplitting = if LocalsAsWritten `elem` [a.localSplitting, b.localSplitting] then LocalsAsWritten else SplitIntoWebs
             , streamLevels
             , preopenLevels
             }
@@ -371,6 +383,7 @@ data Assembled = Assembled
     -}
     , declassify :: Bool
     , typingRestrictions :: Restrictions
+    , splitting :: LocalSplitting
     , annotated :: RawModule
     }
 
@@ -450,6 +463,7 @@ assemble policy m = do
             , inferableFunctions = [inferable i | i <- zipWith const [0 ..] signatures]
             , declassify = policy.declassifyAllowed
             , typingRestrictions = policy.restrictions
+            , splitting = policy.localSplitting
             , annotated = withFunctions (zipWith (annotateFunction ghosts) [fromIntegral (length m.imports) ..] m.functions)
             }
   where

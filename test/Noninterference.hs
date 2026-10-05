@@ -17,6 +17,8 @@ module Noninterference (
     policyText,
     Observation (..),
     observe,
+    observeUnder,
+    withPublicLoads,
     holdsValueAcrossBranch,
 ) where
 
@@ -244,6 +246,32 @@ compileExpr expr = case expr of
 compileAddress :: Expr -> [RawInstr]
 compileAddress address = compileExpr address ++ [Const SI32 60, And SI32]
 
+{- | The module with every load declared public: under the empty policy it has no secret at
+  all, so it is accepted however its locals are typed, and no load traps on a level.
+-}
+withPublicLoads :: GeneratedModule -> GeneratedModule
+withPublicLoads generated = GeneratedModule (body generated.helperBody) (body generated.mainBody)
+  where
+    body (stmts, result) = (map stmt stmts, expr result)
+    stmt s = case s of
+        SetLocal i e -> SetLocal i (expr e)
+        SetGlobal g e -> SetGlobal g (expr e)
+        StoreAt a v -> StoreAt (expr a) (expr v)
+        DropValue e -> DropValue (expr e)
+        IfThen c t e -> IfThen (expr c) (map stmt t) (map stmt e)
+        BlockOf b -> BlockOf (map stmt b)
+        LoopTimes counter times b -> LoopTimes counter times (map stmt b)
+        BranchIf t e -> BranchIf t (expr e)
+        BranchTable ts d e -> BranchTable ts d (expr e)
+        BranchOut t -> BranchOut t
+    expr e = case e of
+        LoadAt _ a -> LoadAt Low (expr a)
+        Binary op x y -> Binary op (expr x) (expr y)
+        IfValue c t f -> IfValue (expr c) (expr t) (expr f)
+        CallHelper x -> CallHelper (expr x)
+        Around x stmts -> Around (expr x) (map stmt stmts)
+        other -> other
+
 {- | Whether the module holds a value on the stack across a conditional branch out of a block:
   the shape in which the lift-free rules and SecWasm's differ.
 -}
@@ -285,12 +313,17 @@ data Observation = Observation
     }
     deriving stock (Show)
 
-{- | Validate the module under the policy, run @f@ on a secret and a public argument, and observe
-  the run: 'Left' if the module is rejected, 'Right Nothing' if the run traps or calls out.
+{- | Validate the module under the policy of 'policyText', run @f@ on a secret and a public
+  argument, and observe the run: 'Left' if the module is rejected, 'Right Nothing' if the run
+  traps or calls out.
 -}
 observe :: RawModule -> Word32 -> Word32 -> Either String (Maybe Observation)
-observe m secret public = do
-    policy <- either (Left . show) Right (parsePolicy policyText)
+observe = observeUnder policyText
+
+-- | 'observe' under a policy given as text.
+observeUnder :: Text -> RawModule -> Word32 -> Word32 -> Either String (Maybe Observation)
+observeUnder text m secret public = do
+    policy <- either (Left . show) Right (parsePolicy text)
     validated <- either (Left . show) Right (elaborateModuleWith policy m)
     inst <- either (Left . show) Right (instantiate validated)
     pure $ case invokeExport inst "f" [I32Value secret, I32Value public] of
