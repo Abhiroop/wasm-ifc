@@ -1,5 +1,5 @@
 {
-  "commit": "95a0f15",
+  "commit": "fb8fea7",
   "date": "2026-10-05",
   "studies": {
     "password": [
@@ -30,7 +30,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.082
+        "seconds": 0.17
       },
       {
         "name": "password-leak-control",
@@ -59,7 +59,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.091
+        "seconds": 0.194
       },
       {
         "name": "password-leak-memory",
@@ -88,7 +88,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.12
+        "seconds": 0.24
       },
       {
         "name": "password (count declared)",
@@ -122,7 +122,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 24 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
         "lift_shape": false,
-        "seconds": 0.136
+        "seconds": 0.267
       },
       {
         "name": "password-naive",
@@ -155,7 +155,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 24 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
         "lift_shape": false,
-        "seconds": 0.136
+        "seconds": 0.287
       }
     ],
     "secwasm": [
@@ -181,7 +181,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.002
+        "seconds": 0.005
       },
       {
         "name": "example1",
@@ -208,7 +208,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.002
+        "seconds": 0.003
       },
       {
         "name": "example2",
@@ -232,7 +232,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.002
+        "seconds": 0.003
       },
       {
         "name": "example3",
@@ -259,7 +259,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.003
+        "seconds": 0.005
       },
       {
         "name": "example4",
@@ -287,7 +287,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 0 (AtInstruction 4 (IllegalFlow \"memory.grow\" High Low))",
         "lift_shape": false,
-        "seconds": 0.002
+        "seconds": 0.004
       },
       {
         "name": "example5",
@@ -315,7 +315,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 0 (AtInstruction 6 (IllegalFlow \"memory.grow\" High Low))",
         "lift_shape": false,
-        "seconds": 0.002
+        "seconds": 0.008
       },
       {
         "name": "example6-expr3",
@@ -343,7 +343,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 0 (AtInstruction 10 (IllegalFlow \"global.set\" High Low))",
         "lift_shape": false,
-        "seconds": 0.003
+        "seconds": 0.005
       },
       {
         "name": "example6-expr4",
@@ -371,7 +371,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 0 (AtInstruction 10 (IllegalFlow \"global.set\" High Low))",
         "lift_shape": false,
-        "seconds": 0.002
+        "seconds": 0.004
       },
       {
         "name": "example6-expr5",
@@ -395,7 +395,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.002
+        "seconds": 0.004
       },
       {
         "name": "example7",
@@ -419,7 +419,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.002
+        "seconds": 0.008
       },
       {
         "name": "example8",
@@ -447,7 +447,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 0 (AtInstruction 7 (IllegalFlow \"global.set\" High Low))",
         "lift_shape": false,
-        "seconds": 0.002
+        "seconds": 0.004
       },
       {
         "name": "finding1-br-table-leak",
@@ -475,7 +475,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 0 (AtInstruction 7 (IllegalFlow \"global.set\" High Low))",
         "lift_shape": false,
-        "seconds": 0.002
+        "seconds": 0.004
       },
       {
         "name": "finding2-if-early-exit",
@@ -499,7 +499,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.002
+        "seconds": 0.005
       },
       {
         "name": "finding3-exact-labels",
@@ -523,7 +523,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.002
+        "seconds": 0.005
       },
       {
         "name": "finding4-unreachable",
@@ -547,7 +547,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.002
+        "seconds": 0.008
       },
       {
         "name": "finding5-br-table-values-below",
@@ -571,7 +571,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.002
+        "seconds": 0.003
       },
       {
         "name": "finding6-repeated-targets",
@@ -595,7 +595,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.002
+        "seconds": 0.008
       },
       {
         "name": "finding7-branch-out-of-body",
@@ -619,7 +619,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.002
+        "seconds": 0.006
       }
     ],
     "wasi-c": [
@@ -645,7 +645,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.014
+        "seconds": 0.031
       },
       {
         "name": "clock_getres-monotonic (stdout L)",
@@ -669,7 +669,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.013
+        "seconds": 0.026
       },
       {
         "name": "clock_getres-realtime (stdout H)",
@@ -693,7 +693,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.013
+        "seconds": 0.025
       },
       {
         "name": "clock_getres-realtime (stdout L)",
@@ -717,7 +717,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.013
+        "seconds": 0.023
       },
       {
         "name": "clock_gettime-monotonic (stdout H)",
@@ -741,7 +741,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.013
+        "seconds": 0.032
       },
       {
         "name": "clock_gettime-monotonic (stdout L)",
@@ -765,7 +765,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.013
+        "seconds": 0.027
       },
       {
         "name": "clock_gettime-realtime (stdout H)",
@@ -789,7 +789,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.013
+        "seconds": 0.025
       },
       {
         "name": "clock_gettime-realtime (stdout L)",
@@ -813,7 +813,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.013
+        "seconds": 0.026
       },
       {
         "name": "fdopendir-with-access (stdout H)",
@@ -879,7 +879,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 81 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
         "lift_shape": false,
-        "seconds": 0.583
+        "seconds": 1.192
       },
       {
         "name": "fdopendir-with-access (stdout L)",
@@ -945,7 +945,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 81 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
         "lift_shape": false,
-        "seconds": 0.599
+        "seconds": 1.119
       },
       {
         "name": "fopen-with-access (stdout H)",
@@ -969,7 +969,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.022
+        "seconds": 0.045
       },
       {
         "name": "fopen-with-access (stdout L)",
@@ -993,7 +993,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.021
+        "seconds": 0.049
       },
       {
         "name": "fopen-with-no-access (stdout H)",
@@ -1017,7 +1017,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.035
+        "seconds": 0.044
       },
       {
         "name": "fopen-with-no-access (stdout L)",
@@ -1041,7 +1041,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.032
+        "seconds": 0.046
       },
       {
         "name": "lseek (stdout H)",
@@ -1067,7 +1067,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 53 (IllegalFlow \"result\" High Low)",
         "lift_shape": false,
-        "seconds": 0.395
+        "seconds": 0.577
       },
       {
         "name": "lseek (stdout L)",
@@ -1093,7 +1093,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 53 (IllegalFlow \"result\" High Low)",
         "lift_shape": false,
-        "seconds": 0.354
+        "seconds": 0.541
       },
       {
         "name": "pread-with-access (stdout H)",
@@ -1124,7 +1124,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 38 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
         "lift_shape": false,
-        "seconds": 0.225
+        "seconds": 0.296
       },
       {
         "name": "pread-with-access (stdout L)",
@@ -1155,7 +1155,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 38 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
         "lift_shape": false,
-        "seconds": 0.169
+        "seconds": 0.334
       },
       {
         "name": "pwrite-with-access (stdout H)",
@@ -1186,7 +1186,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 53 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
         "lift_shape": false,
-        "seconds": 0.235
+        "seconds": 0.327
       },
       {
         "name": "pwrite-with-access (stdout L)",
@@ -1217,7 +1217,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 53 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
         "lift_shape": false,
-        "seconds": 0.273
+        "seconds": 0.337
       },
       {
         "name": "pwrite-with-append (stdout H)",
@@ -1248,7 +1248,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 38 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
         "lift_shape": false,
-        "seconds": 0.312
+        "seconds": 0.377
       },
       {
         "name": "pwrite-with-append (stdout L)",
@@ -1279,7 +1279,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 38 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
         "lift_shape": false,
-        "seconds": 0.258
+        "seconds": 0.335
       },
       {
         "name": "sock_shutdown-invalid_fd (stdout H)",
@@ -1327,7 +1327,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.025
+        "seconds": 0.028
       },
       {
         "name": "sock_shutdown-not_sock (stdout H)",
@@ -1351,7 +1351,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.025
+        "seconds": 0.026
       },
       {
         "name": "sock_shutdown-not_sock (stdout L)",
@@ -1375,7 +1375,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.025
+        "seconds": 0.026
       },
       {
         "name": "stat-dev-ino (stdout H)",
@@ -1405,7 +1405,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 33 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
         "lift_shape": false,
-        "seconds": 0.193
+        "seconds": 0.296
       },
       {
         "name": "stat-dev-ino (stdout L)",
@@ -1435,7 +1435,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 33 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
         "lift_shape": false,
-        "seconds": 0.224
+        "seconds": 0.327
       }
     ],
     "polybench": [
@@ -1475,7 +1475,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 64 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
         "lift_shape": false,
-        "seconds": 0.521
+        "seconds": 0.797
       },
       {
         "name": "3mm",
@@ -1513,7 +1513,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 64 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
         "lift_shape": false,
-        "seconds": 0.494
+        "seconds": 0.769
       },
       {
         "name": "atax",
@@ -1551,7 +1551,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 64 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
         "lift_shape": false,
-        "seconds": 0.524
+        "seconds": 0.809
       },
       {
         "name": "gemm",
@@ -1589,7 +1589,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 64 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
         "lift_shape": false,
-        "seconds": 0.425
+        "seconds": 0.765
       },
       {
         "name": "jacobi-2d",
@@ -1627,7 +1627,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 64 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
         "lift_shape": false,
-        "seconds": 0.523
+        "seconds": 0.784
       },
       {
         "name": "seidel-2d",
@@ -1665,7 +1665,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 64 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
         "lift_shape": false,
-        "seconds": 0.473
+        "seconds": 0.767
       },
       {
         "name": "floyd-warshall",
@@ -1703,7 +1703,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 64 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
         "lift_shape": false,
-        "seconds": 0.571
+        "seconds": 0.804
       },
       {
         "name": "nussinov",
@@ -1741,7 +1741,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 64 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
         "lift_shape": false,
-        "seconds": 0.5
+        "seconds": 0.842
       },
       {
         "name": "correlation",
@@ -1779,7 +1779,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 64 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
         "lift_shape": false,
-        "seconds": 0.561
+        "seconds": 0.818
       },
       {
         "name": "lu",
@@ -1817,7 +1817,7 @@
         },
         "secwasm_restrictions": "rejected: InFunction 64 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
         "lift_shape": false,
-        "seconds": 0.654
+        "seconds": 0.705
       },
       {
         "name": "2mm (printing compiled out)",
@@ -1841,7 +1841,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.412
+        "seconds": 0.494
       },
       {
         "name": "3mm (printing compiled out)",
@@ -1865,7 +1865,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.414
+        "seconds": 0.621
       },
       {
         "name": "atax (printing compiled out)",
@@ -1889,7 +1889,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.082
+        "seconds": 0.127
       },
       {
         "name": "gemm (printing compiled out)",
@@ -1913,7 +1913,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.069
+        "seconds": 0.084
       },
       {
         "name": "jacobi-2d (printing compiled out)",
@@ -1937,7 +1937,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.12
+        "seconds": 0.119
       },
       {
         "name": "seidel-2d (printing compiled out)",
@@ -1961,7 +1961,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.261
+        "seconds": 0.289
       },
       {
         "name": "floyd-warshall (printing compiled out)",
@@ -1985,7 +1985,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.379
+        "seconds": 0.461
       },
       {
         "name": "nussinov (printing compiled out)",
@@ -2009,7 +2009,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.328
+        "seconds": 0.335
       },
       {
         "name": "correlation (printing compiled out)",
@@ -2033,7 +2033,7 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.209
+        "seconds": 0.341
       },
       {
         "name": "lu (printing compiled out)",
@@ -2057,7 +2057,676 @@
         },
         "secwasm_restrictions": "accepted",
         "lift_shape": false,
-        "seconds": 0.245
+        "seconds": 0.303
+      },
+      {
+        "name": "2mm (stack pointer preserved)",
+        "wasm": "casestudies/build/polybench/2mm.wasm",
+        "policy": "stdout : H\nstderr : H\nstore-default func 10 : H\nload-default func 10 : H\nload-default func 11 : H\npreserved global 0\n",
+        "policy_lines": 6,
+        "loads_declared_from_traps": 0,
+        "outcome": "rejected",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 1,
+        "error": "Validation error: InFunction 63 (AtInstruction 126 (IllegalFlow \"call_indirect\" High Low))",
+        "site": {
+          "function": 63,
+          "instruction": 126,
+          "rule": "IllegalFlow \"call_indirect\" High Low"
+        },
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "rejected: InFunction 63 (AtInstruction 126 (IllegalFlow \"call_indirect\" High Low))",
+          "attempts": 291,
+          "secret_locals": 370,
+          "raised_functions": [
+            "17: LabelledFuncType High [I32 :~ High,I64 :~ High,I32 :~ High] [I32 :~ High]",
+            "26: LabelledFuncType Low [I32 :~ High,I32 :~ Low,I32 :~ Low] [I32 :~ Low]",
+            "27: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "29: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] []",
+            "30: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "33: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "34: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "35: LabelledFuncType Low [I32 :~ Low,I32 :~ High] [I32 :~ High]",
+            "36: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "37: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "48: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "49: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "50: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "52: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "53: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "54: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "55: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "56: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "57: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "58: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "59: LabelledFuncType High [F64 :~ High,I32 :~ High] [F64 :~ High]",
+            "60: LabelledFuncType High [F64 :~ High,I32 :~ High] [F64 :~ High]",
+            "61: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "62: LabelledFuncType High [] []",
+            "63: LabelledFuncType Low [I32 :~ High,I32 :~ Low,I32 :~ Low] [I32 :~ Low]",
+            "64: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "65: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] []",
+            "66: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] []",
+            "67: LabelledFuncType High [] []"
+          ]
+        },
+        "secwasm_restrictions": "rejected: InFunction 63 (AtInstruction 126 (IllegalFlow \"call_indirect\" High Low))",
+        "lift_shape": false,
+        "seconds": 10.524
+      },
+      {
+        "name": "3mm (stack pointer preserved)",
+        "wasm": "casestudies/build/polybench/3mm.wasm",
+        "policy": "stdout : H\nstderr : H\nstore-default func 10 : H\nload-default func 10 : H\nload-default func 11 : H\npreserved global 0\n",
+        "policy_lines": 6,
+        "loads_declared_from_traps": 0,
+        "outcome": "rejected",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 1,
+        "error": "Validation error: InFunction 63 (AtInstruction 126 (IllegalFlow \"call_indirect\" High Low))",
+        "site": {
+          "function": 63,
+          "instruction": 126,
+          "rule": "IllegalFlow \"call_indirect\" High Low"
+        },
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "rejected: InFunction 63 (AtInstruction 126 (IllegalFlow \"call_indirect\" High Low))",
+          "attempts": 291,
+          "secret_locals": 372,
+          "raised_functions": [
+            "17: LabelledFuncType High [I32 :~ High,I64 :~ High,I32 :~ High] [I32 :~ High]",
+            "26: LabelledFuncType Low [I32 :~ High,I32 :~ Low,I32 :~ Low] [I32 :~ Low]",
+            "27: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "29: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] []",
+            "30: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "33: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "34: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "35: LabelledFuncType Low [I32 :~ Low,I32 :~ High] [I32 :~ High]",
+            "36: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "37: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "48: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "49: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "50: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "52: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "53: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "54: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "55: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "56: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "57: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "58: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "59: LabelledFuncType High [F64 :~ High,I32 :~ High] [F64 :~ High]",
+            "60: LabelledFuncType High [F64 :~ High,I32 :~ High] [F64 :~ High]",
+            "61: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "62: LabelledFuncType High [] []",
+            "63: LabelledFuncType Low [I32 :~ High,I32 :~ Low,I32 :~ Low] [I32 :~ Low]",
+            "64: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "65: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] []",
+            "66: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] []",
+            "67: LabelledFuncType High [] []"
+          ]
+        },
+        "secwasm_restrictions": "rejected: InFunction 63 (AtInstruction 126 (IllegalFlow \"call_indirect\" High Low))",
+        "lift_shape": false,
+        "seconds": 10.44
+      },
+      {
+        "name": "atax (stack pointer preserved)",
+        "wasm": "casestudies/build/polybench/atax.wasm",
+        "policy": "stdout : H\nstderr : H\nstore-default func 10 : H\nload-default func 10 : H\nload-default func 11 : H\npreserved global 0\n",
+        "policy_lines": 6,
+        "loads_declared_from_traps": 0,
+        "outcome": "rejected",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 1,
+        "error": "Validation error: InFunction 63 (AtInstruction 126 (IllegalFlow \"call_indirect\" High Low))",
+        "site": {
+          "function": 63,
+          "instruction": 126,
+          "rule": "IllegalFlow \"call_indirect\" High Low"
+        },
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "rejected: InFunction 63 (AtInstruction 126 (IllegalFlow \"call_indirect\" High Low))",
+          "attempts": 291,
+          "secret_locals": 353,
+          "raised_functions": [
+            "17: LabelledFuncType High [I32 :~ High,I64 :~ High,I32 :~ High] [I32 :~ High]",
+            "26: LabelledFuncType Low [I32 :~ High,I32 :~ Low,I32 :~ Low] [I32 :~ Low]",
+            "27: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "29: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] []",
+            "30: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "33: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "34: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "35: LabelledFuncType Low [I32 :~ Low,I32 :~ High] [I32 :~ High]",
+            "36: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "37: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "48: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "49: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "50: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "52: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "53: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "54: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "55: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "56: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "57: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "58: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "59: LabelledFuncType High [F64 :~ High,I32 :~ High] [F64 :~ High]",
+            "60: LabelledFuncType High [F64 :~ High,I32 :~ High] [F64 :~ High]",
+            "61: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "62: LabelledFuncType High [] []",
+            "63: LabelledFuncType Low [I32 :~ High,I32 :~ Low,I32 :~ Low] [I32 :~ Low]",
+            "64: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "65: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] []",
+            "66: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] []",
+            "67: LabelledFuncType High [] []"
+          ]
+        },
+        "secwasm_restrictions": "rejected: InFunction 63 (AtInstruction 126 (IllegalFlow \"call_indirect\" High Low))",
+        "lift_shape": false,
+        "seconds": 10.399
+      },
+      {
+        "name": "gemm (stack pointer preserved)",
+        "wasm": "casestudies/build/polybench/gemm.wasm",
+        "policy": "stdout : H\nstderr : H\nstore-default func 10 : H\nload-default func 10 : H\nload-default func 11 : H\npreserved global 0\n",
+        "policy_lines": 6,
+        "loads_declared_from_traps": 0,
+        "outcome": "rejected",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 1,
+        "error": "Validation error: InFunction 63 (AtInstruction 126 (IllegalFlow \"call_indirect\" High Low))",
+        "site": {
+          "function": 63,
+          "instruction": 126,
+          "rule": "IllegalFlow \"call_indirect\" High Low"
+        },
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "rejected: InFunction 63 (AtInstruction 126 (IllegalFlow \"call_indirect\" High Low))",
+          "attempts": 291,
+          "secret_locals": 350,
+          "raised_functions": [
+            "17: LabelledFuncType High [I32 :~ High,I64 :~ High,I32 :~ High] [I32 :~ High]",
+            "26: LabelledFuncType Low [I32 :~ High,I32 :~ Low,I32 :~ Low] [I32 :~ Low]",
+            "27: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "29: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] []",
+            "30: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "33: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "34: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "35: LabelledFuncType Low [I32 :~ Low,I32 :~ High] [I32 :~ High]",
+            "36: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "37: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "48: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "49: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "50: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "52: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "53: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "54: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "55: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "56: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "57: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "58: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "59: LabelledFuncType High [F64 :~ High,I32 :~ High] [F64 :~ High]",
+            "60: LabelledFuncType High [F64 :~ High,I32 :~ High] [F64 :~ High]",
+            "61: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "62: LabelledFuncType High [] []",
+            "63: LabelledFuncType Low [I32 :~ High,I32 :~ Low,I32 :~ Low] [I32 :~ Low]",
+            "64: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "65: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] []",
+            "66: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] []",
+            "67: LabelledFuncType High [] []"
+          ]
+        },
+        "secwasm_restrictions": "rejected: InFunction 63 (AtInstruction 126 (IllegalFlow \"call_indirect\" High Low))",
+        "lift_shape": false,
+        "seconds": 10.869
+      },
+      {
+        "name": "jacobi-2d (stack pointer preserved)",
+        "wasm": "casestudies/build/polybench/jacobi-2d.wasm",
+        "policy": "stdout : H\nstderr : H\nstore-default func 10 : H\nload-default func 10 : H\nload-default func 11 : H\npreserved global 0\n",
+        "policy_lines": 6,
+        "loads_declared_from_traps": 0,
+        "outcome": "rejected",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 1,
+        "error": "Validation error: InFunction 63 (AtInstruction 126 (IllegalFlow \"call_indirect\" High Low))",
+        "site": {
+          "function": 63,
+          "instruction": 126,
+          "rule": "IllegalFlow \"call_indirect\" High Low"
+        },
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "rejected: InFunction 63 (AtInstruction 126 (IllegalFlow \"call_indirect\" High Low))",
+          "attempts": 291,
+          "secret_locals": 350,
+          "raised_functions": [
+            "17: LabelledFuncType High [I32 :~ High,I64 :~ High,I32 :~ High] [I32 :~ High]",
+            "26: LabelledFuncType Low [I32 :~ High,I32 :~ Low,I32 :~ Low] [I32 :~ Low]",
+            "27: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "29: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] []",
+            "30: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "33: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "34: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "35: LabelledFuncType Low [I32 :~ Low,I32 :~ High] [I32 :~ High]",
+            "36: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "37: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "48: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "49: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "50: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "52: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "53: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "54: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "55: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "56: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "57: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "58: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "59: LabelledFuncType High [F64 :~ High,I32 :~ High] [F64 :~ High]",
+            "60: LabelledFuncType High [F64 :~ High,I32 :~ High] [F64 :~ High]",
+            "61: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "62: LabelledFuncType High [] []",
+            "63: LabelledFuncType Low [I32 :~ High,I32 :~ Low,I32 :~ Low] [I32 :~ Low]",
+            "64: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "65: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] []",
+            "66: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] []",
+            "67: LabelledFuncType High [] []"
+          ]
+        },
+        "secwasm_restrictions": "rejected: InFunction 63 (AtInstruction 126 (IllegalFlow \"call_indirect\" High Low))",
+        "lift_shape": false,
+        "seconds": 10.776
+      },
+      {
+        "name": "seidel-2d (stack pointer preserved)",
+        "wasm": "casestudies/build/polybench/seidel-2d.wasm",
+        "policy": "stdout : H\nstderr : H\nstore-default func 10 : H\nload-default func 10 : H\nload-default func 11 : H\npreserved global 0\n",
+        "policy_lines": 6,
+        "loads_declared_from_traps": 0,
+        "outcome": "rejected",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 1,
+        "error": "Validation error: InFunction 63 (AtInstruction 126 (IllegalFlow \"call_indirect\" High Low))",
+        "site": {
+          "function": 63,
+          "instruction": 126,
+          "rule": "IllegalFlow \"call_indirect\" High Low"
+        },
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "rejected: InFunction 63 (AtInstruction 126 (IllegalFlow \"call_indirect\" High Low))",
+          "attempts": 291,
+          "secret_locals": 357,
+          "raised_functions": [
+            "17: LabelledFuncType High [I32 :~ High,I64 :~ High,I32 :~ High] [I32 :~ High]",
+            "26: LabelledFuncType Low [I32 :~ High,I32 :~ Low,I32 :~ Low] [I32 :~ Low]",
+            "27: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "29: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] []",
+            "30: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "33: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "34: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "35: LabelledFuncType Low [I32 :~ Low,I32 :~ High] [I32 :~ High]",
+            "36: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "37: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "48: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "49: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "50: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "52: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "53: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "54: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "55: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "56: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "57: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "58: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "59: LabelledFuncType High [F64 :~ High,I32 :~ High] [F64 :~ High]",
+            "60: LabelledFuncType High [F64 :~ High,I32 :~ High] [F64 :~ High]",
+            "61: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "62: LabelledFuncType High [] []",
+            "63: LabelledFuncType Low [I32 :~ High,I32 :~ Low,I32 :~ Low] [I32 :~ Low]",
+            "64: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "65: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] []",
+            "66: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] []",
+            "67: LabelledFuncType High [] []"
+          ]
+        },
+        "secwasm_restrictions": "rejected: InFunction 63 (AtInstruction 126 (IllegalFlow \"call_indirect\" High Low))",
+        "lift_shape": false,
+        "seconds": 10.307
+      },
+      {
+        "name": "floyd-warshall (stack pointer preserved)",
+        "wasm": "casestudies/build/polybench/floyd-warshall.wasm",
+        "policy": "stdout : H\nstderr : H\nstore-default func 10 : H\nload-default func 10 : H\nload-default func 11 : H\npreserved global 0\n",
+        "policy_lines": 6,
+        "loads_declared_from_traps": 0,
+        "outcome": "rejected",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 1,
+        "error": "Validation error: InFunction 63 (AtInstruction 126 (IllegalFlow \"call_indirect\" High Low))",
+        "site": {
+          "function": 63,
+          "instruction": 126,
+          "rule": "IllegalFlow \"call_indirect\" High Low"
+        },
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "rejected: InFunction 63 (AtInstruction 126 (IllegalFlow \"call_indirect\" High Low))",
+          "attempts": 291,
+          "secret_locals": 354,
+          "raised_functions": [
+            "17: LabelledFuncType High [I32 :~ High,I64 :~ High,I32 :~ High] [I32 :~ High]",
+            "26: LabelledFuncType Low [I32 :~ High,I32 :~ Low,I32 :~ Low] [I32 :~ Low]",
+            "27: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "29: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] []",
+            "30: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "33: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "34: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "35: LabelledFuncType Low [I32 :~ Low,I32 :~ High] [I32 :~ High]",
+            "36: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "37: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "48: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "49: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "50: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "52: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "53: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "54: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "55: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "56: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "57: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "58: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "59: LabelledFuncType High [F64 :~ High,I32 :~ High] [F64 :~ High]",
+            "60: LabelledFuncType High [F64 :~ High,I32 :~ High] [F64 :~ High]",
+            "61: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "62: LabelledFuncType High [] []",
+            "63: LabelledFuncType Low [I32 :~ High,I32 :~ Low,I32 :~ Low] [I32 :~ Low]",
+            "64: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "65: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] []",
+            "66: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] []",
+            "67: LabelledFuncType High [] []"
+          ]
+        },
+        "secwasm_restrictions": "rejected: InFunction 63 (AtInstruction 126 (IllegalFlow \"call_indirect\" High Low))",
+        "lift_shape": false,
+        "seconds": 10.131
+      },
+      {
+        "name": "nussinov (stack pointer preserved)",
+        "wasm": "casestudies/build/polybench/nussinov.wasm",
+        "policy": "stdout : H\nstderr : H\nstore-default func 10 : H\nload-default func 10 : H\nload-default func 11 : H\npreserved global 0\n",
+        "policy_lines": 6,
+        "loads_declared_from_traps": 0,
+        "outcome": "rejected",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 1,
+        "error": "Validation error: InFunction 63 (AtInstruction 126 (IllegalFlow \"call_indirect\" High Low))",
+        "site": {
+          "function": 63,
+          "instruction": 126,
+          "rule": "IllegalFlow \"call_indirect\" High Low"
+        },
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "rejected: InFunction 63 (AtInstruction 126 (IllegalFlow \"call_indirect\" High Low))",
+          "attempts": 291,
+          "secret_locals": 360,
+          "raised_functions": [
+            "17: LabelledFuncType High [I32 :~ High,I64 :~ High,I32 :~ High] [I32 :~ High]",
+            "26: LabelledFuncType Low [I32 :~ High,I32 :~ Low,I32 :~ Low] [I32 :~ Low]",
+            "27: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "29: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] []",
+            "30: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "33: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "34: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "35: LabelledFuncType Low [I32 :~ Low,I32 :~ High] [I32 :~ High]",
+            "36: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "37: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "48: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "49: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "50: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "52: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "53: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "54: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "55: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "56: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "57: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "58: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "59: LabelledFuncType High [F64 :~ High,I32 :~ High] [F64 :~ High]",
+            "60: LabelledFuncType High [F64 :~ High,I32 :~ High] [F64 :~ High]",
+            "61: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "62: LabelledFuncType High [] []",
+            "63: LabelledFuncType Low [I32 :~ High,I32 :~ Low,I32 :~ Low] [I32 :~ Low]",
+            "64: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "65: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] []",
+            "66: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] []",
+            "67: LabelledFuncType High [] []"
+          ]
+        },
+        "secwasm_restrictions": "rejected: InFunction 63 (AtInstruction 126 (IllegalFlow \"call_indirect\" High Low))",
+        "lift_shape": false,
+        "seconds": 10.337
+      },
+      {
+        "name": "correlation (stack pointer preserved)",
+        "wasm": "casestudies/build/polybench/correlation.wasm",
+        "policy": "stdout : H\nstderr : H\nstore-default func 10 : H\nload-default func 10 : H\nload-default func 11 : H\npreserved global 0\n",
+        "policy_lines": 6,
+        "loads_declared_from_traps": 0,
+        "outcome": "rejected",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 1,
+        "error": "Validation error: InFunction 63 (AtInstruction 126 (IllegalFlow \"call_indirect\" High Low))",
+        "site": {
+          "function": 63,
+          "instruction": 126,
+          "rule": "IllegalFlow \"call_indirect\" High Low"
+        },
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "rejected: InFunction 63 (AtInstruction 126 (IllegalFlow \"call_indirect\" High Low))",
+          "attempts": 291,
+          "secret_locals": 362,
+          "raised_functions": [
+            "17: LabelledFuncType High [I32 :~ High,I64 :~ High,I32 :~ High] [I32 :~ High]",
+            "26: LabelledFuncType Low [I32 :~ High,I32 :~ Low,I32 :~ Low] [I32 :~ Low]",
+            "27: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "29: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] []",
+            "30: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "33: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "34: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "35: LabelledFuncType Low [I32 :~ Low,I32 :~ High] [I32 :~ High]",
+            "36: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "37: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "48: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "49: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "50: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "52: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "53: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "54: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "55: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "56: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "57: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "58: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "59: LabelledFuncType High [F64 :~ High,I32 :~ High] [F64 :~ High]",
+            "60: LabelledFuncType High [F64 :~ High,I32 :~ High] [F64 :~ High]",
+            "61: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "62: LabelledFuncType High [] []",
+            "63: LabelledFuncType Low [I32 :~ High,I32 :~ Low,I32 :~ Low] [I32 :~ Low]",
+            "64: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "65: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] []",
+            "66: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] []",
+            "67: LabelledFuncType High [] []"
+          ]
+        },
+        "secwasm_restrictions": "rejected: InFunction 63 (AtInstruction 126 (IllegalFlow \"call_indirect\" High Low))",
+        "lift_shape": false,
+        "seconds": 10.229
+      },
+      {
+        "name": "lu (stack pointer preserved)",
+        "wasm": "casestudies/build/polybench/lu.wasm",
+        "policy": "stdout : H\nstderr : H\nstore-default func 10 : H\nload-default func 10 : H\nload-default func 11 : H\npreserved global 0\n",
+        "policy_lines": 6,
+        "loads_declared_from_traps": 0,
+        "outcome": "rejected",
+        "expected": null,
+        "as_expected": true,
+        "exit_code": 1,
+        "error": "Validation error: InFunction 63 (AtInstruction 126 (IllegalFlow \"call_indirect\" High Low))",
+        "site": {
+          "function": 63,
+          "instruction": 126,
+          "rule": "IllegalFlow \"call_indirect\" High Low"
+        },
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "rejected: InFunction 63 (AtInstruction 126 (IllegalFlow \"call_indirect\" High Low))",
+          "attempts": 291,
+          "secret_locals": 354,
+          "raised_functions": [
+            "17: LabelledFuncType High [I32 :~ High,I64 :~ High,I32 :~ High] [I32 :~ High]",
+            "26: LabelledFuncType Low [I32 :~ High,I32 :~ Low,I32 :~ Low] [I32 :~ Low]",
+            "27: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "29: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] []",
+            "30: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "33: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "34: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "35: LabelledFuncType Low [I32 :~ Low,I32 :~ High] [I32 :~ High]",
+            "36: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "37: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "48: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "49: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "50: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "52: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "53: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "54: LabelledFuncType High [I32 :~ High] [I32 :~ High]",
+            "55: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "56: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "57: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "58: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "59: LabelledFuncType High [F64 :~ High,I32 :~ High] [F64 :~ High]",
+            "60: LabelledFuncType High [F64 :~ High,I32 :~ High] [F64 :~ High]",
+            "61: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "62: LabelledFuncType High [] []",
+            "63: LabelledFuncType Low [I32 :~ High,I32 :~ Low,I32 :~ Low] [I32 :~ Low]",
+            "64: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "65: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High] []",
+            "66: LabelledFuncType High [I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High,I32 :~ High] []",
+            "67: LabelledFuncType High [] []"
+          ]
+        },
+        "secwasm_restrictions": "rejected: InFunction 63 (AtInstruction 126 (IllegalFlow \"call_indirect\" High Low))",
+        "lift_shape": false,
+        "seconds": 10.252
+      }
+    ],
+    "frames": [
+      {
+        "name": "frames (odd key)",
+        "wasm": "casestudies/build/frames/frames.wasm",
+        "policy": "preopen /secrets : H\nload-default func 11 : H\nload-default func 12 : H\nload-default func 13 : H\npreserved global 0\nload 14 3 : H\n",
+        "policy_lines": 5,
+        "loads_declared_from_traps": 1,
+        "outcome": "ran",
+        "expected": "ran",
+        "as_expected": true,
+        "exit_code": 0,
+        "error": null,
+        "site": null,
+        "stdout": "done\n",
+        "files_written": {},
+        "inference": {
+          "verdict": "accepted",
+          "attempts": 13,
+          "secret_locals": 5,
+          "raised_functions": [
+            "12: LabelledFuncType High [] []",
+            "13: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "14: LabelledFuncType Low [I32 :~ Low,I32 :~ Low,I32 :~ Low] [I32 :~ High]"
+          ]
+        },
+        "secwasm_restrictions": "accepted",
+        "lift_shape": false,
+        "seconds": 0.257
+      },
+      {
+        "name": "frames (even key)",
+        "wasm": "casestudies/build/frames/frames.wasm",
+        "policy": "preopen /secrets : H\nload-default func 11 : H\nload-default func 12 : H\nload-default func 13 : H\npreserved global 0\nload 14 3 : H\n",
+        "policy_lines": 5,
+        "loads_declared_from_traps": 1,
+        "outcome": "ran",
+        "expected": "ran",
+        "as_expected": true,
+        "exit_code": 0,
+        "error": null,
+        "site": null,
+        "stdout": "done\n",
+        "files_written": {},
+        "inference": {
+          "verdict": "accepted",
+          "attempts": 13,
+          "secret_locals": 5,
+          "raised_functions": [
+            "12: LabelledFuncType High [] []",
+            "13: LabelledFuncType High [I32 :~ High,I32 :~ High] [I32 :~ High]",
+            "14: LabelledFuncType Low [I32 :~ Low,I32 :~ Low,I32 :~ Low] [I32 :~ High]"
+          ]
+        },
+        "secwasm_restrictions": "accepted",
+        "lift_shape": false,
+        "seconds": 0.25
+      },
+      {
+        "name": "frames (stack pointer not preserved)",
+        "wasm": "casestudies/build/frames/frames.wasm",
+        "policy": "preopen /secrets : H\nload-default func 11 : H\nload-default func 12 : H\nload-default func 13 : H\n",
+        "policy_lines": 4,
+        "loads_declared_from_traps": 0,
+        "outcome": "rejected",
+        "expected": "rejected",
+        "as_expected": true,
+        "exit_code": 1,
+        "error": "Validation error: InFunction 12 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+        "site": {
+          "function": 12,
+          "instruction": 4,
+          "rule": "IllegalFlow \"global.set\" High Low"
+        },
+        "stdout": "",
+        "files_written": {},
+        "inference": {
+          "verdict": "rejected: InFunction 12 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+          "attempts": 3,
+          "secret_locals": 1,
+          "raised_functions": [
+            "12: LabelledFuncType High [] []",
+            "13: LabelledFuncType Low [I32 :~ Low,I32 :~ Low] [I32 :~ High]"
+          ]
+        },
+        "secwasm_restrictions": "rejected: InFunction 12 (AtInstruction 4 (IllegalFlow \"global.set\" High Low))",
+        "lift_shape": false,
+        "seconds": 0.061
       }
     ]
   }
