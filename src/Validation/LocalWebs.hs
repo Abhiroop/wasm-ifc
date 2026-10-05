@@ -14,10 +14,19 @@
   transfer is reached by none. A parameter keeps its index for the web of the value it is
   called with; every other web becomes a declared local of its local's type, in order of first
   definition.
+
+  Once the labels are settled, the webs of one local that received the same label are merged
+  again ('mergeWebs'): a split local needs at most one slot per label, not one per web. Any
+  grouping of the webs of one local is as faithful as the splitting itself, because the
+  definition a use read last in the original function is in the use's own web, and so in its
+  group. Merging matters at run time, where a write to a local copies the frame: with one slot
+  per web, CoreMark allocated 74 % more than with the locals as written.
 -}
 module Validation.LocalWebs (
     splitLocals,
     splitModuleLocals,
+    mergeWebs,
+    mergeModuleWebs,
 ) where
 
 import Control.Monad (forM_, when)
@@ -27,7 +36,7 @@ import Data.IntMap.Strict (IntMap)
 import Data.IntMap.Strict qualified as IntMap
 import Data.IntSet (IntSet)
 import Data.IntSet qualified as IntSet
-import Data.List (sortOn)
+import Data.List (sortOn, zip4)
 import Data.Maybe (fromMaybe)
 import Data.Tree (flatten)
 import Data.Word (Word32)
@@ -67,10 +76,16 @@ data Flow = Flow
   are the values the locals start with (the arguments, then the declared locals' zeros).
 -}
 splitLocals :: RawFunction -> RawFunction
-splitLocals function@(RawFunction signature declared body)
+splitLocals = fst . splitLocalsWithOrigins
+
+{- | 'splitLocals', with the original local (by its index in the local space) of every declared
+  local of the result: what 'mergeWebs' needs to put webs of one local together again.
+-}
+splitLocalsWithOrigins :: RawFunction -> (RawFunction, [Word32])
+splitLocalsWithOrigins function@(RawFunction signature declared body)
     -- A body that names a local the function does not have is invalid; validation rejects it as written.
-    | any (>= localCount) (IntMap.elems definitionLocals ++ map snd (useLocals nodes)) = function
-    | otherwise = RawFunction signature newDeclared (evalState (rename webOfDefinition webOfUse body) (localCount, 0))
+    | any (>= localCount) (IntMap.elems definitionLocals ++ map snd (useLocals nodes)) = (function, [fromIntegral (length params + i) | i <- [0 .. length declared - 1]])
+    | otherwise = (RawFunction signature newDeclared (evalState (rename webOfDefinition webOfUse body) (localCount, 0)), map fromIntegral origins)
   where
     FuncType params _ = signature
     localTypes = params ++ declared
@@ -93,7 +108,8 @@ splitLocals function@(RawFunction signature declared body)
     ordered = map fst (sortOn snd others)
     fresh = IntMap.fromList (zip ordered [fromIntegral (length params) ..])
     indexOfWeb web = fromMaybe (fresh IntMap.! web) (IntMap.lookup web starting)
-    newDeclared = [localTypes !! (definitionLocals IntMap.! IntSet.findMin (webs !! web)) | web <- ordered]
+    origins = [definitionLocals IntMap.! IntSet.findMin (webs !! web) | web <- ordered]
+    newDeclared = map (localTypes !!) origins
     webOfDefinition d = indexOfWeb (webOf IntMap.! d)
     -- A use no definition reaches is never run; it reads its local's starting web.
     webOfUse u local = case IntSet.minView (IntMap.findWithDefault IntSet.empty u uses) of
@@ -111,13 +127,69 @@ useLocals = concatMap collect
         IfNode thenBody elseBody -> useLocals thenBody ++ useLocals elseBody
         _ -> []
 
--- | Every function of a module with its locals split ('splitLocals').
-splitModuleLocals :: RawModule -> RawModule
-splitModuleLocals m =
+{- | Merge the webs of each local that have the same level into one local again. The function
+  is one that 'splitLocalsWithOrigins' returned, with those origins; the levels are those of
+  its parameters and of its declared locals. A web of a parameter at the parameter's own level
+  goes back into the parameter; the other groups become the declared locals of the result, in
+  order of their first web, and their levels are returned with it.
+-}
+mergeWebs :: Eq level => [Word32] -> [level] -> [level] -> RawFunction -> (RawFunction, [level])
+mergeWebs origins paramLevels declaredLevels (RawFunction signature declared body) =
+    (RawFunction signature (map fst merged) (map renameLocals body), map snd merged)
+  where
+    paramCount = length paramLevels
+    webs = zip3 origins declaredLevels declared
+    isParamWeb (origin, level, _) = fromIntegral origin < paramCount && paramLevels !! fromIntegral origin == level
+    -- The groups that need a declared local, by original local and level, in order of first
+    -- web, each with the type of its local.
+    groups = go [] (filter (not . isParamWeb) webs)
+      where
+        go seen [] = reverse seen
+        go seen ((origin, level, t) : rest)
+            | any (\(o, l, _) -> (o, l) == (origin, level)) seen = go seen rest
+            | otherwise = go ((origin, level, t) : seen) rest
+    merged = [(t, level) | (_, level, t) <- groups]
+    slotOf web@(origin, level, _)
+        | isParamWeb web = origin
+        | otherwise = fromIntegral (paramCount + length (takeWhile (\(o, l, _) -> (o, l) /= (origin, level)) groups))
+    slots = map slotOf webs
+    newIndex i
+        | fromIntegral i < paramCount = i
+        | otherwise = case drop (fromIntegral i - paramCount) slots of
+            slot : _ -> slot
+            [] -> i
+    renameLocals raw = case raw of
+        LocalGet (LocalIdx i) -> LocalGet (LocalIdx (newIndex i))
+        LocalSet (LocalIdx i) -> LocalSet (LocalIdx (newIndex i))
+        LocalTee (LocalIdx i) -> LocalTee (LocalIdx (newIndex i))
+        Block bt inner -> Block bt (map renameLocals inner)
+        Loop bt inner -> Loop bt (map renameLocals inner)
+        If bt thenBody elseBody -> If bt (map renameLocals thenBody) (map renameLocals elseBody)
+        other -> other
+
+{- | 'mergeWebs' for every function of a module: the origins, parameter levels and declared
+  levels are given per function, in order.
+-}
+mergeModuleWebs :: Eq level => [[Word32]] -> [[level]] -> [[level]] -> RawModule -> (RawModule, [[level]])
+mergeModuleWebs origins paramLevels declaredLevels m = (withFunctions (map fst merged) m, map snd merged)
+  where
+    merged = [mergeWebs o ps ds f | (o, ps, ds, f) <- zip4 origins paramLevels declaredLevels m.functions]
+
+{- | Every function of a module with its locals split ('splitLocals'), and the origins of each
+  function's declared locals ('splitLocalsWithOrigins').
+-}
+splitModuleLocals :: RawModule -> (RawModule, [[Word32]])
+splitModuleLocals m = (withFunctions (map fst split) m, map snd split)
+  where
+    split = map splitLocalsWithOrigins m.functions
+
+-- | The module with its functions replaced (a construction, since the field name is shared).
+withFunctions :: [RawFunction] -> RawModule -> RawModule
+withFunctions functions m =
     RawModule
         { types = m.types
         , imports = m.imports
-        , functions = map splitLocals m.functions
+        , functions
         , globals = m.globals
         , memories = m.memories
         , tables = m.tables

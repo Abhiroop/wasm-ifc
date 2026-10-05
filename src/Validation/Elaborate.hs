@@ -61,7 +61,7 @@ import Syntax.Instructions (
 import Syntax.Module
 import Syntax.Types
 import Syntax.TypesIFC
-import Validation.LocalWebs (splitModuleLocals)
+import Validation.LocalWebs (mergeModuleWebs, splitModuleLocals)
 import Validation.Policy (Assembled (..), LocalSplitting (..), Policy, PolicyError, Restrictions (..), assemble, emptyPolicy, modulePolicy)
 import Validation.Ref (resolveLocal)
 import Validation.Reflect
@@ -1339,10 +1339,15 @@ elaborateModuleTraced :: Policy -> RawModule -> (Inferred, Either ElabError Some
 elaborateModuleTraced given raw = case validateStructure raw >> first BadPolicy (modulePolicy given raw >>= (`assemble` raw)) of
     Left err -> (Inferred [] [] 0 [], Left err)
     Right assembledAsWritten ->
-        -- Each web of a local gets a local of its own, and so a label of its own ("Validation.LocalWebs").
-        let assembled = case assembledAsWritten.splitting of
-                SplitIntoWebs -> assembledAsWritten {annotated = splitModuleLocals assembledAsWritten.annotated}
-                LocalsAsWritten -> assembledAsWritten
+        -- Each web of a local gets a local of its own, and so a label of its own
+        -- ("Validation.LocalWebs"), unless the policy says otherwise or names no secret at all:
+        -- then every label is public whatever the locals are, and there is nothing to split for.
+        let (assembled, origins) = case assembledAsWritten.splitting of
+                SplitIntoWebs
+                    | mentionsSecret assembledAsWritten ->
+                        let (split, splitOrigins) = splitModuleLocals assembledAsWritten.annotated
+                         in (assembledAsWritten {annotated = split}, Just splitOrigins)
+                _ -> (assembledAsWritten, Nothing)
             importCount = fromIntegral (length raw.imports)
             initial =
                 Choices
@@ -1350,11 +1355,25 @@ elaborateModuleTraced given raw = case validateStructure raw >> first BadPolicy 
                     , localLevels = Map.fromList [(i, map (const Low) declared) | (i, RawFunction _ declared _) <- zip [importCount ..] assembled.annotated.functions]
                     }
             settle count history choices = case elaborateUnder assembled choices of
-                Right validated -> (report count history initial choices, Right validated)
+                Right validated -> merged count history choices validated
                 Left (LevelTooLow raises failure) -> case applyRaises assembled.inferableFunctions choices raises of
                     Just raised -> settle (count + 1) (history ++ [raises]) raised
                     Nothing -> (report count history initial choices, Left failure)
                 Left failure -> (report count history initial choices, Left failure)
+            -- With the labels settled, the webs of a local at one label share a local again,
+            -- and the module is elaborated once more under exactly those labels. The split
+            -- module is already validated, so it stands if the merged one were ever refused.
+            merged count history choices validated = case origins of
+                Nothing -> (report count history initial choices, Right validated)
+                Just splitOrigins ->
+                    let defined = drop (fromIntegral importCount) choices.chosenFunctionTypes
+                        paramLevels = [[l | _ :~ l <- ps] | LabelledFuncType _ ps _ <- defined]
+                        declaredLevels = [Map.findWithDefault [] i choices.localLevels | i <- zipWith const [importCount ..] defined]
+                        (mergedModule, mergedLevels) = mergeModuleWebs splitOrigins paramLevels declaredLevels assembled.annotated
+                        mergedChoices = Choices {chosenFunctionTypes = choices.chosenFunctionTypes, localLevels = Map.fromList (zip [importCount ..] mergedLevels)}
+                     in case elaborateUnder (assembled {annotated = mergedModule}) mergedChoices of
+                            Right mergedValidated -> (report count history initial mergedChoices, Right mergedValidated)
+                            Left _ -> (report count history initial choices, Right validated)
          in settle 1 [] initial
   where
     report count history initial final =
@@ -1364,6 +1383,27 @@ elaborateModuleTraced given raw = case validateStructure raw >> first BadPolicy 
             , attempts = count
             , history
             }
+
+{- | Whether the assembled module names a secret anywhere: in a function, type or global
+  declaration, in a load default, or in an annotation of a body. If it does not, every label
+  the validator assigns is public.
+-}
+mentionsSecret :: Assembled -> Bool
+mentionsSecret assembled =
+    any secretType (assembled.functionTypes ++ assembled.sectionTypes)
+        || or [l == High | GlobalType _ (_ :~ l) <- assembled.globalTypes]
+        || High `elem` assembled.loadDefaults
+        || or [any secretInstr body | RawFunction _ _ body <- assembled.annotated.functions]
+  where
+    secretType (LabelledFuncType bound ps rs) = bound == High || or [l == High | _ :~ l <- ps ++ rs]
+    secretInstr raw = case raw of
+        Annotated level inner -> level == High || secretInstr inner
+        AtSite _ inner -> secretInstr inner
+        Relabel level -> level == High
+        Block _ body -> any secretInstr body
+        Loop _ body -> any secretInstr body
+        If _ thenBody elseBody -> any secretInstr thenBody || any secretInstr elseBody
+        _ -> False
 
 {- | Raise the labels a failure names, where inference chose them; 'Nothing' if none of them
   could rise, which leaves the failure standing.

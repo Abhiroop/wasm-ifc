@@ -7,7 +7,7 @@
 -}
 module Main (main) where
 
-import Control.Monad (void)
+import Control.Monad (forM_, void)
 import Data.Bifunctor (first)
 import Data.Bits (xor, (.&.), (.|.))
 import Data.ByteString.Lazy qualified as BL
@@ -45,6 +45,7 @@ import Syntax.Module (DataMode (..), Export (..), ExportDesc (..), ImportDesc (.
 import Syntax.Types
 import Syntax.TypesIFC (LabelledFuncType (..), LabelledValType (..), SecLevel (..))
 import Validation.Elaborate (ElabError (..), IndexSpace (..), Inferred (..), elaborateModule, elaborateModuleInferring, elaborateModuleWith)
+import Validation.LocalWebs (mergeModuleWebs, splitModuleLocals)
 import Validation.Policy (FunctionLevels (..), Policy (..), PolicyError (..), mergePolicies, parsePolicy)
 
 main :: IO ()
@@ -694,26 +695,32 @@ spec = do
     describe "splitting locals into webs (Validation.LocalWebs) over generated programs" $ do
         cases <- runIO (maybe 2000 read <$> lookupEnv "WASM_IFC_NI_CASES")
         modifyMaxSuccess (const cases) $
-            it "a module behaves the same with its locals split and as written" $
+            it "a module behaves the same with its locals split, split and merged again, and as written" $
                 hedgehog $ do
                     generated <- forAll genModule
                     a <- forAll (Gen.word32 Range.linearBounded)
                     b <- forAll (Gen.word32 (Range.linear 0 64))
-                    -- No secrets at all, so both are accepted and only the behaviour is compared.
+                    -- No secrets at all, so every form is accepted and only the behaviour is compared.
+                    -- The validator does not split under such a policy, so the test splits and
+                    -- merges itself; the merge groups the webs of a local under alternating
+                    -- levels, since any grouping must be faithful, not only the one inference picks.
                     let m = compileModule (withPublicLoads generated)
-                        split = observeUnder "" m a b
-                        asWritten = observeUnder "no-local-splitting\n" m a b
-                    case (split, asWritten) of
-                        (Right (Just one), Right (Just other)) -> do
+                        (split, origins) = splitModuleLocals m
+                        alternating = [zipWith const (cycle [Low, High]) f.locals | f <- split.functions]
+                        params = [map (const Low) ps | RawFunction (FuncType ps _) _ _ <- split.functions]
+                        (merged, _) = mergeModuleWebs origins params alternating split
+                        run form = observeUnder "no-local-splitting\n" form a b
+                        asWritten = run m
+                    forM_ [run split, run merged] $ \other -> case (other, asWritten) of
+                        (Right (Just one), Right (Just reference)) -> do
                             label "both runs finished"
-                            one.result === other.result
-                            one.publicGlobal === other.publicGlobal
-                            one.memory === other.memory
+                            one.result === reference.result
+                            one.publicGlobal === reference.publicGlobal
+                            one.memory === reference.memory
                         (Right Nothing, Right Nothing) -> label "both runs trapped"
                         _ -> do
-                            annotate (show (void split) ++ " / " ++ show (void asWritten))
+                            annotate (show (void other) ++ " / " ++ show (void asWritten))
                             failure
-
     describe "generated well-typed programs (i32 arithmetic with if/else over two parameters)" $ do
         it "elaborate, run, and agree with a reference evaluator" $ hedgehog $ do
             program <- forAll (genProgram 4)
