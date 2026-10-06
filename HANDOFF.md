@@ -135,6 +135,43 @@ on this machine (Linux, GHC 9.12.2); commits are on `implement`.
 - **(e) Lift shapes**: no program of (a)–(d) is accepted by the lift-free rules and rejected
   with `secwasm-restrictions` (`run.py`'s `lift_shape` is false throughout).
 
+**9. The cost of the labels; the suites on the labelled build** (`BENCHMARKS.md`, "The cost of
+the labels (2026-10-06, d2839ff)"; `bench/results/2026-10-06-d2839ff*.json`; driver
+`bench/sweep-labels.sh`)
+- **Caveat that governs every timing below:** the machine (bare-metal Ryzen 5 3600, Linux,
+  GHC 9.12.2) was loaded by unrelated jobs during the sweeps (load average 3 to 32 on 12
+  threads, recorded per sweep). The repetitions are interleaved, so the ratios are usable with
+  their spread; the absolute times and ns per step are not quiet-machine figures. Allocation
+  is deterministic and exact. A quiet re-run is open (`TODO.md`).
+- **Without secrets, labelled build against the typed core of 0fcf4b4:** CPU-time ratio 1.05
+  on 24 kernels (0.96 to 1.26; the block-entering kernels `labels-*` 1.09 to 1.26, `br-table`
+  1.16, `call-indirect` 1.12), 1.03 on 10 programs at the small sizes, 0.98 on 11 at the
+  medium sizes; the spread over repetitions is 1 to 2 % in the median and up to 13 %.
+  Allocation: within +0.4 to +2.8 % on seven of the tripwire's nine workloads, −15.5 % on
+  `fib` and −6.2 % on `call-indirect`.
+- **With secrets in memory** (ten PolyBench kernels without printing, their data declared
+  secret by two policy lines, against the same binary without a policy): 1.76 times the time
+  at the small sizes and 1.69 at the medium sizes (per kernel 1.5 to 2.3), and 2.23 and 2.11
+  times the allocation (1.8 to 2.9), 79 to 323 bytes more per step. The two time ratios come
+  from sweeps under very different load and agree. The cost is the label map written by every
+  secret store.
+- **Typed against erased** (kernels): the erased machine (`bench/erased`) is the twin of the
+  typed core without labels. The typed core of 0fcf4b4 is at 1.00 of it here (0.85 to 1.18),
+  which is parity as in the paper's table (0.95 to 0.97 on the other machine); the labelled
+  build is at 1.05 of it, the same 5 % as against the build before the labels.
+- **Placement:** Hackage `wasm` 3.8 times slower than ours on the kernels; wabt 1.0.42 1.9
+  times faster (ahead on all 24); on the programs at the medium sizes wasmi 73 times faster,
+  Pulley 15, Winch 233 (8 programs), Cranelift 495 (4). **WAMR could not be run** on this
+  machine (its release binary needs a newer libstdc++), and **wasm3 was not in the sweep**.
+- **ns per machine step** of the labelled build on the programs: 33.8 (small) and 38.4
+  (medium), geometric means, under load and on a slower processor than the paper's 16.1 and
+  15.9; upper bounds only.
+- **Suites** (at 720256f, same `src`/`app`/`test` as d2839ff): spec 23,306 passed, 0 failed,
+  960 skipped over 70 scripts; wasi-testsuite 72 of 72. Skips by reason: text-format modules
+  368, reference types 333, imports of tables, memories and globals 154, passive, declarative
+  or other-table element segments 43, `table.*` instructions 21, harness imports 13, a shared
+  table 5, and 23 the runner's output does not attribute.
+
 ## Phase 2
 
 **10. Typed obligations on the main line** (delta 7)
@@ -297,5 +334,6 @@ on the same inputs and requires the same result, public global and memory (2,000
 
 ## Not done yet
 
-- Item 9: the cost of the labels (timing sweep, native Linux, suites at the submission commit).
+- Item 9, remainder: the timing sweeps again on a quiet machine, with wasm3 and, if a
+  runnable build is found, WAMR (`PRE=… ./bench/sweep-labels.sh`).
 - Items 12–14: Lean; the rest of WebAssembly 3.0; WASI sockets.

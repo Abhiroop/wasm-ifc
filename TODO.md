@@ -63,8 +63,16 @@ are summarised here, not repeated.
 
 ## Performance
 
-- [ ] **P2** IFC's own cost: an interleaved timing sweep of this build against the pre-IFC one,
-  with and without secrets in memory (`bench/README.md`).
+- [ ] **P2** The cost of the labels was measured on 2026-10-06 on a loaded machine
+  (`BENCHMARKS.md`): the ratios stand with their spread, the absolute times do not. Re-run on a
+  quiet machine, `PRE=<wasm-ifc built at 0fcf4b4> ./bench/sweep-labels.sh`, after
+  `./bench/tools/fetch.sh wasm3` (WAMR's release binary does not run on EL9: build it from
+  source or drop it from the table), and replace the section's timings.
+- [ ] **P2** With secrets in memory the interpreter takes 1.7 to 1.8 times the time and
+  allocates 2.1 to 2.2 times as much (`BENCHMARKS.md`): a store under a secret label copies a
+  chunk of the label map as well as a chunk of bytes. Keeping a byte and its label in one
+  chunk, or the label map coarser where a whole chunk is secret, would be the first things to
+  try.
 - [ ] **P3** `call_indirect`: avoid the allocation of the level-aware type check (number table
   entries' types at instantiation), then re-record `bench/allocation.txt`.
 - [ ] **P3** The front end under a policy that names a secret: splitting, inference and the
@@ -72,7 +80,10 @@ are summarised here, not repeated.
   reaching-definitions pass keeps a set of definitions per local at every point.
 - [ ] **P3** Memory in `ST` against persistent chunks, now that bytes carry levels
   (`BENCHMARKS.md`, E6).
-- [ ] **P3** Retake the tables on native Linux before quoting them.
+- [ ] **P3** `bench/erased` is the twin of the typed core without labels (it is kept compiling,
+  not in lockstep): against it the typed core of 0fcf4b4 is at 1.00 and the labelled build at
+  1.05 on the loaded machine. A twin of the labelled machine would separate typing from labels
+  at the current commit; settle whether the paper needs one.
 
 ## Repository
 

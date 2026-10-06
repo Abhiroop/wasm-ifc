@@ -1,0 +1,683 @@
+{
+  "environment": {
+    "date": "2026-10-06T01:18:02",
+    "commit": "d2839ff",
+    "tier": "t2",
+    "cpu": "AMD Ryzen 5 3600 6-Core Processor",
+    "kernel": "5.14.0-687.53.1.el9_8.x86_64",
+    "pinned_to": null,
+    "ghc": "The Glorious Glasgow Haskell Compilation System, version 9.12.2",
+    "versions": {
+      "wasmtime-cranelift": "wasmtime 48.0.1 (7bac2c277 2026-08-24)",
+      "wasmtime-winch": "wasmtime 48.0.1 (7bac2c277 2026-08-24)",
+      "wasmtime-pulley": "wasmtime 48.0.1 (7bac2c277 2026-08-24)",
+      "wasmi": "wasmi 2.0.0"
+    },
+    "binaries": {
+      "wasm-ifc": "/home/neko/repos/ethz/wasm-ifc-implement/dist-newstyle/build/x86_64-linux/ghc-9.12.2/wasm-ifc-0.1.0.0/x/wasm-ifc/build/wasm-ifc/wasm-ifc",
+      "pre-ifc": "/home/neko/.claude/jobs/b4956cc7/tmp/bin/wasm-ifc-pre-ifc-0fcf4b4"
+    }
+  },
+  "measurements": [
+    {
+      "workload": "coremark-4000",
+      "runtime": "wasm-ifc",
+      "ok": true,
+      "checksum": "exit 0, results c5e7d8e19dc2",
+      "wall_s": 85.78451498599316,
+      "wall_mad_s": 1.5863397100038128,
+      "cpu_s": 85.37254800000001,
+      "reps": 3
+    },
+    {
+      "workload": "coremark-4000",
+      "runtime": "pre-ifc",
+      "ok": true,
+      "checksum": "exit 0, results c5e7d8e19dc2",
+      "wall_s": 76.34930451100809,
+      "wall_mad_s": 6.482697799991001,
+      "cpu_s": 75.84065599999994,
+      "reps": 3
+    },
+    {
+      "workload": "coremark-4000",
+      "runtime": "wasmtime-cranelift",
+      "ok": true,
+      "checksum": "exit 0, results c5e7d8e19dc2",
+      "wall_s": 0.20278565799526405,
+      "wall_mad_s": 0.0018376910011284053,
+      "cpu_s": 0.1987029999999962,
+      "reps": 3
+    },
+    {
+      "workload": "coremark-4000",
+      "runtime": "wasmtime-winch",
+      "ok": true,
+      "checksum": "exit 0, results c5e7d8e19dc2",
+      "wall_s": 0.42110637899895664,
+      "wall_mad_s": 0.006220177005161531,
+      "cpu_s": 0.3993450000000438,
+      "reps": 3
+    },
+    {
+      "workload": "coremark-4000",
+      "runtime": "wasmtime-pulley",
+      "ok": true,
+      "checksum": "exit 0, results c5e7d8e19dc2",
+      "wall_s": 3.8558851840061834,
+      "wall_mad_s": 0.08363403899420518,
+      "cpu_s": 3.8304359999999678,
+      "reps": 3
+    },
+    {
+      "workload": "coremark-4000",
+      "runtime": "wasmi",
+      "ok": true,
+      "checksum": "exit 0, results c5e7d8e19dc2",
+      "wall_s": 1.5687664949946338,
+      "wall_mad_s": 0.02462200001173187,
+      "cpu_s": 1.5591189999999893,
+      "reps": 3
+    },
+    {
+      "workload": "pb-2mm-medium",
+      "runtime": "wasm-ifc",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 14.383927468996262,
+      "wall_mad_s": 0.0639107829920249,
+      "cpu_s": 14.260437999999947,
+      "reps": 3
+    },
+    {
+      "workload": "pb-2mm-medium",
+      "runtime": "pre-ifc",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 15.316824286986957,
+      "wall_mad_s": 0.01933474100951571,
+      "cpu_s": 15.117283000000102,
+      "reps": 3
+    },
+    {
+      "workload": "pb-2mm-medium",
+      "runtime": "wasmtime-cranelift",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 0.04153269300877582,
+      "wall_mad_s": 0.010733122006058693,
+      "cpu_s": 0.02619999999993672,
+      "reps": 3
+    },
+    {
+      "workload": "pb-2mm-medium",
+      "runtime": "wasmtime-winch",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 0.07318497500091325,
+      "wall_mad_s": 0.010754614995676093,
+      "cpu_s": 0.056488000000066485,
+      "reps": 3
+    },
+    {
+      "workload": "pb-2mm-medium",
+      "runtime": "wasmtime-pulley",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 1.0713168179936474,
+      "wall_mad_s": 0.010854367996216752,
+      "cpu_s": 1.0405550000000825,
+      "reps": 3
+    },
+    {
+      "workload": "pb-2mm-medium",
+      "runtime": "wasmi",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 0.18338454701006413,
+      "wall_mad_s": 0.0025759940035641193,
+      "cpu_s": 0.17793799999998794,
+      "reps": 3
+    },
+    {
+      "workload": "pb-3mm-medium",
+      "runtime": "wasm-ifc",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 22.154752481001196,
+      "wall_mad_s": 0.038186221005162224,
+      "cpu_s": 21.975774999999956,
+      "reps": 3
+    },
+    {
+      "workload": "pb-3mm-medium",
+      "runtime": "pre-ifc",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 23.149924423007178,
+      "wall_mad_s": 0.054056578999734484,
+      "cpu_s": 23.02350500000001,
+      "reps": 3
+    },
+    {
+      "workload": "pb-3mm-medium",
+      "runtime": "wasmtime-cranelift",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 0.047615814008167945,
+      "wall_mad_s": 0.0016656580119160935,
+      "cpu_s": 0.03658500000001874,
+      "reps": 3
+    },
+    {
+      "workload": "pb-3mm-medium",
+      "runtime": "wasmtime-winch",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 0.1105968030024087,
+      "wall_mad_s": 0.010824027995113283,
+      "cpu_s": 0.08510099999997656,
+      "reps": 3
+    },
+    {
+      "workload": "pb-3mm-medium",
+      "runtime": "wasmtime-pulley",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 1.6786099460005062,
+      "wall_mad_s": 0.000803990988060832,
+      "cpu_s": 1.5953489999999788,
+      "reps": 3
+    },
+    {
+      "workload": "pb-3mm-medium",
+      "runtime": "wasmi",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 0.28449341100349557,
+      "wall_mad_s": 0.0033813089976320043,
+      "cpu_s": 0.2774970000000112,
+      "reps": 3
+    },
+    {
+      "workload": "pb-atax-medium",
+      "runtime": "wasm-ifc",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 0.4357458190061152,
+      "wall_mad_s": 0.0019669289904413745,
+      "cpu_s": 0.4270630000000011,
+      "reps": 3
+    },
+    {
+      "workload": "pb-atax-medium",
+      "runtime": "pre-ifc",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 0.4277623509988189,
+      "wall_mad_s": 0.004638944999896921,
+      "cpu_s": 0.423472999999988,
+      "reps": 3
+    },
+    {
+      "workload": "pb-atax-medium",
+      "runtime": "wasmtime-cranelift",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 0.01972080100676976,
+      "wall_mad_s": 0.0006526569923153147,
+      "cpu_s": 0.009025999999991097,
+      "reps": 3
+    },
+    {
+      "workload": "pb-atax-medium",
+      "runtime": "wasmtime-winch",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 0.01816202599729877,
+      "wall_mad_s": 0.00017876199854072183,
+      "cpu_s": 0.0097250000000344,
+      "reps": 3
+    },
+    {
+      "workload": "pb-atax-medium",
+      "runtime": "wasmtime-pulley",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 0.05530458599969279,
+      "wall_mad_s": 0.006637864004005678,
+      "cpu_s": 0.04085500000007336,
+      "reps": 3
+    },
+    {
+      "workload": "pb-atax-medium",
+      "runtime": "wasmi",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 0.010924845992121845,
+      "wall_mad_s": 0.00048194498231168836,
+      "cpu_s": 0.00921799999998374,
+      "reps": 3
+    },
+    {
+      "workload": "pb-correlation-medium",
+      "runtime": "wasm-ifc",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 4.592186693000258,
+      "wall_mad_s": 0.060422547001508065,
+      "cpu_s": 4.582305000000003,
+      "reps": 3
+    },
+    {
+      "workload": "pb-correlation-medium",
+      "runtime": "pre-ifc",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 4.5986078749992885,
+      "wall_mad_s": 0.03186371800256893,
+      "cpu_s": 4.589043000000011,
+      "reps": 3
+    },
+    {
+      "workload": "pb-correlation-medium",
+      "runtime": "wasmtime-cranelift",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 0.013197367996326648,
+      "wall_mad_s": 4.821100446861237e-05,
+      "cpu_s": 0.013719000000030235,
+      "reps": 3
+    },
+    {
+      "workload": "pb-correlation-medium",
+      "runtime": "wasmtime-winch",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 0.027630579003016464,
+      "wall_mad_s": 9.259099897462875e-05,
+      "cpu_s": 0.02843900000003119,
+      "reps": 3
+    },
+    {
+      "workload": "pb-correlation-medium",
+      "runtime": "wasmtime-pulley",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 0.4276717699976871,
+      "wall_mad_s": 0.0003208230045856908,
+      "cpu_s": 0.42752900000000116,
+      "reps": 3
+    },
+    {
+      "workload": "pb-correlation-medium",
+      "runtime": "wasmi",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 0.06801786000141874,
+      "wall_mad_s": 0.00180126799386926,
+      "cpu_s": 0.06710200000000066,
+      "reps": 3
+    },
+    {
+      "workload": "pb-floyd-warshall-medium",
+      "runtime": "wasm-ifc",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 104.60335571499309,
+      "wall_mad_s": 3.879488822989515,
+      "cpu_s": 104.06609200000007,
+      "reps": 3
+    },
+    {
+      "workload": "pb-floyd-warshall-medium",
+      "runtime": "pre-ifc",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 123.476175238,
+      "wall_mad_s": 2.684508951002499,
+      "cpu_s": 122.40128000000006,
+      "reps": 3
+    },
+    {
+      "workload": "pb-floyd-warshall-medium",
+      "runtime": "wasmtime-cranelift",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 0.15033873700303957,
+      "wall_mad_s": 0.017144395998911932,
+      "cpu_s": 0.123321999999908,
+      "reps": 3
+    },
+    {
+      "workload": "pb-floyd-warshall-medium",
+      "runtime": "wasmtime-winch",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 0.4899506219953764,
+      "wall_mad_s": 0.01718863101268653,
+      "cpu_s": 0.46612900000016655,
+      "reps": 3
+    },
+    {
+      "workload": "pb-floyd-warshall-medium",
+      "runtime": "wasmtime-pulley",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 3.837167731995578,
+      "wall_mad_s": 0.14769346899993252,
+      "cpu_s": 3.7790279999998098,
+      "reps": 3
+    },
+    {
+      "workload": "pb-floyd-warshall-medium",
+      "runtime": "wasmi",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 1.3750221259979298,
+      "wall_mad_s": 0.18679532399983145,
+      "cpu_s": 1.262832999999834,
+      "reps": 3
+    },
+    {
+      "workload": "pb-gemm-medium",
+      "runtime": "wasm-ifc",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 11.2726848339953,
+      "wall_mad_s": 0.2851855670014629,
+      "cpu_s": 11.039796999999965,
+      "reps": 3
+    },
+    {
+      "workload": "pb-gemm-medium",
+      "runtime": "pre-ifc",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 11.350450653990265,
+      "wall_mad_s": 0.3778353000234347,
+      "cpu_s": 11.30496599999991,
+      "reps": 3
+    },
+    {
+      "workload": "pb-gemm-medium",
+      "runtime": "wasmtime-cranelift",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 0.032916634998400696,
+      "wall_mad_s": 0.011402699004975148,
+      "cpu_s": 0.018411000000144284,
+      "reps": 3
+    },
+    {
+      "workload": "pb-gemm-medium",
+      "runtime": "wasmtime-winch",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 0.05795275999116711,
+      "wall_mad_s": 0.011249173010583036,
+      "cpu_s": 0.04114099999988863,
+      "reps": 3
+    },
+    {
+      "workload": "pb-gemm-medium",
+      "runtime": "wasmtime-pulley",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 0.8122590540006058,
+      "wall_mad_s": 0.04874287699931301,
+      "cpu_s": 0.7893149999999509,
+      "reps": 3
+    },
+    {
+      "workload": "pb-gemm-medium",
+      "runtime": "wasmi",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 0.14024596600211225,
+      "wall_mad_s": 0.007734517988865264,
+      "cpu_s": 0.1384230000000084,
+      "reps": 3
+    },
+    {
+      "workload": "pb-jacobi-2d-medium",
+      "runtime": "wasm-ifc",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 14.095685049003805,
+      "wall_mad_s": 0.983784761003335,
+      "cpu_s": 14.022103000000019,
+      "reps": 3
+    },
+    {
+      "workload": "pb-jacobi-2d-medium",
+      "runtime": "pre-ifc",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 14.494583338993834,
+      "wall_mad_s": 1.3834305479977047,
+      "cpu_s": 14.40765100000008,
+      "reps": 3
+    },
+    {
+      "workload": "pb-jacobi-2d-medium",
+      "runtime": "wasmtime-cranelift",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 0.030803254005149938,
+      "wall_mad_s": 0.0020650910155382007,
+      "cpu_s": 0.02954300000003318,
+      "reps": 3
+    },
+    {
+      "workload": "pb-jacobi-2d-medium",
+      "runtime": "wasmtime-winch",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 0.0722591349913273,
+      "wall_mad_s": 0.005360145005397499,
+      "cpu_s": 0.07112600000011238,
+      "reps": 3
+    },
+    {
+      "workload": "pb-jacobi-2d-medium",
+      "runtime": "wasmtime-pulley",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 1.646920177998254,
+      "wall_mad_s": 0.10421586099255364,
+      "cpu_s": 1.6335569999998425,
+      "reps": 3
+    },
+    {
+      "workload": "pb-jacobi-2d-medium",
+      "runtime": "wasmi",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 0.23309308198804501,
+      "wall_mad_s": 0.027824093980598263,
+      "cpu_s": 0.23128700000019542,
+      "reps": 3
+    },
+    {
+      "workload": "pb-lu-medium",
+      "runtime": "wasm-ifc",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 85.91700980399037,
+      "wall_mad_s": 0.7383682329964358,
+      "cpu_s": 85.37623500000029,
+      "reps": 3
+    },
+    {
+      "workload": "pb-lu-medium",
+      "runtime": "pre-ifc",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 84.82667148701148,
+      "wall_mad_s": 1.2323998730134917,
+      "cpu_s": 84.30369599999958,
+      "reps": 3
+    },
+    {
+      "workload": "pb-lu-medium",
+      "runtime": "wasmtime-cranelift",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 0.10900203399069142,
+      "wall_mad_s": 0.000574158999370411,
+      "cpu_s": 0.09365800000015678,
+      "reps": 3
+    },
+    {
+      "workload": "pb-lu-medium",
+      "runtime": "wasmtime-winch",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 0.2782231489982223,
+      "wall_mad_s": 0.01692575500055682,
+      "cpu_s": 0.25976400000003697,
+      "reps": 3
+    },
+    {
+      "workload": "pb-lu-medium",
+      "runtime": "wasmtime-pulley",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 5.664234329000465,
+      "wall_mad_s": 0.03955964499618858,
+      "cpu_s": 5.591987999999668,
+      "reps": 3
+    },
+    {
+      "workload": "pb-lu-medium",
+      "runtime": "wasmi",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 1.0396388039953308,
+      "wall_mad_s": 0.0014150839997455478,
+      "cpu_s": 1.0304410000000246,
+      "reps": 3
+    },
+    {
+      "workload": "pb-nussinov-medium",
+      "runtime": "wasm-ifc",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 20.32328139600577,
+      "wall_mad_s": 1.2533804339909693,
+      "cpu_s": 20.235234999999967,
+      "reps": 3
+    },
+    {
+      "workload": "pb-nussinov-medium",
+      "runtime": "pre-ifc",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 20.45097399999213,
+      "wall_mad_s": 1.1488672570121707,
+      "cpu_s": 20.37814899999992,
+      "reps": 3
+    },
+    {
+      "workload": "pb-nussinov-medium",
+      "runtime": "wasmtime-cranelift",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 0.03146443099831231,
+      "wall_mad_s": 0.0006337660015560687,
+      "cpu_s": 0.03175500000007947,
+      "reps": 3
+    },
+    {
+      "workload": "pb-nussinov-medium",
+      "runtime": "wasmtime-winch",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 0.05517961300211027,
+      "wall_mad_s": 0.001317132991971448,
+      "cpu_s": 0.055554999999959165,
+      "reps": 3
+    },
+    {
+      "workload": "pb-nussinov-medium",
+      "runtime": "wasmtime-pulley",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 0.5304165770066902,
+      "wall_mad_s": 0.004698448014096357,
+      "cpu_s": 0.5286090000000145,
+      "reps": 3
+    },
+    {
+      "workload": "pb-nussinov-medium",
+      "runtime": "wasmi",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 0.19740634599293116,
+      "wall_mad_s": 0.018261107004946098,
+      "cpu_s": 0.19576699999972202,
+      "reps": 3
+    },
+    {
+      "workload": "pb-seidel-2d-medium",
+      "runtime": "wasm-ifc",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 24.580480328993872,
+      "wall_mad_s": 0.19539381499635056,
+      "cpu_s": 24.34875199999992,
+      "reps": 3
+    },
+    {
+      "workload": "pb-seidel-2d-medium",
+      "runtime": "pre-ifc",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 24.53420787799405,
+      "wall_mad_s": 0.08712230599485338,
+      "cpu_s": 24.334377999999987,
+      "reps": 3
+    },
+    {
+      "workload": "pb-seidel-2d-medium",
+      "runtime": "wasmtime-cranelift",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 0.15783627900236752,
+      "wall_mad_s": 0.005540132988244295,
+      "cpu_s": 0.13434200000011653,
+      "reps": 3
+    },
+    {
+      "workload": "pb-seidel-2d-medium",
+      "runtime": "wasmtime-winch",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 0.2611525329994038,
+      "wall_mad_s": 0.0030893399962224066,
+      "cpu_s": 0.20866199999998258,
+      "reps": 3
+    },
+    {
+      "workload": "pb-seidel-2d-medium",
+      "runtime": "wasmtime-pulley",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 2.9370353339909343,
+      "wall_mad_s": 0.007648962011444382,
+      "cpu_s": 2.815868000000277,
+      "reps": 3
+    },
+    {
+      "workload": "pb-seidel-2d-medium",
+      "runtime": "wasmi",
+      "ok": true,
+      "checksum": "exit 0, results da39a3ee5e6b",
+      "wall_s": 0.5358929469948635,
+      "wall_mad_s": 0.0009580600017216057,
+      "cpu_s": 0.4899929999998802,
+      "reps": 3
+    }
+  ]
+}

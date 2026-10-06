@@ -103,8 +103,21 @@ At a milestone, save the built binary; time the next milestone against it in one
 ./bench/run.py --binary before=/path/to/saved/wasm-ifc -r before -r wasm-ifc --tier t2 -w coremark-100 -w 'pb-*-small'
 ```
 
-The erased machine is frozen at `15e5ace`, where it answered E1 (typed / erased 0.95). It is not
-kept in lockstep while IFC reshapes the instructions and `step`, and it will stop compiling once
-they change; to rerun E1, build `bench/erased` from that commit.
+The erased machine answered E1 at `15e5ace` (typed / erased 0.95). Since then it is kept
+compiling against the labelled instruction type but not in lockstep with the machine: it erases
+the program the elaborator returns today, and its own `step` keeps no label map and checks no
+load. Against it, the typed core before the labels answers E1, and the labelled build shows
+typing and labels together.
+
+The cost of the labels has its own driver, which runs every sweep of that question in turn and
+records the load average beside each (`PRE` is a binary built before the labels):
+
+```sh
+./bench/c/build-silent.sh                         # PolyBench without printing, for secrets.py
+PRE=/path/to/pre-ifc/wasm-ifc ./bench/sweep-labels.sh
+```
+
+`secrets.py` runs the kernels without printing twice with the same binary, without a policy and
+with their data declared secret, and records times and allocation.
 
 The findings, with their method and threats, are in `BENCHMARKS.md` at the repository root.

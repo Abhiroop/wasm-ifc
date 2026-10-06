@@ -98,7 +98,7 @@ def i32_checksum(out: str) -> str:
     hexadecimal = re.search(r"0x([0-9a-fA-F]+):i32", out)
     if hexadecimal:
         return str(int(hexadecimal.group(1), 16) % 2**32)
-    digits = "".join(c if (c.isdigit() or c == "-") else " " for c in out).split()
+    digits = re.findall(r"-?\d+", out)
     return str(int(digits[-1]) % 2**32) if digits else out
 
 
