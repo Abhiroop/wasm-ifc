@@ -2,6 +2,7 @@ dist-newstyle
 *.~undo-tree~
 *.wasm*.agdai
 bench/wasm-t2/
+bench/wasm-t2-silent/
 bench/drivers/haskell-wasm/wasm-1.1.1/
 bench/drivers/haskell-wasm/dist-newstyle/
 bench/__pycache__/
