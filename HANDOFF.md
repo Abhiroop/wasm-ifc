@@ -337,3 +337,26 @@ on the same inputs and requires the same result, public global and memory (2,000
 - Item 9, remainder: the timing sweeps again on a quiet machine, with wasm3 and, if a
   runnable build is found, WAMR (`PRE=… ./bench/sweep-labels.sh`).
 - Items 12–14: Lean; the rest of WebAssembly 3.0; WASI sockets.
+
+## The 3.0 suite (item 13, first step, 2026-10-08)
+
+No feature was added. The spec suite is now the WebAssembly 3.0 release (submodule at b464a4c,
+2026-09-15; it was a commit of 2021), all 257 scripts at its top level are run, and a skipped
+assertion is counted under the features its module uses, which `wasm-tools validate` reports.
+
+- **Result:** 27,891 assertions passed, 0 failed, 37,311 skipped; the same with SecWasm's
+  restrictions on. 38 scripts run with nothing skipped, 154 with nothing passed (57 of them
+  for vector instructions).
+- **Supported subset**, as `wasm-tools` names it: WebAssembly 1.0 with mutable-global,
+  sign-extension, saturating-float-to-int, multi-value and the memory half of bulk-memory.
+  That is less than WebAssembly 2.0, which also has reference types, the table instructions
+  and vector instructions.
+- **Skips by feature:** the table in `TODO.md`. Two thirds are vector instructions.
+- **The counts changed meaning.** An assertion that a module is malformed or invalid now counts
+  as passed only if the module stays within the subset; before, rejecting it for any reason
+  counted. The old 23,306 and 960 are not comparable with the new numbers.
+- **One decoder change:** an alignment field of 64 or more in a memory access is now rejected
+  when decoding (64 to 127 announce a memory index, which is unsupported; 128 and above are
+  malformed), where it used to fail validation as a misaligned access.
+- **Tools:** the runner needs `wasm-tools` (1.261); wabt's `wast2json` cannot parse 44 of the
+  257 scripts.

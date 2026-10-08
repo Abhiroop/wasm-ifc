@@ -11,7 +11,7 @@ fourmolu -i $(git ls-files -m -o --exclude-standard 'src/*.hs' 'app/*.hs' 'test/
 if ! cabal build all --ghc-options=-Werror >"$LOG" 2>&1; then echo "BUILD FAILED"; grep -n -A12 -iE "error" "$LOG" | head -60; exit 1; fi
 echo "build ok"
 if ! cabal test ${SUITES:-} >"$LOG" 2>&1; then echo "TESTS FAILED"; grep -E "Failure|expected|but got|examples" "$LOG" | head -40; exit 1; fi
-grep -E "examples, 0 failures" "$LOG"
+grep -aE "examples, 0 failures" "$LOG"
 if ! fourmolu --mode check src app test >"$LOG" 2>&1; then echo "FOURMOLU FAILED"; head -20 "$LOG"; exit 1; fi
 H=$(hlint src app test 2>&1); if [ "$H" != "No hints" ]; then echo "HLINT: $H" | head -30; exit 1; fi
 echo "lint ok"

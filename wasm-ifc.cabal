@@ -147,8 +147,8 @@ test-suite wasm-ifc-test
       , hspec-hedgehog ^>=0.3
       , singletons-base ^>=3.5
 
--- The official spec testsuite, driven through wabt's wast2json (skips itself when the tool
--- or the submodule is missing).
+-- The official spec testsuite, driven through wasm-tools (or wabt's wast2json for the scripts
+-- it can parse); skips itself when the tool or the submodule is missing.
 test-suite wasm-ifc-spec
     import:           warnings
     type:             exitcode-stdio-1.0

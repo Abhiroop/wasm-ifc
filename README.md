@@ -88,7 +88,7 @@ cabal run wasm-ifc -- run    [--policy P] [--dir D[::G]]... [--env K=V]... <file
 cabal run wasm-ifc -- get    [--policy P] <file.wasm> <global>             # an exported global
 
 ./scripts/gate.sh   # format, -Werror build, all test suites, lint, samples
-cabal test          # unit tests, the spec testsuite (needs wabt's wast2json), the wasi-testsuite;
+cabal test          # unit tests, the spec testsuite (needs wasm-tools), the wasi-testsuite;
                     # the suites are submodules: git submodule update --init
 ```
 
@@ -96,8 +96,10 @@ cabal test          # unit tests, the spec testsuite (needs wabt's wast2json), t
 
 WebAssembly: the numeric, comparison and conversion instructions, memory including bulk
 memory, structured control, calls, `call_indirect` through tables, globals, typed `select`,
-whole-module validation and the start function. The official spec testsuite passes for this
-subset (23,306 assertions, none failing; the rest need features listed below), and so does
+whole-module validation and the start function. The official spec testsuite, at the
+WebAssembly 3.0 release, passes for this subset (27,891 assertions over 257 scripts, none
+failing; the rest need features listed below, and `scripts/spec-report.py` counts them by
+feature), and so does
 every program in the official wasi-testsuite (72 of 72), over the complete WASI Preview 1
 interface.
 
@@ -120,6 +122,7 @@ The backlog is `TODO.md`; what the paper can cite is in `HANDOFF.md`.
 
 ### Toolchain
 
-GHC 9.12.2 and cabal 3.14 on a POSIX system; wabt (`wat2wasm`, `wast2json`, `wasm-validate`)
-for the samples and the spec testsuite; `wasmtime` optionally, as a second opinion in
+GHC 9.12.2 and cabal 3.14 on a POSIX system; wabt (`wat2wasm`, `wasm-validate`) for the
+samples; `wasm-tools` (1.261 or later) for the spec testsuite, to convert its scripts and to
+say which features a module uses; `wasmtime` optionally, as a second opinion in
 `samples/check.sh`.

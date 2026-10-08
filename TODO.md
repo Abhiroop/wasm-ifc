@@ -9,11 +9,11 @@ paper, **P3** is desirable. Items marked **decision** wait on Daniel. Open desig
 code are `TODO(ifc Pn)` comments beside what they concern (`grep -rn 'TODO(ifc' src test`); they
 are summarised here, not repeated.
 
-## Where things stand (2026-09-30)
+## Where things stand (2026-10-08)
 
-- WebAssembly: the spec testsuite passes for the supported subset (23,306 assertions, none
-  failing, 960 skipped as unsupported features); the wasi-testsuite passes 72 of 72. Both also
-  with SecWasm's restrictions on.
+- WebAssembly: the spec testsuite, at the WebAssembly 3.0 release (all 257 scripts), passes for
+  the supported subset (27,891 assertions, none failing, 37,311 skipped, counted by feature
+  below); the wasi-testsuite passes 72 of 72. Both also with SecWasm's restrictions on.
 - Information flow: SecWasm's static rules in the single instruction type, with the repairs of
   the paper's findings (`br_table` raises down to its deepest target); inference of stores,
   block results, loop parameters, local variables (split into webs first) and internal
@@ -54,12 +54,36 @@ are summarised here, not repeated.
 
 ## WebAssembly coverage
 
-- [ ] **P2** `global.get` of an imported immutable global in initialisers, once globals can be
-  imported.
-- [ ] **P3** Imports of globals, memories and tables, and linking between modules.
-- [ ] **P3** The `table.*` instructions, `elem.drop`, passive and declarative element segments.
-- [ ] **P3** Multiple memories; reference and SIMD types; tail calls; exceptions; exported
-  memories in the spec runner.
+The supported subset is WebAssembly 1.0 with mutable globals, sign extension, saturating
+conversions, multiple values and the memory half of bulk memory. What the 3.0 suite skips
+(`WASM_IFC_SPEC_REPORT=f cabal test wasm-ifc-spec; ./scripts/spec-report.py f`), by the features
+a skipped module uses according to `wasm-tools`, in assertions:
+
+| Skipped | Features the module uses beyond the subset |
+|---:|---|
+| 25,355 | vector instructions |
+| 4,291 | reference types |
+| 1,974 | 64-bit memories and tables (306 more with reference types) |
+| 1,159 | none: passive element segments and the table half of bulk memory |
+| 832 | multiple memories |
+| 821 | garbage collection |
+| 459 | none: imports of tables, memories and globals; linking between modules |
+| 424 | typed function references |
+| 88 | tail calls with typed function references (33 with tail calls alone) |
+| 75 | extended constant expressions with reference types (4 alone) |
+| 61 | exceptions (98 more with another feature) |
+| 1,245 | none: malformed modules given as text, which the harness does not run |
+
+The suite's scripts for one feature use others: `return_call.wast` needs typed function
+references, and the scripts for constant expressions need reference types.
+
+- [ ] **P2** Reference types with the `table.*` instructions, `elem.drop`, passive and
+  declarative element segments and several tables: with it, WebAssembly 2.0 without vectors.
+- [ ] **P2** Imports of globals, memories and tables, and linking between modules in the spec
+  runner (`register`, the `spectest` module); `global.get` of an imported global in
+  initialisers.
+- [ ] **P3** Tail calls; extended constant expressions; multiple memories; 64-bit memories.
+- [ ] **P3** Vector instructions; exceptions; typed function references; garbage collection.
 
 ## Performance
 

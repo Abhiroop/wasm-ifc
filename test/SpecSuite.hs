@@ -1,30 +1,33 @@
-{- | The official WebAssembly spec testsuite, run through wabt's @wast2json@: each @.wast@
-  script becomes binary modules plus a JSON list of assertions, which this harness executes
-  against the decoder, the elaborator and the interpreter.
+{- | The official WebAssembly spec testsuite, at the WebAssembly 3.0 release: each @.wast@
+  script becomes binary modules plus a JSON list of assertions (through @wasm-tools
+  json-from-wast@, or wabt's @wast2json@ for the scripts it can parse), which this harness
+  executes against the decoder, the elaborator and the interpreter.
 
-  A module that needs a feature we do not implement (tables, reference types, imports, …)
-  is skipped together with the assertions on it, and counted; every assertion on a module we
-  do accept must pass. The suite is a git submodule under @test/spec/testsuite@, pinned to a
-  commit @wast2json@ 1.0.27 can parse.
+  Every script at the top of the suite is run. A module that uses a feature we do not
+  implement is skipped together with the assertions on it, and counted under the features it
+  uses, which @wasm-tools validate@ tells us ('neededFeatures'); every assertion on a module
+  within the supported subset must pass. The suite is a git submodule under
+  @test/spec/testsuite@; @scripts/spec-report.py@ tabulates a run by feature.
 -}
 module Main (main) where
 
-import Control.Monad (foldM)
-import Data.Aeson (FromJSON (..), withObject, (.:), (.:?))
+import Control.Monad (foldM, forM_)
+import Data.Aeson (FromJSON (..), withObject, (.:), (.:?), (.=))
 import Data.Aeson qualified as Aeson
+import Data.Aeson.Types (parseMaybe)
 import Data.Bifunctor (first)
 import Data.ByteString.Lazy qualified as BL
-import Data.List (isInfixOf, sortOn)
+import Data.List (isInfixOf, isPrefixOf, sort, sortOn)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Word (Word64)
 import GHC.Float (castDoubleToWord64, castFloatToWord32, castWord32ToFloat, castWord64ToDouble)
-import System.Directory (createDirectoryIfMissing, doesFileExist, findExecutable, getTemporaryDirectory)
+import System.Directory (createDirectoryIfMissing, doesFileExist, findExecutable, getTemporaryDirectory, listDirectory)
 import System.Environment (lookupEnv)
 import System.Exit (ExitCode (..))
-import System.FilePath ((<.>), (</>))
+import System.FilePath (dropExtension, takeExtension, (<.>), (</>))
 import System.Process (readProcessWithExitCode)
 import Test.Hspec
 import Text.Read (readMaybe)
@@ -37,117 +40,59 @@ import Syntax.Types (ValType (..))
 import Validation.Elaborate (elaborateModuleWith)
 import Validation.Policy (Policy (..), Restrictions (..), emptyPolicy)
 
-{- | Assertions we know we cannot meet, by script and line, with the reason. They are reported
-  as skipped, not failed, so a regression elsewhere still shows.
--}
-knownGaps :: Map.Map String [(Int, String)]
-knownGaps =
-    Map.fromList
-        [ ("elem", [(l, "the table is shared with another module through an import") | l <- [574, 575, 587, 588, 589]])
-        ]
-
--- | The scripts we run: those exercising the instruction subset and the binary format.
-scripts :: [String]
-scripts =
-    [ "address"
-    , "align"
-    , "binary"
-    , "binary-leb128"
-    , "block"
-    , "br"
-    , "br_if"
-    , "br_table"
-    , "bulk"
-    , "call"
-    , "call_indirect"
-    , "comments"
-    , "const"
-    , "conversions"
-    , "custom"
-    , "data"
-    , "elem"
-    , "endianness"
-    , "exports"
-    , "f32"
-    , "f32_bitwise"
-    , "f32_cmp"
-    , "f64"
-    , "f64_bitwise"
-    , "f64_cmp"
-    , "fac"
-    , "float_exprs"
-    , "float_literals"
-    , "float_memory"
-    , "float_misc"
-    , "forward"
-    , "func"
-    , "func_ptrs"
-    , "global"
-    , "i32"
-    , "i64"
-    , "if"
-    , "imports"
-    , "int_exprs"
-    , "int_literals"
-    , "labels"
-    , "left-to-right"
-    , "load"
-    , "local_get"
-    , "local_set"
-    , "local_tee"
-    , "loop"
-    , "memory"
-    , "memory_copy"
-    , "memory_fill"
-    , "memory_grow"
-    , "memory_init"
-    , "memory_redundancy"
-    , "memory_size"
-    , "memory_trap"
-    , "names"
-    , "nop"
-    , "return"
-    , "select"
-    , "stack"
-    , "start"
-    , "store"
-    , "switch"
-    , "table"
-    , "traps"
-    , "type"
-    , "unreachable"
-    , "unreached-invalid"
-    , "unreached-valid"
-    , "unwind"
-    ]
-
 suiteDir :: FilePath
 suiteDir = "test/spec/testsuite"
 
+{- | The program that turns a script into JSON and binary modules: @wasm-tools json-from-wast@
+  if it is installed, since it reads every script of the WebAssembly 3.0 suite, and otherwise
+  wabt's @wast2json@, which cannot parse the scripts that use the newest text syntax.
+-}
+data Converter = WasmTools FilePath | Wast2Json FilePath
+
+findConverter :: IO (Maybe Converter)
+findConverter = do
+    wasmTools <- findExecutable "wasm-tools"
+    wast2json <- findExecutable "wast2json"
+    pure (maybe (Wast2Json <$> wast2json) (Just . WasmTools) wasmTools)
+
+convert :: Converter -> FilePath -> FilePath -> FilePath -> IO (ExitCode, String)
+convert converter wast jsonPath outDir = do
+    (code, _, err) <- case converter of
+        WasmTools tool -> readProcessWithExitCode tool ["json-from-wast", wast, "-o", jsonPath, "--wasm-dir", outDir] ""
+        Wast2Json tool -> readProcessWithExitCode tool [wast, "-o", jsonPath] ""
+    pure (code, err)
+
+{- | Every script at the top of the suite is run, whatever it exercises: what the interpreter
+  does not support shows up as skipped assertions, with the reason, not as a script left out.
+  With @WASM_IFC_SPEC_REPORT@ set to a file, one JSON line per script is appended to it.
+-}
 main :: IO ()
 main = hspec $ do
-    wast2json <- runIO (findExecutable "wast2json")
+    converter <- runIO findConverter
     checkedOut <- runIO (doesFileExist (suiteDir </> "i32.wast"))
+    scripts <- runIO (if checkedOut then sort . map dropExtension . filter ((== ".wast") . takeExtension) <$> listDirectory suiteDir else pure [])
     describe "WebAssembly spec testsuite" $
-        mapM_ (scriptSpec wast2json checkedOut) scripts
+        if checkedOut
+            then mapM_ (scriptSpec converter) scripts
+            else it "is checked out" (pendingWith "test/spec/testsuite is not checked out (git submodule update --init)")
 
-scriptSpec :: Maybe FilePath -> Bool -> String -> Spec
-scriptSpec wast2json checkedOut name = it name $ case wast2json of
-    Nothing -> pendingWith "wast2json (wabt) is not installed"
-    Just tool
-        | not checkedOut -> pendingWith "test/spec/testsuite is not checked out (git submodule update --init)"
-        | otherwise -> do
-            outDir <- (</> ("wasm-ifc-spec" </> name)) <$> getTemporaryDirectory
-            createDirectoryIfMissing True outDir
-            let jsonPath = outDir </> name <.> "json"
-            (code, _, err) <- readProcessWithExitCode tool [suiteDir </> name <.> "wast", "-o", jsonPath] ""
-            case code of
-                ExitFailure _ -> pendingWith ("wast2json cannot parse this script: " ++ take 200 err)
-                ExitSuccess -> do
-                    decoded <- Aeson.eitherDecode <$> BL.readFile jsonPath
-                    script <- either fail pure (decoded :: Either String Script)
-                    outcomes <- runScript name outDir script.commands
-                    report name outcomes
+scriptSpec :: Maybe Converter -> String -> Spec
+scriptSpec converter name = it name $ case converter of
+    Nothing -> pendingWith "neither wasm-tools nor wast2json (wabt) is installed"
+    Just tool -> do
+        outDir <- (</> ("wasm-ifc-spec" </> name)) <$> getTemporaryDirectory
+        createDirectoryIfMissing True outDir
+        let jsonPath = outDir </> name <.> "json"
+        (code, err) <- convert tool (suiteDir </> name <.> "wast") jsonPath outDir
+        case code of
+            ExitFailure _ -> case tool of
+                WasmTools _ -> expectationFailure ("wasm-tools could not convert this script: " ++ take 200 err)
+                Wast2Json _ -> pendingWith ("wast2json cannot parse this script: " ++ take 200 err)
+            ExitSuccess -> do
+                decoded <- Aeson.eitherDecode <$> BL.readFile jsonPath
+                script <- either fail pure (decoded :: Either String Script)
+                outcomes <- runScript outDir script.commands
+                report name outcomes
 
 -- *** The script format (as wast2json writes it) ***
 
@@ -194,8 +139,13 @@ instance FromJSON Action where
 -- | A typed literal: the value is the bit pattern as a decimal string, or a NaN class.
 data Literal = Literal {litType :: Text, litValue :: Maybe Text}
 
+-- (A vector literal's value is a list of lanes and an alternative has none: neither is read.)
 instance FromJSON Literal where
-    parseJSON = withObject "literal" $ \o -> Literal <$> o .: "type" <*> o .:? "value"
+    parseJSON = withObject "literal" $ \o -> do
+        value <- o .:? "value"
+        pure . Literal (fromMaybe "?" (parseMaybe (.: "type") o)) $ case value of
+            Just (Aeson.String text) -> Just text
+            _ -> Nothing
 
 -- *** Running ***
 
@@ -237,32 +187,49 @@ data State = State
     { anonymous :: Loaded
     , named :: Map.Map Text Loaded
     , current :: Maybe Text
+    , registered :: Bool
+    -- ^ whether the script has registered a module for others to import from
     }
 
-runScript :: String -> FilePath -> [Command] -> IO [(Int, Outcome)]
-runScript name dir = fmap (reverse . snd) . foldM step (State (Unavailable "no module yet") Map.empty Nothing, [])
+runScript :: FilePath -> [Command] -> IO [(Int, Outcome)]
+runScript dir = fmap (reverse . snd) . foldM step (State (Unavailable "no module yet") Map.empty Nothing False, [])
   where
-    gaps = Map.findWithDefault [] name knownGaps
     step (state, acc) cmd = do
         (state', outcome) <- runCommand dir state cmd
-        let outcome' = case lookup cmd.line gaps of
-                Just reason -> Skipped ("known gap: " ++ reason)
-                Nothing -> outcome
-        pure (state', (cmd.line, outcome') : acc)
+        pure (state', (cmd.line, outcome) : acc)
 
 runCommand :: FilePath -> State -> Command -> IO (State, Outcome)
 runCommand dir state cmd = case cmd.kind of
     "module" -> do
-        result <- loadModule (dir </> fromMaybe "" cmd.filename)
-        let loaded = toLoaded result
-            outcome = case result of
-                Right _ -> Passed
-                Left rejection
+        let path = dir </> fromMaybe "" cmd.filename
+        result <-
+            if cmd.moduleType `elem` [Just "binary", Nothing]
+                then loadModule path
+                else pure (Left (AtDecode "unsupported: text-format module"))
+        -- A valid module we reject is a gap, not a failure, if it needs a feature we lack.
+        missing <- case result of
+            Left _ | cmd.moduleType `elem` [Just "binary", Nothing] -> neededFeatures path
+            _ -> pure Nothing
+        -- A module we could not load may have imported a table, memory or global of a
+        -- registered module and changed it, which linking between modules would have done
+        -- here; what the script asserts about the modules loaded before it is then unknown.
+        let unlinked = state.registered && either (const True) (const False) result
+            stale loadedBefore = case loadedBefore of
+                Loaded _ | unlinked -> Unavailable "its state may depend on a module that could not be linked"
+                other -> other
+            loaded = case missing of
+                Just features | Left _ <- result -> Unavailable ("needs " ++ features)
+                _ -> toLoaded result
+            outcome = case (result, missing) of
+                (Right _, _) -> Passed
+                (Left _, Just feature) -> Skipped ("needs " ++ feature)
+                (Left rejection, Nothing)
                     | isUnsupported rejection -> Skipped (describeRejection rejection)
                     | otherwise -> Failed ("valid module rejected: " ++ describeRejection rejection)
+            earlier = state {anonymous = stale state.anonymous, named = Map.map stale state.named}
             state' = case cmd.name of
-                Just n -> state {named = Map.insert n loaded state.named, current = Just n}
-                Nothing -> state {anonymous = loaded, current = Nothing}
+                Just n -> earlier {named = Map.insert n loaded earlier.named, current = Just n}
+                Nothing -> earlier {anonymous = loaded, current = Nothing}
         pure (state', outcome)
     "assert_return" -> pure (withAction (\m act -> assertReturn m act cmd.expected))
     "assert_trap" -> pure (withAction (\m act -> assertTrap m act cmd.trapText))
@@ -272,6 +239,7 @@ runCommand dir state cmd = case cmd.kind of
     "assert_invalid" -> rejectedBy invalid
     "assert_unlinkable" -> rejectedBy unlinkable
     "assert_uninstantiable" -> rejectedBy uninstantiable
+    "register" -> pure (state {registered = True}, Skipped "command register")
     other -> pure (state, Skipped ("command " ++ T.unpack other))
   where
     -- Run a check on the instance an action names, and store the instance it hands back.
@@ -310,13 +278,77 @@ runCommand dir state cmd = case cmd.kind of
     rejectedBy expected
         | cmd.moduleType /= Just "binary" = pure (state, Skipped "text-format module")
         | otherwise = do
-            result <- loadModule (dir </> fromMaybe "" cmd.filename)
-            pure . (,) state $ case result of
+            let path = dir </> fromMaybe "" cmd.filename
+            result <- loadModule path
+            -- A module that uses a feature we lack is a gap whatever we answer: the decoder
+            -- turns it away before the stage the assertion names is reached.
+            missing <- neededFeatures path
+            -- Such a module may have written into a registered module's table or memory
+            -- before it failed, which persists; without linking we cannot say what.
+            let stale loadedBefore = case loadedBefore of
+                    Loaded _ | state.registered -> Unavailable "its state may depend on a module that could not be linked"
+                    other -> other
+            pure . (,) state {anonymous = stale state.anonymous, named = Map.map stale state.named} $ case result of
+                _ | Just features <- missing -> Skipped ("needs " ++ features)
                 Left rejection
                     | expected rejection -> Passed
                     | isUnsupported rejection -> Skipped (describeRejection rejection)
                     | otherwise -> Failed ("rejected at the wrong stage: " ++ describeRejection rejection)
                 Right _ -> Failed ("accepted a module the spec rejects: " ++ maybe "" T.unpack cmd.trapText)
+
+{- | The features of WebAssembly this interpreter implements, as @wasm-tools validate@ names
+  them: WebAssembly 1.0 with the mutable-global, sign-extension, saturating-conversion,
+  multi-value and bulk-memory extensions. (@gc-types@ enables no instruction: it lets
+  @wasm-tools@ mention reference types at all once another feature introduces them.)
+-}
+supportedFeatures :: String
+supportedFeatures = "-all,mutable-global,saturating-float-to-int,sign-extension,multi-value,bulk-memory,floats,gc-types"
+
+{- | The features of WebAssembly 3.0 beyond 'supportedFeatures', each with the flags that
+  enable it in @wasm-tools@ together with the features it builds on.
+-}
+furtherFeatures :: [(String, String)]
+furtherFeatures =
+    [ ("vector instructions", "simd")
+    , ("reference types", "reference-types")
+    , ("64-bit memories and tables", "memory64")
+    , ("multiple memories", "multi-memory")
+    , ("tail calls", "tail-call")
+    , ("extended constant expressions", "extended-const")
+    , ("typed function references", "reference-types,function-references")
+    , ("garbage collection", "reference-types,function-references,gc")
+    , ("exceptions", "reference-types,exceptions")
+    ]
+
+{- | The features a module uses beyond 'supportedFeatures', or 'Nothing' if it uses none (or if
+  @wasm-tools@ is not installed to say). @wasm-tools@ gives its verdict on the module with
+  all of WebAssembly 3.0 enabled; the features the module uses are the smallest set, of one or two of
+  'furtherFeatures', with which it gives that same verdict. The comparison of verdicts, not
+  of validity, is for the modules the suite expects to be rejected.
+-}
+neededFeatures :: FilePath -> IO (Maybe String)
+neededFeatures path = do
+    tool <- findExecutable "wasm-tools"
+    case tool of
+        Nothing -> pure Nothing
+        Just wasmTools -> do
+            let verdict flags = do
+                    (code, _, err) <- readProcessWithExitCode wasmTools ["validate", "--features=" ++ flags, path] ""
+                    -- (Without its log lines, which carry the time of day.)
+                    pure (if code == ExitSuccess then "" else unlines (filter (not . isPrefixOf "[") (lines err)))
+            target <- verdict "wasm3"
+            subset <- verdict supportedFeatures
+            if subset == target
+                then pure Nothing
+                else do
+                    let matching candidates = case candidates of
+                            [] -> pure Nothing
+                            (names, flags) : rest -> do
+                                answer <- verdict (supportedFeatures ++ "," ++ flags)
+                                if answer == target then pure (Just names) else matching rest
+                        pairs = [(a ++ " + " ++ b, fa ++ "," ++ fb) | (i, (a, fa)) <- zip [0 :: Int ..] furtherFeatures, (b, fb) <- drop (i + 1) furtherFeatures]
+                    found <- matching (furtherFeatures ++ pairs)
+                    pure (Just (fromMaybe "three or more features" found))
 
 {- | Decode, validate and instantiate a module. With @WASM_IFC_SECWASM_RESTRICTIONS@ set in the
   environment, validation applies SecWasm's restrictions ("Validation.Policy").
@@ -394,6 +426,7 @@ numericTypes = ["i32", "i64", "f32", "f64"]
 -- | A literal's value from its bit pattern.
 literalValue :: Literal -> Maybe Value
 literalValue lit = do
+    -- (wabt writes a bit pattern as an unsigned decimal, wasm-tools as a signed one.)
     bits <- readMaybe . T.unpack =<< lit.litValue :: Maybe Integer
     case lit.litType of
         "i32" -> Just (I32Value (fromInteger bits))
@@ -409,13 +442,18 @@ matches lit actual
     | otherwise = case lit.litValue of
         Just "nan:canonical" -> isNaNValue actual
         Just "nan:arithmetic" -> isNaNValue actual
-        Just v -> readMaybe (T.unpack v) == Just (valueBits actual)
+        Just v -> fmap (`mod` width) (readMaybe (T.unpack v)) == Just (valueBits actual)
         Nothing -> False
   where
     typeName I32 = "i32"
     typeName I64 = "i64"
     typeName F32 = "f32"
     typeName F64 = "f64"
+    width = case valueType actual of
+        I32 -> 2 ^ (32 :: Int)
+        F32 -> 2 ^ (32 :: Int)
+        I64 -> 2 ^ (64 :: Int)
+        F64 -> 2 ^ (64 :: Int)
 
 isNaNValue :: Value -> Bool
 isNaNValue (F32Value f) = isNaN f
@@ -434,6 +472,9 @@ valueBits (F64Value d) = fromIntegral (castDoubleToWord64 d :: Word64)
 report :: String -> [(Int, Outcome)] -> Expectation
 report name outcomes = do
     putStrLn ("    " ++ name ++ ": " ++ show passed ++ " passed, " ++ show (length failures) ++ " failed, " ++ show (length skipped) ++ " skipped")
+    reportFile <- lookupEnv "WASM_IFC_SPEC_REPORT"
+    forM_ reportFile $ \file ->
+        BL.appendFile file (Aeson.encode (Aeson.object ["script" .= name, "passed" .= passed, "failed" .= length failures, "skipped" .= length skipped, "reasons" .= skipReasons, "failures" .= take 5 (map snd failures)]) <> "\n")
     mapM_ (\(reason, n) -> putStrLn ("        " ++ show n ++ "x " ++ reason)) (take 4 skipReasons)
     case failures of
         [] -> pure ()

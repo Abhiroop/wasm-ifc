@@ -178,8 +178,15 @@ nth xs i
     | i < 0 = Nothing
     | otherwise = case drop i xs of x : _ -> Just x; [] -> Nothing
 
+{- | A memory access's alignment and offset. Since multiple memories, bit 6 of the alignment
+  field says that a memory index follows, and a field of 128 or more is malformed.
+-}
 getMemArg :: Get MemArg
-getMemArg = MemArg <$> getULEB128 <*> getULEB128
+getMemArg = do
+    alignment <- getULEB128
+    when (alignment >= 128) (fail "malformed memop flags")
+    when (alignment >= 64) (fail "unsupported: a memory index in a memory access (multiple memories)")
+    MemArg alignment <$> getULEB128
 
 -- *** Instructions ***
 

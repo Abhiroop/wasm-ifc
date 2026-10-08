@@ -23,7 +23,7 @@ implementation (for example to check a claim against the code). Never merge `pap
 - Full local gate (format, `-Werror` build, tests, hlint, samples, cross-validate):
   `./scripts/gate.sh`; the fast core loop is `SUITES=wasm-ifc-test ./scripts/gate.sh`.
 - Three cabal test suites: `wasm-ifc-test` (unit, ~1s), `wasm-ifc-spec` (official spec
-  testsuite via `wast2json`, ~minutes), `wasm-ifc-wasi` (official wasi-testsuite).
+  testsuite at 3.0 via `wasm-tools`, ~minutes), `wasm-ifc-wasi` (official wasi-testsuite).
 - `cabal build all --ghc-options=-Werror` — warnings are errors; fix them, do not suppress.
 - Format with `fourmolu -i <files>` before committing; `hlint src app test` must say "No hints".
 
