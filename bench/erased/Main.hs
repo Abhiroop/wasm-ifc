@@ -84,7 +84,7 @@ import Runtime.Interpreter (
  )
 import Runtime.MemInst (MemInst, copyWithin, fillBytes, growMemory, loadWordUnchecked, memoryPages, storeWord, writeBytes)
 import Runtime.Module (SomeModuleInst (..))
-import Runtime.Stack (DataSpaceInst (..), GlobalSpaceInst (..), MemSpaceInst (..), TableSpaceInst (..))
+import Runtime.Stack (DataSpaceInst (..), GlobalSpaceInst (..), MemSpaceInst (..), TableInsts (..), TableSpaceInst (..))
 import Runtime.TableInst (tableEntryUnchecked, tableSize)
 import Runtime.Trap (Trap (..))
 import Syntax.Functions (Function (..))
@@ -672,7 +672,7 @@ eraseInstr instr = case instr of
     IMemInit _ ix -> EMemInit (positionOf ix)
     IDataDrop ix -> EDataDrop (positionOf ix)
     IDrop -> EDrop
-    ISelect _ -> ESelect
+    ISelect -> ESelect
     ILocalGet ref -> ELocalGet (localPosition ref) (fromSing (localType ref))
     ILocalSet _ _ ref -> ELocalSet (localPosition ref) (fromSing (localType ref))
     ILocalTee _ _ ref -> ELocalTee (localPosition ref) (fromSing (localType ref))
@@ -686,7 +686,7 @@ eraseInstr instr = case instr of
     IDeclassify -> ENop
     IStore _ _ nt memArg -> EStore (numType nt) memArg
     ICall _ _ _ witness ix -> ECall (widthOf witness) (positionOf ix)
-    ICallIndirect _ _ _ witness (SLabelledFuncType _ params results) -> ECallIndirect (widthOf witness) (FuncType (unlabelledTypes params) (unlabelledTypes results))
+    ICallIndirect _ _ _ _ witness (SLabelledFuncType _ params results) -> ECallIndirect (widthOf witness) (FuncType (unlabelledTypes params) (unlabelledTypes results))
     IBlock _ _ _ _ witness body -> EBlock (widthOf witness) (eraseExpr body)
     ILoop _ _ _ _ _ witness body -> ELoop (widthOf witness) (eraseExpr body)
     IIf _ _ _ _ witness thenArm elseArm -> EIf (widthOf witness) (eraseExpr thenArm) (eraseExpr elseArm)
@@ -743,9 +743,12 @@ eraseGlobals (SCons (SGlobalType _ (valTypeS :%~ _)) rest) (GCons v vs) = valueO
     valueOf SF32 = VF32
     valueOf SF64 = VF64
 
-eraseTable :: TableSpaceInst fts ts -> Maybe Table
-eraseTable TNil = Nothing
-eraseTable (TCons t _) = Just (Table n (IntMap.fromList [(fromIntegral i, erased ref) | n > 0, i <- [0 .. n - 1], Right ref <- [tableEntryUnchecked t i]]))
+eraseTable :: TableSpaceInst fts ts es -> Maybe Table
+eraseTable tables = case tables.instances of
+    TNil -> Nothing
+    TCons t _ -> Just (Table n (IntMap.fromList [(fromIntegral i, erased ref) | n > 0, i <- [0 .. n - 1], Right ref <- [tableEntryUnchecked tables.directory t i]]))
+      where
+        n = tableSize t
   where
     n = tableSize t
     erased (SomeFuncRef _ params results ix) = FuncRef (FuncType (unlabelledTypes params) (unlabelledTypes results)) (positionOf ix)
@@ -773,7 +776,7 @@ forced funcs = go funcs `seq` funcs
         _ -> ()
 
 runExport :: SomeModuleInst -> Text -> Either String [Value]
-runExport (SomeModuleInst (SModuleShape _ globalTypesS _ _ _) inst exports) name =
+runExport (SomeModuleInst (SModuleShape _ globalTypesS _ _ _ _) inst exports) name =
     case [index | Export exportName (ExportFunc (FunctionIdx index)) <- exports, exportName == name] of
         [] -> Left ("no exported function named " ++ T.unpack name)
         index : _ -> case functionAt (unary index) funcs of

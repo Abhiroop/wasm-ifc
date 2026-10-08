@@ -36,6 +36,7 @@ import Codec.Wasm (decodeModule)
 import Runtime.Instantiate (InstantiationError (..), instantiate)
 import Runtime.Module (Invocation (..), RunError (..), SomeModuleInst, Value (..), invokeExport, readGlobalExport, valueType)
 import Runtime.Trap (Trap (..))
+import Syntax.Immediates (Reference (..), isNullReference, nullReference, referenceTo)
 import Syntax.Types (ValType (..))
 import Validation.Elaborate (elaborateModuleWith)
 import Validation.Policy (Policy (..), Restrictions (..), emptyPolicy)
@@ -297,12 +298,12 @@ runCommand dir state cmd = case cmd.kind of
                 Right _ -> Failed ("accepted a module the spec rejects: " ++ maybe "" T.unpack cmd.trapText)
 
 {- | The features of WebAssembly this interpreter implements, as @wasm-tools validate@ names
-  them: WebAssembly 1.0 with the mutable-global, sign-extension, saturating-conversion,
-  multi-value and bulk-memory extensions. (@gc-types@ enables no instruction: it lets
-  @wasm-tools@ mention reference types at all once another feature introduces them.)
+  them: WebAssembly 2.0 without vector instructions, which is 1.0 with the mutable-global,
+  sign-extension, saturating-conversion, multi-value, bulk-memory and reference-types
+  extensions. (@gc-types@ enables no instruction: it lets @wasm-tools@ accept @externref@.)
 -}
 supportedFeatures :: String
-supportedFeatures = "-all,mutable-global,saturating-float-to-int,sign-extension,multi-value,bulk-memory,floats,gc-types"
+supportedFeatures = "-all,mutable-global,saturating-float-to-int,sign-extension,multi-value,bulk-memory,reference-types,floats,gc-types"
 
 {- | The features of WebAssembly 3.0 beyond 'supportedFeatures', each with the flags that
   enable it in @wasm-tools@ together with the features it builds on.
@@ -399,7 +400,8 @@ assertTrap m act expectedText
     | not (knownAction act) = (m, Skipped ("action " ++ T.unpack act.actionKind))
     | otherwise = case invoke m act of
         Left (Trapped trap)
-            | Just (trapText trap) == expectedText -> (m, Passed)
+            -- (The suite's text may say more than ours, as in "uninitialized element 2".)
+            | maybe False (trapText trap `T.isPrefixOf`) expectedText -> (m, Passed)
             | otherwise -> (m, Failed ("trapped with " ++ show trap ++ ", expected " ++ maybe "?" T.unpack expectedText))
         Left err -> (m, Failed ("invoke " ++ T.unpack act.field ++ ": " ++ show err))
         Right (m', results) -> (m', Failed ("expected a trap (" ++ maybe "?" T.unpack expectedText ++ "), got " ++ show results))
@@ -411,6 +413,7 @@ trapText IntegerOverflow = "integer overflow"
 trapText OutOfBoundsMemoryAccess = "out of bounds memory access"
 trapText InvalidConversionToInteger = "invalid conversion to integer"
 trapText UnreachableExecuted = "unreachable"
+trapText OutOfBoundsTableAccess = "out of bounds table access"
 trapText UndefinedElement = "undefined element"
 trapText UninitializedElement = "uninitialized element"
 trapText IndirectCallTypeMismatch = "indirect call type mismatch"
@@ -421,11 +424,18 @@ trapText (SecretRead _) = "secret read"
 trapText GlobalNotRestored = "global not restored"
 
 numericTypes :: [Text]
-numericTypes = ["i32", "i64", "f32", "f64"]
+numericTypes = ["i32", "i64", "f32", "f64", "funcref", "externref"]
 
 -- | A literal's value from its bit pattern.
 literalValue :: Literal -> Maybe Value
-literalValue lit = do
+literalValue lit = case (lit.litType, lit.litValue) of
+    ("funcref", Just "null") -> Just (FuncRefValue nullReference)
+    ("externref", Just "null") -> Just (ExternRefValue nullReference)
+    ("externref", Just number) -> ExternRefValue . referenceTo <$> readMaybe (T.unpack number)
+    _ -> numericLiteral lit
+
+numericLiteral :: Literal -> Maybe Value
+numericLiteral lit = do
     -- (wabt writes a bit pattern as an unsigned decimal, wasm-tools as a signed one.)
     bits <- readMaybe . T.unpack =<< lit.litValue :: Maybe Integer
     case lit.litType of
@@ -435,9 +445,18 @@ literalValue lit = do
         "f64" -> Just (F64Value (castWord64ToDouble (fromInteger bits)))
         _ -> Nothing
 
--- | Does a result match an expectation? Bit-exact, except that a NaN class matches any NaN.
+{- | Does a result match an expectation? Bit-exact, except that a NaN class matches any NaN.
+  A reference type with no value expects any reference of that type that is not null, and
+  @refnull@ a null reference of any type.
+-}
 matches :: Literal -> Value -> Bool
 matches lit actual
+    | Just reference <- referenceOf actual = case (lit.litType, lit.litValue) of
+        ("refnull", _) -> isNullReference reference
+        (expected, _) | expected /= typeName (valueType actual) -> False
+        (_, Nothing) -> not (isNullReference reference)
+        (_, Just "null") -> isNullReference reference
+        (_, Just number) -> fmap referenceTo (readMaybe (T.unpack number)) == Just reference
     | typeName (valueType actual) /= lit.litType = False
     | otherwise = case lit.litValue of
         Just "nan:canonical" -> isNaNValue actual
@@ -449,11 +468,16 @@ matches lit actual
     typeName I64 = "i64"
     typeName F32 = "f32"
     typeName F64 = "f64"
+    typeName FuncRef = "funcref"
+    typeName ExternRef = "externref"
+    referenceOf value = case value of
+        FuncRefValue reference -> Just reference
+        ExternRefValue reference -> Just reference
+        _ -> Nothing
     width = case valueType actual of
-        I32 -> 2 ^ (32 :: Int)
-        F32 -> 2 ^ (32 :: Int)
         I64 -> 2 ^ (64 :: Int)
         F64 -> 2 ^ (64 :: Int)
+        _ -> 2 ^ (32 :: Int)
 
 isNaNValue :: Value -> Bool
 isNaNValue (F32Value f) = isNaN f
@@ -465,6 +489,8 @@ valueBits (I32Value w) = fromIntegral w
 valueBits (I64Value w) = fromIntegral w
 valueBits (F32Value f) = fromIntegral (castFloatToWord32 f)
 valueBits (F64Value d) = fromIntegral (castDoubleToWord64 d :: Word64)
+valueBits (FuncRefValue (Reference word)) = fromIntegral word
+valueBits (ExternRefValue (Reference word)) = fromIntegral word
 
 -- *** Reporting ***
 

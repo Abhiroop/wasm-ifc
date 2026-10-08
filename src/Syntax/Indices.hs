@@ -9,6 +9,7 @@ module Syntax.Indices (
     MemoryIdx (..),
     GlobalIdx (..),
     DataIdx (..),
+    ElemIdx (..),
     LocalIdx (..),
     LabelIdx (..),
 ) where
@@ -21,5 +22,6 @@ newtype TableIdx = TableIdx Word32 deriving stock (Eq, Ord, Show)
 newtype MemoryIdx = MemoryIdx Word32 deriving stock (Eq, Ord, Show)
 newtype GlobalIdx = GlobalIdx Word32 deriving stock (Eq, Ord, Show)
 newtype DataIdx = DataIdx Word32 deriving stock (Eq, Ord, Show)
+newtype ElemIdx = ElemIdx Word32 deriving stock (Eq, Ord, Show)
 newtype LocalIdx = LocalIdx Word32 deriving stock (Eq, Ord, Show)
 newtype LabelIdx = LabelIdx Word32 deriving stock (Eq, Ord, Show)

@@ -43,6 +43,7 @@
   > type 2 : H -{H}-> H         ; the type-section entry an indirect call names
   > global 0 : H
   > export global key : H
+  > table 0 : H                ; a table, whose entries and size are then secret
   > load 3 5 : H               ; the sixth memory access of function 3
   > store 3 2 : H
   > region 0x1000 0x1400 : H   ; addresses in [0x1000, 0x1400) hold secrets; overlapping regions must agree
@@ -156,13 +157,15 @@ data Policy = Policy
     them ('Syntax.Types.Preserved'): the stack pointer of compiled C, global 0 of what wasi-sdk
     emits, which every function that needs a frame lowers on entry and raises on exit
     -}
+    , tablesByIndex :: Map Word32 SecLevel
+    -- ^ the level of a table, which bounds what is written to it and labels what is read from it
     }
     -- \^ by the directory's guest name
 
     deriving stock (Eq, Show)
 
 emptyPolicy :: Policy
-emptyPolicy = Policy Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty [] Nothing Map.empty Map.empty Map.empty False LiftFree SplitIntoWebs Map.empty Map.empty []
+emptyPolicy = Policy Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty [] Nothing Map.empty Map.empty Map.empty False LiftFree SplitIntoWebs Map.empty Map.empty [] Map.empty
 
 {- | Whether the validator splits every local into its webs before typing
   ("Validation.LocalWebs"), which it does unless the policy says otherwise. Typing the locals
@@ -257,6 +260,10 @@ parsePolicy source = foldM statement emptyPolicy (zip [1 ..] (T.lines source))
             i <- number lineNo ix
             l <- oneLevel lineNo body
             Right policy {globalsByIndex = Map.insert i l policy.globalsByIndex}
+        ["table", ix] -> do
+            i <- number lineNo ix
+            l <- oneLevel lineNo body
+            Right policy {tablesByIndex = Map.insert i l policy.tablesByIndex}
         ["export", "global", name] -> do
             l <- oneLevel lineNo body
             Right policy {exportedGlobals = Map.insert name l policy.exportedGlobals}
@@ -323,6 +330,7 @@ mergePolicies a b = do
     typesByIndex <- agreeing "type" a.typesByIndex b.typesByIndex
     globalsByIndex <- agreeing "global" a.globalsByIndex b.globalsByIndex
     exportedGlobals <- agreeing "export global" a.exportedGlobals b.exportedGlobals
+    tablesByIndex <- agreeing "table" a.tablesByIndex b.tablesByIndex
     loads <- agreeing "load" a.loads b.loads
     stores <- agreeing "store" a.stores b.stores
     loadDefaultsByIndex <- agreeing "load-default func" a.loadDefaultsByIndex b.loadDefaultsByIndex
@@ -354,6 +362,7 @@ mergePolicies a b = do
             , streamLevels
             , preopenLevels
             , preservedGlobals = a.preservedGlobals ++ [i | i <- b.preservedGlobals, i `notElem` a.preservedGlobals]
+            , tablesByIndex
             }
   where
     agreeing :: (Ord k, Show k, Eq v) => Text -> Map k v -> Map k v -> Either PolicyError (Map k v)
@@ -383,6 +392,8 @@ data Assembled = Assembled
     { functionTypes :: [LabelledFuncType]
     -- ^ one per entry of the function index space, in declared order
     , globalTypes :: [LabelledGlobalType]
+    , tableLevels :: [SecLevel]
+    -- ^ one per table: the level the policy declares, or public
     , sectionTypes :: [LabelledFuncType]
     -- ^ one per entry of the type section, in declared order
     , secretRegions :: [(Word32, Word32)]
@@ -451,7 +462,7 @@ assemble policy m = do
     mapM_ (\(lo, hi, _) -> when (lo >= hi) (Left (PolicyEmptyRegion lo hi))) policy.regions
     unless (null [() | (lo, hi, l) <- policy.regions, (lo', hi', l') <- policy.regions, l /= l', lo < hi', lo' < hi]) (Left (PolicyConflict "region"))
     ghosts <- Map.fromList <$> sequence [(i,) <$> ghostOf imp | (i, imp) <- zip [0 ..] m.imports, imp.moduleName == ghostModuleName]
-    mapM_ (notAGhost ghosts) ([(e.name, i) | e <- m.exports, ExportFunc (FunctionIdx i) <- [e.desc]] ++ [("start", i) | Just (FunctionIdx i) <- [m.start]] ++ [("elem", i) | seg <- m.elementSegments, FunctionIdx i <- seg.functions])
+    mapM_ (notAGhost ghosts) ([(e.name, i) | e <- m.exports, ExportFunc (FunctionIdx i) <- [e.desc]] ++ [("start", i) | Just (FunctionIdx i) <- [m.start]] ++ [("elem", i) | FunctionIdx i <- referencedFunctions m])
     mapM_ (knownFunction . fst) (Map.toList policy.functionsByIndex)
     mapM_ (knownFunction . fst) (Map.toList policy.loadDefaultsByIndex)
     mapM_ (knownFunction . fst) (Map.toList policy.storeDefaultsByIndex)
@@ -461,6 +472,7 @@ assemble policy m = do
     mapM_ publicImport (Map.toList policy.importedFunctions)
     mapM_ (knownGlobal . fst) (Map.toList policy.globalsByIndex)
     mapM_ knownGlobal policy.preservedGlobals
+    mapM_ (\i -> when (fromIntegral i >= length m.tables) (Left (PolicyUnknown ("table " <> T.pack (show i))))) (Map.keys policy.tablesByIndex)
     mapM_ (knownType . fst) (Map.toList policy.typesByIndex)
     mapM_ knownExportedGlobal (Map.keys policy.exportedGlobals)
     functionTypes <- traverse functionType (zip [0 ..] signatures)
@@ -471,6 +483,7 @@ assemble policy m = do
         Assembled
             { functionTypes
             , globalTypes
+            , tableLevels = [Map.findWithDefault Low i policy.tablesByIndex | (i, _) <- zip [0 ..] m.tables]
             , sectionTypes
             , secretRegions = [(lo, hi) | (lo, hi, High) <- policy.regions]
             , loadDefaults
@@ -520,7 +533,7 @@ assemble policy m = do
         fromIntegral i >= length m.imports
             && null (declarationsFor i)
             && null (exportNamesOf i)
-            && FunctionIdx i `notElem` concat [seg.functions | seg <- m.elementSegments]
+            && FunctionIdx i `notElem` referencedFunctions m
             && m.start /= Just (FunctionIdx i)
     -- Every declaration that names function @i@: by index, by each export name, by import.
     declarationsFor :: Word32 -> [(Text, FunctionLevels)]
@@ -640,6 +653,7 @@ assemble policy m = do
             I64 -> 8
             F32 -> 4
             F64 -> 8
+            _ -> 0 -- (a load of a reference type is rejected by validation)
         LoadN _ width _ _ -> toInteger width
         _ -> 0 :: Integer
     -- The level of the regions the bytes [from, from + width) fall in: secret if any is.

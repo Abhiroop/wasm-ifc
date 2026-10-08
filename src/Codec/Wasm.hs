@@ -129,7 +129,15 @@ getValType = do
         0x7E -> pure I64
         0x7D -> pure F32
         0x7C -> pure F64
+        0x70 -> pure FuncRef
+        0x6F -> pure ExternRef
         _ -> fail ("unknown valtype byte 0x" ++ showHex byte "")
+
+-- | A reference type: a value type that is one.
+getRefType :: Get ValType
+getRefType = do
+    valType <- getValType
+    if valType `elem` [FuncRef, ExternRef] then pure valType else fail "malformed reference type"
 
 getFuncType :: Get FuncType
 getFuncType = do
@@ -166,6 +174,8 @@ getBlockType types = do
         -2 -> pure (FuncType [] [I64])
         -3 -> pure (FuncType [] [F32])
         -4 -> pure (FuncType [] [F64])
+        -16 -> pure (FuncType [] [FuncRef])
+        -17 -> pure (FuncType [] [ExternRef])
         n -> case nth types (fromIntegral n) of
             Just ft -> pure ft
             Nothing -> fail ("block type index out of range: " ++ show n)
@@ -229,8 +239,7 @@ getInstr hasDataCount types opcode = case opcode of
     0x11 -> do
         typeIdx <- getULEB128
         tableIdx <- getULEB128
-        when (tableIdx /= 0) (fail "unsupported: call_indirect through a table other than 0")
-        pure (CallIndirect (TypeIdx typeIdx))
+        pure (CallIndirect (TableIdx tableIdx) (TypeIdx typeIdx))
     {- Locals & globals -}
     0x20 -> LocalGet . LocalIdx <$> getULEB128
     0x21 -> LocalSet . LocalIdx <$> getULEB128
@@ -408,6 +417,12 @@ getInstr hasDataCount types opcode = case opcode of
     0x1A -> pure Drop
     0x1B -> pure Select
     0x1C -> SelectTyped <$> getVec getValType
+    {- References and tables -}
+    0xD0 -> RefNull <$> getRefType
+    0xD1 -> pure RefIsNull
+    0xD2 -> RefFunc . FunctionIdx <$> getULEB128
+    0x25 -> TableGet . TableIdx <$> getULEB128
+    0x26 -> TableSet . TableIdx <$> getULEB128
     {- The 0xFC prefix: saturating truncations (0–7); the rest is bulk memory -}
     0xFC -> do
         sub <- getULEB128
@@ -430,6 +445,12 @@ getInstr hasDataCount types opcode = case opcode of
                 DataDrop . DataIdx <$> getULEB128
             10 -> reservedZero >> reservedZero >> pure MemoryCopy
             11 -> reservedZero >> pure MemoryFill
+            12 -> TableInit . ElemIdx <$> getULEB128 <*> (TableIdx <$> getULEB128)
+            13 -> ElemDrop . ElemIdx <$> getULEB128
+            14 -> TableCopy . TableIdx <$> getULEB128 <*> (TableIdx <$> getULEB128)
+            15 -> TableGrow . TableIdx <$> getULEB128
+            16 -> TableSize . TableIdx <$> getULEB128
+            17 -> TableFill . TableIdx <$> getULEB128
             _ -> fail ("unsupported: 0xFC opcode " ++ show sub)
     _ -> fail ("unsupported opcode 0x" ++ showHex opcode "")
 
@@ -551,41 +572,38 @@ getImport types = do
         _ -> fail ("unknown import kind 0x" ++ showHex kind "")
     pure (RawImport moduleName fieldName desc)
 
--- | A table type: only @funcref@ (0x70) tables are supported.
+-- | A table type: the reference type of its entries, then its limits.
 getTable :: Get RawTable
-getTable = do
-    refType <- getWord8
-    when (refType /= 0x70) (fail "unsupported: table of a reference type other than funcref")
-    RawTable <$> getLimits
+getTable = RawTable <$> getRefType <*> getLimits
 
-{- | An element segment. The active forms for table 0 are supported — flags 0 (function
-  indices), 2 (an explicit table index, which must be 0) and 4 (@ref.func@ expressions);
-  passive and declarative segments are not.
+{- | An element segment. Bit 0 of its flags says that it is not active, bit 1 that an active
+  one names its table (or that an inactive one is declarative), and bit 2 that its items are
+  expressions and not function indices. A function index is kept as the expression it
+  abbreviates, @ref.func@ of it.
 -}
 getElem :: Get RawElementSegment
 getElem = do
-    flags <- getULEB128
-    case flags of
-        0 -> RawElementSegment <$> getExpr False [] <*> getVec (FunctionIdx <$> getULEB128)
-        2 -> do
-            tableIdx <- getULEB128
-            when (tableIdx /= 0) (fail "unsupported: element segment for a table other than 0")
-            offset <- getExpr False []
+    flags <- getULEB128 :: Get Word32
+    let indices = map (\f -> [RefFunc f]) <$> getVec (FunctionIdx <$> getULEB128)
+        expressions = getVec (getExpr False [])
+        kindThenIndices = do
             elemKind <- getWord8
             when (elemKind /= 0) (fail ("unknown element kind " ++ show elemKind))
-            RawElementSegment offset <$> getVec (FunctionIdx <$> getULEB128)
-        4 -> RawElementSegment <$> getExpr False [] <*> getVec getFuncRefExpr
-        _ -> fail ("unsupported: element segment with flags " ++ show flags)
-
--- | A constant expression of the form @ref.func x end@.
-getFuncRefExpr :: Get FunctionIdx
-getFuncRefExpr = do
-    opcode <- getWord8
-    when (opcode /= 0xD2) (fail "unsupported: element expression other than ref.func")
-    idx <- getULEB128
-    end <- getWord8
-    when (end /= 0x0B) (fail "malformed element expression")
-    pure (FunctionIdx idx)
+            RawElementSegment ElemPassive FuncRef <$> indices
+        typeThenExpressions = RawElementSegment ElemPassive <$> getRefType <*> expressions
+        activeIn table segment = (\offset (RawElementSegment _ entryType items) -> RawElementSegment (ElemActive table offset) entryType items) <$> getExpr False [] <*> segment
+        named segment = getULEB128 >>= \table -> activeIn (TableIdx table) segment
+        declarative segment = (\(RawElementSegment _ entryType items) -> RawElementSegment ElemDeclarative entryType items) <$> segment
+    case flags of
+        0 -> activeIn (TableIdx 0) (RawElementSegment ElemPassive FuncRef <$> indices)
+        1 -> kindThenIndices
+        2 -> named kindThenIndices
+        3 -> declarative kindThenIndices
+        4 -> activeIn (TableIdx 0) (RawElementSegment ElemPassive FuncRef <$> expressions)
+        5 -> typeThenExpressions
+        6 -> named typeThenExpressions
+        7 -> declarative typeThenExpressions
+        _ -> fail ("unknown element segment flags " ++ show flags)
 
 getMemory :: Get RawMemory
 getMemory = RawMemory . MemType AddrI32 <$> getLimits

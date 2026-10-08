@@ -19,6 +19,7 @@ module Runtime.Module (
     exportedResultLevels,
     exportedGlobalLevel,
     readMemoryLevels,
+    readTable,
     invokeExport,
     readGlobalExport,
     continueWith,
@@ -32,9 +33,10 @@ import Data.Word (Word32, Word64, Word8)
 
 import Runtime.Interpreter (Config, FuncSpaceInst, Halt (..), HostRequest, ModuleInst (..), Outcome (..), getFunc, run, runFunction, storeToModule)
 import Runtime.MemInst (levelOfRange, readBytes)
-import Runtime.Stack (MemSpaceInst (..), ValueStack (..), getGlobal)
+import Runtime.Stack (MemSpaceInst (..), TableInsts (..), TableSpaceInst (..), ValueStack (..), getGlobal)
+import Runtime.TableInst (readEntries, tableSize)
 import Runtime.Trap (Trap)
-import Syntax.Immediates (HostType)
+import Syntax.Immediates (HostType, Reference, isNullReference, referent)
 import Syntax.Indices (FunctionIdx (..), GlobalIdx (..))
 import Syntax.Module (Export (..), ExportDesc (..))
 import Syntax.Types
@@ -54,6 +56,8 @@ data Value
     | I64Value Word64
     | F32Value Float
     | F64Value Double
+    | FuncRefValue Reference
+    | ExternRefValue Reference
     deriving stock (Eq, Show)
 
 valueType :: Value -> ValType
@@ -61,13 +65,17 @@ valueType (I32Value _) = I32
 valueType (I64Value _) = I64
 valueType (F32Value _) = F32
 valueType (F64Value _) = F64
+valueType (FuncRefValue _) = FuncRef
+valueType (ExternRefValue _) = ExternRef
 
--- | Integers as unsigned decimals (the raw bits), floats as Haskell shows them.
+-- | Integers as unsigned decimals (the raw bits), floats as Haskell shows them, references by index.
 renderValue :: Value -> String
 renderValue (I32Value w) = show w
 renderValue (I64Value w) = show w
 renderValue (F32Value f) = show f
 renderValue (F64Value d) = show d
+renderValue (FuncRefValue r) = maybe "null" (\index -> "func " ++ show index) (referent r)
+renderValue (ExternRefValue r) = maybe "null" (\index -> "extern " ++ show index) (referent r)
 
 data RunError
     = -- | no export of that name and kind (a function to invoke, a global to read)
@@ -167,6 +175,15 @@ readMemoryLevels (SomeModuleInst _ inst _) addr count = case inst.memories of
         pure (zip bytes [levelOfRange mem a 1 | a <- [addr .. addr + count - 1]])
     MNil -> Nothing
 
+-- | The entries of a table, by its index: for tests that compare what two runs left in it.
+readTable :: SomeModuleInst -> Word32 -> Maybe [Reference]
+readTable (SomeModuleInst _ inst _) = entriesAt inst.tables.instances
+  where
+    entriesAt :: TableInsts ts -> Word32 -> Maybe [Reference]
+    entriesAt TNil _ = Nothing
+    entriesAt (TCons table _) 0 = readEntries 0 (tableSize table) table
+    entriesAt (TCons _ rest) n = entriesAt rest (n - 1)
+
 -- | The current value of an exported global (the spec's @get@ action).
 readGlobalExport :: SomeModuleInst -> Text -> Either RunError Value
 readGlobalExport (SomeModuleInst shapeS inst exports) name = do
@@ -214,6 +231,10 @@ fromValue SI32 (I32Value w) = Just w
 fromValue SI64 (I64Value w) = Just w
 fromValue SF32 (F32Value f) = Just f
 fromValue SF64 (F64Value d) = Just d
+-- (From outside, the only reference to a function is null: one that names a function comes
+-- from the module's own code, 'Validation.Ref.FunctionRef'.)
+fromValue SFuncRef (FuncRefValue r) | isNullReference r = Just r
+fromValue SExternRef (ExternRefValue r) = Just r
 fromValue _ _ = Nothing
 
 toValues :: Sing (rs :: [LabelledValType]) -> ValueStack rs -> [Value]
@@ -225,6 +246,8 @@ toValue SI32 = I32Value
 toValue SI64 = I64Value
 toValue SF32 = F32Value
 toValue SF64 = F64Value
+toValue SFuncRef = FuncRefValue
+toValue SExternRef = ExternRefValue
 
 note :: e -> Maybe a -> Either e a
 note e = maybe (Left e) Right

@@ -49,6 +49,11 @@ A policy can also declare a public global preserved (`preserved global 0`, the s
 of compiled C). Code may then change it where a secret decided the control flow, and the
 machine checks, where that code ends, that the global has its old value again.
 
+A table has one level, declared like a global's (`table 0 : H`) and public otherwise. What is
+read from a table is as secret as the table, its size included; a write to it, a `table.grow`
+included, needs the pc, the index and the value to flow into its level; and a call through
+it is a call from a context as secret as the table.
+
 At the host boundary an import is called from a public context with public arguments, and its
 results take the policy's levels. Every byte a host call takes from memory is checked against
 the level of the file descriptor it concerns, and the run traps if the byte is more secret:
@@ -94,10 +99,12 @@ cabal test          # unit tests, the spec testsuite (needs wasm-tools), the was
 
 ### Status
 
-WebAssembly: the numeric, comparison and conversion instructions, memory including bulk
-memory, structured control, calls, `call_indirect` through tables, globals, typed `select`,
-whole-module validation and the start function. The official spec testsuite, at the
-WebAssembly 3.0 release, passes for this subset (27,891 assertions over 257 scripts, none
+WebAssembly 2.0 without vector instructions and with imports of functions only: the numeric, comparison and conversion
+instructions, memory including bulk memory, structured control, calls, reference types
+(`funcref`, `externref`), several tables with the table instructions and every kind of element
+segment, `call_indirect`, globals, typed `select`, whole-module validation and the start
+function. The official spec testsuite, at the
+WebAssembly 3.0 release, passes for this subset (30,693 assertions over 257 scripts, none
 failing; the rest need features listed below, and `scripts/spec-report.py` counts them by
 feature), and so does
 every program in the official wasi-testsuite (72 of 72), over the complete WASI Preview 1
@@ -116,8 +123,10 @@ its rule depends on, and the machine's step for it type-checks only with evidenc
 checked memory read, or the checked table lookup, hands out (`Runtime.Obligation`;
 `test/obligations-must-not-compile.sh` checks that four wrong steps are rejected).
 
-Not yet: a noninterference proof; imports of tables,
-memories and globals; the `table.*` instructions; multiple memories; reference and SIMD types.
+Not yet: a noninterference proof; imports of tables, memories and globals, and linking
+between modules; vector instructions; and what WebAssembly 3.0 adds (multiple and 64-bit
+memories, tail calls, extended constant expressions, exceptions, typed function references,
+garbage collection).
 The backlog is `TODO.md`; what the paper can cite is in `HANDOFF.md`.
 
 ### Toolchain

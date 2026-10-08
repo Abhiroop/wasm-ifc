@@ -28,7 +28,13 @@ module Runtime.Stack (
     initialGlobals,
     MemSpaceInst (..),
     TableSpaceInst (..),
-    firstTable,
+    TableInsts (..),
+    ElemSpaceInst (..),
+    noTables,
+    getTable,
+    setTable,
+    getElements,
+    dropElements,
     DataSpaceInst (..),
     getSegment,
     dropSegment,
@@ -60,13 +66,13 @@ import GHC.Float (castDoubleToWord64, castFloatToWord32, castWord32ToFloat, cast
 import Data.List.Singletons (type (++))
 import Data.Singletons.Base.TH (SList (SCons, SNil), Sing)
 import Runtime.MemInst (MemInst)
-import Runtime.TableInst (TableInst)
+import Runtime.TableInst (FunctionDirectory, TableInst, functionDirectory)
 import Syntax.Globals (Global (..), GlobalSpace (..))
-import Syntax.Immediates (HostType)
+import Syntax.Immediates (HostType, Reference (..))
 import Syntax.Types
 import Syntax.TypesIFC
 import Validation.Ref (LocalRef, localPosition, localType)
-import Validation.Shape (Append (..), DataShape (..), Elem (..), MemShape, PreservedGlobals (..), PreservedOf, Recorded (..), RecordedGlobals, ReverseOnto, TableShape)
+import Validation.Shape (Append (..), DataShape (..), Elem (..), ElemShape (..), MemShape, PreservedGlobals (..), PreservedOf, Recorded (..), RecordedGlobals, ReverseOnto, TableShape)
 
 {- | The operand stack (head = top of stack), indexed by the types it holds.
 
@@ -189,6 +195,8 @@ packValue SI32 v = fromIntegral v
 packValue SI64 v = v
 packValue SF32 v = fromIntegral (castFloatToWord32 v)
 packValue SF64 v = castDoubleToWord64 v
+packValue SFuncRef (Reference w) = w
+packValue SExternRef (Reference w) = w
 
 -- | Read a packed word back at its type: the inverse of 'packValue'.
 unpackValue :: Sing (t :: ValType) -> Word64 -> HostType t
@@ -196,6 +204,8 @@ unpackValue SI32 w = fromIntegral w
 unpackValue SI64 w = w
 unpackValue SF32 w = castWord32ToFloat (fromIntegral w)
 unpackValue SF64 w = castWord64ToDouble w
+unpackValue SFuncRef w = Reference w
+unpackValue SExternRef w = Reference w
 
 lengthOf :: Sing (ls :: [LabelledValType]) -> Int
 lengthOf SNil = 0
@@ -253,17 +263,61 @@ firstMem (MCons mem _) = mem
 setFirstMem :: MemInst m -> MemSpaceInst (m ': ms) -> MemSpaceInst (m ': ms)
 setFirstMem mem (MCons _ rest) = MCons mem rest
 
-{- | A module's tables, indexed by their declared shapes and by the module's function types
-  (which every entry is a reference into). Non-emptiness is the runtime counterpart of the
-  @ModuleTables shape ~ (t ': ts)@ constraint @call_indirect@ carries, so 'firstTable' is total.
+{- | A module's tables, indexed by their declared shapes, together with what they are filled
+  from and resolved against: the element segments as they stand (a dropped segment is empty;
+  active and declarative segments are dropped as soon as the module is instantiated, as the
+  spec prescribes), and the directory of the module's functions, which an indirect call
+  resolves an entry in. They are one field of the machine's store because none of them is
+  touched by ordinary code.
 -}
-type TableSpaceInst :: [LabelledFuncType] -> [TableShape] -> Type
-data TableSpaceInst fts ts where
-    TNil :: TableSpaceInst fts '[]
-    TCons :: !(TableInst fts) -> !(TableSpaceInst fts ts) -> TableSpaceInst fts (t ': ts)
+type TableSpaceInst :: [LabelledFuncType] -> [TableShape] -> [ElemShape] -> Type
+data TableSpaceInst fts ts es = TableSpaceInst
+    { directory :: !(FunctionDirectory fts)
+    , instances :: !(TableInsts ts)
+    , segments :: !(ElemSpaceInst es)
+    }
 
-firstTable :: TableSpaceInst fts (t ': ts) -> TableInst fts
-firstTable (TCons table _) = table
+type TableInsts :: [TableShape] -> Type
+data TableInsts ts where
+    TNil :: TableInsts '[]
+    TCons :: !TableInst -> !(TableInsts ts) -> TableInsts (t ': ts)
+
+-- | The table space of a module with no table and no element segment.
+noTables :: TableSpaceInst fts '[] '[]
+noTables = TableSpaceInst (functionDirectory []) TNil ENil
+
+getTable :: Elem t ts -> TableSpaceInst fts ts es -> TableInst
+getTable ix tables = go ix tables.instances
+  where
+    go :: Elem t ts -> TableInsts ts -> TableInst
+    go Here (TCons table _) = table
+    go (There rest) (TCons _ others) = go rest others
+
+setTable :: Elem t ts -> TableInst -> TableSpaceInst fts ts es -> TableSpaceInst fts ts es
+setTable ix table tables = tables {instances = go ix tables.instances}
+  where
+    go :: Elem t ts -> TableInsts ts -> TableInsts ts
+    go Here (TCons _ others) = TCons table others
+    go (There rest) (TCons other others) = TCons other (go rest others)
+
+type ElemSpaceInst :: [ElemShape] -> Type
+data ElemSpaceInst es where
+    ENil :: ElemSpaceInst '[]
+    ECons :: ![Reference] -> !(ElemSpaceInst es) -> ElemSpaceInst ('ElemShape t ': es)
+
+getElements :: Elem ('ElemShape t) es -> TableSpaceInst fts ts es -> [Reference]
+getElements ix tables = go ix tables.segments
+  where
+    go :: Elem e es -> ElemSpaceInst es -> [Reference]
+    go Here (ECons references _) = references
+    go (There rest) (ECons _ others) = go rest others
+
+dropElements :: Elem ('ElemShape t) es -> TableSpaceInst fts ts es -> TableSpaceInst fts ts es
+dropElements ix tables = tables {segments = go ix tables.segments}
+  where
+    go :: Elem e es -> ElemSpaceInst es -> ElemSpaceInst es
+    go Here (ECons _ others) = ECons [] others
+    go (There rest) (ECons references others) = ECons references (go rest others)
 
 {- | A module's data segments as they stand at run time, one slot per segment of the data index
   space: the bytes still available to @memory.init@, or nothing once dropped (active segments

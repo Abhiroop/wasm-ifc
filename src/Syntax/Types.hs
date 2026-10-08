@@ -37,7 +37,7 @@ import Data.Word (Word32)
   constructors 'ValType' currently happens to have — adding @FuncRef@/@V128@ cannot silently
   make @funcref.add@ representable.
 -}
-data ValType = I32 | I64 | F32 | F64 -- later: | V128 | FuncRef | ExternRef
+data ValType = I32 | I64 | F32 | F64 | FuncRef | ExternRef -- later: | V128
     deriving stock (Eq, Show)
 
 -- Singletons for the value type: the intrinsically-typed layer reflects these between the
@@ -82,6 +82,8 @@ decideNum SI32 = Just I32IsNum
 decideNum SI64 = Just I64IsNum
 decideNum SF32 = Just F32IsNum
 decideNum SF64 = Just F64IsNum
+decideNum SFuncRef = Nothing
+decideNum SExternRef = Nothing
 
 -- | The width in bytes of a numeric type (4 for i32/f32, 8 for i64/f64).
 numBytes :: IsNum t -> Int
@@ -102,12 +104,37 @@ decideInt SI32 = Just I32IsInt
 decideInt SI64 = Just I64IsInt
 decideInt SF32 = Nothing
 decideInt SF64 = Nothing
+decideInt SFuncRef = Nothing
+decideInt SExternRef = Nothing
 
 decideFloat :: Sing (t :: ValType) -> Maybe (IsFloat t)
 decideFloat SF32 = Just F32IsFloat
 decideFloat SF64 = Just F64IsFloat
 decideFloat SI32 = Nothing
 decideFloat SI64 = Nothing
+decideFloat SFuncRef = Nothing
+decideFloat SExternRef = Nothing
+
+{- | Evidence that a value type is a reference type (the spec's @reftype@), refined to which
+  one: a reference to a function of the module, or to a value of the host that the module
+  cannot inspect. Carried by the instructions on references and by a table's element type.
+-}
+data IsRef (t :: ValType) where
+    FuncRefIsRef :: IsRef 'FuncRef
+    ExternRefIsRef :: IsRef 'ExternRef
+
+decideRef :: Sing (t :: ValType) -> Maybe (IsRef t)
+decideRef SFuncRef = Just FuncRefIsRef
+decideRef SExternRef = Just ExternRefIsRef
+decideRef SI32 = Nothing
+decideRef SI64 = Nothing
+decideRef SF32 = Nothing
+decideRef SF64 = Nothing
+
+-- | Recover the value-type singleton from a reference witness.
+refSing :: IsRef t -> Sing t
+refSing FuncRefIsRef = SFuncRef
+refSing ExternRefIsRef = SExternRef
 
 {- | A result type — the stack shape a block, loop, if, or function yields (the spec's
   @resulttype@). It is exactly a list of value types; the synonym names the intent so

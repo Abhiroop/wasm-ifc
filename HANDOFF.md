@@ -360,3 +360,52 @@ assertion is counted under the features its module uses, which `wasm-tools valid
   malformed), where it used to fail validation as a misaligned access.
 - **Tools:** the runner needs `wasm-tools` (1.261); wabt's `wast2json` cannot parse 44 of the
   257 scripts.
+
+## Reference types and tables (item 13, second step, 2026-10-08)
+
+The interpreter now covers WebAssembly 2.0 without vector instructions and without imports of
+tables, memories and globals (only functions are imported): `funcref` and
+`externref` as value types, `ref.null`, `ref.is_null`, `ref.func`, typed `select` on
+references, several tables per module, `table.get`, `table.set`, `table.size`, `table.grow`,
+`table.fill`, `table.copy`, `table.init`, `elem.drop`, passive and declarative element
+segments, segments given as expressions, and `call_indirect` through any table.
+
+- **Spec suite:** 30,693 assertions passed, 0 failed, 34,509 skipped (27,891 and 37,311
+  before), the same with SecWasm's restrictions on; 44 scripts run with nothing skipped. The
+  skips by feature are in `TODO.md`. `table_copy.wast` and `table_init.wast` still skip 2,616
+  assertions, because their modules import functions from another module of the script
+  (linking, not done).
+- **The rules** (ours: SecWasm has no reference types and no instruction that writes a table).
+  A table has one static level `lt` from the policy (`table N : H`, public otherwise), as
+  Section 5's "Beyond the Calculus" and the "Tables and references" row of Appendix A say. The
+  typed constructors are in `src/Syntax/Instructions.hs`:
+  - `table.get`: the result is labelled pc ⊔ index ⊔ lt.
+  - `table.set`: pc ⊔ index ⊔ value ⊑ lt.
+  - `table.size`: the result is labelled pc ⊔ lt. The size of a table is part of its contents.
+  - `table.grow`: pc ⊔ count ⊔ value ⊑ lt, and the result is labelled pc ⊔ lt.
+  - `table.fill`: pc ⊔ count ⊔ value ⊔ index ⊑ lt.
+  - `table.copy`: pc ⊔ the three operands ⊔ the source table's level ⊑ the destination's.
+  - `table.init`: pc ⊔ the three operands ⊑ lt. An element segment is public.
+  - `elem.drop`: no premise, like `data.drop`: whether a later `table.init` traps is not an
+    output.
+  - `ref.null` and `ref.func` are constants, typed like `const`; `ref.is_null` is as secret as
+    its operand; `select` on references is the rule of `select`.
+  - `call_indirect`: pc ⊔ index ⊔ lt ⊑ the expected bound (lt is new). The run-time check on
+    the callee is unchanged.
+  The paper states the static level and the two call rules. The rules for `table.size`,
+  `table.grow`, `table.fill`, `table.copy`, `table.init` and `elem.drop` are this
+  implementation's reading of "like a global" and are for the paper track to confirm.
+- **Not in the calculus, not proved.** No dynamic check was added: tables have no run-time
+  labels.
+- **Inference:** a function whose reference the module takes (in an element segment or a
+  global's initial value) keeps its declared type, like an exported one.
+- **Tests:** eight unit examples (`test/Spec.hs`, "references and tables"); the generator of
+  the noninterference property now writes, grows, copies, reads and calls through a public and
+  a secret table, and compares the public table of the two runs. 100,000 cases, no
+  counterexample (30 % accepted and finished, 6 % accepted with a trap, 64 % rejected). A
+  mutant whose `table.get` forgets the table's level fails after 7,470 cases; the first
+  version of the generator did not find it in 30,000, until the entry written was made to
+  depend on the parity of the secret.
+- **Representation:** a reference is one word (null, or an index); `TODO.md` records what the
+  types do not rule out there.
+- **Cost:** the allocation tripwire is unchanged (`bench/tripwire.py`); no timing was run.

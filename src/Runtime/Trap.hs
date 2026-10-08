@@ -16,6 +16,8 @@ data Trap
     = IntegerDivideByZero
     | IntegerOverflow
     | OutOfBoundsMemoryAccess
+    | -- | a table instruction with an index past the table, or past the element segment
+      OutOfBoundsTableAccess
     | InvalidConversionToInteger
     | UnreachableExecuted
     | -- | @call_indirect@ with an index past the table

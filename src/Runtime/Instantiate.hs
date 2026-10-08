@@ -24,15 +24,15 @@ import Runtime.Host (SomeWasiFunc (..), resolveWasiImport, wasiFuncType, wasiMod
 import Runtime.Interpreter (FuncInst (..), FuncSpaceInst (..), ModuleInst (..), Outcome (..), getFunc, runFunction)
 import Runtime.MemInst (allocMemory, labelRange, writeBytes)
 import Runtime.Module (SomeModuleInst (..))
-import Runtime.Stack (DataSpaceInst (..), MemSpaceInst (..), TableSpaceInst (..), ValueStack (..), initialGlobals)
-import Runtime.TableInst (allocTable, setTableEntries)
+import Runtime.Stack (DataSpaceInst (..), ElemSpaceInst (..), MemSpaceInst (..), TableInsts (..), TableSpaceInst (..), ValueStack (..), getTable, initialGlobals, setTable)
+import Runtime.TableInst (allocTable, functionDirectory, writeEntries)
 import Runtime.Trap (Trap)
 import Syntax.Functions (FunctionSpace (..))
-import Syntax.Module (DataSegment (..), ElementSegment (..), Module (..), SomeModule (..))
+import Syntax.Module (DataSegment (..), ElementMode (..), ElementSegment (..), ElementSpace (..), Module (..), SomeModule (..), constReference)
 import Syntax.Types
 import Syntax.TypesIFC (LabelledFuncType (..), SLabelledFuncType (..), SSecLevel (..), SecLevel (..), decideSameValueTypes, decideSegmentFlows)
 import Validation.Policy (ghostModuleName)
-import Validation.Reflect (NonEmptyMems (..), memsNonEmpty)
+import Validation.Reflect (NonEmptyMems (..), allFuncRefs, memsNonEmpty)
 import Validation.Shape
 
 data InstantiationError
@@ -60,11 +60,11 @@ data InstantiationError
 
 instantiate :: SomeModule -> Either InstantiationError SomeModuleInst
 instantiate (SomeModule shapeS m) = case shapeS of
-    SModuleShape ftsS _ msS tsS dsS -> do
+    SModuleShape ftsS _ msS tsS dsS _ -> do
         funcs <- link (memsNonEmpty msS) ftsS m.functions
         placed <- placeData m.dataSegments (allocateMemories msS)
         mems <- labelRegions m.secretRegions placed
-        tables <- placeElements m.elementSegments (allocateTables tsS)
+        tables <- placeElements 0 m.elementSegments (TableSpaceInst (functionDirectory (allFuncRefs ftsS)) (allocateTables tsS) (keptElements m.elementSegments))
         let inst = ModuleInst {functions = funcs, globals = initialGlobals m.globals, memories = mems, tables, dataSegments = remainingData dsS m.dataSegments}
         started <- runStart inst m.start
         Right (SomeModuleInst shapeS started m.exports)
@@ -101,12 +101,12 @@ allocateMemories (SCons shape rest) = MCons (allocMemory (limitsOf (fromSing sha
   where
     limitsOf (MemShape _ lo hi) = Limits (fromIntegral lo) (fmap fromIntegral hi)
 
--- | Every table at its declared minimum size, uninitialised, from the shape.
-allocateTables :: Sing (ts :: [TableShape]) -> TableSpaceInst fts ts
+-- | Every table at its declared minimum size, its entries null, from the shape.
+allocateTables :: Sing (ts :: [TableShape]) -> TableInsts ts
 allocateTables SNil = TNil
 allocateTables (SCons shape rest) = TCons (allocTable (limitsOf (fromSing shape))) (allocateTables rest)
   where
-    limitsOf (TableShape lo hi) = Limits (fromIntegral lo) (fmap fromIntegral hi)
+    limitsOf (TableShape _ _ lo hi) = Limits (fromIntegral lo) (fmap fromIntegral hi)
 
 -- | Copy the active data segments into memory 0, in order.
 placeData :: [DataSegment] -> MemSpaceInst ms -> Either InstantiationError (MemSpaceInst ms)
@@ -127,13 +127,28 @@ labelRegions regions (MCons mem rest) = do
     Right (MCons mem' rest)
 labelRegions ((lo, hi) : _) MNil = Left (RegionOutOfBounds lo hi)
 
--- | Place the element segments' functions into table 0, in order.
-placeElements :: [ElementSegment fts] -> TableSpaceInst fts ts -> Either InstantiationError (TableSpaceInst fts ts)
-placeElements [] tables = Right tables
-placeElements segments (TCons table rest) = do
-    table' <- foldl (\acc (i, segment) -> acc >>= \current -> note (ElementSegmentOutOfBounds i) (setTableEntries segment.offset segment.functions current)) (Right table) (zip [0 ..] segments)
-    Right (TCons table' rest)
-placeElements (_ : _) TNil = Left (ElementSegmentOutOfBounds 0)
+-- | Write the active element segments into their tables, in order.
+placeElements :: Int -> ElementSpace shape es -> TableSpaceInst fts (ModuleTables shape) kept -> Either InstantiationError (TableSpaceInst fts (ModuleTables shape) kept)
+placeElements _ NoElements tables = Right tables
+placeElements index (Elements segment rest) tables = do
+    written <- case segment.mode of
+        WrittenTo tableIx offset -> do
+            table <- note (ElementSegmentOutOfBounds index) (writeEntries offset (map constReference segment.items) (getTable tableIx tables))
+            Right (setTable tableIx table tables)
+        KeptForInit -> Right tables
+        DeclaredOnly -> Right tables
+    placeElements (index + 1) rest written
+
+{- | The element segments as @table.init@ will find them: passive ones keep their references,
+active and declarative ones are already dropped.
+-}
+keptElements :: ElementSpace shape es -> ElemSpaceInst es
+keptElements NoElements = ENil
+keptElements (Elements segment rest) = ECons kept (keptElements rest)
+  where
+    kept = case segment.mode of
+        KeptForInit -> map constReference segment.items
+        _ -> []
 
 {- | The data segments as @memory.init@ will find them: passive ones keep their bytes, active
 ones are already dropped (instantiation copied them).

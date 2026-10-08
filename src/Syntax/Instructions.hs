@@ -46,16 +46,18 @@ import Syntax.Immediates
 import Syntax.Indices
 import Syntax.Types
 import Syntax.TypesIFC
-import Validation.Ref (LocalRef)
+import Validation.Ref (FunctionRef, LocalRef)
 import Validation.Shape (
     Append (..),
     BranchTarget,
     DataShape (..),
     Elem,
+    ElemShape (..),
     FrameLocals,
     FrameReturn,
     FrameShape,
     ModuleData,
+    ModuleElems,
     ModuleFuncs,
     ModuleGlobals,
     ModuleMems,
@@ -64,6 +66,7 @@ import Validation.Shape (
     RecordedGlobals,
     Restores (..),
     TableReach,
+    TableShape (..),
     appendFromSing,
  )
 
@@ -83,7 +86,7 @@ data RawInstr where
     BrTable :: [LabelIdx] -> LabelIdx -> RawInstr
     Return :: RawInstr
     Call :: FunctionIdx -> RawInstr
-    CallIndirect :: TypeIdx -> RawInstr
+    CallIndirect :: TableIdx -> TypeIdx -> RawInstr
     -- \*** Locals & globals ***
     LocalGet :: LocalIdx -> RawInstr
     LocalSet :: LocalIdx -> RawInstr
@@ -117,6 +120,19 @@ data RawInstr where
     MemoryFill :: RawInstr
     MemoryInit :: DataIdx -> RawInstr
     DataDrop :: DataIdx -> RawInstr
+    -- \*** References and tables ***
+    RefNull :: ValType -> RawInstr
+    RefIsNull :: RawInstr
+    RefFunc :: FunctionIdx -> RawInstr
+    TableGet :: TableIdx -> RawInstr
+    TableSet :: TableIdx -> RawInstr
+    TableSize :: TableIdx -> RawInstr
+    TableGrow :: TableIdx -> RawInstr
+    TableFill :: TableIdx -> RawInstr
+    -- | @table.copy@: the destination table, then the source
+    TableCopy :: TableIdx -> TableIdx -> RawInstr
+    TableInit :: ElemIdx -> TableIdx -> RawInstr
+    ElemDrop :: ElemIdx -> RawInstr
     -- \*** Constants ***
     Const :: Sing (t :: ValType) -> HostType t -> RawInstr
     -- \*** Numeric ***
@@ -380,12 +396,61 @@ data
         Elem 'DataShape (ModuleData m) ->
         Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck (('I32 ':~ ln) ': ('I32 ':~ lsrc) ': ('I32 ':~ ldst) ': s) s
     IDataDrop :: Elem 'DataShape (ModuleData m) -> Instr m f l p p 'NoDynamicCheck s s
-    {- Stack management. @drop@ works on any value type; @select@ (0x1B) on numeric operands and
+    {- References. @ref.null@ and @ref.func@ are constants, typed like 'IConst'; a function
+       is named by a reference that validation resolved from its witness ('FunctionRef').
+       @ref.is_null@ is a test, as secret as its operand. -}
+    IRefNull :: forall lv t m f l pc pcs s. IsRef t -> Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck s ((t ':~ Join pc lv) ': s)
+    IRefFunc :: forall lv m f l pc pcs s. FunctionRef (ModuleFuncs m) -> Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck s (('FuncRef ':~ Join pc lv) ': s)
+    IRefIsNull :: IsRef t -> Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck ((t ':~ lv) ': s) (('I32 ':~ Join pc lv) ': s)
+    {- Tables. A table is named by an 'Elem' into the module's table index space, whose shape
+       gives the type of its entries and its level @lt@. SecWasm covers WebAssembly 1.0, where
+       only @call_indirect@ uses a table, so these rules are ours, and they are those of a
+       global that is indexed: a read is as secret as the table, the index and the pc; a write
+       needs the pc, the index and the value to flow into the table's level. The size of a
+       table is part of its contents: @table.size@ is as secret as the table, and @table.grow@
+       is a write. Operands, top first, are as for bulk memory: the count, then the source (a
+       value, an index into the source table or into the segment), then the destination index.
+       Element segments are public, and so is whether one has been dropped: as for
+       @data.drop@, a trap is not an output. -}
+    ITableGet ::
+        IsRef t ->
+        Elem ('TableShape t lt lo hi) (ModuleTables m) ->
+        Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck (('I32 ':~ li) ': s) ((t ':~ Join pc (Join li lt)) ': s)
+    ITableSet ::
+        IsRef t ->
+        FlowsInto (Join pc (Join li lv)) lt ->
+        Elem ('TableShape t lt lo hi) (ModuleTables m) ->
+        Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck ((t ':~ lv) ': ('I32 ':~ li) ': s) s
+    ITableSize ::
+        Elem ('TableShape t lt lo hi) (ModuleTables m) ->
+        Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck s (('I32 ':~ Join pc lt) ': s)
+    ITableGrow ::
+        IsRef t ->
+        FlowsInto (Join pc (Join ln lv)) lt ->
+        Elem ('TableShape t lt lo hi) (ModuleTables m) ->
+        Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck (('I32 ':~ ln) ': (t ':~ lv) ': s) (('I32 ':~ Join pc lt) ': s)
+    ITableFill ::
+        IsRef t ->
+        FlowsInto (Join pc (Join ln (Join lv li))) lt ->
+        Elem ('TableShape t lt lo hi) (ModuleTables m) ->
+        Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck (('I32 ':~ ln) ': (t ':~ lv) ': ('I32 ':~ li) ': s) s
+    ITableCopy ::
+        FlowsInto (Join pc (Join ln (Join lsrc (Join ldst lfrom)))) lt ->
+        Elem ('TableShape t lt lo hi) (ModuleTables m) ->
+        Elem ('TableShape t lfrom lo' hi') (ModuleTables m) ->
+        Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck (('I32 ':~ ln) ': ('I32 ':~ lsrc) ': ('I32 ':~ ldst) ': s) s
+    ITableInit ::
+        FlowsInto (Join pc (Join ln (Join lsrc ldst))) lt ->
+        Elem ('ElemShape t) (ModuleElems m) ->
+        Elem ('TableShape t lt lo hi) (ModuleTables m) ->
+        Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck (('I32 ':~ ln) ': ('I32 ':~ lsrc) ': ('I32 ':~ ldst) ': s) s
+    IElemDrop :: Elem ('ElemShape t) (ModuleElems m) -> Instr m f l p p 'NoDynamicCheck s s
+    {- Stack management. @drop@ and @select@ work on any value type (validation asks that an
+       untyped @select@, 0x1B, has numeric operands); @select@
        keeps the first operand when the condition is non-zero, the second otherwise. Its result
        depends on all three operands, so it is as secret as the most secret of them. -}
     IDrop :: Instr m f l p p 'NoDynamicCheck (t ': s) s
     ISelect ::
-        IsNum t ->
         Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck (('I32 ':~ lc) ': (t ':~ l1) ': (t ':~ l2) ': s) ((t ':~ Join pc (Join lc (Join l1 l2))) ': s)
     {- Locals (from the @frame@) & globals (from the @mod@). A variable has one level, declared
        with it and fixed for good. A read yields a value at that level (and the pc). A write
@@ -461,14 +526,15 @@ data
         Append args s full ->
         Elem ('LabelledFuncType bound ps rs) (ModuleFuncs m) ->
         Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck full (rs ++ s)
-    {- Indirect calls: the callee is an entry of the module's table, checked at run time against
-       the expected type (a trap if it differs); the module must declare a table. The expected
+    {- Indirect calls: the callee is an entry of a table of function references, checked at run
+       time against the expected type (a trap if it differs). Which function runs depends on
+       the table as well as on the index, so the table's level joins the index's. The expected
        type is labelled (the policy's declaration of the type-section entry), so the run-time
        check compares the levels too: the parameters and results must be the same, and the
        expected bound must flow into the callee's. -}
     ICallIndirect ::
-        (ModuleTables m ~ (table ': tables)) =>
-        FlowsInto (Join pc lv) bound ->
+        Elem ('TableShape 'FuncRef lt lo hi) (ModuleTables m) ->
+        FlowsInto (Join pc (Join lv lt)) bound ->
         SegmentFlows args ps ->
         ArgumentsAtCallPc pc ps ->
         Append args s full ->

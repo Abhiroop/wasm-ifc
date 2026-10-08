@@ -12,7 +12,7 @@ are summarised here, not repeated.
 ## Where things stand (2026-10-08)
 
 - WebAssembly: the spec testsuite, at the WebAssembly 3.0 release (all 257 scripts), passes for
-  the supported subset (27,891 assertions, none failing, 37,311 skipped, counted by feature
+  the supported subset (30,693 assertions, none failing, 34,509 skipped, counted by feature
   below); the wasi-testsuite passes 72 of 72. Both also with SecWasm's restrictions on.
 - Information flow: SecWasm's static rules in the single instruction type, with the repairs of
   the paper's findings (`br_table` raises down to its deepest target); inference of stores,
@@ -21,7 +21,8 @@ are summarised here, not repeated.
   `call_indirect` with the run-time bound check `ℓf ⊑ ℓt`; public host imports and the complete
   host boundary rule (every byte a call takes is checked against its descriptor, every byte it
   stores carries the descriptor's level); secret regions labelled at instantiation; load traps
-  that name their site.
+  that name their site. References and tables (ours, SecWasm has neither): a table has one
+  level from the policy, like a global.
 - Evidence: a two-run noninterference property test (100,000 cases, no counterexample); case
   studies with secrets in `casestudies/` (the password checker, SecWasm's examples, WANILLA's
   suite as an oracle, the wasi-testsuite's C programs, PolyBench).
@@ -54,34 +55,37 @@ are summarised here, not repeated.
 
 ## WebAssembly coverage
 
-The supported subset is WebAssembly 1.0 with mutable globals, sign extension, saturating
-conversions, multiple values and the memory half of bulk memory. What the 3.0 suite skips
+The supported subset is WebAssembly 2.0 without vector instructions and with imports of
+functions only. What the 3.0 suite skips
 (`WASM_IFC_SPEC_REPORT=f cabal test wasm-ifc-spec; ./scripts/spec-report.py f`), by the features
 a skipped module uses according to `wasm-tools`, in assertions:
 
 | Skipped | Features the module uses beyond the subset |
 |---:|---|
 | 25,355 | vector instructions |
-| 4,291 | reference types |
-| 1,974 | 64-bit memories and tables (306 more with reference types) |
-| 1,159 | none: passive element segments and the table half of bulk memory |
-| 832 | multiple memories |
+| 3,107 | none: imports of tables, memories and globals; functions imported from another module of the script |
+| 2,280 | 64-bit memories and tables |
+| 834 | multiple memories |
 | 821 | garbage collection |
-| 459 | none: imports of tables, memories and globals; linking between modules |
 | 424 | typed function references |
-| 88 | tail calls with typed function references (33 with tail calls alone) |
-| 75 | extended constant expressions with reference types (4 alone) |
+| 88 | tail calls with typed function references (34 with tail calls alone) |
+| 79 | extended constant expressions |
 | 61 | exceptions (98 more with another feature) |
 | 1,245 | none: malformed modules given as text, which the harness does not run |
 
-The suite's scripts for one feature use others: `return_call.wast` needs typed function
-references, and the scripts for constant expressions need reference types.
+Of the 3,107, 2,616 are `table_copy.wast` and `table_init.wast` (and their 64-bit twins), whose
+modules import functions from a module the script registers. `return_call.wast` needs typed
+function references.
 
-- [ ] **P2** Reference types with the `table.*` instructions, `elem.drop`, passive and
-  declarative element segments and several tables: with it, WebAssembly 2.0 without vectors.
 - [ ] **P2** Imports of globals, memories and tables, and linking between modules in the spec
   runner (`register`, the `spectest` module); `global.get` of an imported global in
   initialisers.
+- [ ] **P3** A reference to a function is a word, the function's index, which the table
+  resolves in the module's directory of functions (`Runtime/TableInst.hs`). The typed
+  instructions and element segments only make references to functions that exist
+  (`Validation.Ref.FunctionRef`), but the word on the stack carries no proof of it, so the
+  resolution answers "no function" for any other word and no type rules that case out. With
+  linking the word would have to name a function of the store.
 - [ ] **P3** Tail calls; extended constant expressions; multiple memories; 64-bit memories.
 - [ ] **P3** Vector instructions; exceptions; typed function references; garbage collection.
 

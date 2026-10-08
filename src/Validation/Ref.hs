@@ -1,3 +1,5 @@
+{-# LANGUAGE RoleAnnotations #-}
+
 {- | Local variables resolved for the machine (TODO.md §I, E2b).
 
   An instruction that reads or writes a local used to carry the local's 'Elem' witness, and the
@@ -18,13 +20,18 @@ module Validation.Ref (
     resolveLocal,
     localPosition,
     localType,
+    FunctionRef,
+    resolveFunction,
+    functionReference,
 ) where
 
 import Data.Kind (Type)
 import Data.Singletons.Base.TH (Sing)
+import Data.Word (Word32)
 
+import Syntax.Immediates (Reference, referenceTo)
 import Syntax.Types (ValType)
-import Syntax.TypesIFC (LabelledValType (..), SLabelledValType (..))
+import Syntax.TypesIFC (LabelledFuncType, LabelledValType (..), SLabelledValType (..))
 import Validation.Shape (Elem (..))
 
 type LocalRef :: LabelledValType -> [LabelledValType] -> Type
@@ -48,3 +55,23 @@ localPosition (LocalRef position _) = position
 -}
 localType :: LocalRef (vt ':~ l) ls -> Sing vt
 localType (LocalRef _ ty) = ty
+
+{- | A function of the module as a @funcref@ value: the reference whose index is the position
+  of a function that a witness proved to exist. The constructor stays in this module, so every
+  reference a typed instruction or an element segment holds names a function of its module.
+-}
+type FunctionRef :: [LabelledFuncType] -> Type
+
+type role FunctionRef nominal
+newtype FunctionRef fts = FunctionRef Reference
+
+-- | Resolve a function's witness into the reference to it.
+resolveFunction :: Elem ft fts -> FunctionRef fts
+resolveFunction ix = FunctionRef (referenceTo (positionOf 0 ix))
+  where
+    positionOf :: Word32 -> Elem x xs -> Word32
+    positionOf !n Here = n
+    positionOf !n (There rest) = positionOf (n + 1) rest
+
+functionReference :: FunctionRef fts -> Reference
+functionReference (FunctionRef reference) = reference

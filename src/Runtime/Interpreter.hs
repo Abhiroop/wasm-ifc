@@ -121,7 +121,7 @@ import Runtime.MemInst (LoadFailure (..), MemInst, checkedWord, copyWithinAt, fi
 import Runtime.Numeric (copysign32, copysign64, fromSigned32, fromSigned64, intDiv32, intDiv64, intRem32, intRem64, toSigned32, toSigned64, wasmMax, wasmMin)
 import Runtime.Obligation (CheckPassed (..))
 import Runtime.Stack
-import Runtime.TableInst (enteredCallee, lookupChecked)
+import Runtime.TableInst (TableInst, enteredCallee, fillEntries, getEntry, growTable, lookupChecked, readEntries, setEntry, tableSize, writeEntries)
 import Runtime.Trap (Trap (..))
 import Syntax.Functions (Function (..))
 import Syntax.Immediates
@@ -136,8 +136,9 @@ import Syntax.Instructions (
  )
 import Syntax.Types
 import Syntax.TypesIFC
+import Validation.Ref (functionReference)
 import Validation.Reflect (appendNil)
-import Validation.Shape (Append (..), BranchTarget (..), DataShape (..), Elem (..), FrameShape (..), ModuleData, ModuleFuncs, ModuleGlobals, ModuleMems, ModuleShape, ModuleTables, PreservedOf, Restores (..), ReturnsWith (..), appendIs, withinReach)
+import Validation.Shape (Append (..), BranchTarget (..), DataShape (..), Elem (..), ElemShape (..), FrameShape (..), ModuleData, ModuleElems, ModuleFuncs, ModuleGlobals, ModuleMems, ModuleShape, ModuleTables, PreservedOf, Restores (..), ReturnsWith (..), appendIs, withinReach)
 
 -- *** Module and runtime state ***
 
@@ -182,7 +183,7 @@ getFunc (There ix) (FsCons _ rest) = getFunc ix rest
 data Store (mod :: ModuleShape) = Store
     { globals :: !(GlobalSpaceInst (ModuleGlobals mod))
     , memories :: !(MemSpaceInst (ModuleMems mod))
-    , tables :: !(TableSpaceInst (ModuleFuncs mod) (ModuleTables mod))
+    , tables :: !(TableSpaceInst (ModuleFuncs mod) (ModuleTables mod) (ModuleElems mod))
     , dataSegments :: !(DataSpaceInst (ModuleData mod))
     }
 
@@ -194,7 +195,7 @@ data ModuleInst (mod :: ModuleShape) = ModuleInst
     { functions :: !(FuncSpaceInst mod (ModuleFuncs mod))
     , globals :: !(GlobalSpaceInst (ModuleGlobals mod))
     , memories :: !(MemSpaceInst (ModuleMems mod))
-    , tables :: !(TableSpaceInst (ModuleFuncs mod) (ModuleTables mod))
+    , tables :: !(TableSpaceInst (ModuleFuncs mod) (ModuleTables mod) (ModuleElems mod))
     , dataSegments :: !(DataSpaceInst (ModuleData mod))
     }
 
@@ -443,9 +444,50 @@ stepInstr funcs store locals stack instr rest control = case instr of
                     (True, Just mem') -> stepped NothingToCheck (storeMem mem' store) locals r rest control
                     _ -> Left OutOfBoundsMemoryAccess
     IDataDrop segmentIx -> stepped NothingToCheck (storeDropSegment segmentIx store) locals stack rest control
+    {- References and tables. A reference is a word like any other value; the table
+       instructions trap on an index past the table (or past the segment), and otherwise move
+       references between a table, the stack and an element segment unchanged. -}
+    IRefNull isRef -> withReference isRef (stepped NothingToCheck store locals (nullReference :# stack) rest control)
+    IRefFunc function -> stepped NothingToCheck store locals (functionReference function :# stack) rest control
+    IRefIsNull isRef -> case stack of
+        reference :# r -> stepped NothingToCheck store locals ((if withReference isRef (isNullReference reference) then 1 else 0) :# r) rest control
+    ITableGet isRef tableIx -> withReference isRef $ case stack of
+        index :# r -> case getEntry (getTable tableIx store.tables) index of
+            Just reference -> stepped NothingToCheck store locals (reference :# r) rest control
+            Nothing -> Left OutOfBoundsTableAccess
+    ITableSet isRef _ tableIx -> withReference isRef $ case stack of
+        reference :# index :# r -> case setEntry index reference (getTable tableIx store.tables) of
+            Just table -> stepped NothingToCheck (storeTable tableIx table store) locals r rest control
+            Nothing -> Left OutOfBoundsTableAccess
+    ITableSize tableIx -> stepped NothingToCheck store locals (tableSize (getTable tableIx store.tables) :# stack) rest control
+    -- (As for @memory.grow@, failing to grow is not a trap: the result is -1.)
+    ITableGrow isRef _ tableIx -> withReference isRef $ case stack of
+        count :# reference :# r ->
+            let table = getTable tableIx store.tables
+             in case growTable count reference table of
+                    Just grown -> stepped NothingToCheck (storeTable tableIx grown store) locals (tableSize table :# r) rest control
+                    Nothing -> stepped NothingToCheck store locals (0xFFFFFFFF :# r) rest control
+    ITableFill isRef _ tableIx -> withReference isRef $ case stack of
+        count :# reference :# index :# r -> case fillEntries index count reference (getTable tableIx store.tables) of
+            Just table -> stepped NothingToCheck (storeTable tableIx table store) locals r rest control
+            Nothing -> Left OutOfBoundsTableAccess
+    -- (The source is read whole before the destination is written, so the two may overlap.)
+    ITableCopy _ toIx fromIx -> case stack of
+        count :# src :# dst :# r -> case readEntries src count (getTable fromIx store.tables) >>= \references -> writeEntries dst references (getTable toIx store.tables) of
+            Just table -> stepped NothingToCheck (storeTable toIx table store) locals r rest control
+            Nothing -> Left OutOfBoundsTableAccess
+    ITableInit _ segmentIx tableIx -> case stack of
+        count :# src :# dst :# r ->
+            let segment = getElements segmentIx store.tables
+                inSegment = toInteger src + toInteger count <= toInteger (length segment)
+                references = take (fromIntegral count) (drop (fromIntegral src) segment)
+             in case (inSegment, writeEntries dst references (getTable tableIx store.tables)) of
+                    (True, Just table) -> stepped NothingToCheck (storeTable tableIx table store) locals r rest control
+                    _ -> Left OutOfBoundsTableAccess
+    IElemDrop segmentIx -> stepped NothingToCheck (storeDropElements segmentIx store) locals stack rest control
     {- Stack management -}
     IDrop -> case stack of _ :# r -> stepped NothingToCheck store locals r rest control
-    ISelect _ -> case stack of
+    ISelect -> case stack of
         cond :# second :# first :# r ->
             stepped NothingToCheck store locals ((if cond /= 0 then first else second) :# r) rest control
     {- Locals & globals -}
@@ -484,8 +526,8 @@ stepInstr funcs store locals stack instr rest control = case instr of
        (SecWasm's ℓf ⊑ ℓt), since the call's pc was checked against the expected bound only.
        The callee it enters is the one that lookup hands out, and so is its evidence. -}
     ICall _ flows _ witness ix -> enterCall NothingToCheck funcs store locals flows witness ix stack rest control
-    ICallIndirect _ flows _ witness expected -> case stack of
-        index :# below' -> case lookupChecked (firstTable store.tables) index expected of
+    ICallIndirect tableIx _ flows _ witness expected -> case stack of
+        index :# below' -> case lookupChecked store.tables.directory (getTable tableIx store.tables) index expected of
             Left trap -> Left trap
             Right checked -> enteredCallee checked $ \ix ->
                 enterCall (CalleeWasWithin checked) funcs store locals flows witness ix below' rest control
@@ -697,6 +739,14 @@ storeMem mem store =
 storeSetGlobal :: Elem ('GlobalType mut (t ':~ l)) (ModuleGlobals mod) -> HostType t -> Store mod -> Store mod
 storeSetGlobal ix v store =
     Store {globals = setGlobal ix v store.globals, memories = store.memories, tables = store.tables, dataSegments = store.dataSegments}
+
+storeTable :: Elem t (ModuleTables mod) -> TableInst -> Store mod -> Store mod
+storeTable ix table store =
+    Store {globals = store.globals, memories = store.memories, tables = setTable ix table store.tables, dataSegments = store.dataSegments}
+
+storeDropElements :: Elem ('ElemShape t) (ModuleElems mod) -> Store mod -> Store mod
+storeDropElements ix store =
+    Store {globals = store.globals, memories = store.memories, tables = dropElements ix store.tables, dataSegments = store.dataSegments}
 
 storeDropSegment :: Elem 'DataShape (ModuleData mod) -> Store mod -> Store mod
 storeDropSegment ix store =

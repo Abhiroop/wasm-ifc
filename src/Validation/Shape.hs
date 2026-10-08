@@ -205,27 +205,33 @@ data ModuleShape = ModuleShape
     , tableShapes :: [TableShape]
     , dataShapes :: [DataShape]
     -- ^ one entry per data segment: the data index space, which only has a size
+    , elemShapes :: [ElemShape]
+    -- ^ one entry per element segment, with the type of its references
     }
 
 type ModuleFuncs :: ModuleShape -> [LabelledFuncType]
 type family ModuleFuncs s where
-    ModuleFuncs ('ModuleShape fs _ _ _ _) = fs
+    ModuleFuncs ('ModuleShape fs _ _ _ _ _) = fs
 
 type ModuleGlobals :: ModuleShape -> [GlobalTypeOf LabelledValType]
 type family ModuleGlobals s where
-    ModuleGlobals ('ModuleShape _ gs _ _ _) = gs
+    ModuleGlobals ('ModuleShape _ gs _ _ _ _) = gs
 
 type ModuleMems :: ModuleShape -> [MemShape]
 type family ModuleMems s where
-    ModuleMems ('ModuleShape _ _ ms _ _) = ms
+    ModuleMems ('ModuleShape _ _ ms _ _ _) = ms
 
 type ModuleTables :: ModuleShape -> [TableShape]
 type family ModuleTables s where
-    ModuleTables ('ModuleShape _ _ _ ts _) = ts
+    ModuleTables ('ModuleShape _ _ _ ts _ _) = ts
 
 type ModuleData :: ModuleShape -> [DataShape]
 type family ModuleData s where
-    ModuleData ('ModuleShape _ _ _ _ ds) = ds
+    ModuleData ('ModuleShape _ _ _ _ ds _) = ds
+
+type ModuleElems :: ModuleShape -> [ElemShape]
+type family ModuleElems s where
+    ModuleElems ('ModuleShape _ _ _ _ _ es) = es
 
 {- | The per-activation (function-scoped) part of an instruction's context: the local
   variable types and the function's result type. These two always share a scope — both
@@ -268,13 +274,27 @@ data MemShape = MemShape
     }
     deriving stock (Eq, Show)
 
-{- | The type-level counterpart of a table's type: its size limits (as 'Natural's, like
-  'MemShape'). Only @funcref@ tables exist, so the element type needs no field.
+{- | The type-level counterpart of a table's type: the type of its entries (a reference type,
+  which the instructions on tables ask for as an 'Syntax.Types.IsRef'), its security level and
+  its size limits (as 'Natural's, like 'MemShape').
+
+  IFC note: unlike a memory, a table has one level for good, declared by the policy like a
+  global's ("Validation.Policy"). SecWasm covers WebAssembly 1.0, where no instruction writes a
+  table; with the table instructions a table is state like any other, and its level bounds what
+  may be written to it and labels what is read from it, its size included.
 -}
 data TableShape = TableShape
-    { minEntries :: Natural
+    { entryType :: ValType
+    , tableLevel :: SecLevel
+    , minEntries :: Natural
     , maxEntries :: Maybe Natural
     }
+    deriving stock (Eq, Show)
+
+{- | An element segment's type: that of the references it holds. The element index space is a
+  list of these, so @table.init@ and @elem.drop@ name a segment with an 'Elem' proof.
+-}
+newtype ElemShape = ElemShape ValType
     deriving stock (Eq, Show)
 
 {- | A data segment has no type beyond existing: the data index space is a list of these, so
@@ -285,4 +305,4 @@ data DataShape = DataShape
 
 -- Library singletons for the shape kinds. The list/'Maybe'/'Natural' fields draw their 'Sing'
 -- instances from @singletons-base@; the element types from "Syntax.Types".
-$(genSingletons [''MemShape, ''TableShape, ''DataShape, ''ModuleShape, ''FrameShape])
+$(genSingletons [''MemShape, ''TableShape, ''DataShape, ''ElemShape, ''ModuleShape, ''FrameShape])

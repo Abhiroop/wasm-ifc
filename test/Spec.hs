@@ -41,7 +41,7 @@ import Syntax.Globals (RawGlobal (..))
 import Syntax.Immediates
 import Syntax.Indices
 import Syntax.Instructions
-import Syntax.Module (DataMode (..), Export (..), ExportDesc (..), ImportDesc (..), RawDataSegment (..), RawElementSegment (..), RawImport (..), RawMemory (..), RawModule (..), RawTable (..))
+import Syntax.Module (DataMode (..), ElemMode (..), Export (..), ExportDesc (..), ImportDesc (..), RawDataSegment (..), RawElementSegment (..), RawImport (..), RawMemory (..), RawModule (..), RawTable (..))
 import Syntax.Types
 import Syntax.TypesIFC (LabelledFuncType (..), LabelledValType (..), SecLevel (..))
 import Validation.Elaborate (ElabError (..), IndexSpace (..), Inferred (..), elaborateModule, elaborateModuleInferring, elaborateModuleWith)
@@ -274,7 +274,7 @@ spec = do
         it "the interface is not inferred: an export, a declared function, a table entry stay as declared" $ do
             elabRunWithPolicy "export f : H -> L" secretThroughLocal [5] `shouldSatisfy` errorContaining "IllegalFlow \"result\" High Low"
             elabRunWithPolicy "func 0 : L -> L\nexport f : H -> H" helper [5] `shouldSatisfy` errorContaining "IllegalFlow \"call\" High Low"
-            elabRunWithPolicy "export f : H -> H" (helper {tables = [RawTable (Limits 1 Nothing)], elementSegments = [RawElementSegment [Const SI32 0] [FunctionIdx 0]]}) [5]
+            elabRunWithPolicy "export f : H -> H" (helper {tables = [RawTable FuncRef (Limits 1 Nothing)], elementSegments = [activeElements [Const SI32 0] [FunctionIdx 0]]}) [5]
                 `shouldSatisfy` errorContaining "IllegalFlow \"call\" High Low"
 
     describe "br_table raises the pc down to its deepest target" $ do
@@ -394,11 +394,11 @@ spec = do
         -- function 0 (type 0, [] -> [i32]) sits in slot 0 of the table; function 1, exported, calls through it
         let throughTable mainType mainBody =
                 (moduleOf [] [RawFunction (FuncType [] [I32]) [] [Const SI32 42], RawFunction mainType [] mainBody] (FunctionIdx 1))
-                    { tables = [RawTable (Limits 1 Nothing)]
-                    , elementSegments = [RawElementSegment [Const SI32 0] [FunctionIdx 0]]
+                    { tables = [RawTable FuncRef (Limits 1 Nothing)]
+                    , elementSegments = [activeElements [Const SI32 0] [FunctionIdx 0]]
                     }
-            underSecret = throughTable (FuncType [I32] [I32]) [LocalGet (LocalIdx 0), If (FuncType [] [I32]) [Const SI32 0, CallIndirect (TypeIdx 0)] [Const SI32 1]]
-            atPublicPc = throughTable (FuncType [] [I32]) [Const SI32 0, CallIndirect (TypeIdx 0)]
+            underSecret = throughTable (FuncType [I32] [I32]) [LocalGet (LocalIdx 0), If (FuncType [] [I32]) [Const SI32 0, CallIndirect (TableIdx 0) (TypeIdx 0)] [Const SI32 1]]
+            atPublicPc = throughTable (FuncType [] [I32]) [Const SI32 0, CallIndirect (TableIdx 0) (TypeIdx 0)]
         it "take the type the policy declares for the type-section entry, bound included" $ do
             elabRunWithPolicy "func 0 : -{H}-> H\ntype 0 : -{H}-> H\nexport f : H -> H" underSecret [1] `shouldBe` Right ["42"]
             elabRunWithPolicy "func 0 : -{H}-> H\nexport f : H -> H" underSecret [1] `shouldSatisfy` errorContaining "IllegalFlow \"call_indirect\" High Low"
@@ -408,22 +408,61 @@ spec = do
         it "a type declaration must name an entry the type section has" $
             elabRunWithPolicy "type 5 : -> L" atPublicPc [] `shouldSatisfy` errorContaining "PolicyUnknown \"type 5\""
         it "go through the table entry, typed" $
-            elabRunModule (tableModule [Const SI32 0, CallIndirect (TypeIdx 0)]) [] `shouldBe` Right ["42"]
+            elabRunModule (tableModule [Const SI32 0, CallIndirect (TableIdx 0) (TypeIdx 0)]) [] `shouldBe` Right ["42"]
         it "trap on an uninitialised entry" $
-            elabRunModule (tableModule [Const SI32 1, CallIndirect (TypeIdx 0)]) [] `shouldSatisfy` trapContaining "UninitializedElement"
+            elabRunModule (tableModule [Const SI32 1, CallIndirect (TableIdx 0) (TypeIdx 0)]) [] `shouldSatisfy` trapContaining "UninitializedElement"
         it "trap on an index past the table" $
-            elabRunModule (tableModule [Const SI32 3, CallIndirect (TypeIdx 0)]) [] `shouldSatisfy` trapContaining "UndefinedElement"
+            elabRunModule (tableModule [Const SI32 3, CallIndirect (TableIdx 0) (TypeIdx 0)]) [] `shouldSatisfy` trapContaining "UndefinedElement"
         it "trap when the entry's function has another type" $
-            elabRunModule (tableModule [Const SI32 2, CallIndirect (TypeIdx 0)]) [] `shouldSatisfy` trapContaining "IndirectCallTypeMismatch"
+            elabRunModule (tableModule [Const SI32 2, CallIndirect (TableIdx 0) (TypeIdx 0)]) [] `shouldSatisfy` trapContaining "IndirectCallTypeMismatch"
         it "need a table in the module" $
-            first unplaced (void (elaborateModule (singleFunctionModule [] [] [I32] [] [Const SI32 0, CallIndirect (TypeIdx 0)])))
-                `shouldBe` Left (NoTable "call_indirect")
+            first unplaced (void (elaborateModule (singleFunctionModule [] [] [I32] [] [Const SI32 0, CallIndirect (TableIdx 0) (TypeIdx 0)])))
+                `shouldBe` Left (IndexOutOfRange Tables 0)
         it "reject an element segment that does not fit" $
-            void (load ((tableModule [Const SI32 0]) {elementSegments = [RawElementSegment [Const SI32 2] [FunctionIdx 0, FunctionIdx 0]]}))
+            void (load ((tableModule [Const SI32 0]) {elementSegments = [activeElements [Const SI32 2] [FunctionIdx 0, FunctionIdx 0]]}))
                 `shouldBe` Left (Uninstantiable (ElementSegmentOutOfBounds 0))
         it "reject an element segment in a module without a table at validation" $
-            void (elaborateModule ((singleFunctionModule [] [] [] [] []) {elementSegments = [RawElementSegment [Const SI32 0] [FunctionIdx 0]]}))
-                `shouldBe` Left (NoTable "elem")
+            void (elaborateModule ((singleFunctionModule [] [] [] [] []) {elementSegments = [activeElements [Const SI32 0] [FunctionIdx 0]]}))
+                `shouldBe` Left (IndexOutOfRange Tables 0)
+
+    describe "references and tables" $ do
+        -- function 0 (type 0, [] -> [i32]) sits in slot 0 of a table of two; function 1, exported, takes an i32
+        let tabled results body =
+                (moduleOf [] [RawFunction (FuncType [] [I32]) [] [Const SI32 42], RawFunction (FuncType [I32] results) [] body] (FunctionIdx 1))
+                    { tables = [RawTable FuncRef (Limits 2 (Just 4))]
+                    , elementSegments = [activeElements [Const SI32 0] [FunctionIdx 0]]
+                    }
+            setThenCall = tabled [I32] [Const SI32 1, RefFunc (FunctionIdx 0), TableSet (TableIdx 0), Const SI32 1, CallIndirect (TableIdx 0) (TypeIdx 0)]
+            writeIfArgument = tabled [] [LocalGet (LocalIdx 0), If (FuncType [] []) [Const SI32 1, RefFunc (FunctionIdx 0), TableSet (TableIdx 0)] []]
+            isSlotOneNull = tabled [I32] [Const SI32 1, TableGet (TableIdx 0), RefIsNull]
+            size = tabled [I32] [TableSize (TableIdx 0)]
+            growByArgument = tabled [I32] [RefNull FuncRef, LocalGet (LocalIdx 0), TableGrow (TableIdx 0)]
+            callSlotZero = tabled [I32] [Const SI32 0, CallIndirect (TableIdx 0) (TypeIdx 0)]
+        it "a function written to a table is the one an indirect call finds there" $
+            elabRunModule setThenCall [0] `shouldBe` Right ["42"]
+        it "table instructions trap past the end of the table, and growing stops at the maximum" $ do
+            elabRunModule (tabled [I32] [LocalGet (LocalIdx 0), TableGet (TableIdx 0), RefIsNull]) [2] `shouldSatisfy` trapContaining "OutOfBoundsTableAccess"
+            elabRunModule growByArgument [2] `shouldBe` Right ["2"]
+            elabRunModule growByArgument [3] `shouldBe` Right ["4294967295"]
+        it "a write under a secret pc needs a secret table" $ do
+            elabRunWithPolicy "export f : H ->" writeIfArgument [1] `shouldSatisfy` errorContaining "IllegalFlow \"table.set\" High Low"
+            elabRunWithPolicy "table 0 : H\nexport f : H ->" writeIfArgument [1] `shouldBe` Right []
+        it "what is read from a secret table is secret, its size included" $ do
+            elabRunWithPolicy "table 0 : H\nexport f : L -> L" isSlotOneNull [0] `shouldSatisfy` errorContaining "IllegalFlow"
+            elabRunWithPolicy "table 0 : H\nexport f : L -> H" isSlotOneNull [0] `shouldBe` Right ["1"]
+            elabRunWithPolicy "table 0 : H\nexport f : L -> L" size [0] `shouldSatisfy` errorContaining "IllegalFlow"
+            elabRunWithPolicy "table 0 : H\nexport f : L -> H" size [0] `shouldBe` Right ["2"]
+        it "growing a table by a secret count is a write to it" $ do
+            elabRunWithPolicy "export f : H -> H" growByArgument [1] `shouldSatisfy` errorContaining "IllegalFlow \"table.grow\" High Low"
+            elabRunWithPolicy "table 0 : H\nexport f : H -> H" growByArgument [1] `shouldBe` Right ["2"]
+        it "a call through a secret table is a call from a secret context" $ do
+            elabRunWithPolicy "table 0 : H\nexport f : L -> H" callSlotZero [0] `shouldSatisfy` errorContaining "IllegalFlow \"call_indirect\" High Low"
+            elabRunWithPolicy "func 0 : -{H}-> H\ntype 0 : -{H}-> H\ntable 0 : H\nexport f : L -> H" callSlotZero [0] `shouldBe` Right ["42"]
+        it "ref.func names only a function the module declares outside its code" $
+            elabRunModule (moduleOf [] [RawFunction (FuncType [] []) [] [], RawFunction (FuncType [] []) [] [RefFunc (FunctionIdx 0), Drop]] (FunctionIdx 1)) []
+                `shouldSatisfy` errorContaining "UndeclaredFunctionReference 0"
+        it "a policy may only label a table that exists" $
+            elabRunWithPolicy "table 1 : H" size [0] `shouldSatisfy` errorContaining "PolicyUnknown"
 
     describe "WASI imports" $ do
         it "resolve to typed host functions; proc_exit ends the run with its code" $ do
@@ -735,6 +774,7 @@ spec = do
                             oneRun.result === otherRun.result
                             oneRun.publicGlobal === otherRun.publicGlobal
                             oneRun.preservedGlobal === otherRun.preservedGlobal
+                            oneRun.publicTable === otherRun.publicTable
                             [(a, i) | (i, (a, Low), (_, Low)) <- zip3 [0 :: Int ..] oneRun.memory otherRun.memory]
                                 === [(b, i) | (i, (_, Low), (b, Low)) <- zip3 [0 :: Int ..] oneRun.memory otherRun.memory]
                         (Right _, Right _) -> label "accepted, a run trapped"
@@ -911,6 +951,8 @@ invokeWithIntegers sm args = do
     integerValue I64 n = I64Value (fromInteger n)
     integerValue F32 n = F32Value (fromInteger n)
     integerValue F64 n = F64Value (fromInteger n)
+    integerValue FuncRef _ = FuncRefValue nullReference
+    integerValue ExternRef n = ExternRefValue (referenceTo (fromInteger n))
 
 onePageMemory :: RawMemory
 onePageMemory = RawMemory (MemType AddrI32 (Limits 1 Nothing))
@@ -922,8 +964,8 @@ onePageMemory = RawMemory (MemType AddrI32 (Limits 1 Nothing))
 tableModule :: [RawInstr] -> RawModule
 tableModule body =
     (moduleOf [] [RawFunction (FuncType [] [I32]) [] [Const SI32 42], RawFunction (FuncType [I32] [I32]) [] [LocalGet (LocalIdx 0)], RawFunction (FuncType [] [I32]) [] body] (FunctionIdx 2))
-        { tables = [RawTable (Limits 3 Nothing)]
-        , elementSegments = [RawElementSegment [Const SI32 0] [FunctionIdx 0], RawElementSegment [Const SI32 2] [FunctionIdx 1]]
+        { tables = [RawTable FuncRef (Limits 3 Nothing)]
+        , elementSegments = [activeElements [Const SI32 0] [FunctionIdx 0], activeElements [Const SI32 2] [FunctionIdx 1]]
         }
 
 procExitImport, fdWriteImport :: RawImport
@@ -1075,3 +1117,7 @@ fromSigned32Test = fromIntegral
 
 trapContaining :: String -> Either String [String] -> Bool
 trapContaining needle = either (needle `isInfixOf`) (const False)
+
+-- | An active element segment for table 0: these functions, from a constant offset.
+activeElements :: RawExpr -> [FunctionIdx] -> RawElementSegment
+activeElements offset functions = RawElementSegment (ElemActive (TableIdx 0) offset) FuncRef [[RefFunc f] | f <- functions]

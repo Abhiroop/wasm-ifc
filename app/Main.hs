@@ -19,7 +19,7 @@ import Runtime.Instantiate (instantiate)
 import Runtime.Module (RunError (..), SomeModuleInst, Value (..), exportSignature, exportedGlobalLevel, exportedResultLevels, readGlobalExport, renderValue)
 import Runtime.Trap (Trap (..))
 import Runtime.Wasi (Completion (..), DescriptorLevels (..), Preopen (..), WasiConfig (..), runWithWasi)
-import Syntax.Immediates (AccessSite (..))
+import Syntax.Immediates (AccessSite (..), nullReference, referenceTo)
 import Syntax.Module (SomeModule)
 import Syntax.Types (FuncTypeOf (..), ValType (..))
 import Syntax.TypesIFC (SecLevel (..))
@@ -235,6 +235,9 @@ parseValue valType raw = case valType of
     I64 -> I64Value . fromInteger <$> readInteger
     F32 -> F32Value <$> readFloat (castWord32ToFloat . fromInteger) 0x7F800000
     F64 -> F64Value <$> readFloat (castWord64ToDouble . fromInteger) 0x7FF0000000000000
+    -- A reference from the command line is null, or a value of the host by its number.
+    FuncRef -> if text == "null" then Just (FuncRefValue nullReference) else Nothing
+    ExternRef -> if text == "null" then Just (ExternRefValue nullReference) else ExternRefValue . referenceTo . fromInteger <$> readInteger
   where
     text = T.unpack raw
     readInteger = readMaybe text :: Maybe Integer

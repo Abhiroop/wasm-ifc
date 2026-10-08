@@ -10,6 +10,12 @@
 -}
 module Syntax.Immediates (
     HostType,
+    Reference (..),
+    withReference,
+    nullReference,
+    isNullReference,
+    referenceTo,
+    referent,
     MemArg (..),
     AccessSite (..),
     Signedness (..),
@@ -35,6 +41,36 @@ type family HostType (t :: ValType) :: Type where
     HostType 'I64 = Word64
     HostType 'F32 = Float
     HostType 'F64 = Double
+    HostType 'FuncRef = Reference
+    HostType 'ExternRef = Reference
+
+{- | A reference as a machine holds it: null, or the index of what it refers to. For a
+  @funcref@ that is a function of the module, by its place in the function index space; for an
+  @externref@ it is whatever number the host uses for its value. Like every other value it is
+  one word, zero for null (which is also what a local starts at), so it is kept in a frame
+  unchanged. A @funcref@ is only made by @ref.func@ and by element segments, both of which
+  validation resolves to a function that exists, and no instruction computes on references.
+-}
+newtype Reference = Reference Word64 deriving stock (Eq, Show)
+
+-- | What a reference witness says about the representation: a value of that type is a 'Reference'.
+withReference :: IsRef t -> ((HostType t ~ Reference) => result) -> result
+withReference FuncRefIsRef result = result
+withReference ExternRefIsRef result = result
+
+nullReference :: Reference
+nullReference = Reference 0
+
+isNullReference :: Reference -> Bool
+isNullReference (Reference word) = word == 0
+
+-- | The reference to the thing with this index.
+referenceTo :: Word32 -> Reference
+referenceTo index = Reference (fromIntegral index + 1)
+
+-- | The index a reference refers to, or 'Nothing' for null.
+referent :: Reference -> Maybe Word32
+referent (Reference word) = if word == 0 then Nothing else Just (fromIntegral (word - 1))
 
 {- | A memory immediate. Alignment is advisory (ignored at run time); @offset@ is added to
   the dynamic address.

@@ -47,17 +47,21 @@ module Validation.Reflect (
     SomeModuleShape (..),
     SomeGlobalRef (..),
     NonEmptyMems (..),
-    NonEmptyTables (..),
-    tablesNonEmpty,
     reflectCtx,
     funcTypesSing,
     globalTypesSing,
     preservedOf,
     memShapesSing,
     tableShapesSing,
+    elemShapesSing,
+    SomeTableRef (..),
+    lookupTableRef,
+    SomeElemRef (..),
+    lookupElemRef,
     dataShapesSing,
     mkDataElem,
     lookupFuncRef,
+    allFuncRefs,
     lookupGlobalRef,
     memsNonEmpty,
 ) where
@@ -266,29 +270,30 @@ data SomeModuleShape where
 memShapeOf :: MemType -> MemShape
 memShapeOf (MemType at (Limits lo hi)) = MemShape at (fromIntegral lo) (fmap fromIntegral hi)
 
--- | The type-level mirror of a table's limits.
-tableShapeOf :: Limits -> TableShape
-tableShapeOf (Limits lo hi) = TableShape (fromIntegral lo) (fmap fromIntegral hi)
+-- | The type-level mirror of a table: the type of its entries, its level and its limits.
+tableShapeOf :: (ValType, SecLevel, Limits) -> TableShape
+tableShapeOf (entryType, level, Limits lo hi) = TableShape entryType level (fromIntegral lo) (fmap fromIntegral hi)
 
 {- | Reflect a module's signature (function types, global types, memory types, table limits)
   to a runtime witness with the type-level signature hidden existentially. The function types
   are given in declared order (as decoded) and stored in stack order.
 -}
-reflectCtx :: [LabelledFuncType] -> [LabelledGlobalType] -> [MemType] -> [Limits] -> Int -> SomeModuleShape
-reflectCtx funcTypes globalTypes memTypes tableLimits dataCount =
+reflectCtx :: [LabelledFuncType] -> [LabelledGlobalType] -> [MemType] -> [(ValType, SecLevel, Limits)] -> Int -> [ValType] -> SomeModuleShape
+reflectCtx funcTypes globalTypes memTypes tables dataCount elementTypes =
     withSomeSing
         ( ModuleShape
             (map stackOrderLabelled funcTypes)
             globalTypes
             (map memShapeOf memTypes)
-            (map tableShapeOf tableLimits)
+            (map tableShapeOf tables)
             (replicate dataCount DataShape)
+            (map ElemShape elementTypes)
         )
         SomeModuleShape
 
--- | The five index spaces of a module-shape singleton.
+-- | The six index spaces of a module-shape singleton.
 funcTypesSing :: SModuleShape shape -> Sing (ModuleFuncs shape)
-funcTypesSing (SModuleShape fts _ _ _ _) = fts
+funcTypesSing (SModuleShape fts _ _ _ _ _) = fts
 
 -- | Which globals of a global space are preserved, from its singleton.
 preservedOf :: Sing (gs :: [LabelledGlobalType]) -> PreservedOf gs
@@ -300,18 +305,39 @@ preservedOf (SCons (SGlobalType mutability (t :%~ level)) rest) = case (mutabili
     (SPreserved, SLow) -> PreservedHere t (preservedOf rest)
 
 globalTypesSing :: SModuleShape shape -> Sing (ModuleGlobals shape)
-globalTypesSing (SModuleShape _ gs _ _ _) = gs
+globalTypesSing (SModuleShape _ gs _ _ _ _) = gs
 
 memShapesSing :: SModuleShape shape -> Sing (ModuleMems shape)
-memShapesSing (SModuleShape _ _ ms _ _) = ms
+memShapesSing (SModuleShape _ _ ms _ _ _) = ms
 
 tableShapesSing :: SModuleShape shape -> Sing (ModuleTables shape)
-tableShapesSing (SModuleShape _ _ _ ts _) = ts
+tableShapesSing (SModuleShape _ _ _ ts _ _) = ts
 
 dataShapesSing :: SModuleShape shape -> Sing (ModuleData shape)
-dataShapesSing (SModuleShape _ _ _ _ ds) = ds
+dataShapesSing (SModuleShape _ _ _ _ ds _) = ds
 
 -- | A bounds-checked index into the data index space.
+elemShapesSing :: SModuleShape shape -> Sing (ModuleElems shape)
+elemShapesSing (SModuleShape _ _ _ _ _ es) = es
+
+-- | @∃t lt lo hi. (Sing t, Sing lt, Elem ('TableShape t lt lo hi) ts)@: a table found by its index.
+data SomeTableRef (ts :: [TableShape]) where
+    SomeTableRef :: Sing (t :: ValType) -> Sing (lt :: SecLevel) -> Elem ('TableShape t lt lo hi) ts -> SomeTableRef ts
+
+lookupTableRef :: Sing (ts :: [TableShape]) -> Word32 -> Maybe (SomeTableRef ts)
+lookupTableRef (SCons (STableShape t lt _ _) _) 0 = Just (SomeTableRef t lt Here)
+lookupTableRef (SCons _ rest) n = (\(SomeTableRef t lt ix) -> SomeTableRef t lt (There ix)) <$> lookupTableRef rest (n - 1)
+lookupTableRef SNil _ = Nothing
+
+-- | @∃t. (Sing t, Elem ('ElemShape t) es)@: an element segment found by its index.
+data SomeElemRef (es :: [ElemShape]) where
+    SomeElemRef :: Sing (t :: ValType) -> Elem ('ElemShape t) es -> SomeElemRef es
+
+lookupElemRef :: Sing (es :: [ElemShape]) -> Word32 -> Maybe (SomeElemRef es)
+lookupElemRef (SCons (SElemShape t) _) 0 = Just (SomeElemRef t Here)
+lookupElemRef (SCons _ rest) n = (\(SomeElemRef t ix) -> SomeElemRef t (There ix)) <$> lookupElemRef rest (n - 1)
+lookupElemRef SNil _ = Nothing
+
 mkDataElem :: Sing (ds :: [DataShape]) -> Word32 -> Maybe (Elem 'DataShape ds)
 mkDataElem (SCons SDataShape _) 0 = Just Here
 mkDataElem (SCons _ rest) n = There <$> mkDataElem rest (n - 1)
@@ -322,6 +348,16 @@ lookupFuncRef (SCons (SLabelledFuncType bound ps rs) _) 0 = Just (SomeFuncRef bo
 lookupFuncRef (SCons _ rest) n =
     (\(SomeFuncRef bound ps rs ix) -> SomeFuncRef bound ps rs (There ix)) <$> lookupFuncRef rest (n - 1)
 lookupFuncRef SNil _ = Nothing
+
+{- | Every function of a signature, in index order. A function's witness is built when it is
+  first asked for, so listing the functions of a large module costs one cell each.
+-}
+allFuncRefs :: forall (fts :: [LabelledFuncType]). Sing fts -> [SomeFuncRef fts]
+allFuncRefs = go id
+  where
+    go :: (forall ft. Elem ft rest -> Elem ft fts) -> Sing (rest :: [LabelledFuncType]) -> [SomeFuncRef fts]
+    go _ SNil = []
+    go within (SCons (SLabelledFuncType bound ps rs) rest) = SomeFuncRef bound ps rs (within Here) : go (within . There) rest
 
 {- | @∃m t. (Sing m, Sing (t :: ValType), Elem ('GlobalType m t) gs)@ — a global resolved
   against the signature, carrying its mutability and type.
@@ -342,11 +378,3 @@ data NonEmptyMems (ms :: [MemShape]) where
 memsNonEmpty :: Sing (ms :: [MemShape]) -> Maybe (NonEmptyMems ms)
 memsNonEmpty (SCons _ _) = Just NonEmptyMems
 memsNonEmpty SNil = Nothing
-
--- | Proof that a table index space is non-empty, licensing @call_indirect@.
-data NonEmptyTables (ts :: [TableShape]) where
-    NonEmptyTables :: NonEmptyTables (t ': ts)
-
-tablesNonEmpty :: Sing (ts :: [TableShape]) -> Maybe (NonEmptyTables ts)
-tablesNonEmpty (SCons _ _) = Just NonEmptyTables
-tablesNonEmpty SNil = Nothing

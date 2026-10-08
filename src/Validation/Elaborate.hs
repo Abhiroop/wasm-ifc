@@ -28,7 +28,7 @@ module Validation.Elaborate (
     elaborateModuleTraced,
 ) where
 
-import Control.Monad (foldM, when)
+import Control.Monad (foldM, void, when)
 import Data.Bifunctor (first)
 import Data.Text (Text)
 import Data.Type.Equality ((:~:) (Refl))
@@ -37,7 +37,7 @@ import Data.Word (Word32)
 import Data.List.Singletons ((%++))
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, isNothing)
 import Data.Singletons (SomeSing (..), toSing, withSomeSing)
 import Data.Singletons.Base.TH (SList (SCons, SNil), Sing, fromSing)
 import Data.Singletons.Decide (decideEquality)
@@ -45,7 +45,7 @@ import Runtime.MemInst (maxMemoryPages)
 import Syntax.Functions (Function (..), FunctionSpace (..), RawFunction (RawFunction))
 import Syntax.Globals (Global (..), GlobalSpace (..), RawGlobal (RawGlobal))
 import Syntax.Immediates
-import Syntax.Indices (DataIdx (..), FunctionIdx (..), GlobalIdx (..), LabelIdx (..), LocalIdx (..), MemoryIdx (..), TableIdx (..), TypeIdx (..))
+import Syntax.Indices (DataIdx (..), ElemIdx (..), FunctionIdx (..), GlobalIdx (..), LabelIdx (..), LocalIdx (..), MemoryIdx (..), TableIdx (..), TypeIdx (..))
 import Syntax.Instructions (
     BitwiseOp (..),
     ConvertOp (..),
@@ -63,7 +63,7 @@ import Syntax.Types
 import Syntax.TypesIFC
 import Validation.LocalWebs (mergeModuleWebs, splitModuleLocals)
 import Validation.Policy (Assembled (..), LocalSplitting (..), Policy, PolicyError, Restrictions (..), assemble, emptyPolicy, modulePolicy)
-import Validation.Ref (resolveLocal)
+import Validation.Ref (resolveFunction, resolveLocal)
 import Validation.Reflect
 import Validation.Shape
 
@@ -108,8 +108,10 @@ data ElabError
       InvalidDataSegmentOffset Int
     | -- | an element segment's offset is not a single @i32.const@
       InvalidElementSegmentOffset Int
-    | -- | @call_indirect@, or an element segment, in a module without a table
-      NoTable Text
+    | -- | an element segment (by index) has an item that is not a constant of its type
+      InvalidElementItem Int
+    | -- | @ref.func@ of a function the module names nowhere outside its code
+      UndeclaredFunctionReference Word32
     | -- | a table's limits are not well-formed
       InvalidTableLimits Limits
     | -- | a memory's limits are not well-formed or exceed 65536 pages
@@ -173,7 +175,7 @@ data OperandKind = Numeric | Integral | FloatingPoint
     deriving stock (Eq, Show)
 
 -- | The index spaces an instruction or export may refer into.
-data IndexSpace = Locals | Globals | Functions | Labels | Memories | Types | Tables | DataSegments
+data IndexSpace = Locals | Globals | Functions | Labels | Memories | Types | Tables | DataSegments | ElementSegments
     deriving stock (Eq, Show)
 
 -- *** Elaboration environment & results ***
@@ -531,18 +533,100 @@ elabInstr env pcsIn@(SCons pc _) stackIn instr = case instr of
             publicContext <- requireFlow "memory.grow" (sJoin pc lc) SLow
             Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (SI32 :%~ pc) rest) (IMemGrow publicContext))
         _ -> Left (StackUnderflow "memory.grow")
+    {- References and tables -}
+    RefNull t -> withSomeSing t $ \st -> do
+        isRef <- note (Malformed "ref.null of a type that is not a reference type") (decideRef st)
+        Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (st :%~ sJoin pc SLow) stackIn) (IRefNull @'Low isRef))
+    RefIsNull -> case stackIn of
+        SCons (sa :%~ la) rest -> do
+            isRef <- note (OperandMismatch "ref.is_null" FuncRef (valTypeOf sa)) (decideRef sa)
+            Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (SI32 :%~ sJoin pc la) rest) (IRefIsNull isRef))
+        _ -> Left (StackUnderflow "ref.is_null")
+    RefFunc (FunctionIdx f) -> case lookupFuncRef (funcTypesSing (env.shape)) f of
+        Nothing -> Left (IndexOutOfRange Functions f)
+        Just (SomeFuncRef _ _ _ fix) -> Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (SFuncRef :%~ sJoin pc SLow) stackIn) (IRefFunc @'Low (resolveFunction fix)))
+    TableGet (TableIdx t) -> do
+        SomeTableRef st lt tix <- tableAt env t
+        isRef <- referenceTable st
+        case stackIn of
+            SCons (si :%~ li) rest -> do
+                Refl <- note (OperandMismatch "table.get" I32 (valTypeOf si)) (decideEquality si SI32)
+                Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (st :%~ sJoin pc (sJoin li lt)) rest) (ITableGet isRef tix))
+            _ -> Left (StackUnderflow "table.get")
+    TableSet (TableIdx t) -> do
+        SomeTableRef st lt tix <- tableAt env t
+        isRef <- referenceTable st
+        case stackIn of
+            SCons (sv :%~ lv) (SCons (si :%~ li) rest) -> do
+                Refl <- note (OperandMismatch "table.set" (valTypeOf st) (valTypeOf sv)) (decideEquality sv st)
+                Refl <- note (OperandMismatch "table.set" I32 (valTypeOf si)) (decideEquality si SI32)
+                flows <- requireFlow "table.set" (sJoin pc (sJoin li lv)) lt
+                Right (Produces (sameLengthAs pcsIn) pcsIn rest (ITableSet isRef flows tix))
+            _ -> Left (StackUnderflow "table.set")
+    TableSize (TableIdx t) -> do
+        SomeTableRef _ lt tix <- tableAt env t
+        Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (SI32 :%~ sJoin pc lt) stackIn) (ITableSize tix))
+    TableGrow (TableIdx t) -> do
+        SomeTableRef st lt tix <- tableAt env t
+        isRef <- referenceTable st
+        case stackIn of
+            SCons (sn :%~ ln) (SCons (sv :%~ lv) rest) -> do
+                Refl <- note (OperandMismatch "table.grow" I32 (valTypeOf sn)) (decideEquality sn SI32)
+                Refl <- note (OperandMismatch "table.grow" (valTypeOf st) (valTypeOf sv)) (decideEquality sv st)
+                flows <- requireFlow "table.grow" (sJoin pc (sJoin ln lv)) lt
+                Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (SI32 :%~ sJoin pc lt) rest) (ITableGrow isRef flows tix))
+            _ -> Left (StackUnderflow "table.grow")
+    TableFill (TableIdx t) -> do
+        SomeTableRef st lt tix <- tableAt env t
+        isRef <- referenceTable st
+        case stackIn of
+            SCons (sn :%~ ln) (SCons (sv :%~ lv) (SCons (si :%~ li) rest)) -> do
+                Refl <- note (OperandMismatch "table.fill" I32 (valTypeOf sn)) (decideEquality sn SI32)
+                Refl <- note (OperandMismatch "table.fill" (valTypeOf st) (valTypeOf sv)) (decideEquality sv st)
+                Refl <- note (OperandMismatch "table.fill" I32 (valTypeOf si)) (decideEquality si SI32)
+                flows <- requireFlow "table.fill" (sJoin pc (sJoin ln (sJoin lv li))) lt
+                Right (Produces (sameLengthAs pcsIn) pcsIn rest (ITableFill isRef flows tix))
+            _ -> Left (StackUnderflow "table.fill")
+    TableCopy (TableIdx to) (TableIdx from) -> do
+        SomeTableRef st lt toIx <- tableAt env to
+        SomeTableRef sfrom lfrom fromIx <- tableAt env from
+        Refl <- note (OperandMismatch "table.copy" (valTypeOf st) (valTypeOf sfrom)) (decideEquality sfrom st)
+        case stackIn of
+            SCons (a :%~ ln) (SCons (b :%~ lsrc) (SCons (c :%~ ldst) rest)) -> do
+                Refl <- note (OperandMismatch "table.copy" I32 (valTypeOf a)) (decideEquality a SI32)
+                Refl <- note (OperandMismatch "table.copy" I32 (valTypeOf b)) (decideEquality b SI32)
+                Refl <- note (OperandMismatch "table.copy" I32 (valTypeOf c)) (decideEquality c SI32)
+                flows <- requireFlow "table.copy" (sJoin pc (sJoin ln (sJoin lsrc (sJoin ldst lfrom)))) lt
+                Right (Produces (sameLengthAs pcsIn) pcsIn rest (ITableCopy flows toIx fromIx))
+            _ -> Left (StackUnderflow "table.copy")
+    TableInit (ElemIdx e) (TableIdx t) -> do
+        SomeTableRef st lt tix <- tableAt env t
+        SomeElemRef se eix <- note (IndexOutOfRange ElementSegments e) (lookupElemRef (elemShapesSing (env.shape)) e)
+        Refl <- note (OperandMismatch "table.init" (valTypeOf st) (valTypeOf se)) (decideEquality se st)
+        case stackIn of
+            SCons (a :%~ ln) (SCons (b :%~ lsrc) (SCons (c :%~ ldst) rest)) -> do
+                Refl <- note (OperandMismatch "table.init" I32 (valTypeOf a)) (decideEquality a SI32)
+                Refl <- note (OperandMismatch "table.init" I32 (valTypeOf b)) (decideEquality b SI32)
+                Refl <- note (OperandMismatch "table.init" I32 (valTypeOf c)) (decideEquality c SI32)
+                flows <- requireFlow "table.init" (sJoin pc (sJoin ln (sJoin lsrc ldst))) lt
+                Right (Produces (sameLengthAs pcsIn) pcsIn rest (ITableInit flows eix tix))
+            _ -> Left (StackUnderflow "table.init")
+    ElemDrop (ElemIdx e) -> do
+        SomeElemRef _ eix <- note (IndexOutOfRange ElementSegments e) (lookupElemRef (elemShapesSing (env.shape)) e)
+        Right (Produces (sameLengthAs pcsIn) pcsIn stackIn (IElemDrop eix))
     {- Calls -}
-    CallIndirect (TypeIdx t) -> case stackIn of
+    CallIndirect (TableIdx tb) (TypeIdx t) -> case stackIn of
         SCons (sc :%~ lidx) rest -> do
-            NonEmptyTables <- requireTable env
+            SomeTableRef st lt tix <- tableAt env tb
+            Refl <- note (OperandMismatch "call_indirect" FuncRef (valTypeOf st)) (decideEquality st SFuncRef)
             Refl <- note (OperandMismatch "call_indirect" I32 (valTypeOf sc)) (decideEquality sc SI32)
             expected <- note (IndexOutOfRange Types t) (nth (env.types) t)
             case toSing (stackOrderLabelled expected) of
                 SomeSing (SLabelledFuncType boundS psS rsS) -> do
                     SomeCoercion sS flows witness <- prefixFlows "call_indirect" psS rest
-                    calledFrom <- requireFlow "call_indirect" (sJoin pc lidx) boundS
+                    calledFrom <- requireFlow "call_indirect" (sJoin pc (sJoin lidx lt)) boundS
                     atCallPc <- argumentsAtCallPc env "call_indirect" pc psS
-                    Right (Produces (sameLengthAs pcsIn) pcsIn (rsS %++ sS) (ICallIndirect calledFrom flows atCallPc witness (SLabelledFuncType boundS psS rsS)))
+                    Right (Produces (sameLengthAs pcsIn) pcsIn (rsS %++ sS) (ICallIndirect tix calledFrom flows atCallPc witness (SLabelledFuncType boundS psS rsS)))
         _ -> Left (StackUnderflow "call_indirect")
     Call (FunctionIdx f) -> case lookupFuncRef (funcTypesSing (env.shape)) f of
         Nothing -> Left (IndexOutOfRange Functions f)
@@ -721,8 +805,8 @@ resultsAtEndPc env name pcEnd rsS = case env.restrictions of
 
 -- | Push a label's result type onto the elaboration environment's label context.
 
-{- | @select@ takes a condition over two operands of one numeric type; the typed form also
-  names that type, which the operands must have.
+{- | @select@ takes a condition over two operands of one type: a numeric one, or, in the typed
+  form, the type it names, which may be a reference type.
 -}
 elabSelect :: Maybe ValType -> Sing (pc ': pcs) -> Sing stackIn -> Either ElabError (ElaboratedInstr shape ret locals labels (pc ': pcs) stackIn)
 elabSelect annotation pcsIn@(SCons pc _) stackIn = case stackIn of
@@ -730,8 +814,9 @@ elabSelect annotation pcsIn@(SCons pc _) stackIn = case stackIn of
         Refl <- note (OperandMismatch "select" I32 (valTypeOf sc)) (decideEquality sc SI32)
         Refl <- note (OperandMismatch "select" (valTypeOf va) (valTypeOf vb)) (decideEquality va vb)
         mapM_ (\t -> if t == valTypeOf va then Right () else Left (OperandMismatch "select" t (valTypeOf va))) annotation
-        isNum <- requireNum va
-        Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (va :%~ sJoin pc (sJoin lc (sJoin l1 l2))) rest) (ISelect isNum))
+        -- (Only the typed form selects between references.)
+        when (isNothing annotation) (void (requireNum va))
+        Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (va :%~ sJoin pc (sJoin lc (sJoin l1 l2))) rest) ISelect)
     _ -> Left (StackUnderflow "select")
 
 pushLabel :: Sing rs -> ElabEnv shape ret locals labels -> ElabEnv shape ret locals (rs ': labels)
@@ -979,9 +1064,13 @@ threeAddresses name stackIn pcsIn@(SCons pc _) typed = case stackIn of
         Right (Produces (sameLengthAs pcsIn) pcsIn rest (typed (sJoin pc (sJoin ln (sJoin lsrc ldst)))))
     _ -> Left (StackUnderflow name)
 
--- | Require the module to declare a table, for @call_indirect@.
-requireTable :: ElabEnv shape ret locals labels -> Either ElabError (NonEmptyTables (ModuleTables shape))
-requireTable env = note (NoTable "call_indirect") (tablesNonEmpty (tableShapesSing (env.shape)))
+-- | The table an instruction names.
+tableAt :: ElabEnv shape ret locals labels -> Word32 -> Either ElabError (SomeTableRef (ModuleTables shape))
+tableAt env t = note (IndexOutOfRange Tables t) (lookupTableRef (tableShapesSing (env.shape)) t)
+
+-- | A table's entries are references, which the decoder ensures and the typed instructions ask for.
+referenceTable :: Sing (t :: ValType) -> Either ElabError (IsRef t)
+referenceTable st = note (Malformed "a table of a type that is not a reference type") (decideRef st)
 
 -- | Total list indexing by a decoded index.
 nth :: [a] -> Word32 -> Maybe a
@@ -1110,6 +1199,7 @@ stepDead env pcsIn s instr = case instr of
             (b, s3) = popAny s2
         case (a, b) of
             (Just x, Just y) | x /= y -> Left (DeadCodeMismatch x y)
+            _ | Just x <- orElse a b, x `elem` [FuncRef, ExternRef] -> Left (OperandMismatch "select" I32 x)
             _ -> Right (PolyStack (orElse a b : unStack s3))
     SelectTyped [t] -> popKnown I32 s >>= popKnown t >>= popKnown t >>= Right . pushKnown t
     SelectTyped ts -> Left (InvalidSelectArity (length ts))
@@ -1160,7 +1250,32 @@ stepDead env pcsIn s instr = case instr of
     Call (FunctionIdx f) -> case lookupFuncRef (funcTypesSing (env.shape)) f of
         Nothing -> Left (IndexOutOfRange Functions f)
         Just (SomeFuncRef _ psS rsS _) -> afterFrame (stackToList psS) (stackToList rsS) s
-    CallIndirect (TypeIdx t) -> do
+    RefNull t -> Right (pushKnown t s)
+    RefIsNull -> case popAny s of
+        (Just t, _) | t `notElem` [FuncRef, ExternRef] -> Left (OperandMismatch "ref.is_null" FuncRef t)
+        (_, s1) -> Right (pushKnown I32 s1)
+    RefFunc (FunctionIdx f) -> case lookupFuncRef (funcTypesSing (env.shape)) f of
+        Nothing -> Left (IndexOutOfRange Functions f)
+        Just _ -> Right (pushKnown FuncRef s)
+    TableGet (TableIdx t) -> tableAt env t >>= \(SomeTableRef st _ _) -> pushKnown (valTypeOf st) <$> popKnown I32 s
+    TableSet (TableIdx t) -> tableAt env t >>= \(SomeTableRef st _ _) -> popTypes [valTypeOf st, I32] s
+    TableSize (TableIdx t) -> tableAt env t >> Right (pushKnown I32 s)
+    TableGrow (TableIdx t) -> tableAt env t >>= \(SomeTableRef st _ _) -> pushKnown I32 <$> popTypes [I32, valTypeOf st] s
+    TableFill (TableIdx t) -> tableAt env t >>= \(SomeTableRef st _ _) -> popTypes [I32, valTypeOf st, I32] s
+    TableCopy (TableIdx to) (TableIdx from) -> do
+        SomeTableRef st _ _ <- tableAt env to
+        SomeTableRef sfrom _ _ <- tableAt env from
+        when (valTypeOf st /= valTypeOf sfrom) (Left (OperandMismatch "table.copy" (valTypeOf st) (valTypeOf sfrom)))
+        popTypes [I32, I32, I32] s
+    TableInit (ElemIdx e) (TableIdx t) -> do
+        SomeTableRef st _ _ <- tableAt env t
+        SomeElemRef se _ <- note (IndexOutOfRange ElementSegments e) (lookupElemRef (elemShapesSing (env.shape)) e)
+        when (valTypeOf st /= valTypeOf se) (Left (OperandMismatch "table.init" (valTypeOf st) (valTypeOf se)))
+        popTypes [I32, I32, I32] s
+    ElemDrop (ElemIdx e) -> note (IndexOutOfRange ElementSegments e) (lookupElemRef (elemShapesSing (env.shape)) e) >> Right s
+    CallIndirect (TableIdx tb) (TypeIdx t) -> do
+        SomeTableRef st _ _ <- tableAt env tb
+        when (valTypeOf st /= FuncRef) (Left (OperandMismatch "call_indirect" FuncRef (valTypeOf st)))
         s1 <- popKnown I32 s
         LabelledFuncType _ ps rs <- note (IndexOutOfRange Types t) (nth (env.types) t)
         afterFrame (map unlabelled (stackOrder ps)) (map unlabelled (stackOrder rs)) s1
@@ -1410,6 +1525,7 @@ mentionsSecret :: Assembled -> Bool
 mentionsSecret assembled =
     any secretType (assembled.functionTypes ++ assembled.sectionTypes)
         || or [l == High | GlobalType _ (_ :~ l) <- assembled.globalTypes]
+        || High `elem` assembled.tableLevels
         || High `elem` assembled.loadDefaults
         || or [any secretInstr body | RawFunction _ _ body <- assembled.annotated.functions]
   where
@@ -1454,12 +1570,13 @@ applyRaises inferable choices raises
 -- | Elaborate the module once, under the labels inference has chosen so far.
 elaborateUnder :: Assembled -> Choices -> Either ElabError SomeModule
 elaborateUnder assembled choices =
-    case reflectCtx choices.chosenFunctionTypes assembled.globalTypes memTypes tableLimits (length m.dataSegments) of
-        SomeModuleShape ctxS@(SModuleShape ftsS gsS msS tsS _) -> do
+    case moduleShape of
+        SomeModuleShape ctxS@(SModuleShape ftsS gsS msS _ _ esS) -> do
+            mapM_ declared (concat [functionsReferencedIn body | RawFunction _ _ body <- m.functions])
             functions <- gathered (elaborateFuncs ctxS assembled.sectionTypes assembled.declassify assembled.typingRestrictions ftsS entries)
-            globals <- elaborateGlobals gsS (m.globals)
+            globals <- elaborateGlobals ftsS gsS (m.globals)
             dataSegments <- traverse (elaborateData (memsNonEmpty msS)) (zip [0 ..] m.dataSegments)
-            elementSegments <- traverse (elaborateElements ftsS (tablesNonEmpty tsS)) (zip [0 ..] m.elementSegments)
+            elementSegments <- elaborateElements ctxS esS (zip [0 ..] m.elementSegments)
             start <- traverse (resolveStart ftsS) (m.start)
             when (not (null assembled.secretRegions) && null m.memories) (Left (NoMemory "region"))
             Right (SomeModule ctxS (Module {functions, globals, dataSegments, secretRegions = assembled.secretRegions, elementSegments, exports = m.exports, start}))
@@ -1470,12 +1587,24 @@ elaborateUnder assembled choices =
     -- which saves an elaboration per label; labels only rise, so this reaches the same labels.
     gathered :: Either ElabError a -> Either ElabError a
     gathered result = case result of
-        Left (LevelTooLow raises failure) -> case reflectCtx choices.chosenFunctionTypes assembled.globalTypes memTypes tableLimits (length m.dataSegments) of
-            SomeModuleShape ctxS@(SModuleShape ftsS _ _ _ _) ->
+        Left (LevelTooLow raises failure) -> case moduleShape of
+            SomeModuleShape ctxS@(SModuleShape ftsS _ _ _ _ _) ->
                 Left (LevelTooLow (raises ++ concat [more | LevelTooLow more _ <- functionErrors ctxS assembled.sectionTypes assembled.declassify assembled.typingRestrictions ftsS entries]) failure)
         other -> other
     importCount = fromIntegral (length m.imports)
-    tableLimits = [t.limits | t <- m.tables]
+    moduleShape =
+        reflectCtx
+            choices.chosenFunctionTypes
+            assembled.globalTypes
+            memTypes
+            [(t.entryType, level, t.limits) | (t, level) <- zip m.tables assembled.tableLevels]
+            (length m.dataSegments)
+            [segment.entryType | segment <- m.elementSegments]
+    -- A function body may take a reference only to a function the module names outside its
+    -- code, in an element segment, a global's initial value or an export (the spec's C.refs).
+    declared (FunctionIdx f)
+        | FunctionIdx f `elem` referencedFunctions m || or [True | Export _ (ExportFunc (FunctionIdx g)) <- m.exports, g == f] = Right ()
+        | otherwise = Left (UndeclaredFunctionReference f)
     memTypes = map (\(RawMemory mt) -> mt) (m.memories)
 
 {- | The module-level rules of the validation section that need no shape: well-formed,
@@ -1587,23 +1716,45 @@ elaborateFunctionIn ctxS types loadDefault declassify restrictions index localLe
         SCons SLow _ -> ReturnsUnderPublicPc
         _ -> RestoresOnReturn (preservedOf (globalTypesSing ctxS))
 
-elaborateGlobals :: Sing gs -> [RawGlobal] -> Either ElabError (GlobalSpace gs)
-elaborateGlobals = go 0
+elaborateGlobals :: forall fts gs. Sing (fts :: [LabelledFuncType]) -> Sing gs -> [RawGlobal] -> Either ElabError (GlobalSpace gs)
+elaborateGlobals ftsS = go 0
   where
-    go :: Word32 -> Sing gs -> [RawGlobal] -> Either ElabError (GlobalSpace gs)
+    go :: Word32 -> Sing gs' -> [RawGlobal] -> Either ElabError (GlobalSpace gs')
     go _ SNil [] = Right NoGlobals
     go index (SCons (SGlobalType _ (sn :%~ _)) gs) (RawGlobal _ initExpr : rest) = do
-        value <- evalConstInit (InvalidGlobalInitializer index) sn initExpr
+        value <- evalConstInit ftsS (InvalidGlobalInitializer index) sn initExpr
         rest' <- go (index + 1) gs rest
         Right (Declared (Global value) rest')
     go _ _ _ = Left (Malformed "global/type count mismatch")
 
--- | A constant expression of the given type: exactly one constant instruction.
-evalConstInit :: ElabError -> Sing (n :: ValType) -> [RawInstr] -> Either ElabError (HostType n)
-evalConstInit invalid sn [Const st literal] = case decideEquality st sn of
-    Just Refl -> Right literal
-    Nothing -> Left invalid
-evalConstInit invalid _ _ = Left invalid
+{- | A constant expression of the given type: exactly one constant instruction, a numeric
+  constant or, for a reference type, @ref.null@ or @ref.func@.
+-}
+evalConstInit :: Sing (fts :: [LabelledFuncType]) -> ElabError -> Sing (n :: ValType) -> [RawInstr] -> Either ElabError (HostType n)
+evalConstInit ftsS invalid sn expr = case (expr, decideRef sn) of
+    ([Const st literal], _) | Just Refl <- decideEquality st sn -> Right literal
+    (_, Just isRef) -> withReference isRef (constReference <$> constRef ftsS invalid sn expr)
+    _ -> Left invalid
+
+-- | A constant expression of a reference type: null at that type, or a function that exists.
+constRef :: Sing (fts :: [LabelledFuncType]) -> ElabError -> Sing (t :: ValType) -> [RawInstr] -> Either ElabError (ConstRef fts t)
+constRef ftsS invalid st expr = case (expr, st) of
+    ([RefNull t], _) | t == valTypeOf st -> Right NullConst
+    ([RefFunc (FunctionIdx f)], SFuncRef) -> case lookupFuncRef ftsS f of
+        Just (SomeFuncRef _ _ _ ix) -> Right (FunctionConst (resolveFunction ix))
+        Nothing -> Left (IndexOutOfRange Functions f)
+    _ -> Left invalid
+
+-- | The functions a body takes references to, at any depth.
+functionsReferencedIn :: [RawInstr] -> [FunctionIdx]
+functionsReferencedIn = concatMap referenced
+  where
+    referenced instr = case instr of
+        RefFunc f -> [f]
+        Block _ body -> functionsReferencedIn body
+        Loop _ body -> functionsReferencedIn body
+        If _ thenBody elseBody -> functionsReferencedIn thenBody ++ functionsReferencedIn elseBody
+        _ -> []
 
 -- | An active data segment needs a memory to land in and a constant @i32@ offset.
 elaborateData :: Maybe (NonEmptyMems ms) -> (Int, RawDataSegment) -> Either ElabError DataSegment
@@ -1611,16 +1762,27 @@ elaborateData mems (index, RawDataSegment mode bytes) = case mode of
     Passive -> Right (DataSegment Nothing bytes)
     Active offsetExpr -> do
         NonEmptyMems <- note (NoMemory "data") mems
-        offset <- evalConstInit (InvalidDataSegmentOffset index) SI32 offsetExpr
+        offset <- evalConstInit SNil (InvalidDataSegmentOffset index) SI32 offsetExpr
         Right (DataSegment (Just offset) bytes)
 
-{- | An element segment needs a table to land in, a constant @i32@ offset, and functions that
-  exist: each index is resolved to a typed reference ('SomeFuncRef'), so a table only ever
-  holds real functions.
+{- | The element segments, each at the type the shape gives it: its items are constants of
+  that type (so a table only ever holds functions that exist), and an active one needs a table
+  of that type to land in and a constant @i32@ offset.
 -}
-elaborateElements :: Sing (fts :: [LabelledFuncType]) -> Maybe (NonEmptyTables ts) -> (Int, RawElementSegment) -> Either ElabError (ElementSegment fts)
-elaborateElements ftsS tables (index, RawElementSegment offsetExpr functions) = do
-    NonEmptyTables <- note (NoTable "elem") tables
-    offset <- evalConstInit (InvalidElementSegmentOffset index) SI32 offsetExpr
-    refs <- traverse (\(FunctionIdx f) -> note (IndexOutOfRange Functions f) (lookupFuncRef ftsS f)) functions
-    Right (ElementSegment offset refs)
+elaborateElements :: forall shape es. SModuleShape shape -> Sing (es :: [ElemShape]) -> [(Int, RawElementSegment)] -> Either ElabError (ElementSpace shape es)
+elaborateElements ctxS = go
+  where
+    go :: Sing (es' :: [ElemShape]) -> [(Int, RawElementSegment)] -> Either ElabError (ElementSpace shape es')
+    go SNil [] = Right NoElements
+    go (SCons (SElemShape st) es) ((index, RawElementSegment mode _ items) : rest) = do
+        references <- traverse (constRef (funcTypesSing ctxS) (InvalidElementItem index) st) items
+        placement <- case mode of
+            ElemPassive -> Right KeptForInit
+            ElemDeclarative -> Right DeclaredOnly
+            ElemActive (TableIdx t) offsetExpr -> do
+                SomeTableRef tableType _ tix <- note (IndexOutOfRange Tables t) (lookupTableRef (tableShapesSing ctxS) t)
+                Refl <- note (OperandMismatch "elem" (valTypeOf tableType) (valTypeOf st)) (decideEquality tableType st)
+                offset <- evalConstInit (funcTypesSing ctxS) (InvalidElementSegmentOffset index) SI32 offsetExpr
+                Right (WrittenTo tix offset)
+        Elements (ElementSegment placement references) <$> go es rest
+    go _ _ = Left (Malformed "element segment/type count mismatch")

@@ -10,6 +10,7 @@
 module Syntax.Module (
     -- * As decoded
     RawModule (..),
+    referencedFunctions,
     RawImport (..),
     ImportDesc (..),
     RawMemory (..),
@@ -17,13 +18,18 @@ module Syntax.Module (
     RawDataSegment (..),
     DataMode (..),
     RawElementSegment (..),
+    ElemMode (..),
     Export (..),
     ExportDesc (..),
 
     -- * As validated
     Module (..),
     DataSegment (..),
+    ElementSpace (..),
     ElementSegment (..),
+    ElementMode (..),
+    ConstRef (..),
+    constReference,
     SomeModule (..),
 ) where
 
@@ -34,12 +40,14 @@ import Data.Text (Text)
 import Data.Word (Word32)
 
 import Syntax.Functions (FunctionSpace, RawFunction)
-import Syntax.Globals (GlobalSpace, RawGlobal)
+import Syntax.Globals (GlobalSpace, RawGlobal (..))
+import Syntax.Immediates (Reference, nullReference)
 import Syntax.Indices (FunctionIdx, GlobalIdx, MemoryIdx, TableIdx)
-import Syntax.Instructions (RawExpr)
-import Syntax.Types (FuncType, Limits, MemType)
+import Syntax.Instructions (RawExpr, RawInstr (RefFunc))
+import Syntax.Types (FuncType, Limits, MemType, ValType (..))
 import Syntax.TypesIFC (LabelledFuncType (..), SecLevel (..))
-import Validation.Shape (Elem, ModuleFuncs, ModuleGlobals, ModuleShape, SomeFuncRef)
+import Validation.Ref (FunctionRef, functionReference)
+import Validation.Shape (Elem, ElemShape (..), ModuleElems, ModuleFuncs, ModuleGlobals, ModuleShape, ModuleTables, TableShape (..))
 
 data RawModule = RawModule
     { types :: [FuncType]
@@ -52,7 +60,6 @@ data RawModule = RawModule
     , memories :: [RawMemory]
     , tables :: [RawTable]
     , elementSegments :: [RawElementSegment]
-    -- ^ active element segments, applied in order at instantiation
     , dataSegments :: [RawDataSegment]
     , exports :: [Export]
     , start :: Maybe FunctionIdx
@@ -80,9 +87,10 @@ newtype RawMemory = RawMemory
     }
     deriving stock (Eq, Show)
 
--- | A table: its size limits. Only @funcref@ tables exist here, so that is all of it.
-newtype RawTable = RawTable
-    { limits :: Limits
+-- | A table: the reference type of its entries, and its size limits.
+data RawTable = RawTable
+    { entryType :: ValType
+    , limits :: Limits
     }
     deriving stock (Eq, Show)
 
@@ -98,11 +106,28 @@ data DataMode
     = Active RawExpr
     | Passive
 
--- | An active element segment: functions to place in table 0 from a constant offset.
+{- | An element segment: references of one type, each given by a constant expression (a
+  function index in the binary is the expression @ref.func@ of it). An active segment is
+  written into a table at a constant offset when the module is instantiated; a passive one is
+  kept for @table.init@; a declarative one only declares its functions for @ref.func@.
+-}
 data RawElementSegment = RawElementSegment
-    { offset :: RawExpr
-    , functions :: [FunctionIdx]
+    { mode :: ElemMode
+    , entryType :: ValType
+    , items :: [RawExpr]
     }
+
+data ElemMode
+    = ElemActive TableIdx RawExpr
+    | ElemPassive
+    | ElemDeclarative
+
+{- | The functions a module names outside its code, in element segments and in the initial
+  values of globals: those a reference may come to refer to, and (with the exported ones) the
+  only ones @ref.func@ may name in a function body.
+-}
+referencedFunctions :: RawModule -> [FunctionIdx]
+referencedFunctions m = [f | expr <- concatMap (.items) m.elementSegments ++ map (.initializer) m.globals, RefFunc f <- expr]
 
 -- | A named entry point exposed by the module.
 data Export = Export
@@ -130,7 +155,7 @@ data Module (shape :: ModuleShape) = Module
     , dataSegments :: [DataSegment]
     , secretRegions :: [(Word32, Word32)]
     -- ^ the half-open address ranges of memory 0 whose bytes the policy declares secret
-    , elementSegments :: [ElementSegment (ModuleFuncs shape)]
+    , elementSegments :: ElementSpace shape (ModuleElems shape)
     , exports :: [Export]
     , start :: Maybe (Elem ('LabelledFuncType 'Low '[] '[]) (ModuleFuncs shape))
     -- ^ the start function, known to take and return nothing
@@ -142,11 +167,36 @@ data DataSegment = DataSegment
     , bytes :: ByteString
     }
 
--- | An element segment as validated: its constant offset, and its functions, each resolved.
-data ElementSegment (fts :: [LabelledFuncType]) = ElementSegment
-    { offset :: Word32
-    , functions :: [SomeFuncRef fts]
+{- | A module's element index space: one segment per element type in the shape, so that
+  @table.init@ and @elem.drop@ find a segment of the type their witness names.
+-}
+data ElementSpace (shape :: ModuleShape) (es :: [ElemShape]) where
+    NoElements :: ElementSpace shape '[]
+    Elements :: ElementSegment shape t -> ElementSpace shape es -> ElementSpace shape ('ElemShape t ': es)
+
+-- | An element segment as validated: where it goes, and its references, each resolved.
+data ElementSegment (shape :: ModuleShape) (t :: ValType) = ElementSegment
+    { mode :: ElementMode shape t
+    , items :: [ConstRef (ModuleFuncs shape) t]
     }
+
+{- | What becomes of an element segment at instantiation: it is written into a table of its
+  type at a constant offset, kept for @table.init@, or neither (a declarative segment, whose
+  only use is to declare its functions for @ref.func@).
+-}
+data ElementMode (shape :: ModuleShape) (t :: ValType) where
+    WrittenTo :: Elem ('TableShape t lt lo hi) (ModuleTables shape) -> Word32 -> ElementMode shape t
+    KeptForInit :: ElementMode shape t
+    DeclaredOnly :: ElementMode shape t
+
+-- | A constant of a reference type: null, or a function of the module.
+data ConstRef (fts :: [LabelledFuncType]) (t :: ValType) where
+    NullConst :: ConstRef fts t
+    FunctionConst :: FunctionRef fts -> ConstRef fts 'FuncRef
+
+constReference :: ConstRef fts t -> Reference
+constReference NullConst = nullReference
+constReference (FunctionConst function) = functionReference function
 
 -- | A validated module with its shape hidden, together with the shape's singleton.
 data SomeModule where

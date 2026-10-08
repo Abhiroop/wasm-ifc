@@ -29,13 +29,13 @@ import Hedgehog.Gen qualified as Gen
 import Hedgehog.Range qualified as Range
 
 import Runtime.Instantiate (instantiate)
-import Runtime.Module (Invocation (..), SomeModuleInst, Value (..), invokeExport, readGlobalExport, readMemoryLevels)
+import Runtime.Module (Invocation (..), SomeModuleInst, Value (..), invokeExport, readGlobalExport, readMemoryLevels, readTable)
 import Syntax.Functions (RawFunction (..))
 import Syntax.Globals (RawGlobal (..))
 import Syntax.Immediates
 import Syntax.Indices
 import Syntax.Instructions (RawInstr (..))
-import Syntax.Module (Export (..), ExportDesc (..), RawMemory (..), RawModule (..))
+import Syntax.Module (ElemMode (..), Export (..), ExportDesc (..), RawElementSegment (..), RawMemory (..), RawModule (..), RawTable (..))
 import Syntax.Types
 import Syntax.TypesIFC (SecLevel (..))
 import Validation.Elaborate (elaborateModuleWith)
@@ -49,6 +49,12 @@ data Stmt
     | DropValue Expr
     | -- | a write to the preserved global (global 2)
       SetPreserved Expr
+    | -- | write to a table, at an index, the function 2 or null as the last value says
+      SetEntry Word32 Expr Expr
+    | -- | grow a table by no entry or by one, as the value says
+      GrowTable Word32 Expr
+    | -- | copy the first two entries of the second table to the first
+      CopyTable Word32 Word32
     | -- | lower the preserved global by this much, run the statements, and raise it again
       Borrowing Word32 [Stmt]
     | IfThen Expr [Stmt] [Stmt]
@@ -70,6 +76,11 @@ data Expr
     | Binary BinaryOp Expr Expr
     | IfValue Expr Expr Expr
     | CallHelper Expr
+    | -- | whether an entry of a table is null
+      EntryIsNull Word32 Expr
+    | TableSizeOf Word32
+    | -- | call the function at an index of the public table (a trap if the entry is null)
+      CallEntry Expr
     | -- | the value, left on the stack while the statements run in a block of their own
       Around Expr [Stmt]
     deriving stock (Show)
@@ -77,9 +88,11 @@ data Expr
 data BinaryOp = OpAdd | OpSub | OpMul | OpAnd | OpOr | OpXor | OpLtU
     deriving stock (Show)
 
-{- | A module of two functions: an internal helper (function 0, @i32 -> i32@) and the exported
-  @f@ (function 1, @i32 i32 -> i32@, the first parameter secret), with a public global (0), a
-  secret global (1), and one page of memory whose bytes [32, 64) are a secret region.
+{- | A module of three functions: an internal helper (function 0, @i32 -> i32@), the exported
+  @f@ (function 1, @i32 i32 -> i32@, the first parameter secret) and a constant (function 2,
+  which tables refer to), with a public global (0), a secret global (1), one page of memory
+  whose bytes [32, 64) are a secret region, and two tables of four entries or more, a public
+  one (0) and a secret one (1), whose first entry is function 2.
 -}
 data GeneratedModule = GeneratedModule
     { helperBody :: ([Stmt], Expr)
@@ -146,17 +159,29 @@ genStmt size scope
             )
   where
     expr = genExpr (size - 1) scope
+    -- (The statements on tables are rarer than the others, and more often on the secret
+    -- table: a write to the public one under a secret pc is rejected, and a rejected program
+    -- tests nothing here. What is written is often decided by local 0, the secret of @f@.)
     simple =
-        Gen.choice
-            [ SetLocal <$> Gen.element scope.writable <*> expr
-            , SetGlobal <$> Gen.element [0, 1] <*> expr
-            , StoreAt <$> expr <*> expr
-            , DropValue <$> expr
-            , SetPreserved <$> expr
-            , Borrowing <$> Gen.element [4, 16] <*> (if size <= 0 then pure [] else genStmts (size - 1) scope)
+        Gen.frequency
+            [ (3, SetLocal <$> Gen.element scope.writable <*> expr)
+            , (3, SetGlobal <$> Gen.element [0, 1] <*> expr)
+            , (3, StoreAt <$> expr <*> expr)
+            , (3, DropValue <$> expr)
+            , (3, SetPreserved <$> expr)
+            , (1, SetEntry <$> Gen.element [0, 1, 1] <*> genTableIndex expr <*> Gen.frequency [(1, pure (GetLocal 0)), (1, expr)])
+            , (1, GrowTable <$> Gen.element [0, 1, 1] <*> expr)
+            , (1, uncurry CopyTable <$> Gen.element [(0, 0), (1, 0), (1, 1)])
+            , (3, Borrowing <$> Gen.element [4, 16] <*> (if size <= 0 then pure [] else genStmts (size - 1) scope))
             ]
     branchIf _ = BranchIf <$> Gen.element scope.targets <*> expr
     branchTable = BranchTable <$> Gen.list (Range.linear 0 3) (Gen.element scope.targets) <*> Gen.element scope.targets <*> expr
+
+{- | An index for a table: mostly one of the first two entries, so that a write and a later
+  read often meet at the same entry.
+-}
+genTableIndex :: Gen Expr -> Gen Expr
+genTableIndex other = Gen.frequency [(3, Literal <$> Gen.element [0, 1]), (1, other)]
 
 genExpr :: Int -> Scope -> Gen Expr
 genExpr size scope
@@ -167,6 +192,7 @@ genExpr size scope
               , (3, Binary <$> Gen.element [OpAdd, OpSub, OpMul, OpAnd, OpOr, OpXor, OpLtU] <*> sub <*> sub)
               , (2, IfValue <$> sub <*> genExpr (size - 1) (enter False scope) <*> genExpr (size - 1) (enter False scope))
               , (1, LoadAt <$> Gen.element [Low, High] <*> sub)
+              , (1, EntryIsNull <$> Gen.element [0, 1] <*> genTableIndex sub)
               , (2, Around <$> sub <*> genStmts (size - 1) (enter True scope))
               ]
                 ++ [(1, CallHelper <$> sub) | scope.mayCall]
@@ -178,22 +204,25 @@ genExpr size scope
             [ Literal <$> Gen.word32 (Range.linear 0 64)
             , GetLocal <$> Gen.element scope.readable
             , GetGlobal <$> Gen.element [0, 1, 2]
+            , TableSizeOf <$> Gen.element [0, 0, 0, 1]
+            , CallEntry . Literal <$> Gen.element [0, 0, 0, 1]
             ]
 
 -- | The module, with the policy of 'policyText'.
 compileModule :: GeneratedModule -> RawModule
 compileModule generated =
     RawModule
-        { types = [helperType, mainType]
+        { types = [helperType, mainType, constantType]
         , imports = []
         , functions =
             [ RawFunction helperType [I32, I32, I32, I32] (body generated.helperBody)
             , RawFunction mainType [I32, I32, I32, I32] (secretIntoMemory ++ body generated.mainBody)
+            , RawFunction constantType [] [Const SI32 7]
             ]
         , globals = [RawGlobal (GlobalType Mutable I32) [Const SI32 0], RawGlobal (GlobalType Mutable I32) [Const SI32 0], RawGlobal (GlobalType Mutable I32) [Const SI32 1000]]
         , memories = [RawMemory (MemType AddrI32 (Limits 1 (Just 1)))]
-        , tables = []
-        , elementSegments = []
+        , tables = [RawTable FuncRef (Limits 4 (Just 6)), RawTable FuncRef (Limits 4 (Just 6))]
+        , elementSegments = [RawElementSegment (ElemActive (TableIdx t) [Const SI32 0]) FuncRef [[RefFunc (FunctionIdx 2)]] | t <- [0, 1]]
         , dataSegments = []
         , exports = [Export "f" (ExportFunc (FunctionIdx 1)), Export "public" (ExportGlobal (GlobalIdx 0)), Export "preserved" (ExportGlobal (GlobalIdx 2))]
         , start = Nothing
@@ -202,19 +231,25 @@ compileModule generated =
   where
     helperType = FuncType [I32] [I32]
     mainType = FuncType [I32, I32] [I32]
+    constantType = FuncType [] [I32]
     body (stmts, result) = concatMap compileStmt stmts ++ compileExpr result
     -- the secret parameter, stored into the secret region, so the two runs' memories differ there
     secretIntoMemory = [Const SI32 32, LocalGet (LocalIdx 0), Store SI32 (MemArg 0 0)]
 
 -- | The policy the generated modules are checked under.
 policyText :: Text
-policyText = "export f : H L -> L\nglobal 1 : H\nregion 32 64 : H\npreserved global 2\n"
+policyText = "export f : H L -> L\nglobal 1 : H\nregion 32 64 : H\npreserved global 2\ntable 1 : H\n"
 
 compileStmt :: Stmt -> [RawInstr]
 compileStmt stmt = case stmt of
     SetLocal i e -> compileExpr e ++ [LocalSet (LocalIdx i)]
     SetGlobal g e -> compileExpr e ++ [GlobalSet (GlobalIdx g)]
     SetPreserved e -> compileExpr e ++ [GlobalSet (GlobalIdx 2)]
+    -- (The choice is by parity: two secrets drawn at random are both non-zero, and differ in
+    -- parity half the time.)
+    SetEntry t index choice -> compileIndex index ++ [RefFunc (FunctionIdx 2), RefNull FuncRef] ++ compileExpr choice ++ [Const SI32 1, And SI32, SelectTyped [FuncRef], TableSet (TableIdx t)]
+    GrowTable t count -> [RefNull FuncRef] ++ compileExpr count ++ [Const SI32 1, And SI32, TableGrow (TableIdx t), Drop]
+    CopyTable to from -> [Const SI32 0, Const SI32 0, Const SI32 2, TableCopy (TableIdx to) (TableIdx from)]
     Borrowing amount body ->
         [GlobalGet (GlobalIdx 2), Const SI32 amount, Sub SI32, GlobalSet (GlobalIdx 2)]
             ++ concatMap compileStmt body
@@ -243,6 +278,9 @@ compileExpr expr = case expr of
     Binary op x y -> compileExpr x ++ compileExpr y ++ [binaryInstr op]
     IfValue c t e -> compileExpr c ++ [If (FuncType [] [I32]) (compileExpr t) (compileExpr e)]
     CallHelper e -> compileExpr e ++ [Call (FunctionIdx 0)]
+    EntryIsNull t index -> compileIndex index ++ [TableGet (TableIdx t), RefIsNull]
+    TableSizeOf t -> [TableSize (TableIdx t)]
+    CallEntry index -> compileIndex index ++ [CallIndirect (TableIdx 0) (TypeIdx 2)]
     Around e stmts -> compileExpr e ++ [Block (FuncType [] []) (concatMap compileStmt stmts)]
   where
     binaryInstr OpAdd = Add SI32
@@ -257,6 +295,10 @@ compileExpr expr = case expr of
 compileAddress :: Expr -> [RawInstr]
 compileAddress address = compileExpr address ++ [Const SI32 60, And SI32]
 
+-- | An index into the first four entries of a table, which every table has.
+compileIndex :: Expr -> [RawInstr]
+compileIndex index = compileExpr index ++ [Const SI32 3, And SI32]
+
 {- | The module with every load declared public: under the empty policy it has no secret at
   all, so it is accepted however its locals are typed, and no load traps on a level.
 -}
@@ -270,6 +312,9 @@ withPublicLoads generated = GeneratedModule (body generated.helperBody) (body ge
         StoreAt a v -> StoreAt (expr a) (expr v)
         DropValue e -> DropValue (expr e)
         SetPreserved e -> SetPreserved (expr e)
+        SetEntry t i c -> SetEntry t (expr i) (expr c)
+        GrowTable t e -> GrowTable t (expr e)
+        CopyTable to from -> CopyTable to from
         Borrowing amount b -> Borrowing amount (map stmt b)
         IfThen c t e -> IfThen (expr c) (map stmt t) (map stmt e)
         BlockOf b -> BlockOf (map stmt b)
@@ -282,6 +327,8 @@ withPublicLoads generated = GeneratedModule (body generated.helperBody) (body ge
         Binary op x y -> Binary op (expr x) (expr y)
         IfValue c t f -> IfValue (expr c) (expr t) (expr f)
         CallHelper x -> CallHelper (expr x)
+        EntryIsNull t i -> EntryIsNull t (expr i)
+        CallEntry i -> CallEntry (expr i)
         Around x stmts -> Around (expr x) (map stmt stmts)
         other -> other
 
@@ -298,6 +345,9 @@ holdsValueAcrossBranch generated = any bodyHolds [generated.helperBody, generate
         StoreAt a v -> exprHolds a || exprHolds v
         DropValue e -> exprHolds e
         SetPreserved e -> exprHolds e
+        SetEntry _ i c -> exprHolds i || exprHolds c
+        GrowTable _ e -> exprHolds e
+        CopyTable _ _ -> False
         Borrowing _ body -> any stmtHolds body
         IfThen c t e -> exprHolds c || any stmtHolds t || any stmtHolds e
         BlockOf body -> any stmtHolds body
@@ -311,6 +361,8 @@ holdsValueAcrossBranch generated = any bodyHolds [generated.helperBody, generate
         Binary _ x y -> exprHolds x || exprHolds y
         IfValue c t e -> exprHolds c || exprHolds t || exprHolds e
         CallHelper e -> exprHolds e
+        EntryIsNull _ i -> exprHolds i
+        CallEntry i -> exprHolds i
         _ -> False
     branches stmt = case stmt of
         BranchIf {} -> True
@@ -320,12 +372,14 @@ holdsValueAcrossBranch generated = any bodyHolds [generated.helperBody, generate
         LoopTimes _ _ body -> any branches body
         _ -> False
 
--- | What the attacker sees of a run that finished: the result, the public globals (the preserved one is public), and memory.
+-- | What the attacker sees of a run that finished: the result, the public globals (the preserved one is public), memory, and the public table.
 data Observation = Observation
     { result :: [Value]
     , publicGlobal :: Value
     , preservedGlobal :: Value
     , memory :: [(Word8, SecLevel)]
+    , publicTable :: [Reference]
+    -- ^ the entries of table 0, as many as it has
     }
     deriving stock (Show)
 
@@ -352,3 +406,4 @@ observeUnder text m secret public = do
             <$> either (const Nothing) Just (readGlobalExport after "public")
             <*> either (const Nothing) Just (readGlobalExport after "preserved")
             <*> readMemoryLevels after 0 64
+            <*> readTable after 0
