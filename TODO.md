@@ -12,7 +12,7 @@ are summarised here, not repeated.
 ## Where things stand (2026-10-08)
 
 - WebAssembly: the spec testsuite, at the WebAssembly 3.0 release (all 257 scripts), passes for
-  the supported subset (30,693 assertions, none failing, 34,509 skipped, counted by feature
+  the supported subset (33,439 assertions, none failing, 31,763 skipped, counted by feature
   below); the wasi-testsuite passes 72 of 72. Both also with SecWasm's restrictions on.
 - Information flow: SecWasm's static rules in the single instruction type, with the repairs of
   the paper's findings (`br_table` raises down to its deepest target); inference of stores,
@@ -63,7 +63,7 @@ a skipped module uses according to `wasm-tools`, in assertions:
 | Skipped | Features the module uses beyond the subset |
 |---:|---|
 | 25,355 | vector instructions |
-| 3,107 | none: imports of tables, memories and globals; functions imported from another module of the script |
+| 358 | none: imports of tables, memories and globals, and what depends on state shared between modules |
 | 2,280 | 64-bit memories and tables |
 | 834 | multiple memories |
 | 821 | garbage collection |
@@ -73,13 +73,21 @@ a skipped module uses according to `wasm-tools`, in assertions:
 | 61 | exceptions (98 more with another feature) |
 | 1,245 | none: malformed modules given as text, which the harness does not run |
 
-Of the 3,107, 2,616 are `table_copy.wast` and `table_init.wast` (and their 64-bit twins), whose
-modules import functions from a module the script registers. `return_call.wast` needs typed
-function references.
+`return_call.wast` needs typed function references. (The table's order is by count before the
+358 fell from 3,107: functions imported from another module of a script are now linked.)
 
-- [ ] **P2** Imports of globals, memories and tables, and linking between modules in the spec
-  runner (`register`, the `spectest` module); `global.get` of an imported global in
-  initialisers.
+- [ ] **P2** Imports of globals, memories and tables; `global.get` of an imported global in
+  initialisers. A function is imported by suspending on the call (`ForeignFunc`), which shares
+  nothing; a table, a memory or a mutable global imported from another module is state two
+  instances share, which the store of one typed machine per module does not express. Imports
+  by value (the embedder gives the initial contents, the module owns them) would cover the
+  suite's `spectest` module and immutable globals: some part, not counted, of the 287
+  assertions on modules with such imports (the other 71 of the 358 depend on shared state or
+  on commands the runner does not perform).
+- [ ] **P3** A start function that calls an imported function fails to instantiate
+  (`StartFunctionNeedsHost`): nobody answers calls during instantiation.
+- [ ] **P3** The spec runner keeps an instance as it was before a call that trapped, so what the
+  call wrote before trapping is lost; no assertion of the suite depends on it today.
 - [ ] **P3** A reference to a function is a word, the function's index, which the table
   resolves in the module's directory of functions (`Runtime/TableInst.hs`). The typed
   instructions and element segments only make references to functions that exist

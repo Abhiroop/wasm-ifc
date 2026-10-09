@@ -10,9 +10,12 @@
 module Runtime.Instantiate (
     InstantiationError (..),
     instantiate,
+    ForeignFunctions,
+    noForeignFunctions,
+    instantiateWith,
 ) where
 
-import Control.Monad (foldM)
+import Control.Monad (foldM, when)
 import Data.Bifunctor (first)
 import Data.ByteString qualified as BS
 import Data.Singletons (Sing, fromSing)
@@ -30,7 +33,7 @@ import Runtime.Trap (Trap)
 import Syntax.Functions (FunctionSpace (..))
 import Syntax.Module (DataSegment (..), ElementMode (..), ElementSegment (..), ElementSpace (..), Module (..), SomeModule (..), constReference)
 import Syntax.Types
-import Syntax.TypesIFC (LabelledFuncType (..), SLabelledFuncType (..), SSecLevel (..), SecLevel (..), decideSameValueTypes, decideSegmentFlows)
+import Syntax.TypesIFC (LabelledFuncType (..), SLabelledFuncType (..), SSecLevel (..), SecLevel (..), decideAllPublic, decideSameValueTypes, decideSegmentFlows, unlabelled)
 import Validation.Policy (ghostModuleName)
 import Validation.Reflect (NonEmptyMems (..), allFuncRefs, memsNonEmpty)
 import Validation.Shape
@@ -59,9 +62,22 @@ data InstantiationError
     deriving stock (Eq, Show)
 
 instantiate :: SomeModule -> Either InstantiationError SomeModuleInst
-instantiate (SomeModule shapeS m) = case shapeS of
+instantiate = instantiateWith noForeignFunctions
+
+{- | What an embedder provides besides WASI: for a module name and a field name, the type of
+  the function it will answer calls to ('Runtime.Module.answerForeign'), parameters and
+  results in declared order.
+-}
+type ForeignFunctions = Text -> Text -> Maybe FuncType
+
+noForeignFunctions :: ForeignFunctions
+noForeignFunctions _ _ = Nothing
+
+-- | 'instantiate' for a module that may import functions of its embedder.
+instantiateWith :: ForeignFunctions -> SomeModule -> Either InstantiationError SomeModuleInst
+instantiateWith provided (SomeModule shapeS m) = case shapeS of
     SModuleShape ftsS _ msS tsS dsS _ -> do
-        funcs <- link (memsNonEmpty msS) ftsS m.functions
+        funcs <- link provided (memsNonEmpty msS) ftsS m.functions
         placed <- placeData m.dataSegments (allocateMemories msS)
         mems <- labelRegions m.secretRegions placed
         tables <- placeElements 0 m.elementSegments (TableSpaceInst (functionDirectory (allFuncRefs ftsS)) (allocateTables tsS) (keptElements m.elementSegments))
@@ -73,11 +89,19 @@ instantiate (SomeModule shapeS m) = case shapeS of
   module, name a function the host provides, be declared at exactly that function's type, and
   the module must have a memory (WASI requires one, and 'HostFunc' cannot be built without it).
 -}
-link :: Maybe (NonEmptyMems (ModuleMems shape)) -> Sing fts -> FunctionSpace shape fts -> Either InstantiationError (FuncSpaceInst shape fts)
-link _ SNil NoFunctions = Right FsNil
-link mems (SCons _ rest) (Defined f more) = FsCons (WasmFunc f) <$> link mems rest more
-link mems (SCons (SLabelledFuncType boundS psS rsS) rest) (Imported moduleName fieldName more)
-    | moduleName == ghostModuleName = FsCons GhostFunc <$> link mems rest more
+link :: ForeignFunctions -> Maybe (NonEmptyMems (ModuleMems shape)) -> Sing fts -> FunctionSpace shape fts -> Either InstantiationError (FuncSpaceInst shape fts)
+link _ _ SNil NoFunctions = Right FsNil
+link provided mems (SCons _ rest) (Defined f more) = FsCons (WasmFunc f) <$> link provided mems rest more
+link provided mems (SCons (SLabelledFuncType boundS psS rsS) rest) (Imported moduleName fieldName more)
+    | moduleName == ghostModuleName = FsCons GhostFunc <$> link provided mems rest more
+    -- An embedder's function: at the type the embedder gives it, from a public context,
+    -- with public arguments.
+    | Just (FuncType params results) <- provided moduleName fieldName = do
+        when (params /= reverse (map unlabelled (fromSing psS)) || results /= reverse (map unlabelled (fromSing rsS))) (Left (ImportTypeMismatch fieldName))
+        public <- note (ImportNotPublic fieldName) (decideAllPublic psS)
+        case boundS of
+            SLow -> FsCons (ForeignFunc moduleName fieldName psS rsS public) <$> link provided mems rest more
+            SHigh -> Left (ImportNotPublic fieldName)
     | moduleName /= wasiModuleName = Left (UnsupportedImport moduleName fieldName)
     | otherwise = case resolveWasiImport fieldName of
         Nothing -> Left (UnsupportedImport moduleName fieldName)
@@ -90,7 +114,7 @@ link mems (SCons (SLabelledFuncType boundS psS rsS) rest) (Imported moduleName f
                 argsPublic <- note (ImportNotPublic fieldName) (decideSegmentFlows psS hostPsS)
                 NonEmptyMems <- note WasiNeedsMemory mems
                 case boundS of
-                    SLow -> FsCons (HostFunc wasiFunc argsPublic resultsAgree) <$> link mems rest more
+                    SLow -> FsCons (HostFunc wasiFunc argsPublic resultsAgree) <$> link provided mems rest more
                     SHigh -> Left (ImportNotPublic fieldName)
             SLabelledFuncType SHigh _ _ -> Left (ImportTypeMismatch fieldName)
 

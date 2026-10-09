@@ -235,6 +235,17 @@ segmentSelf (SCons (_ :%~ l) rest) = ValueFlows (flowsSelf l) (segmentSelf rest)
   boundary the words cross under the declared levels on the module's side and under public
   ones on the host's; nothing about them changes.
 -}
+
+-- | Every value of a segment is public: what may be handed to a function outside the module.
+data AllPublic (ps :: [LabelledValType]) where
+    NoneToHand :: AllPublic '[]
+    PublicThen :: AllPublic ps -> AllPublic ((t ':~ 'Low) ': ps)
+
+decideAllPublic :: Sing (ps :: [LabelledValType]) -> Maybe (AllPublic ps)
+decideAllPublic SNil = Just NoneToHand
+decideAllPublic (SCons (_ :%~ SLow) rest) = PublicThen <$> decideAllPublic rest
+decideAllPublic (SCons (_ :%~ SHigh) _) = Nothing
+
 data SameValueTypes (a :: [LabelledValType]) (b :: [LabelledValType]) where
     NoValues :: SameValueTypes '[] '[]
     SameValue :: SameValueTypes as bs -> SameValueTypes ((t ':~ l) ': as) ((t ':~ l') ': bs)

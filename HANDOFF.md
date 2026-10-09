@@ -409,3 +409,23 @@ segments, segments given as expressions, and `call_indirect` through any table.
 - **Representation:** a reference is one word (null, or an index); `TODO.md` records what the
   types do not rule out there.
 - **Cost:** the allocation tripwire is unchanged (`bench/tripwire.py`); no timing was run.
+
+## Functions imported from other modules (item 13, third step, 2026-10-09)
+
+- **What:** a module may import functions of whoever embeds it (`Runtime.Instantiate.instantiateWith`
+  takes their types). A call to one suspends the machine with the arguments
+  (`ForeignRequest`), and the embedder answers with the results (`Runtime.Module.foreignCall`,
+  `answerForeign`), which are checked against the declared result types. The spec runner uses
+  this to link the modules of a script: it keeps every instance, serves a call to a function
+  of a registered module by running that function in its own instance, and serves the
+  printing functions of the suite's `spectest` module by returning nothing.
+- **Spec suite:** 33,439 passed, 0 failed, 31,763 skipped (30,693 and 34,509 before), the same
+  with SecWasm's restrictions on. `table_copy.wast` and `table_init.wast` now run.
+- **Information flow:** such an import is typed like a host function: the policy must give it
+  the bound `Low` and public parameters (checked when the policy is assembled and again at
+  linking), and may label its results. The policy of the module that is called plays no part:
+  from the importer's side it is the host. Two modules with two policies are not composed.
+- **Not done:** imports of tables, memories and globals. The accurate coverage claim is
+  "WebAssembly 2.0 without vector instructions and without imports of tables, memories and
+  globals"; 358 assertions of the suite still need them or depend on state shared between
+  modules.

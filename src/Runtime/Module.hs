@@ -15,6 +15,9 @@ module Runtime.Module (
     RunError (..),
     Invocation (..),
     SomeHostRequest (..),
+    ForeignCall (..),
+    foreignCall,
+    answerForeign,
     exportSignature,
     exportedResultLevels,
     exportedGlobalLevel,
@@ -31,7 +34,7 @@ import Data.Singletons.Base.TH (SList (SCons, SNil))
 import Data.Text (Text)
 import Data.Word (Word32, Word64, Word8)
 
-import Runtime.Interpreter (Config, FuncSpaceInst, Halt (..), HostRequest, ModuleInst (..), Outcome (..), getFunc, run, runFunction, storeToModule)
+import Runtime.Interpreter (Config, FuncSpaceInst, Halt (..), HostRequest (..), ModuleInst (..), Outcome (..), getFunc, resumeWith, run, runFunction, storeToModule)
 import Runtime.MemInst (levelOfRange, readBytes)
 import Runtime.Stack (MemSpaceInst (..), TableInsts (..), TableSpaceInst (..), ValueStack (..), getGlobal)
 import Runtime.TableInst (readEntries, tableSize)
@@ -77,9 +80,36 @@ renderValue (F64Value d) = show d
 renderValue (FuncRefValue r) = maybe "null" (\index -> "func " ++ show index) (referent r)
 renderValue (ExternRefValue r) = maybe "null" (\index -> "extern " ++ show index) (referent r)
 
+-- | A call the module made to a function its embedder provides, arguments in declared order.
+data ForeignCall = ForeignCall
+    { moduleName :: Text
+    , fieldName :: Text
+    , arguments :: [Value]
+    }
+
+-- | The call a suspended invocation waits on, if it is one to an embedder's function.
+foreignCall :: SomeHostRequest -> Maybe ForeignCall
+foreignCall (SomeHostRequest _ _ _ _ request) = case request of
+    ForeignRequest moduleName fieldName psS _ args _ _ _ -> Just (ForeignCall moduleName fieldName (declaredOrder (toValues psS args)))
+    HostRequest {} -> Nothing
+
+{- | Continue an invocation suspended on a call to an embedder's function, with that
+  function's results in declared order; they must have the types the import declares.
+-}
+answerForeign :: SomeHostRequest -> [Value] -> Either RunError Invocation
+answerForeign (SomeHostRequest shapeS funcs exports rsS request) results = case request of
+    ForeignRequest moduleName fieldName _ _ _ resultTypes store suspended -> do
+        answered <- note (ForeignResultMismatch moduleName fieldName) (if map valueType results == declaredOrder (unlabelledTypes resultTypes) then buildStack resultTypes (stackOrder results) else Nothing)
+        continueWith shapeS funcs exports rsS (resumeWith store answered suspended)
+    HostRequest {} -> Left (ForeignResultMismatch "" "")
+
 data RunError
     = -- | no export of that name and kind (a function to invoke, a global to read)
       NoSuchExport Text
+    | -- | a call to an embedder's function (module, name) that nothing answered
+      ForeignCallUnanswered Text Text
+    | -- | the answer to a call to an embedder's function has not the results it declares
+      ForeignResultMismatch Text Text
     | -- | expected and actual number of arguments
       ArgumentCount Int Int
     | -- | the argument at this (zero-based) position should have the first type, has the second

@@ -29,9 +29,9 @@ import Noninterference (Observation (..), compileModule, genModule, holdsValueAc
 import Runtime.Bytes (bytesOfWord32, bytesOfWord64, word32OfBytes, word64OfBytes)
 import Runtime.Convert (convertVal)
 import Runtime.Host (WasiFunc (..))
-import Runtime.Instantiate (InstantiationError (..), instantiate)
+import Runtime.Instantiate (InstantiationError (..), instantiate, instantiateWith)
 import Runtime.Interpreter (HostRequest (..), callDepthBound, resumeWith)
-import Runtime.Module (Invocation (..), RunError (..), SomeHostRequest (..), SomeModuleInst, Value (..), continueWith, exportSignature, invokeExport, readGlobalExport, renderValue)
+import Runtime.Module (ForeignCall (..), Invocation (..), RunError (..), SomeHostRequest (..), SomeModuleInst, Value (..), answerForeign, continueWith, exportSignature, foreignCall, invokeExport, readGlobalExport, renderValue)
 import Runtime.Numeric (intDiv32)
 import Runtime.Stack (ValueStack (..), retagStack)
 import Runtime.Trap (Trap (..))
@@ -463,6 +463,30 @@ spec = do
                 `shouldSatisfy` errorContaining "UndeclaredFunctionReference 0"
         it "a policy may only label a table that exists" $
             elabRunWithPolicy "table 1 : H" size [0] `shouldSatisfy` errorContaining "PolicyUnknown"
+
+    describe "functions an embedder provides" $ do
+        -- function 0 is the import m.double (i32 -> i32); function 1, exported, calls it with 21
+        let importing = wasiModule (RawImport "m" "double" (ImportFunc (FuncType [I32] [I32]))) [Const SI32 21, Call (FunctionIdx 0)] [I32]
+            validated = either (error . show) id (elaborateModule importing)
+            doubling moduleName name = if (moduleName, name) == ("m", "double") then Just (FuncType [I32] [I32]) else Nothing
+            calledOut = either (error . show) id (instantiateWith doubling validated) `invokeExport` "f"
+        it "a call suspends the module with its arguments, and the answer resumes it" $
+            case calledOut [] of
+                Right (CalledHost request) -> do
+                    fmap (\asked -> (asked.moduleName, asked.fieldName, asked.arguments)) (foreignCall request) `shouldBe` Just ("m", "double", [I32Value 21])
+                    case answerForeign request [I32Value 42] of
+                        Right (Returned _ results) -> results `shouldBe` [I32Value 42]
+                        _ -> expectationFailure "the module did not return after the answer"
+                _ -> expectationFailure "the module did not call out"
+        it "an answer of other types than the import declares is refused" $
+            case calledOut [] of
+                Right (CalledHost request) -> either Just (const Nothing) (answerForeign request [I64Value 42]) `shouldBe` Just (ForeignResultMismatch "m" "double")
+                _ -> expectationFailure "the module did not call out"
+        it "an import links only to a function that is provided, at its type" $ do
+            void (instantiate validated) `shouldBe` Left (UnsupportedImport "m" "double")
+            void (instantiateWith (\_ _ -> Just (FuncType [I64] [I32])) validated) `shouldBe` Left (ImportTypeMismatch "double")
+        it "an import is called with public arguments only" $
+            elabRunWithPolicy "import m.double : H -> L" importing [] `shouldSatisfy` errorContaining "PolicyImportNotPublic"
 
     describe "WASI imports" $ do
         it "resolve to typed host functions; proc_exit ends the run with its code" $ do

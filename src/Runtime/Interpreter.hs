@@ -107,6 +107,7 @@ import Data.Bits (
     (.&.),
     (.|.),
  )
+import Data.Text (Text)
 import Data.Word (Word32, Word64)
 import GHC.Float (castDoubleToWord64, castFloatToWord32, castWord32ToFloat, castWord64ToDouble)
 
@@ -138,7 +139,7 @@ import Syntax.Types
 import Syntax.TypesIFC
 import Validation.Ref (functionReference)
 import Validation.Reflect (appendNil)
-import Validation.Shape (Append (..), BranchTarget (..), DataShape (..), Elem (..), ElemShape (..), FrameShape (..), ModuleData, ModuleElems, ModuleFuncs, ModuleGlobals, ModuleMems, ModuleShape, ModuleTables, PreservedOf, Restores (..), ReturnsWith (..), appendIs, withinReach)
+import Validation.Shape (Append (..), BranchTarget (..), DataShape (..), Elem (..), ElemShape (..), FrameShape (..), ModuleData, ModuleElems, ModuleFuncs, ModuleGlobals, ModuleMems, ModuleShape, ModuleTables, PreservedOf, Restores (..), ReturnsWith (..), appendFromSing, appendIs, withinReach)
 
 -- *** Module and runtime state ***
 
@@ -165,6 +166,19 @@ data FuncInst (mod :: ModuleShape) (ft :: LabelledFuncType) where
         WasiFunc ('LabelledFuncType 'Low hostParams hostResults) ->
         SegmentFlows ps hostParams ->
         SameValueTypes hostResults rs ->
+        FuncInst mod ('LabelledFuncType 'Low ps rs)
+    {- | A function of whoever embeds the module, known by the names it is imported under: a
+    function of another module, in a script that links several. Like a host function it is
+    called from a public context with public arguments only, since what it does with them is
+    outside this module's policy; its results have the levels the policy declares. A call to
+    it suspends the machine ('ForeignRequest'), and the embedder answers with the results.
+    -}
+    ForeignFunc ::
+        Text ->
+        Text ->
+        Sing ps ->
+        Sing rs ->
+        AllPublic ps ->
         FuncInst mod ('LabelledFuncType 'Low ps rs)
 
 -- | The instance of a module's function index space: one 'FuncInst' per type in 'ModuleFuncs'.
@@ -294,6 +308,17 @@ data HostRequest (mod :: ModuleShape) (res :: LabelledResultType) where
         ValueStack hostParams ->
         Store mod ->
         SameValueTypes hostResults rs ->
+        Suspended mod res rs ->
+        HostRequest mod res
+    -- | A call to a 'ForeignFunc': its names, its arguments (public, by their type), and where its results go.
+    ForeignRequest ::
+        Text ->
+        Text ->
+        Sing ps ->
+        AllPublic ps ->
+        ValueStack ps ->
+        Sing rs ->
+        Store mod ->
         Suspended mod res rs ->
         HostRequest mod res
 
@@ -606,6 +631,10 @@ enterCall evidence funcs store locals flows witness ix stack rest control = case
         let (args, below) = splitStack witness stack
             suspended = Suspended (appendFromSameValues resultsAgree) locals below rest control
          in Right (HostCall evidence (HostRequest wasiFunc (relabelStack argsAgree (relabelStack flows args)) store resultsAgree suspended))
+    ForeignFunc moduleName fieldName params results allPublic ->
+        let (args, below) = splitStack witness stack
+            suspended = Suspended (appendFromSing results) locals below rest control
+         in Right (HostCall evidence (ForeignRequest moduleName fieldName params allPublic (relabelStack flows args) results store suspended))
     GhostFunc -> Left InformationFlowViolation
   where
     depth = activationDepth control + 1
@@ -925,6 +954,8 @@ runFunction resultTypes tm (WasmFunc (Function params declared returns body)) ar
 runFunction _ tm (HostFunc wasiFunc argsAgree resultsAgree) args =
     let store = moduleToStore tm
      in Right (NeedsHost (HostRequest wasiFunc (relabelStack argsAgree args) store resultsAgree (Suspended (appendNilSameValues resultsAgree) noLocals VNil INil EntryBoundary)))
+runFunction _ tm (ForeignFunc moduleName fieldName params results allPublic) args =
+    Right (NeedsHost (ForeignRequest moduleName fieldName params allPublic args results (moduleToStore tm) (Suspended (appendNil results) noLocals VNil INil EntryBoundary)))
 runFunction _ _ GhostFunc _ = Left InformationFlowViolation
 
 {- *** Numeric dispatch ***

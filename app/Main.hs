@@ -211,6 +211,8 @@ parseArguments wasmModule name rawArgs = do
 describeRunError :: RunError -> String
 describeRunError err = case err of
     NoSuchExport name -> "no exported function named " ++ T.unpack name
+    ForeignCallUnanswered moduleName name -> "a call to " ++ T.unpack moduleName ++ "." ++ T.unpack name ++ ", which this host does not provide"
+    ForeignResultMismatch moduleName name -> "a call to " ++ T.unpack moduleName ++ "." ++ T.unpack name ++ " was answered with results of other types than it declares"
     ArgumentCount expectedCount actualCount ->
         "expected " ++ show expectedCount ++ " argument(s), got " ++ show actualCount
     ArgumentType position expectedType actualType ->

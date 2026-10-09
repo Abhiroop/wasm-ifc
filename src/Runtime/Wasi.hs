@@ -1063,4 +1063,7 @@ runWithWasi cfg wasmModule name args = do
                 WasiTrap trap -> pure (Left (Trapped trap))
                 WasiReturn results mem' ->
                     serve (continueWith shapeS funcs exports rsS (resumeWith (storeMem mem' store) (retagStack resultsAgree results) suspended))
+        -- (Instantiation links no function but WASI's unless an embedder provides it, and
+        -- this driver provides none.)
+        serve (Right (CalledHost (SomeHostRequest _ _ _ _ (ForeignRequest moduleName fieldName _ _ _ _ _ _)))) = pure (Left (ForeignCallUnanswered moduleName fieldName))
     serve (invokeExport wasmModule name args)

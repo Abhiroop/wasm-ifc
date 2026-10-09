@@ -33,11 +33,11 @@ import Test.Hspec
 import Text.Read (readMaybe)
 
 import Codec.Wasm (decodeModule)
-import Runtime.Instantiate (InstantiationError (..), instantiate)
-import Runtime.Module (Invocation (..), RunError (..), SomeModuleInst, Value (..), invokeExport, readGlobalExport, valueType)
+import Runtime.Instantiate (ForeignFunctions, InstantiationError (..), instantiateWith)
+import Runtime.Module (ForeignCall (..), Invocation (..), RunError (..), SomeModuleInst, Value (..), answerForeign, exportSignature, foreignCall, invokeExport, readGlobalExport, valueType)
 import Runtime.Trap (Trap (..))
 import Syntax.Immediates (Reference (..), isNullReference, nullReference, referenceTo)
-import Syntax.Types (ValType (..))
+import Syntax.Types (FuncTypeOf (..), ValType (..))
 import Validation.Elaborate (elaborateModuleWith)
 import Validation.Policy (Policy (..), Restrictions (..), emptyPolicy)
 
@@ -112,6 +112,7 @@ data Command = Command
     , action :: Maybe Action
     , expected :: [Literal]
     , trapText :: Maybe Text
+    , registerAs :: Maybe Text
     }
 
 instance FromJSON Command where
@@ -125,6 +126,7 @@ instance FromJSON Command where
             <*> o .:? "action"
             <*> (fromMaybe [] <$> o .:? "expected")
             <*> o .:? "text"
+            <*> o .:? "as"
 
 data Action = Action
     { actionKind :: Text
@@ -167,6 +169,8 @@ isUnsupported rejection = case rejection of
     AtDecode err -> any (`isInfixOf` err) ["unsupported", "not supported", "unknown valtype", "unknown limits flag"]
     AtValidation _ -> False
     AtInstantiation (UnsupportedImport _ _) -> True
+    -- (A start function that calls an import: instantiation has nobody to answer the call.)
+    AtInstantiation StartFunctionNeedsHost -> True
     AtInstantiation _ -> False
 
 describeRejection :: Rejection -> String
@@ -185,19 +189,63 @@ toLoaded = either (Unavailable . describeRejection) Loaded
   module state persists across a script.
 -}
 data State = State
-    { anonymous :: Loaded
-    , named :: Map.Map Text Loaded
-    , current :: Maybe Text
-    , registered :: Bool
-    -- ^ whether the script has registered a module for others to import from
+    { instances :: Map.Map Int Loaded
+    -- ^ every module the script has loaded, in order
+    , named :: Map.Map Text Int
+    , latest :: Maybe Int
+    -- ^ the module the last @module@ command loaded, which an action without a name means
+    , registered :: Map.Map Text Int
+    -- ^ the modules registered for import, by the module name they are imported under
     }
 
 runScript :: FilePath -> [Command] -> IO [(Int, Outcome)]
-runScript dir = fmap (reverse . snd) . foldM step (State (Unavailable "no module yet") Map.empty Nothing False, [])
+runScript dir = fmap (reverse . snd) . foldM step (State Map.empty Map.empty Nothing Map.empty, [])
   where
     step (state, acc) cmd = do
         (state', outcome) <- runCommand dir state cmd
         pure (state', (cmd.line, outcome) : acc)
+
+{- | The functions a module of the script may import: the printing functions of the suite's
+  @spectest@ module, and the exported functions of the modules registered so far.
+-}
+providedBy :: State -> ForeignFunctions
+providedBy state moduleName fieldName
+    | moduleName == "spectest" = (`FuncType` []) <$> lookup fieldName spectestPrints
+    | otherwise = case Map.lookup moduleName state.registered >>= (`Map.lookup` state.instances) of
+        Just (Loaded m) -> exportSignature m fieldName
+        _ -> Nothing
+  where
+    spectestPrints =
+        [ ("print", [])
+        , ("print_i32", [I32])
+        , ("print_i64", [I64])
+        , ("print_f32", [F32])
+        , ("print_f64", [F64])
+        , ("print_i32_f32", [I32, F32])
+        , ("print_f64_f64", [F64, F64])
+        ]
+
+{- | Call an exported function of an instance, answering the calls it makes to the functions
+  'providedBy' gives it: a print returns nothing, and a function of a registered module is
+  called in that module's instance, which keeps what the call did to it. (A module cannot
+  import from one loaded later it, so the instance being called is never called back.)
+-}
+callExport :: State -> Int -> Text -> [Value] -> (State, Either RunError [Value])
+callExport state i name args = case Map.lookup i state.instances of
+    Just (Loaded m) -> serve state (invokeExport m name args)
+    _ -> (state, Left (NoSuchExport name))
+  where
+    serve current result = case result of
+        Left err -> (current, Left err)
+        Right (Returned m' results) -> (current {instances = Map.insert i (Loaded m') current.instances}, Right results)
+        Right (CalledHost request) -> case foreignCall request of
+            Nothing -> (current, Left HostCallNotServed)
+            Just (ForeignCall moduleName fieldName arguments)
+                | moduleName == "spectest" -> serve current (answerForeign request [])
+                | Just j <- Map.lookup moduleName current.registered -> case callExport current j fieldName arguments of
+                    (later, Right results) -> serve later (answerForeign request results)
+                    (later, Left err) -> (later, Left err)
+                | otherwise -> (current, Left (ForeignCallUnanswered moduleName fieldName))
 
 runCommand :: FilePath -> State -> Command -> IO (State, Outcome)
 runCommand dir state cmd = case cmd.kind of
@@ -205,7 +253,7 @@ runCommand dir state cmd = case cmd.kind of
         let path = dir </> fromMaybe "" cmd.filename
         result <-
             if cmd.moduleType `elem` [Just "binary", Nothing]
-                then loadModule path
+                then loadModule (providedBy state) path
                 else pure (Left (AtDecode "unsupported: text-format module"))
         -- A valid module we reject is a gap, not a failure, if it needs a feature we lack.
         missing <- case result of
@@ -214,7 +262,7 @@ runCommand dir state cmd = case cmd.kind of
         -- A module we could not load may have imported a table, memory or global of a
         -- registered module and changed it, which linking between modules would have done
         -- here; what the script asserts about the modules loaded before it is then unknown.
-        let unlinked = state.registered && either (const True) (const False) result
+        let unlinked = not (Map.null state.registered) && either (const True) (const False) result
             stale loadedBefore = case loadedBefore of
                 Loaded _ | unlinked -> Unavailable "its state may depend on a module that could not be linked"
                 other -> other
@@ -227,37 +275,35 @@ runCommand dir state cmd = case cmd.kind of
                 (Left rejection, Nothing)
                     | isUnsupported rejection -> Skipped (describeRejection rejection)
                     | otherwise -> Failed ("valid module rejected: " ++ describeRejection rejection)
-            earlier = state {anonymous = stale state.anonymous, named = Map.map stale state.named}
-            state' = case cmd.name of
-                Just n -> earlier {named = Map.insert n loaded earlier.named, current = Just n}
-                Nothing -> earlier {anonymous = loaded, current = Nothing}
+            index = Map.size state.instances
+            state' =
+                state
+                    { instances = Map.insert index loaded (Map.map stale state.instances)
+                    , named = maybe state.named (\n -> Map.insert n index state.named) cmd.name
+                    , latest = Just index
+                    }
         pure (state', outcome)
-    "assert_return" -> pure (withAction (\m act -> assertReturn m act cmd.expected))
-    "assert_trap" -> pure (withAction (\m act -> assertTrap m act cmd.trapText))
-    "assert_exhaustion" -> pure (withAction (\m act -> assertTrap m act cmd.trapText))
-    "action" -> pure (withAction (\m act -> either (\e -> (m, Failed (show e))) (\(m', _) -> (m', Passed)) (invoke m act)))
+    "assert_return" -> pure (withAction (\current i act -> assertReturn current i act cmd.expected))
+    "assert_trap" -> pure (withAction (\current i act -> assertTrap current i act cmd.trapText))
+    "assert_exhaustion" -> pure (withAction (\current i act -> assertTrap current i act cmd.trapText))
+    "action" -> pure (withAction (\current i act -> either (Failed . show) (const Passed) <$> invoke current i act))
     "assert_malformed" -> rejectedBy malformed
     "assert_invalid" -> rejectedBy invalid
     "assert_unlinkable" -> rejectedBy unlinkable
     "assert_uninstantiable" -> rejectedBy uninstantiable
-    "register" -> pure (state {registered = True}, Skipped "command register")
+    "register" -> pure $ case (cmd.registerAs, instanceNamed cmd.name) of
+        (Just importedAs, Just i) -> (state {registered = Map.insert importedAs i state.registered}, Passed)
+        _ -> (state, Skipped "command register")
     other -> pure (state, Skipped ("command " ++ T.unpack other))
   where
-    -- Run a check on the instance an action names, and store the instance it hands back.
+    -- Run a check on the instance an action names; the check hands back the script's state.
     withAction check = case cmd.action of
         Nothing -> (state, Failed "command without an action")
-        Just act -> case lookupInstance (act.actionModule) of
-            Unavailable reason -> (state, Skipped reason)
-            Loaded m -> let (m', outcome) = check m act in (storeInstance (act.actionModule) (Loaded m'), outcome)
-    lookupInstance which = case which of
-        Just n -> namedInstance n
-        Nothing -> maybe state.anonymous namedInstance state.current
-    namedInstance n = Map.findWithDefault (Unavailable "unknown module") n state.named
-    storeInstance which loaded = case which of
-        Just n -> state {named = Map.insert n loaded state.named}
-        Nothing -> case state.current of
-            Just n -> state {named = Map.insert n loaded state.named}
-            Nothing -> state {anonymous = loaded}
+        Just act -> case instanceNamed act.actionModule >>= \i -> (,) i <$> Map.lookup i state.instances of
+            Just (i, Loaded _) -> check state i act
+            Just (_, Unavailable reason) -> (state, Skipped reason)
+            Nothing -> (state, Skipped "unknown module")
+    instanceNamed which = maybe state.latest (`Map.lookup` state.named) which
     -- What each assertion expects of the rejection: the stage, and for instantiation the kind.
     malformed rejection = case rejection of
         AtDecode _ -> True
@@ -280,16 +326,16 @@ runCommand dir state cmd = case cmd.kind of
         | cmd.moduleType /= Just "binary" = pure (state, Skipped "text-format module")
         | otherwise = do
             let path = dir </> fromMaybe "" cmd.filename
-            result <- loadModule path
+            result <- loadModule (providedBy state) path
             -- A module that uses a feature we lack is a gap whatever we answer: the decoder
             -- turns it away before the stage the assertion names is reached.
             missing <- neededFeatures path
             -- Such a module may have written into a registered module's table or memory
             -- before it failed, which persists; without linking we cannot say what.
             let stale loadedBefore = case loadedBefore of
-                    Loaded _ | state.registered -> Unavailable "its state may depend on a module that could not be linked"
+                    Loaded _ | not (Map.null state.registered) -> Unavailable "its state may depend on a module that could not be linked"
                     other -> other
-            pure . (,) state {anonymous = stale state.anonymous, named = Map.map stale state.named} $ case result of
+            pure . (,) state {instances = Map.map stale state.instances} $ case result of
                 _ | Just features <- missing -> Skipped ("needs " ++ features)
                 Left rejection
                     | expected rejection -> Passed
@@ -354,8 +400,8 @@ neededFeatures path = do
 {- | Decode, validate and instantiate a module. With @WASM_IFC_SECWASM_RESTRICTIONS@ set in the
   environment, validation applies SecWasm's restrictions ("Validation.Policy").
 -}
-loadModule :: FilePath -> IO (Either Rejection SomeModuleInst)
-loadModule path = do
+loadModule :: ForeignFunctions -> FilePath -> IO (Either Rejection SomeModuleInst)
+loadModule provided path = do
     bytes <- BL.readFile path
     restricted <- lookupEnv "WASM_IFC_SECWASM_RESTRICTIONS"
     let policy = case restricted of
@@ -364,47 +410,46 @@ loadModule path = do
     pure $ do
         raw <- first AtDecode (decodeModule bytes)
         validated <- first (AtValidation . show) (elaborateModuleWith policy raw)
-        first AtInstantiation (instantiate validated)
+        first AtInstantiation (instantiateWith provided validated)
 
--- | Perform an action: @invoke@ an exported function, or @get@ an exported global.
-invoke :: SomeModuleInst -> Action -> Either RunError (SomeModuleInst, [Value])
-invoke m act
-    | act.actionKind == "get" = (\value -> (m, [value])) <$> readGlobalExport m act.field
-    | otherwise = case traverse literalValue act.args of
-        Nothing -> Left (NoSuchExport "(non-numeric argument)")
-        Just values -> case invokeExport m act.field values of
-            Left err -> Left err
-            Right (Returned m' results) -> Right (m', results)
-            Right (CalledHost _) -> Left HostCallNotServed
+-- | Perform an action on an instance: @invoke@ an exported function, or @get@ an exported global.
+invoke :: State -> Int -> Action -> (State, Either RunError [Value])
+invoke state i act = case Map.lookup i state.instances of
+    Just (Loaded m)
+        | act.actionKind == "get" -> (state, (: []) <$> readGlobalExport m act.field)
+        | otherwise -> case traverse literalValue act.args of
+            Nothing -> (state, Left (NoSuchExport "(non-numeric argument)"))
+            Just values -> callExport state i act.field values
+    _ -> (state, Left (NoSuchExport act.field))
 
 -- | The actions the harness performs; anything else is skipped, not failed.
 knownAction :: Action -> Bool
 knownAction act = act.actionKind `elem` ["invoke", "get"]
 
--- | Each check hands back the instance to continue with (unchanged when the call failed).
-assertReturn :: SomeModuleInst -> Action -> [Literal] -> (SomeModuleInst, Outcome)
-assertReturn m act expectations
-    | not (knownAction act) = (m, Skipped ("action " ++ T.unpack act.actionKind))
-    | any (\a -> a.litType `notElem` numericTypes) act.args = (m, Skipped "non-numeric argument")
-    | otherwise = case invoke m act of
-        Left err -> (m, Failed ("invoke " ++ T.unpack act.field ++ ": " ++ show err))
-        Right (m', results)
-            | length results /= length expectations -> (m', Failed ("expected " ++ show (length expectations) ++ " result(s), got " ++ show results))
-            | and (zipWith matches expectations results) -> (m', Passed)
-            | otherwise -> (m', Failed ("invoke " ++ T.unpack act.field ++ " " ++ show (map render act.args) ++ ": expected " ++ show (map render expectations) ++ ", got " ++ show results))
+-- | Each check hands back the script's state later the action.
+assertReturn :: State -> Int -> Action -> [Literal] -> (State, Outcome)
+assertReturn state i act expectations
+    | not (knownAction act) = (state, Skipped ("action " ++ T.unpack act.actionKind))
+    | any (\a -> a.litType `notElem` numericTypes) act.args = (state, Skipped "non-numeric argument")
+    | otherwise = case invoke state i act of
+        (later, Left err) -> (later, Failed ("invoke " ++ T.unpack act.field ++ ": " ++ show err))
+        (later, Right results)
+            | length results /= length expectations -> (later, Failed ("expected " ++ show (length expectations) ++ " result(s), got " ++ show results))
+            | and (zipWith matches expectations results) -> (later, Passed)
+            | otherwise -> (later, Failed ("invoke " ++ T.unpack act.field ++ " " ++ show (map render act.args) ++ ": expected " ++ show (map render expectations) ++ ", got " ++ show results))
   where
     render l = T.unpack l.litType ++ ":" ++ maybe "?" T.unpack l.litValue
 
-assertTrap :: SomeModuleInst -> Action -> Maybe Text -> (SomeModuleInst, Outcome)
-assertTrap m act expectedText
-    | not (knownAction act) = (m, Skipped ("action " ++ T.unpack act.actionKind))
-    | otherwise = case invoke m act of
-        Left (Trapped trap)
+assertTrap :: State -> Int -> Action -> Maybe Text -> (State, Outcome)
+assertTrap state i act expectedText
+    | not (knownAction act) = (state, Skipped ("action " ++ T.unpack act.actionKind))
+    | otherwise = case invoke state i act of
+        (later, Left (Trapped trap))
             -- (The suite's text may say more than ours, as in "uninitialized element 2".)
-            | maybe False (trapText trap `T.isPrefixOf`) expectedText -> (m, Passed)
-            | otherwise -> (m, Failed ("trapped with " ++ show trap ++ ", expected " ++ maybe "?" T.unpack expectedText))
-        Left err -> (m, Failed ("invoke " ++ T.unpack act.field ++ ": " ++ show err))
-        Right (m', results) -> (m', Failed ("expected a trap (" ++ maybe "?" T.unpack expectedText ++ "), got " ++ show results))
+            | maybe False (trapText trap `T.isPrefixOf`) expectedText -> (later, Passed)
+            | otherwise -> (later, Failed ("trapped with " ++ show trap ++ ", expected " ++ maybe "?" T.unpack expectedText))
+        (later, Left err) -> (later, Failed ("invoke " ++ T.unpack act.field ++ ": " ++ show err))
+        (later, Right results) -> (later, Failed ("expected a trap (" ++ maybe "?" T.unpack expectedText ++ "), got " ++ show results))
 
 -- | The spec's wording for each trap, as the scripts assert it.
 trapText :: Trap -> Text
