@@ -188,6 +188,10 @@ lookupReferenced directory reference expected
     | otherwise = maybe (Left UninitializedElement) (`compared` expected) (referencedFunction directory reference)
 
 -- | A function of the module against the type a call expects: the comparison both lookups make.
+
+-- Inlined into each lookup, which is inlined into each call: as a call of its own it returns
+-- its answer in an 'Either', allocated on every indirect call.
+{-# INLINE compared #-}
 compared :: SomeFuncRef fts -> Sing ('LabelledFuncType lf ps rs) -> Either Trap (CheckedCallee lf ps rs fts)
 compared (SomeFuncRef boundS paramsS resultsS ix) (SLabelledFuncType expectedBound expectedParams expectedResults) =
     case (decideEquality paramsS expectedParams, decideEquality resultsS expectedResults) of

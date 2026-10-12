@@ -1,4 +1,5 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE TupleSections #-}
 
 {- | A decoder from the WebAssembly binary format into the raw AST.
 
@@ -22,6 +23,7 @@ import Data.Binary.Get (
     getWord8,
     isEmpty,
     isolate,
+    lookAhead,
     runGetOrFail,
  )
 import Data.Bits (shiftL, shiftR, testBit, (.&.), (.|.))
@@ -767,8 +769,8 @@ data Sections = Sections
     -- ^ code section: locals and body per function
     , globalSection :: [(RawGlobal, WrittenType)]
     , memorySection :: [RawMemory]
-    , tableSection :: [(RawTable, WrittenType)]
-    , elementSection :: [RawElementSegment]
+    , tableSection :: [(RawTable, WrittenType, Maybe RawExpr)]
+    , elementSection :: [(RawElementSegment, WrittenType)]
     , exportSection :: [Export]
     , startSection :: Maybe FunctionIdx
     , dataSection :: [RawDataSegment]
@@ -825,7 +827,7 @@ parseSection sectionId acc = case sectionId of
     1 -> (\ts -> acc {typeSection = map erasedFuncType ts, writtenTypes = ts}) <$> getVec getFuncType
     2 -> (\is -> acc {importSection = is}) <$> getVec (getImport (acc.typeSection))
     3 -> (\is -> acc {functionSection = is}) <$> getVec getULEB128
-    4 -> (\ts -> acc {tableSection = ts}) <$> getVec getWrittenTable
+    4 -> (\ts -> acc {tableSection = ts}) <$> getVec getDeclaredTable
     5 -> (\ms -> acc {memorySection = ms}) <$> getVec getMemory
     6 -> (\gs -> acc {globalSection = gs}) <$> getVec getGlobal
     7 -> (\es -> acc {exportSection = es}) <$> getVec getExport
@@ -889,7 +891,26 @@ getTag types = do
 | A table type, and the type of its entries as the module writes it.
 -}
 getWrittenTable :: Get (RawTable, WrittenType)
-getWrittenTable = do
+getWrittenTable = (\(table, entries, _) -> (table, entries)) <$> getDeclaredTable
+
+{- | A table as the table section declares it: its type, or the two bytes @0x40 0x00@, its
+  type, and the constant expression its entries start at.
+-}
+getDeclaredTable :: Get (RawTable, WrittenType, Maybe RawExpr)
+getDeclaredTable = do
+    first <- lookAhead getWord8
+    if first == 0x40
+        then do
+            _ <- getWord8
+            reserved <- getWord8
+            when (reserved /= 0) (fail "malformed table")
+            (table, entries) <- getTableType
+            initialiser <- getExpr False []
+            pure (table, entries, Just initialiser)
+        else (\(table, entries) -> (table, entries, Nothing)) <$> getTableType
+
+getTableType :: Get (RawTable, WrittenType)
+getTableType = do
     entries <- getWrittenType
     unless (erasedType entries `elem` [FuncRef, ExternRef, ExnRef]) (fail "malformed reference type")
     (addrType, limits) <- getLimits
@@ -900,32 +921,34 @@ getWrittenTable = do
   expressions and not function indices. A function index is kept as the expression it
   abbreviates, @ref.func@ of it.
 -}
-getElem :: Int -> Get RawElementSegment
+getElem :: Int -> Get (RawElementSegment, WrittenType)
 getElem typeCount = do
     flags <- getULEB128 :: Get Word32
-    let indices = map (\f -> [RefFunc f]) <$> getVec (FunctionIdx <$> getULEB128)
+    -- (Function indices make references that are not null; a list of expressions without a type is of funcref.)
+    let indices = (,RefTo False AnyFunction) . map (\f -> [RefFunc f]) <$> getVec (FunctionIdx <$> getULEB128)
         expressions = getVec (getExpr False [])
+        passive (items, entries) = (RawElementSegment ElemPassive (erasedType entries) items, entries)
         kindThenIndices = do
             elemKind <- getWord8
             when (elemKind /= 0) (fail ("unknown element kind " ++ show elemKind))
-            RawElementSegment ElemPassive FuncRef <$> indices
-        typeThenExpressions = RawElementSegment ElemPassive <$> entriesType <*> expressions
+            passive <$> indices
+        typeThenExpressions = (\entries items -> passive (items, entries)) <$> entriesType <*> expressions
         -- (The type as written may name a function type, which must be one of the module's.)
         entriesType = do
             entries <- getWrittenType
             case entries of
                 RefTo _ (OfType i) | fromIntegral i >= typeCount -> fail "unknown type"
-                RefTo _ _ -> pure (erasedType entries)
+                RefTo _ _ -> pure entries
                 Plain _ -> fail "malformed reference type"
-        activeIn table segment = (\offset (RawElementSegment _ entryType items) -> RawElementSegment (ElemActive table offset) entryType items) <$> getExpr False [] <*> segment
+        activeIn table segment = (\offset (RawElementSegment _ entryType items, entries) -> (RawElementSegment (ElemActive table offset) entryType items, entries)) <$> getExpr False [] <*> segment
         named segment = getULEB128 >>= \table -> activeIn (TableIdx table) segment
-        declarative segment = (\(RawElementSegment _ entryType items) -> RawElementSegment ElemDeclarative entryType items) <$> segment
+        declarative segment = (\(RawElementSegment _ entryType items, entries) -> (RawElementSegment ElemDeclarative entryType items, entries)) <$> segment
     case flags of
-        0 -> activeIn (TableIdx 0) (RawElementSegment ElemPassive FuncRef <$> indices)
+        0 -> activeIn (TableIdx 0) (passive <$> indices)
         1 -> kindThenIndices
         2 -> named kindThenIndices
         3 -> declarative kindThenIndices
-        4 -> activeIn (TableIdx 0) (RawElementSegment ElemPassive FuncRef <$> expressions)
+        4 -> activeIn (TableIdx 0) (passive . (,RefTo True AnyFunction) <$> expressions)
         5 -> typeThenExpressions
         6 -> named typeThenExpressions
         7 -> declarative typeThenExpressions
@@ -991,8 +1014,9 @@ assemble secs = do
             , functions = funcs
             , globals = [RawGlobal globalType [] | (_, _, globalType) <- importedGlobals] ++ map fst secs.globalSection
             , memories = [memory | (_, _, memory) <- importedMemories] ++ secs.memorySection
-            , tables = [table | (_, _, table) <- importedTables] ++ map fst secs.tableSection
-            , elementSegments = secs.elementSection
+            , tables = [table | (_, _, table) <- importedTables] ++ [table | (table, _, _) <- secs.tableSection]
+            , tableInitialisers = [(TableIdx (fromIntegral index), initialiser) | (index, (_, _, Just initialiser)) <- zip [length importedTables ..] secs.tableSection]
+            , elementSegments = map fst secs.elementSection
             , dataSegments = secs.dataSection
             , exports = secs.exportSection
             , start = secs.startSection
@@ -1006,8 +1030,9 @@ assemble secs = do
                         , functions = [typeIdx | FunctionImport typeIdx _ <- secs.importSection] ++ secs.functionSection
                         , locals = map fst secs.codeSection
                         , globals = [valType | GlobalImport _ _ valType _ <- secs.importSection] ++ map snd secs.globalSection
-                        , tables = [entries | TableImport _ _ entries _ <- secs.importSection] ++ map snd secs.tableSection
+                        , tables = [entries | TableImport _ _ entries _ <- secs.importSection] ++ [entries | (_, entries, _) <- secs.tableSection]
                         , tags = map snd secs.tagSection
+                        , elements = map snd secs.elementSection
                         }
             }
   where

@@ -142,8 +142,7 @@ are imported at the level they have where they are defined, and the bytes of a s
 keep their levels. A module on its own imports from an embedder (`instantiateWith`), which
 answers its calls. Not yet: a module that imports the same memory, table or writable global
 twice; an exception that crosses from a function to the module that called it, and an
-imported tag; a table whose entries cannot be null (it needs an initial value for them); and
-garbage collection. The Lean proof of noninterference (`lean/`) covers a core, not the whole.
+imported tag; and garbage collection. The Lean proof of noninterference (`lean/`) covers a core, not the whole.
 
 A reference to a function type (WebAssembly 3.0) is a `funcref` in the typed program. What a
 module writes beyond that, whether a reference may be null and of which function type it is,

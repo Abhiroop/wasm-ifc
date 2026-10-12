@@ -524,6 +524,7 @@ assemble policy m = do
             , customSections = m.customSections
             , stateImports = m.stateImports
             , tags = m.tags
+            , tableInitialisers = m.tableInitialisers
             , written = m.written
             }
     -- The function index space: imports first, then the module's own functions.

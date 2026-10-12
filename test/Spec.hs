@@ -1241,6 +1241,7 @@ moduleOf memories funcs exported =
         , customSections = []
         , stateImports = importsNoState
         , tags = []
+        , tableInitialisers = []
         , written = Nothing
         }
 
@@ -1446,6 +1447,7 @@ startModule startBody =
         , customSections = []
         , stateImports = importsNoState
         , tags = []
+        , tableInitialisers = []
         , written = Nothing
         }
 

@@ -27,6 +27,7 @@ import Control.Monad (foldM, when)
 import Data.Bifunctor (first)
 import Data.ByteString qualified as BS
 import Data.IntMap.Strict qualified as IntMap
+import Data.Maybe (fromMaybe)
 import Data.Singletons (Sing, fromSing)
 import Data.Singletons.Base.TH (SList (SCons, SNil))
 import Data.Text (Text)
@@ -37,12 +38,12 @@ import Runtime.Interpreter (ForeignTarget (..), FuncInst (..), FuncSpaceInst (..
 import Runtime.MemInst (MemInst, allocMemory, labelRange, retypeMemory, writeBytes)
 import Runtime.Module (GivenMemory (..), GivenTable (..), SomeModuleInst (..), Value, fromValue)
 import Runtime.Stack (DataSpaceInst (..), ElemSpaceInst (..), GlobalSpaceInst (..), MemSpaceInst (..), TableInsts (..), TableSpaceInst (..), ValueStack (..), getMem, getTable, setMem, setTable)
-import Runtime.TableInst (allocTable, functionDirectory, writeEntries)
+import Runtime.TableInst (allocTable, fillEntries, functionDirectory, tableSize, writeEntries)
 import Runtime.Trap (Trap)
 import Syntax.Functions (FunctionSpace (..))
 import Syntax.Globals (ConstExpr (..), ConstOp (..), Global (..), GlobalSpace (..))
 import Syntax.Immediates (HostType, Reference, functionReferenceIn, withReference)
-import Syntax.Module (DataPlacement (..), DataSegment (..), ElementMode (..), ElementSegment (..), ElementSpace (..), Export, Interface, Module (..), SomeModule (..))
+import Syntax.Module (DataPlacement (..), DataSegment (..), ElementMode (..), ElementSegment (..), ElementSpace (..), Export, Interface, Module (..), SomeModule (..), TableInitialiser (..))
 import Syntax.Types
 import Syntax.TypesIFC (LabelledFuncType (..), SLabelledFuncType (..), SLabelledValType (..), SSecLevel (..), SecLevel (..), decideAllPublic, decideSameValueTypes, decideSegmentFlows, unlabelled)
 import Validation.Policy (ghostModuleName)
@@ -170,7 +171,8 @@ prepare embedder (SomeModule shapeS m) = case shapeS of
         funcs <- link embedder.functions (memsNonEmpty msS) ftsS m.functions
         globals <- instantiateGlobals embedder gsS m.globals
         allocated <- allocateMemories embedder (map Just m.memoryImports ++ repeat Nothing) msS
-        emptyTables <- allocateTables embedder (map Just m.tableImports ++ repeat Nothing) tsS
+        allocatedTables <- allocateTables embedder (map Just m.tableImports ++ repeat Nothing) tsS
+        emptyTables <- foldM (startAt embedder) allocatedTables m.tableInitialisers
         kept <- keptElements embedder m.elementSegments
         -- The active segments are placed in the specification's order, the element segments
         -- first, and placing stops at the first that does not fit.
@@ -310,6 +312,18 @@ allocateTables embedder origins (SCons shape rest) = case fromSing shape of
                 Right given.table
             _ -> note MinimumTooLarge (allocTable declared)
         TCons table <$> allocateTables embedder (drop 1 origins) rest
+
+-- | Give every entry of a table the value the module declares for it.
+startAt :: Embedder -> TableInsts ts -> TableInitialiser -> Either InstantiationError (TableInsts ts)
+startAt embedder tables (TableInitialiser index isRef expr) = do
+    reference <- withReference isRef (evalConst embedder expr)
+    Right (at index reference tables)
+  where
+    at :: Int -> Reference -> TableInsts ts' -> TableInsts ts'
+    at _ _ TNil = TNil
+    at n reference (TCons table rest)
+        | n == 0 = TCons (fromMaybe table (fillEntries 0 (tableSize table) reference table)) rest
+        | otherwise = TCons table (at (n - 1) reference rest)
 
 {- | Whether what is provided has the limits an import declares (the spec's matching of
   limits): at least the minimum, and, if the import declares a maximum, one within it.

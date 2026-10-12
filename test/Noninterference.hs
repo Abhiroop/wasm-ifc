@@ -229,6 +229,7 @@ compileModule generated =
         , customSections = []
         , stateImports = importsNoState
         , tags = []
+        , tableInitialisers = []
         , written = Nothing
         }
   where

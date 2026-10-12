@@ -777,10 +777,14 @@ implemented since e87e76a.
   conditional they are elaborated as, which is sound and slightly coarser than a rule of their
   own would be: the values they leave are at least as secret as the reference tested.
   **For the paper track:** none of this is in section 6.6.
-- **Not done:** a table declared with an initial value for its entries, which a table of
-  references that cannot be null needs (24 assertions; such a table without one is rejected).
-- **Spec suite:** 62,966 passed, 0 failed, 2,236 skipped (62,476 and 2,726 before): every skip
-  for typed function references is gone but those 24. Five unit examples (`test/Spec.hs`,
+- A table may be declared with an initial value for its entries, which a table of references
+  that cannot be null needs: a constant expression of the entries' type, which reads nothing
+  more secret than the table.
+- **Spec suite:** 62,990 passed, 0 failed, 2,212 skipped (62,476 and 2,726 before): every skip
+  for typed function references is gone.
+- **Cost:** the allocation tripwire is at the reference. (Commit 17e697a allocated 3.6 % more
+  on `call-indirect`, because the comparison of a callee with the expected type had become a
+  call of its own; the next commit inlines it again.) Five unit examples (`test/Spec.hs`,
   "typed function references").
 
 ## Where coverage stands (2026-10-12, for the paper's claim)
@@ -789,11 +793,10 @@ Supported, with the 3.0 suite passing on all of it: **WebAssembly 3.0 without ga
 collection**, that is every instruction and type of WebAssembly 2.0, linking between modules
 included, and of what 3.0 adds, several memories, 64-bit memories and tables, tail calls,
 extended constant expressions, the relaxed vector instructions, typed function references and
-exceptions. Four qualifications, each small and each refused by name where it applies:
+exceptions. Three qualifications, each small and each refused by name where it applies:
 
 - exceptions are thrown and caught under a public pc only, do not cross from a function to
   the module that called it, and a tag is not imported (68 assertions of the suite);
-- a table declared with an initial value for its entries is not decoded (24);
 - a module that imports the same memory, table or writable global twice is not linked (10);
 - nullability and the function type behind a reference are checked by a validator beside the
   typed program, not by its types (see "Typed function references").
@@ -807,7 +810,7 @@ vector operation. All seven scripts of the suite pass in full (77 assertions).
 Not supported: garbage collection, as decided.
 
 Every feature that clang 23 (wasi-sdk 34) and rustc 1.99 enable by default for
-`wasm32-wasip1` is supported. The suite's 2,236 skipped assertions are: 1,245 malformed modules
+`wasm32-wasip1` is supported. The suite's 2,212 skipped assertions are: 1,245 malformed modules
 given as text, which the harness does not run; 877 on modules that use garbage collection; 68
-for a tag or an exception across modules; 24 for a table with an initial value; 12 for a
-script command the harness lacks; 10 for an object imported twice. Counts are in `TODO.md`.
+for a tag or an exception across modules; 12 for a script command the harness lacks; 10 for
+an object imported twice. Counts are in `TODO.md`.

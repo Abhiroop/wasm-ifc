@@ -28,7 +28,7 @@ module Validation.Elaborate (
     elaborateModuleTraced,
 ) where
 
-import Control.Monad (foldM, void, when)
+import Control.Monad (foldM, forM, void, when)
 import Data.Bifunctor (first)
 import Data.Text (Text)
 import Data.Type.Equality ((:~:) (Refl))
@@ -1890,9 +1890,17 @@ elaborateUnder assembled choices =
             globals <- elaborateGlobals constEnv gsS (m.globals)
             dataSegments <- traverse (elaborateData constEnv msS) (zip [0 ..] m.dataSegments)
             elementSegments <- elaborateElements constEnv ctxS esS (zip [0 ..] m.elementSegments)
+            -- What a table's entries start at is a constant expression of their type, which reads nothing more secret than the table.
+            tableInitialisers <- forM m.tableInitialisers $ \(TableIdx i, expr) -> do
+                (table, level) <- note (IndexOutOfRange Tables i) (nth (zip m.tables assembled.tableLevels) i)
+                withSomeSing table.entryType $ \st -> do
+                    isRef <- note (Malformed "a table of a type that is not a reference type") (decideRef st)
+                    (value, sourceLevel) <- constExpr constEnv (Malformed "the initial value of a table") st expr
+                    when (sourceLevel == High && level == Low) (Left (IllegalFlow "table" High Low))
+                    Right (TableInitialiser (fromIntegral i) isRef value)
             start <- traverse (resolveStart ftsS) (m.start)
             when (not (null assembled.secretRegions) && null m.memories) (Left (NoMemory "region"))
-            Right (SomeModule ctxS (Module {functions, globals, dataSegments, secretRegions = assembled.secretRegions, elementSegments, interface = interfaceOf <$> m.written, memoryImports = m.stateImports.memories, tableImports = m.stateImports.tables, exports = m.exports, start}))
+            Right (SomeModule ctxS (Module {functions, globals, dataSegments, secretRegions = assembled.secretRegions, elementSegments, interface = interfaceOf <$> m.written, tableInitialisers, memoryImports = m.stateImports.memories, tableImports = m.stateImports.tables, exports = m.exports, start}))
   where
     m = assembled.annotated
     entries = zip3 [0 ..] assembled.loadDefaults (map Left m.imports ++ map (\(i, f) -> Right (f, Map.findWithDefault [] i choices.localLevels)) (zip [importCount ..] m.functions))

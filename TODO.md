@@ -65,7 +65,6 @@ a skipped module uses according to `wasm-tools`, in assertions:
 |---:|---|
 | 877 | garbage collection |
 | 68 | none: an imported exception tag (67), and an exception that crosses modules (1) |
-| 24 | none: a table declared with an initial value for its entries |
 | 12 | none: the script instantiates one module definition several times (`module definition`, `module instance`), which the harness does not do |
 | 10 | none: a module that imports the same memory twice |
 | 1,245 | none: malformed modules given as text, which the harness does not run |
@@ -101,9 +100,6 @@ a skipped module uses according to `wasm-tools`, in assertions:
   `try_table.wast` imports a tag and is skipped (42 assertions).
 - [ ] **P3** The store keeps every exception that a clause caught by reference, for the
   `exnref` that names it, and never frees one.
-- [ ] **P2** A table declared with an initial value for its entries (the form that a table of
-  references that cannot be null needs) is not decoded; 24 assertions. A table of such
-  references without one is rejected, as the specification asks.
 - [ ] **P3** The typed program does not know whether a reference may be null, nor the function
   type behind one: `Validation.References` checks both on the module as written, and the typed
   instructions check again at run time. To have them in the types, a value type would carry a

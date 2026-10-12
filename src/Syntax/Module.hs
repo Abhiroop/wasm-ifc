@@ -12,6 +12,7 @@ module Syntax.Module (
     RawModule (..),
     Written (..),
     Interface (..),
+    TableInitialiser (..),
     interfaceOf,
     StateImports (..),
     importsNoState,
@@ -74,6 +75,8 @@ data RawModule = RawModule
     -- ^ which globals, memories and tables are imported
     , tags :: [FuncType]
     -- ^ the exception tags, each with the type of what an exception of it carries (as parameters)
+    , tableInitialisers :: [(TableIdx, RawExpr)]
+    -- ^ for the tables declared with one, the constant expression every entry starts at (the others start null)
     , written :: Maybe Written
     {- ^ the module's types as it wrote them, if it was decoded from a binary; 'Nothing' for a
     module built in Haskell, whose types are the ones above
@@ -93,6 +96,8 @@ data Written = Written
     , tables :: [WrittenType]
     , tags :: [Word32]
     -- ^ the type index of every tag
+    , elements :: [WrittenType]
+    -- ^ the type of the references of every element segment
     }
 
 {- | The imports that are not functions. An imported global, memory or table comes first in its
@@ -128,6 +133,10 @@ newtype RawMemory = RawMemory
     { memType :: MemType
     }
     deriving stock (Eq, Show)
+
+-- | A table, by its index, with the value its entries start at.
+data TableInitialiser where
+    TableInitialiser :: Int -> IsRef t -> ConstExpr t -> TableInitialiser
 
 {- | What a module's functions, globals and tables are as it wrote their types, each list in the
   order of its index space, with the function types written out ('ClosedType'): what an
@@ -226,6 +235,8 @@ data Module (shape :: ModuleShape) = Module
     -- ^ likewise for its first tables
     , interface :: Maybe Interface
     -- ^ the types of its functions, globals and tables as written, if it was decoded from a binary
+    , tableInitialisers :: [TableInitialiser]
+    -- ^ what the entries of some of its tables start at
     , exports :: [Export]
     , start :: Maybe (Elem ('LabelledFuncType 'Low '[] '[]) (ModuleFuncs shape))
     -- ^ the start function, known to take and return nothing

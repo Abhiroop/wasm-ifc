@@ -267,6 +267,7 @@ withSpectest = case elaborateModuleWith emptyPolicy spectest of
             , customSections = []
             , stateImports = importsNoState
             , tags = []
+            , tableInitialisers = []
             , written = Nothing
             }
 

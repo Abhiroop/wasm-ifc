@@ -59,11 +59,26 @@ checkReferences m = case m.written of
         forM_ (zip [0 ..] w.types) $ \(i, FuncType params results) -> mapM_ (known (i :: Int)) (params ++ results)
         mapM_ (known (length w.types)) (concat w.locals ++ w.globals ++ w.tables)
         -- A table whose entries cannot be null would need an initial value for them, which is not provided.
-        when (any cannotBeNull (drop (length m.stateImports.tables) w.tables)) (Left "type mismatch: a table of references that cannot be null, without an initial value")
+        -- A table's entries start at its initial value, or null: one whose entries cannot be null needs the first.
+        forM_ (zip [0 ..] w.tables) $ \(index, entries) -> case lookup (TableIdx index) m.tableInitialisers of
+            Just expr -> initialiser env expr >>= \given -> unless (maybe True (\t -> below env t entries) given) (Left "type mismatch: the initial value of a table")
+            Nothing -> when (fromIntegral index >= length m.stateImports.tables && cannotBeNull entries) (Left "type mismatch: a table of references that cannot be null, without an initial value")
         forM_ (zip (drop (length m.stateImports.globals) m.globals) (drop (length m.stateImports.globals) w.globals)) $ \(global, declared) ->
             initialiser env global.initializer >>= \given -> unless (maybe True (\t -> below env t declared) given) (Left "type mismatch: the initial value of a global")
+        -- An element segment holds references of its type, and an active one writes them into a table that takes them.
+        forM_ (zip m.elementSegments w.elements) $ \(segment, entries) -> do
+            forM_ segment.items (fits env "type mismatch: an item of an element segment" entries)
+            case segment.mode of
+                ElemActive (TableIdx t) _ -> unless (maybe True (below env entries . fst) (nth env.tables t)) (Left "type mismatch: an element segment and its table")
+                _ -> Right ()
         forM_ (zip3 [length m.imports ..] m.functions w.locals) $ \(index, function, locals) -> checkFunction env index function locals
         Right (withoutNotes m)
+
+-- | A constant expression gives a value that may go where the type given is expected.
+fits :: Env -> String -> WrittenType -> RawExpr -> Either String ()
+fits env message expected expr = do
+    given <- initialiser env expr
+    unless (maybe True (\t -> below env t expected) given) (Left message)
 
 cannotBeNull :: WrittenType -> Bool
 cannotBeNull t = case t of
@@ -88,6 +103,7 @@ data Env = Env
     , memories :: [AddrType]
     , tags :: [[WrittenType]]
     -- ^ what an exception of each tag carries
+    , elements :: [WrittenType]
     }
 
 environment :: RawModule -> Written -> Env
@@ -100,6 +116,7 @@ environment m w =
         , tables = zip w.tables [table.addrType | table <- m.tables]
         , memories = [addresses | RawMemory (MemType addresses _) <- m.memories]
         , tags = [maybe [] (\(FuncType params _) -> params) (nth w.types index) | index <- w.tags]
+        , elements = w.elements
         }
 
 {- | Two function types are the same type if they are written alike, up to the names of the
@@ -385,7 +402,10 @@ step env locals functionResults written instr = case instr of
         expect env (Plain (addrValType (smaller addresses addresses')))
         expect env (Plain (addrValType addresses'))
         expect env (Plain (addrValType addresses))
-    TableInit _ (TableIdx t) -> table t >>= \(_, addresses) -> expect env (Plain I32) >> expect env (Plain I32) >> expect env (Plain (addrValType addresses))
+    TableInit (ElemIdx e) (TableIdx t) -> do
+        (entries, addresses) <- table t
+        unless (maybe True (\segment -> below env segment entries) (nth env.elements e)) (failing "type mismatch: an element segment and the table it is copied to")
+        expect env (Plain I32) >> expect env (Plain I32) >> expect env (Plain (addrValType addresses))
     ElemDrop _ -> pure ()
     DataDrop _ -> pure ()
     _ -> case plainSignature env instr of
@@ -489,6 +509,7 @@ withoutNotes m =
         , Module.globals = [global {initializer = plain global.initializer} | global <- m.globals]
         , elementSegments = [RawElementSegment (plainMode segment.mode) segment.entryType (map plain segment.items) | segment <- m.elementSegments]
         , dataSegments = [RawDataSegment (plainData segment.mode) segment.bytes | segment <- m.dataSegments]
+        , tableInitialisers = [(index, plain expr) | (index, expr) <- m.tableInitialisers]
         }
   where
     plainMode mode = case mode of
