@@ -211,11 +211,11 @@ public traps in that run.
 def StRel (C : Ctx) (s t : State) : Prop :=
   (∀ i, C.locals i = Lab.L → s.loc i = t.loc i) ∧
     (∀ i, C.globals i = Lab.L → s.glob i = t.glob i) ∧
-    (∀ a, s.lab a = Lab.L → t.lab a = Lab.L → s.mem a = t.mem a)
+    (∀ a, s.lab a = Lab.L → t.lab a = Lab.L → s.mem a = t.mem a) ∧ s.tbl = t.tbl
 
 theorem StRel.symm {C : Ctx} {s t : State} (h : StRel C s t) : StRel C t s :=
   ⟨fun i hi => (h.1 i hi).symm, fun i hi => (h.2.1 i hi).symm,
-    fun a ha hb => (h.2.2 a hb ha).symm⟩
+    fun a ha hb => (h.2.2.1 a hb ha).symm, h.2.2.2.symm⟩
 
 /--
 `Conf C s t`: `t` is what a run under a secret pc may make of `s`. The public variables are as
@@ -225,20 +225,22 @@ become secret. (SecWasm's Definition 6, with the convention (C5) of the paper's 
 def Conf (C : Ctx) (s t : State) : Prop :=
   (∀ i, C.locals i = Lab.L → s.loc i = t.loc i) ∧
     (∀ i, C.globals i = Lab.L → s.glob i = t.glob i) ∧
-    (∀ a, t.lab a = Lab.L → s.lab a = Lab.L ∧ s.mem a = t.mem a)
+    (∀ a, t.lab a = Lab.L → s.lab a = Lab.L ∧ s.mem a = t.mem a) ∧ s.tbl = t.tbl
 
 theorem Conf.refl (C : Ctx) (s : State) : Conf C s s :=
-  ⟨fun _ _ => rfl, fun _ _ => rfl, fun _ h => ⟨h, rfl⟩⟩
+  ⟨fun _ _ => rfl, fun _ _ => rfl, fun _ h => ⟨h, rfl⟩, rfl⟩
 
 theorem Conf.trans {C : Ctx} {s t u : State} (h1 : Conf C s t) (h2 : Conf C t u) : Conf C s u :=
   ⟨fun i hi => (h1.1 i hi).trans (h2.1 i hi), fun i hi => (h1.2.1 i hi).trans (h2.2.1 i hi),
-    fun a ha => ⟨(h1.2.2 a (h2.2.2 a ha).1).1, ((h1.2.2 a (h2.2.2 a ha).1).2).trans (h2.2.2 a ha).2⟩⟩
+    fun a ha => ⟨(h1.2.2.1 a (h2.2.2.1 a ha).1).1,
+      ((h1.2.2.1 a (h2.2.2.1 a ha).1).2).trans (h2.2.2.1 a ha).2⟩, h1.2.2.2.trans h2.2.2.2⟩
 
 /-- The first run goes on alone under a secret pc: the two still agree. -/
 theorem StRel.conf_left {C : Ctx} {s s' t : State} (h : StRel C s t) (hc : Conf C s s') :
     StRel C s' t :=
   ⟨fun i hi => (hc.1 i hi).symm.trans (h.1 i hi), fun i hi => (hc.2.1 i hi).symm.trans (h.2.1 i hi),
-    fun a ha hb => (hc.2.2 a ha).2.symm.trans (h.2.2 a (hc.2.2 a ha).1 hb)⟩
+    fun a ha hb => (hc.2.2.1 a ha).2.symm.trans (h.2.2.1 a (hc.2.2.1 a ha).1 hb),
+    hc.2.2.2.symm.trans h.2.2.2⟩
 
 /-- The second run goes on alone under a secret pc: the two still agree. -/
 theorem StRel.conf_right {C : Ctx} {s t t' : State} (h : StRel C s t) (hc : Conf C t t') :
@@ -266,40 +268,40 @@ secret level they need not, and each run's cell becomes secret.
 theorem StRel.setMem {C : Ctx} {s t : State} {a0 a1 v0 v1 : Nat} {lm : Lab}
     (hv : lm = Lab.L → a0 = a1 ∧ v0 = v1) (h : StRel C s t) :
     StRel C (s.setMem a0 v0 lm) (t.setMem a1 v1 lm) := by
-  refine ⟨h.1, h.2.1, fun x hx hy => ?_⟩
+  refine ⟨h.1, h.2.1, fun x hx hy => ?_, h.2.2.2⟩
   cases lm with
   | L =>
     obtain ⟨rfl, rfl⟩ := hv rfl
     by_cases hxa : x = a0
     · simp [State.setMem, hxa]
     · simp only [State.setMem, hxa, ite_false] at hx hy ⊢
-      exact h.2.2 x hx hy
+      exact h.2.2.1 x hx hy
   | H =>
     by_cases hx0 : x = a0
     · simp [State.setMem, hx0] at hx
     · by_cases hx1 : x = a1
       · simp [State.setMem, hx1] at hy
       · simp only [State.setMem, hx0, hx1, ite_false] at hx hy ⊢
-        exact h.2.2 x hx hy
+        exact h.2.2.1 x hx hy
 
 /-- A write to a secret local variable leaves the state as the attacker sees it. -/
 theorem Conf.setLoc_high {C : Ctx} (s : State) {i : Nat} (v : Nat) (hi : C.locals i = Lab.H) :
     Conf C s (s.setLoc i v) := by
-  refine ⟨fun j hj => ?_, fun _ _ => rfl, fun _ h => ⟨h, rfl⟩⟩
+  refine ⟨fun j hj => ?_, fun _ _ => rfl, fun _ h => ⟨h, rfl⟩, rfl⟩
   by_cases hji : j = i
   · subst hji; rw [hi] at hj; cases hj
   · simp [State.setLoc, hji]
 
 theorem Conf.setGlob_high {C : Ctx} (s : State) {i : Nat} (v : Nat) (hi : C.globals i = Lab.H) :
     Conf C s (s.setGlob i v) := by
-  refine ⟨fun _ _ => rfl, fun j hj => ?_, fun _ h => ⟨h, rfl⟩⟩
+  refine ⟨fun _ _ => rfl, fun j hj => ?_, fun _ h => ⟨h, rfl⟩, rfl⟩
   by_cases hji : j = i
   · subst hji; rw [hi] at hj; cases hj
   · simp [State.setGlob, hji]
 
 /-- A store at a secret level makes its cell secret and touches no other. -/
 theorem Conf.setMem_high (C : Ctx) (s : State) (a v : Nat) : Conf C s (s.setMem a v Lab.H) := by
-  refine ⟨fun _ _ => rfl, fun _ _ => rfl, fun x hx => ?_⟩
+  refine ⟨fun _ _ => rfl, fun _ _ => rfl, fun x hx => ?_, rfl⟩
   by_cases hxa : x = a
   · simp [State.setMem, hxa] at hx
   · simp only [State.setMem, hxa, ite_false] at hx ⊢
@@ -405,6 +407,7 @@ theorem rise {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : Pcs} {st st' : S
   | brIf _ _ _ _ ih => exact SFlows.trans (sflows_raise _ _ _) ih
   | brTable _ _ _ => exact sflows_raise _ _ _
   | call _ _ _ _ ih => exact ih
+  | callIndirect _ _ _ _ ih => exact ih
   | unreachable => exact SFlows.refl _
 
 end WasmIfc

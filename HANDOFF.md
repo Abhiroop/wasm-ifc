@@ -609,17 +609,18 @@ implemented since e87e76a.
 
 ## Lean: noninterference on a core with control flow, calls and memory (item 12, 2026-10-12)
 
-- **Where:** `lean/` (Lean 4.35.0, no dependencies; `cd lean && lake build`). 1,930 lines in
+- **Where:** `lean/` (Lean 4.35.0, no dependencies; `cd lean && lake build`). 2,015 lines in
   five files; `lean/README.md` states what is proved and what differs from the paper.
 - **What is proved** (`WasmIfc.tini`, from `WasmIfc.ni`): termination-insensitive
   noninterference for a function of a well-typed module, under the lift-free rules, on a core
   with blocks, loops and conditionals (with parameters and results), `br`, `br_if`, the
-  repaired `br_table`, calls (recursion included), `load` and `store` on a memory whose cells
+  repaired `br_table`, direct and indirect calls (recursion included), `load` and `store` on a
+  memory whose cells
   carry a level, with the run-time check of loads, local and global variables and arithmetic. Also `WasmIfc.rise`, the paper's `lem:rise`. **No `sorry`; the theorems
   depend on `propext`, `Classical.choice` and `Quot.sound` only** (`#print axioms`).
 - **Against the plan's steps (a) to (f):** (a) in part. The rules are the W-rules themselves,
   so for this core there is no erasure and no inclusion to prove, and the theorem is the main
-  theorem's statement for the typed program. Not covered: indirect calls, `return` (it is a
+  theorem's statement for the typed program. Not covered: `return` (it is a
   branch to the function's label), `local.tee`, `memory.grow`, a bounded memory of bytes, more
   than one value type, more than two levels, bulk memory, WASI, the features of 3.0, and
   the correspondence with SecWasm's flat-stack semantics (the Lean semantics evaluates a
@@ -638,6 +639,11 @@ implemented since e87e76a.
      arguments keep their own labels below the parameters', and the premise that a function's
      results be at least its bound is not used: where two runs of a callee diverge, one of them
      returns early under a secret pc, and the rule for the branch makes the result type secret.
+     **`call_indirect` on a secret index does need it**: two different functions run, and
+     their results agree only because the expected type's results are at least its bound,
+     which the pc and the index have raised. The Lean rule for the indirect call carries that
+     premise. The implementation checks it in the policy stage for every function type
+     (`PolicyResultsBelowBound`), as the paper says.
 - **Toolchain:** elan and Lean are installed under `~/.elan` (3 GB, user space).
 
 ## WASI sockets (item 14, 2026-10-12)

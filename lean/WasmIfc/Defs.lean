@@ -83,6 +83,8 @@ inductive Instr where
   /-- `brTable ts d`: the targets, and the default one -/
   | brTable (ts : List Nat) (d : Nat)
   | call (i : Nat)
+  /-- `callIndirect ps b rs`: call the function a table entry names, expected at the type `ps -[b]-> rs` -/
+  | callIndirect (ps : STy) (b : Lab) (rs : STy)
   | unreachable
 
 /-- A function type: the parameters, the bound on the pc of its callers, and the results. -/
@@ -184,6 +186,15 @@ inductive Typed (C : Ctx) : List STy → List Instr → Pcs → STy → Pcs → 
       C.funcs[i]? = some ft → Lab.le pc ft.bound → SFlows targs ft.params →
       Typed C Ls rest (pc :: Pr) (ft.results ++ st) P' st' →
       Typed C Ls (.call i :: rest) (pc :: Pr) (targs ++ st) P' st'
+  /--
+  The pc and the level of the table index flow into the bound of the expected type, whose
+  results are at least its bound (the type is well formed, as the paper's rule for functions
+  asks of every function type).
+  -/
+  | callIndirect {Ls rest pc Pr l ps b rs targs st P' st'} :
+      Lab.le (pc.join l) b → AllGe b rs → SFlows targs ps →
+      Typed C Ls rest (pc :: Pr) (rs ++ st) P' st' →
+      Typed C Ls (.callIndirect ps b rs :: rest) (pc :: Pr) (l :: (targs ++ st)) P' st'
   | unreachable {Ls rest P st stAny} :
       Typed C Ls (.unreachable :: rest) P st P stAny
 
@@ -220,6 +231,8 @@ structure State where
   glob : Nat → Nat
   mem : Nat → Nat
   lab : Nat → Lab
+  /-- the function table, which no instruction of the core writes -/
+  tbl : Nat → Option Nat
 
 def State.setLoc (s : State) (i v : Nat) : State :=
   { s with loc := fun j => if j = i then v else s.loc j }
@@ -272,7 +285,8 @@ the size of the derivation. A block's body runs on the block's parameters alone;
 below them on the stack waits for the body's results. A call runs the callee's body on an
 empty segment with its own local variables, and the caller's are as before when it returns.
 A trap is the absence of a rule: `unreachable` has none, and a `load` has one only if the
-cell's level flows into the level the load declares (SecWasm's run-time check).
+cell's level flows into the level the load declares (SecWasm's run-time check), and an
+indirect call only if the table entry names a function of exactly the expected type.
 -/
 inductive Eval (F : List Func) : Nat → List Nat → List Instr → List Nat → State → Out → Prop where
   | nil {ls σ s} : Eval F 0 ls [] σ s (.normal σ s)
@@ -350,5 +364,11 @@ inductive Eval (F : List Func) : Nat → List Nat → List Instr → List Nat �
       ob.lands = some (r, t) →
       Eval F n2 ls rest (r ++ base) { t with loc := s.loc } o →
       Eval F (n1 + n2 + 1) ls (.call i :: rest) (args ++ base) s o
+  | callIndirect {n1 n2 ls rest ps b rs c i f args base s ob r t o} :
+      s.tbl c = some i → F[i]? = some f → f.ty = ⟨ps, b, rs⟩ → args.length = ps.length →
+      Eval F n1 [rs.length] f.body [] { s with loc := frame args } ob →
+      ob.lands = some (r, t) →
+      Eval F n2 ls rest (r ++ base) { t with loc := s.loc } o →
+      Eval F (n1 + n2 + 1) ls (.callIndirect ps b rs :: rest) (c :: (args ++ base)) s o
 
 end WasmIfc

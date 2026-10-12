@@ -2,8 +2,8 @@
 
 A Lean 4 development that proves termination-insensitive noninterference for the labelled
 typing rules of this repository on a core of WebAssembly: blocks, loops and conditionals with
-parameters and results, `br`, `br_if` and `br_table`, calls of the module's functions
-(recursion included), a memory whose cells carry a level with SecWasm's run-time check on
+parameters and results, `br`, `br_if` and `br_table`, direct and indirect calls of the
+module's functions (recursion included), a memory whose cells carry a level with SecWasm's run-time check on
 loads, local and global variables, and arithmetic on one value type. It has no `sorry`, and its theorems depend on Lean's three
 standard axioms only (`propext`, `Classical.choice`, `Quot.sound`).
 
@@ -41,9 +41,14 @@ type `Syntax.Instructions.Instr` for the instructions above:
   value's. At run time a load traps unless the cell's level flows into the declared one.
 - A call needs the caller's pc to flow into the callee's bound, and the arguments to flow into
   the parameters. The arguments need not be at least the pc (SecWasm's lift raised them).
+- An indirect call needs the pc and the level of the table index to flow into the bound of the
+  expected type, and that type to be well formed: its results are at least its bound. At run
+  time it traps unless the table entry names a function of exactly the expected type.
 - A module is well typed if every function body is typed as the paper's rule for functions
   says. That a function's results be at least its bound, which that rule also asks, is not
-  used by the proof and is not part of `WellTyped`.
+  part of `WellTyped`: the proof uses it in one place, an indirect call on a secret index,
+  where two different functions run and their results must be secret. The rule for the
+  indirect call asks it there.
 - The code after `br`, `br_table` and `unreachable` is not typed.
 
 ## How the proof goes
@@ -72,9 +77,11 @@ paper's appendix B.4 has no counterpart here.
   them on the stack is put back under the body's results. SecWasm evaluates on one stack that
   holds the labels. On validated code the two agree, because a body never reaches below its
   parameters; this agreement is not proved here.
-- **The core is small.** One value type; two levels; no indirect calls and no `return` (a
-  branch to the function's label leaves the function, and the semantics of a call treats it
-  so); no `local.tee`, no `memory.grow`, no bulk memory. The memory is unbounded and its cells
+- **The core is small.** One value type; two levels; no `return` (a branch to the function's
+  label leaves the function, and the semantics of a call treats it so); no `local.tee`, no
+  `memory.grow`, no bulk memory. The function table is public and no instruction writes it,
+  and an indirect call asks the callee's type to equal the expected one, where the
+  implementation compares the bounds by the order of the levels. The memory is unbounded and its cells
   hold whole values, so a load traps only by the level check. `unreachable` is the other trap.
 - **Two relations between states.** `StRel` relates the states of two runs and is not
   transitive, because a cell that is secret in the middle state says nothing. `Conf` relates a

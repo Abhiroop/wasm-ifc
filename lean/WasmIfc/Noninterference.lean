@@ -452,7 +452,7 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
             have haa := ha hla
             subst haa
             subst hlm
-            exact hs.2.2 _ (Lab.eq_L_of_le hlab0 rfl) (Lab.eq_L_of_le hlab1 rfl)
+            exact hs.2.2.1 _ (Lab.eq_L_of_le hlab0 rfl) (Lab.eq_L_of_le hlab1 rfl)
     | store lm hle ht' =>
       cases he0 with
       | store _ he0' =>
@@ -657,6 +657,48 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
           rw [hl1] at hl1'
           cases hl1'
           exact ih _ (by omega) hF hrest hr0 hr1 (hres.append hbase) (StRel.leave hs hst)
+    | callIndirect hpc hge hfl hrest =>
+      cases he0 with
+      | callIndirect htbl0 hf0 hty0 hargs0 hb0 hl0 hr0 =>
+        cases he1 with
+        | callIndirect htbl1 hf1 hty1 hargs1 hb1 hl1 hr1 =>
+          cases hσ with
+          | cons hc hσ' =>
+            obtain ⟨hargs, hbase⟩ := StkRel.split hσ' (hargs0.trans hfl.length_eq.symm)
+              (hargs1.trans hfl.length_eq.symm)
+            obtain ⟨_, P0, hbody0⟩ := hF _ _ hf0
+            obtain ⟨_, P1, hbody1⟩ := hF _ _ hf1
+            rw [hty0] at hbody0
+            rw [hty1] at hbody1
+            rcases cond_cases hc with hcc | hlH
+            · -- the same table entry: the same function, as for a direct call
+              subst hcc
+              rw [hs.2.2.2] at htbl0
+              cases htbl0.symm.trans htbl1
+              cases hf0.symm.trans hf1
+              have hrel := ih _ (by omega) (hF.enter _) hbody0 hb0 hb1 .nil
+                (StRel.enter (hty0 ▸ hargs.mono hfl) hs)
+              obtain ⟨r0, t0, r1, t1, hl0', hl1', hres, hst⟩ := fun_result hrel
+              rw [hl0] at hl0'
+              cases hl0'
+              rw [hl1] at hl1'
+              cases hl1'
+              exact ih _ (by omega) hF hrest hr0 hr1 (hres.append hbase) (StRel.leave hs hst)
+            · -- a secret index: two functions of the expected type, each run under a secret pc
+              subst hlH
+              have hbound := hpc (Lab.join_H _)
+              subst hbound
+              obtain ⟨hc0, hi0⟩ := confine _ (hF.enter _) hbody0 (hiUpTo_zero_cons _) rfl hb0
+              obtain ⟨hc1, hi1⟩ := confine _ (hF.enter _) hbody1 (hiUpTo_zero_cons _) rfl hb1
+              obtain ⟨r0, t0, hl0', hlen0, hst0, _⟩ := top_lands hi0
+              obtain ⟨r1, t1, hl1', hlen1, hst1, _⟩ := top_lands hi1
+              rw [hl0] at hl0'
+              cases hl0'
+              rw [hl1] at hl1'
+              cases hl1'
+              exact ih _ (by omega) hF hrest hr0 hr1
+                ((StkRel.of_allH hge hlen0 hlen1).append hbase)
+                ((hs.conf_left (Conf.call (hst0 ▸ hc0))).conf_right (Conf.call (hst1 ▸ hc1)))
     | unreachable => cases he0
 
 /-! ### A function of a well-typed module -/

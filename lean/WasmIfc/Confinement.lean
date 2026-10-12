@@ -300,6 +300,26 @@ theorem confine : ∀ (n : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P'
         obtain ⟨h1, h2⟩ := ih _ (by omega) hF hrest hP
           (by simp only [List.length_append]; omega) hr
         exact ⟨(Conf.call (hst' ▸ hs1)).trans h1, h2⟩
+    | callIndirect htbl hf hty hargs hb hl hr =>
+      cases ht with
+      | callIndirect hpc hge hfl hrest =>
+        obtain ⟨_, P'', hbodyT⟩ := hF _ _ hf
+        rw [hty] at hbodyT
+        have hpcH := hP.head
+        subst hpcH
+        have hbound := hpc (Lab.H_join _)
+        subst hbound
+        obtain ⟨hs1, hi1⟩ := ih _ (by omega) (hF.enter _) hbodyT (hiUpTo_zero_cons _) rfl hb
+        obtain ⟨r', t', hl', hlen', hst', _⟩ := top_lands hi1
+        dsimp only at hlen'
+        rw [hl] at hl'
+        cases hl'
+        have hfl' := hfl.length_eq
+        have hbase : (_ :: (_ ++ _) : List Nat).length = (_ :: (_ ++ _) : STy).length := hlen
+        simp only [List.length_append, List.length_cons] at hbase
+        obtain ⟨h1, h2⟩ := ih _ (by omega) hF hrest hP
+          (by simp only [List.length_append]; omega) hr
+        exact ⟨(Conf.call (hst' ▸ hs1)).trans h1, h2⟩
 
 /--
 A loop whose body is typed under a secret pc, run from some iteration on. Either it reaches the
