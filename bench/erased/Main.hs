@@ -88,7 +88,7 @@ import Runtime.Stack (DataSpaceInst (..), GlobalSpaceInst (..), MemSpaceInst (..
 import Runtime.TableInst (tableEntryUnchecked, tableSize)
 import Runtime.Trap (Trap (..))
 import Syntax.Functions (Function (..))
-import Syntax.Immediates (HostType, MemArg, NarrowWidth, NumWithSign (..), Signedness (..), narrowBytes, narrowInt)
+import Syntax.Immediates (HostType, MemArg, NarrowWidth, NumWithSign (..), Reference (..), Signedness (..), narrowBytes, narrowInt)
 import Syntax.Indices (FunctionIdx (..))
 import Syntax.Instructions (BitwiseOp, ConvertOp, CountOp, Expr (..), FloatBinOp, FloatUnOp, Instr (..), convertEnds)
 import Syntax.Module (Export (..), ExportDesc (..))
@@ -165,6 +165,8 @@ data Instruction
     | EBrTable !Nat [Nat] !Nat
     | EReturn !Nat
     | ENop
+    | -- | an instruction on references or tables, which the twin does not run
+      ENotModelled
     | EUnreachable
 
 -- *** Runtime state, strict where the typed machine's is ***
@@ -174,9 +176,9 @@ data Func = WasmFunction ![ValType] [Instruction] | HostFunction
 -- | The function index space; lazy, like 'FuncSpaceInst'.
 data Funcs = NoFuncs | FuncCons Func Funcs
 
-data FuncRef = FuncRef !FuncType !Nat
+data TableEntry = TableEntry !FuncType !Nat
 
-data Table = Table {size :: !Word32, entries :: !(IntMap FuncRef)}
+data Table = Table {size :: !Word32, entries :: !(IntMap TableEntry)}
 
 data Segments = NoSegments | !(Maybe ByteString) :| !Segments
 
@@ -211,7 +213,7 @@ data Config m = Config !(Store m) !Frame !Values [Instruction] Control
 data StepResult m = Stepped !(Config m) | Done !(Store m) !Values | Wedged
 
 -- | How a run fails: a WebAssembly trap, or a check the typed machine never has to make.
-data Failure = Trapped Trap | Stuck | HostCallUnsupported
+data Failure = Trapped Trap | Stuck | HostCallUnsupported | ReferencesUnsupported
 
 -- *** The step relation ***
 
@@ -351,7 +353,7 @@ step funcs (Config store locals stack code control) = case code of
         ECallIndirect width expected -> case stack of
             VI32 index :> below' -> case lookupTable store.table index of
                 Left failure -> Left failure
-                Right (FuncRef actual ix)
+                Right (TableEntry actual ix)
                     | actual == expected -> enterCall funcs store locals width ix below' rest control
                     | otherwise -> Left (Trapped IndirectCallTypeMismatch)
             _ -> Left Stuck
@@ -386,6 +388,7 @@ step funcs (Config store locals stack code control) = case code of
         EReturn width -> let (vs, _) = splitValues width stack in Right (returnUnwind store locals vs control)
         {- Inert -}
         ENop -> stepped store locals stack rest control
+        ENotModelled -> Left ReferencesUnsupported
         EUnreachable -> Left (Trapped UnreachableExecuted)
 
 enterCall :: Funcs -> Store m -> Frame -> Nat -> Nat -> Values -> [Instruction] -> Control -> Either Failure (StepResult m)
@@ -492,13 +495,15 @@ taggedInt I32IsInt = VI32
 taggedInt I64IsInt = VI64
 
 byteWidth :: ValType -> Int
-byteWidth ty = case ty of I32 -> 4; I64 -> 8; F32 -> 4; F64 -> 8
+byteWidth ty = case ty of I32 -> 4; I64 -> 8; F32 -> 4; F64 -> 8; FuncRef -> 8; ExternRef -> 8
 
 loaded :: ValType -> Word64 -> Value
 loaded I32 word = VI32 (loadValue I32IsNum word)
 loaded I64 word = VI64 (loadValue I64IsNum word)
 loaded F32 word = VF32 (loadValue F32IsNum word)
 loaded F64 word = VF64 (loadValue F64IsNum word)
+loaded FuncRef word = VI64 word
+loaded ExternRef word = VI64 word
 
 withMemory :: MemInst m -> Store m -> Store m
 withMemory mem store = Store {globals = store.globals, memory = Just mem, table = store.table, segments = store.segments}
@@ -509,7 +514,7 @@ withGlobals gs store = Store {globals = gs, memory = store.memory, table = store
 withSegments :: Segments -> Store m -> Store m
 withSegments segs store = Store {globals = store.globals, memory = store.memory, table = store.table, segments = segs}
 
-lookupTable :: Maybe Table -> Word32 -> Either Failure FuncRef
+lookupTable :: Maybe Table -> Word32 -> Either Failure TableEntry
 lookupTable Nothing _ = Left Stuck
 lookupTable (Just t) index
     | index >= t.size = Left (Trapped UndefinedElement)
@@ -592,6 +597,8 @@ unpackAs ty w = case ty of
     I64 -> VI64 w
     F32 -> VF32 (castWord32ToFloat (fromIntegral w))
     F64 -> VF64 (castWord64ToDouble w)
+    FuncRef -> VI64 w
+    ExternRef -> VI64 w
 
 tagOf :: Value -> ValType
 tagOf v = case v of VI32 _ -> I32; VI64 _ -> I64; VF32 _ -> F32; VF64 _ -> F64
@@ -680,6 +687,19 @@ eraseInstr instr = case instr of
     IGlobalSet _ _ ix -> EGlobalSet (positionOf ix)
     IGlobalSetPreserved _ ix -> EGlobalSet (positionOf ix)
     IRequireRestored _ -> ENop
+    -- The twin predates references: it carries one as its word and runs none of their
+    -- instructions, which no workload of the benchmarks uses.
+    IRefNull {} -> ENotModelled
+    IRefFunc {} -> ENotModelled
+    IRefIsNull {} -> ENotModelled
+    ITableGet {} -> ENotModelled
+    ITableSet {} -> ENotModelled
+    ITableSize {} -> ENotModelled
+    ITableGrow {} -> ENotModelled
+    ITableFill {} -> ENotModelled
+    ITableCopy {} -> ENotModelled
+    ITableInit {} -> ENotModelled
+    IElemDrop {} -> ENotModelled
     ILoad _ _ nt memArg -> ELoad (numType nt) memArg
     IRelabel _ -> ENop
     IRelabelResults _ -> ENop
@@ -728,6 +748,7 @@ eraseFunctions FsNil = NoFuncs
 eraseFunctions (FsCons (WasmFunc (Function _ declared _ body)) rest) = FuncCons (WasmFunction (unlabelledTypes declared) (eraseExpr body)) (eraseFunctions rest)
 eraseFunctions (FsCons HostFunc {} rest) = FuncCons HostFunction (eraseFunctions rest)
 eraseFunctions (FsCons GhostFunc rest) = FuncCons HostFunction (eraseFunctions rest)
+eraseFunctions (FsCons ForeignFunc {} rest) = FuncCons HostFunction (eraseFunctions rest)
 
 -- | The twin knows no security levels: a labelled stack erases to its value types.
 unlabelledTypes :: Sing (s :: [LabelledValType]) -> [ValType]
@@ -742,6 +763,8 @@ eraseGlobals (SCons (SGlobalType _ (valTypeS :%~ _)) rest) (GCons v vs) = valueO
     valueOf SI64 = VI64
     valueOf SF32 = VF32
     valueOf SF64 = VF64
+    valueOf SFuncRef = \(Reference word) -> VI64 word
+    valueOf SExternRef = \(Reference word) -> VI64 word
 
 eraseTable :: TableSpaceInst fts ts es -> Maybe Table
 eraseTable tables = case tables.instances of
@@ -750,8 +773,7 @@ eraseTable tables = case tables.instances of
       where
         n = tableSize t
   where
-    n = tableSize t
-    erased (SomeFuncRef _ params results ix) = FuncRef (FuncType (unlabelledTypes params) (unlabelledTypes results)) (positionOf ix)
+    erased (SomeFuncRef _ params results ix) = TableEntry (FuncType (unlabelledTypes params) (unlabelledTypes results)) (positionOf ix)
 
 eraseSegments :: DataSpaceInst ds -> Segments
 eraseSegments DNil = NoSegments
@@ -787,6 +809,7 @@ runExport (SomeModuleInst (SModuleShape _ globalTypesS _ _ _ _) inst exports) na
                     Left (Trapped trap) -> Left ("trap: " ++ show trap)
                     Left Stuck -> Left "stuck: the machine reached an ill-typed configuration"
                     Left HostCallUnsupported -> Left "the erased machine does not serve host calls"
+                    Left ReferencesUnsupported -> Left "the erased machine has no instruction on references or tables"
   where
     funcs = forced (eraseFunctions inst.functions)
     globalValues = eraseGlobals globalTypesS inst.globals

@@ -93,7 +93,7 @@ def main() -> int:
     ap.add_argument("-o", "--out", help="results file (default bench/results/<date>-<commit>-secrets-<size>.json)")
     args = ap.parse_args()
 
-    ours = args.binary or subprocess.run(["cabal", "list-bin", "exe:wasm-ifc"], cwd=ROOT, capture_output=True, text=True).stdout.strip()
+    ours = args.binary or os.environ.get("WASM_IFC_BIN") or subprocess.run(["cabal", "list-bin", "exe:wasm-ifc"], cwd=ROOT, capture_output=True, text=True).stdout.strip()
     if not ours:
         print("no wasm-ifc binary", file=sys.stderr)
         return 2

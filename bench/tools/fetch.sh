@@ -10,7 +10,7 @@
 # Every version and checksum is pinned: a benchmark result names the toolchain and runtimes that
 # produced it, so none of them may drift underneath. Release digests are the ones GitHub
 # publishes on the asset (API field `digest`). GitHub publishes none for commit archives, so the
-# source digests were pinned on first download (2026-09-13); a mismatch means the archive was
+# source digests were pinned on first download (2026-09-13; WAMR's on 2026-10-12); a mismatch means the archive was
 # regenerated or tampered with — look before re-pinning either way.
 set -euo pipefail
 
@@ -22,10 +22,15 @@ mkdir -p "$TOOLS/bin" "$TOOLS/src" "$CACHE"
 
 WASI_SDK_VERSION=34.0
 WASI_SDK_SHA256=b761e3a0721dbae9c09a0059e5fdb2bf917d1b4a8a7b430fb3b5aafb0984b2c4
+# (wasm3 replaced the binaries of this release on 2026-09-14, four days after publishing it and
+# a day after the first pin, 05bf303d…; this is the digest GitHub publishes for the asset now.)
 WASM3_VERSION=0.9.1-beta.1
-WASM3_SHA256=05bf303d35feb05e6c5885a31f607ff20daca391d0dd5fa342cc29fbbf8c93d2
+WASM3_SHA256=3d6d56112f38e87ce41fcd17d88b15646ebf0672fe44ff2ffdc2ab10df9edbb8
 WAMR_VERSION=2.4.5
 WAMR_SHA256=61e9d4c77e8f7b06d5cea657b2c319b9be5d51ec51ad8f6f576af84cecd391a3
+WAMR_SOURCE_SHA256=1ab09d51099f276ca4a1d6629f6b589aab2bd0caa01445e05031a4bed22c199b
+WASMTIME_VERSION=48.0.1
+WASMTIME_SHA256=4c2e31b68ad99e0a519f225a261fda099eb15f056d4a24fdb3c2a46517bde1df
 WASMI_VERSION=2.0.0
 WASMI_SHA256=fccca87717806246cadab3aec0e3b136742198d1562d6e0af4362f38b6bcc334
 COREMARK_COMMIT=1f483d5b8316753a742cbf5590caf5bd0a4e4777
@@ -63,13 +68,39 @@ install_wasm3 () {
     echo "wasm3 $WASM3_VERSION  $TOOLS/bin/wasm3"
 }
 
-# WAMR's iwasm, the Bytecode Alliance's embedded runtime.
+# WAMR's iwasm, the Bytecode Alliance's embedded runtime. The release binary is built on Ubuntu
+# 22.04 and needs a newer libstdc++ than some systems have (Enterprise Linux 9, for one); where
+# it does not run, iwasm is built from the source of the same release instead (needs cmake and a
+# C compiler), with its interpreter only: no JIT, no ahead-of-time loader, and no vector
+# instructions, which the fast interpreter would fetch another library for.
 install_wamr () {
     local file="iwasm-${WAMR_VERSION}-x86_64-ubuntu-22.04.tar.gz"
     fetch "$file" "https://github.com/bytecodealliance/wasm-micro-runtime/releases/download/WAMR-${WAMR_VERSION}/$file" "$WAMR_SHA256"
     tar -xzf "$CACHE/$file" -C "$SCRATCH" iwasm
     install -m 755 "$SCRATCH/iwasm" "$TOOLS/bin/iwasm"
-    echo "WAMR $WAMR_VERSION  $TOOLS/bin/iwasm"
+    if "$TOOLS/bin/iwasm" --version >/dev/null 2>&1; then
+        echo "WAMR $WAMR_VERSION  $TOOLS/bin/iwasm"
+        return
+    fi
+    echo "the release binary of iwasm does not run here: building WAMR $WAMR_VERSION from source"
+    local source="wamr-src-${WAMR_VERSION}.tar.gz"
+    fetch "$source" "https://codeload.github.com/bytecodealliance/wasm-micro-runtime/tar.gz/refs/tags/WAMR-${WAMR_VERSION}" "$WAMR_SOURCE_SHA256"
+    tar -xzf "$CACHE/$source" -C "$SCRATCH"
+    local linux="$SCRATCH/wasm-micro-runtime-WAMR-${WAMR_VERSION}/product-mini/platforms/linux"
+    cmake -S "$linux" -B "$SCRATCH/wamr-build" -DCMAKE_BUILD_TYPE=Release -DWAMR_BUILD_AOT=0 -DWAMR_BUILD_SIMD=0 >"$SCRATCH/wamr-cmake.log" 2>&1 \
+        || { tail -20 "$SCRATCH/wamr-cmake.log" >&2; exit 1; }
+    nice -n 19 cmake --build "$SCRATCH/wamr-build" -j4 >"$SCRATCH/wamr-make.log" 2>&1 || { tail -20 "$SCRATCH/wamr-make.log" >&2; exit 1; }
+    install -m 755 "$SCRATCH/wamr-build/iwasm" "$TOOLS/bin/iwasm"
+    echo "WAMR $WAMR_VERSION (built from source)  $TOOLS/bin/iwasm"
+}
+
+# Wasmtime, whose three tiers the benchmarks run: Cranelift, Winch and the Pulley interpreter.
+install_wasmtime () {
+    local name="wasmtime-v${WASMTIME_VERSION}-x86_64-linux"
+    fetch "$name.tar.xz" "https://github.com/bytecodealliance/wasmtime/releases/download/v${WASMTIME_VERSION}/$name.tar.xz" "$WASMTIME_SHA256"
+    tar -xJf "$CACHE/$name.tar.xz" -C "$SCRATCH" "$name/wasmtime"
+    install -m 755 "$SCRATCH/$name/wasmtime" "$TOOLS/bin/wasmtime"
+    echo "wasmtime $WASMTIME_VERSION  $TOOLS/bin/wasmtime"
 }
 
 # wasmi, the Rust interpreter.
@@ -101,12 +132,13 @@ install_polybench () {
 }
 
 targets=("$@")
-[ ${#targets[@]} -gt 0 ] || targets=(wasi-sdk wasm3 wamr wasmi coremark polybench)
+[ ${#targets[@]} -gt 0 ] || targets=(wasi-sdk wasm3 wamr wasmtime wasmi coremark polybench)
 for target in "${targets[@]}"; do
     case "$target" in
         wasi-sdk) install_wasi_sdk ;;
         wasm3) install_wasm3 ;;
         wamr) install_wamr ;;
+        wasmtime) install_wasmtime ;;
         wasmi) install_wasmi ;;
         coremark) install_coremark ;;
         polybench) install_polybench ;;

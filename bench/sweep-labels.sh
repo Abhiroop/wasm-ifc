@@ -12,7 +12,8 @@
 # defaults to bench/results/<date>-<commit>. HASKELL_WASM, if set, is the driver of the Hackage
 # interpreter (bench/drivers/haskell-wasm/build.sh prints its path). The other runtimes are
 # whichever bench/run.py finds (bench/tools/fetch.sh installs them). MEDIUM=0 skips the two
-# medium-size sweeps, which take about two hours.
+# medium-size sweeps, which take about two hours. WASM_IFC_BIN and ERASED, if set, are saved
+# copies of the two builds to measure, so that the working tree may be rebuilt meanwhile.
 #
 # Needs: bench/build.sh, bench/c/build.sh and bench/c/build-silent.sh run once, and
 # `cabal build exe:wasm-ifc bench:wasm-ifc-erased --enable-benchmarks`.
@@ -20,7 +21,7 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 : "${PRE:?set PRE to a wasm-ifc binary built before the labels}"
 PREFIX=${1:-bench/results/$(date +%F)-$(git rev-parse --short HEAD)}
-ERASED=$(cabal list-bin bench:wasm-ifc-erased --enable-benchmarks)
+ERASED=${ERASED:-$(cabal list-bin bench:wasm-ifc-erased --enable-benchmarks)}
 PROGRESS=$PREFIX.progress
 stamp() { echo "$(date +%H:%M:%S) $1 (load $(cut -d' ' -f1-3 /proc/loadavg))" | tee -a "$PROGRESS"; }
 others=(--binary pre-ifc="$PRE" --binary erased="$ERASED")

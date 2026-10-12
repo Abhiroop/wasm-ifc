@@ -55,9 +55,13 @@ def runtimes(extra: list[str]) -> dict[str, dict[str, list[str]]]:
     def ours(path: str) -> dict[str, list[str]]:
         return {"t1": [path, "invoke", MODULE, "run"], "t2": [path, "run", MODULE]}
 
-    built = subprocess.run(["cabal", "list-bin", "wasm-ifc"], cwd=ROOT, capture_output=True, text=True)
-    if built.returncode == 0:
-        found["wasm-ifc"] = ours(built.stdout.strip())
+    # WASM_IFC_BIN names a saved copy of the build, for a sweep that must not notice a rebuild.
+    if os.environ.get("WASM_IFC_BIN"):
+        found["wasm-ifc"] = ours(os.environ["WASM_IFC_BIN"])
+    else:
+        built = subprocess.run(["cabal", "list-bin", "wasm-ifc"], cwd=ROOT, capture_output=True, text=True)
+        if built.returncode == 0:
+            found["wasm-ifc"] = ours(built.stdout.strip())
     for spec in extra:
         name, _, path = spec.partition("=")
         if not name or not path:

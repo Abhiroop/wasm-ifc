@@ -3,3 +3,7 @@ packages: .
 -- Enable the test suite in the default build plan so `cabal build` / `cabal test` resolve its
 -- dependencies (hspec, hedgehog) without needing `--enable-tests` on every invocation.
 tests: True
+
+-- The benchmarks too, so that `cabal build all` (the gate) compiles the erased copy of the
+-- machine in bench/erased: it follows the typed AST and breaks when a constructor is added.
+benchmarks: True
