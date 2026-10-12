@@ -156,17 +156,19 @@ data Literal = Literal
     -- ^ of a vector: how its lanes are written (@i8@ … @f64@)
     , laneValues :: [Text]
     -- ^ of a vector: its lanes, lane 0 first, each written like a scalar of the lane type
+    , alternatives :: [Literal]
+    -- ^ of an @either@: the values of which a result must be one
     }
 
--- (An alternative between several expected values has no value of its own, and is not read.)
 instance FromJSON Literal where
     parseJSON = withObject "literal" $ \o -> do
         value <- o .:? "value"
         written <- o .:? "lane_type"
+        choices <- fromMaybe [] <$> o .:? "values"
         pure $ case value of
-            Just (Aeson.String text) -> Literal (kind o) (Just text) written []
-            Just (Aeson.Array texts) -> Literal (kind o) Nothing written [text | Aeson.String text <- foldr (:) [] texts]
-            _ -> Literal (kind o) Nothing written []
+            Just (Aeson.String text) -> Literal (kind o) (Just text) written [] choices
+            Just (Aeson.Array texts) -> Literal (kind o) Nothing written [text | Aeson.String text <- foldr (:) [] texts] choices
+            _ -> Literal (kind o) Nothing written [] choices
       where
         kind o = fromMaybe "?" (parseMaybe (.: "type") o)
 
@@ -373,7 +375,7 @@ runCommand dir state cmd = case cmd.kind of
   extensions. (@gc-types@ enables no instruction: it lets @wasm-tools@ accept @externref@.)
 -}
 supportedFeatures :: String
-supportedFeatures = "-all,mutable-global,saturating-float-to-int,sign-extension,multi-value,bulk-memory,reference-types,simd,multi-memory,memory64,tail-call,extended-const,exceptions,floats,gc-types"
+supportedFeatures = "-all,mutable-global,saturating-float-to-int,sign-extension,multi-value,bulk-memory,reference-types,simd,relaxed-simd,multi-memory,memory64,tail-call,extended-const,exceptions,floats,gc-types"
 
 {- | The features of WebAssembly 3.0 beyond 'supportedFeatures', each with the flags that
   enable it in @wasm-tools@ together with the features it builds on.
@@ -534,6 +536,7 @@ numericLiteral lit = do
 -}
 matches :: Literal -> Value -> Bool
 matches lit actual
+    | lit.litType == "either" = any (`matches` actual) lit.alternatives
     -- A vector is compared lane by lane, each lane like a scalar of the lane type.
     | V128Value vector <- actual = case (lit.litType, lit.laneType >>= laneWidth) of
         ("v128", Just bits) ->

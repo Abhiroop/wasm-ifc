@@ -740,7 +740,8 @@ implemented since e87e76a.
     (`ImportedTwice`): inside one instance two indices are two objects. 10 assertions.
   - An exception does not cross from a function to the module that called it
     (`ExceptionAcrossModules`), and a tag is not imported. 68 assertions.
-- **Spec suite:** 62,399 passed, 0 failed, 2,803 skipped (62,137 and 3,065 before). Every skip
+- **Spec suite:** 62,399 passed, 0 failed, 2,803 skipped (62,137 and 3,065 before; 62,476 and
+  2,726 once the relaxed vector instructions were in). Every skip
   for an unsupported import and for state that may depend on an unlinked module is gone (292),
   and so are the three for a start function that calls an import. Seven unit examples
   (`test/Spec.hs`, "modules linked in a world").
@@ -749,16 +750,21 @@ implemented since e87e76a.
 
 Supported, with the 3.0 suite passing on all of it: **every instruction and type of
 WebAssembly 2.0, linking between modules included**, and of what 3.0 adds, **several memories,
-64-bit memories and tables, tail calls, extended constant expressions and exceptions** (thrown
-under a public pc only, and within one module).
+64-bit memories and tables, tail calls, extended constant expressions, the relaxed vector
+instructions and exceptions** (thrown under a public pc only, and within one module).
 
-Not supported: typed function references, the relaxed vector instructions and garbage
-collection (all 3.0). So the paper's "3.0 without garbage collection" is short of typed
-function references, which change the value types (references to a function type, nullable or
-not, with subtyping), and of the relaxed vector instructions, which are a small addition.
+The relaxed vector instructions (2026-10-12) let an implementation choose among a few results.
+Ours are those of the 2.0 instruction each one relaxes (`relaxed_swizzle` is `swizzle`,
+`relaxed_laneselect` is `bitselect`, and so on), a product rounded before the sum for
+`relaxed_madd`, and saturating sums for the two dot products. Their rule is the rule of every
+vector operation. All seven scripts of the suite pass in full (77 assertions).
+
+Not supported: typed function references and garbage collection (both 3.0). So the paper's
+"3.0 without garbage collection" is short of typed function references, which change the
+value types (references to a function type, nullable or not, with subtyping).
 
 Every feature that clang 23 (wasi-sdk 34) and rustc 1.99 enable by default for
-`wasm32-wasip1` is supported. The suite's 2,803 skipped assertions are: 1,245 malformed modules
-given as text, which the harness does not run; 1,468 on modules that use the unsupported
-features (alone or with others); 68 for a tag or an exception across modules; 12 for a script
-command the harness lacks; 10 for an object imported twice. Counts by feature are in `TODO.md`.
+`wasm32-wasip1` is supported. The suite's 2,726 skipped assertions are: 1,245 malformed modules
+given as text, which the harness does not run; 1,391 on modules that use the two unsupported
+features; 68 for a tag or an exception across modules; 12 for a script command the harness
+lacks; 10 for an object imported twice. Counts by feature are in `TODO.md`.

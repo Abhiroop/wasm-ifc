@@ -538,7 +538,7 @@ getVectorInstr = do
         0x4F -> pure (binary VAndNot)
         0x50 -> pure (binary VOr)
         0x51 -> pure (binary VXor)
-        0x52 -> pure (operation (SCons SV128 (SCons SV128 (SCons SV128 SNil))) SV128 VBitselect)
+        0x52 -> pure (ternary VBitselect)
         0x53 -> pure (test VAnyTrue)
         0x54 -> laneAccess VectorLoadLane Lane8
         0x55 -> laneAccess VectorLoadLane Lane16
@@ -676,6 +676,25 @@ getVectorInstr = do
         0xFB -> pure (unary (VConvertI32x4 Unsigned))
         0xFC -> pure (unary (VTruncSatF64x2Zero Signed))
         0xFD -> pure (unary (VTruncSatF64x2Zero Unsigned))
+        -- The relaxed instructions of 3.0: each is the instruction of 2.0 that gives one of the
+        -- results it permits, or one of the three in 'VectorTernary'.
+        0x100 -> pure (binary VSwizzle)
+        0x101 -> pure (unary (VTruncSatF32x4 Signed))
+        0x102 -> pure (unary (VTruncSatF32x4 Unsigned))
+        0x103 -> pure (unary (VTruncSatF64x2Zero Signed))
+        0x104 -> pure (unary (VTruncSatF64x2Zero Unsigned))
+        0x105 -> pure (ternary (VTernary (VMulAdd F32x4)))
+        0x106 -> pure (ternary (VTernary (VNegMulAdd F32x4)))
+        0x107 -> pure (ternary (VTernary (VMulAdd F64x2)))
+        0x108 -> pure (ternary (VTernary (VNegMulAdd F64x2)))
+        _ | opcode >= 0x109 && opcode <= 0x10C -> pure (ternary VBitselect)
+        0x10D -> pure (binary (VFloatBinary F32x4 FMinLanes))
+        0x10E -> pure (binary (VFloatBinary F32x4 FMaxLanes))
+        0x10F -> pure (binary (VFloatBinary F64x2 FMinLanes))
+        0x110 -> pure (binary (VFloatBinary F64x2 FMaxLanes))
+        0x111 -> pure (binary VQ15MulrSat)
+        0x112 -> pure (binary VDotBytes)
+        0x113 -> pure (ternary (VTernary VDotBytesAdd))
         0xFE -> pure (unary (VConvertLowI32x4 Signed))
         0xFF -> pure (unary (VConvertLowI32x4 Unsigned))
         _ -> fail ("unsupported: vector opcode " ++ show opcode)
@@ -683,6 +702,7 @@ getVectorInstr = do
     operation :: Sing operands -> Sing result -> VectorOp operands result -> RawInstr
     operation operands result op = Vector (SomeVectorOp operands result op)
     unary = operation (SCons SV128 SNil) SV128 . VUnary
+    ternary = operation (SCons SV128 (SCons SV128 (SCons SV128 SNil))) SV128
     binary = operation (SCons SV128 (SCons SV128 SNil)) SV128 . VBinary
     intBinary shape = binary . VIntBinary shape
     test = operation (SCons SV128 SNil) SI32 . VTest

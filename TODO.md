@@ -56,7 +56,8 @@ are summarised here, not repeated.
 ## WebAssembly coverage
 
 The supported subset is WebAssembly 2.0, plus several memories per module, 64-bit memories and
-tables, tail calls, extended constant expressions and exceptions. What the 3.0 suite skips
+tables, tail calls, extended constant expressions, the relaxed vector instructions and
+exceptions. What the 3.0 suite skips
 (`WASM_IFC_SPEC_REPORT=f cabal test wasm-ifc-spec; ./scripts/spec-report.py f`), by the features
 a skipped module uses according to `wasm-tools`, in assertions:
 
@@ -64,7 +65,6 @@ a skipped module uses according to `wasm-tools`, in assertions:
 |---:|---|
 | 877 | garbage collection |
 | 514 | typed function references (88 of them in the scripts for tail calls) |
-| 77 | three or more features at once (the relaxed vector instructions) |
 | 68 | none: an imported exception tag (67), and an exception that crosses modules (1) |
 | 12 | none: the script instantiates one module definition several times (`module definition`, `module instance`), which the harness does not do |
 | 10 | none: a module that imports the same memory twice |

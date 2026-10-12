@@ -25,6 +25,7 @@ module Syntax.Vector (
     SomeVectorOp (..),
     VectorUnary (..),
     VectorBinary (..),
+    VectorTernary (..),
     VectorTest (..),
     VectorShift (..),
     IntUnary (..),
@@ -94,6 +95,7 @@ data VectorOp (operands :: [ValType]) (result :: ValType) where
     VBinary :: VectorBinary -> VectorOp '[ 'V128, 'V128] 'V128
     -- | @v128.bitselect@: operands, top first, are the mask, then the two vectors
     VBitselect :: VectorOp '[ 'V128, 'V128, 'V128] 'V128
+    VTernary :: VectorTernary -> VectorOp '[ 'V128, 'V128, 'V128] 'V128
     VTest :: VectorTest -> VectorOp '[ 'V128] 'I32
     -- | a shift: the count is on top of the vector
     VShift :: VectorShift -> VectorOp '[ 'I32, 'V128] 'V128
@@ -147,6 +149,23 @@ data VectorBinary
       VDot
     | -- | @i16x8.q15mulr_sat_s@
       VQ15MulrSat
+    | -- | @i16x8.relaxed_dot_i8x16_i7x16_s@: the products of adjacent pairs of bytes, added
+      VDotBytes
+    deriving stock (Eq, Show)
+
+{- | The relaxed vector instructions of WebAssembly 3.0 with three operands, written here for
+  operands @a@, @b@, @c@ with @c@ on top. The specification lets an implementation choose among
+  a few results for a relaxed instruction, the same choice every time; ours are the ones named
+  here. The other relaxed instructions are decoded as the instructions of 2.0 that give one of
+  their permitted results (@relaxed_swizzle@ as @swizzle@, and so on; see "Codec.Wasm").
+-}
+data VectorTernary
+    = -- | @relaxed_madd@: @a * b + c@, the product rounded before the sum
+      VMulAdd FloatShape
+    | -- | @relaxed_nmadd@: @-(a * b) + c@
+      VNegMulAdd FloatShape
+    | -- | @i32x4.relaxed_dot_i8x16_i7x16_add_s@: the products of the bytes of @a@ and @b@, added in fours, plus @c@
+      VDotBytesAdd
     deriving stock (Eq, Show)
 
 data VectorTest

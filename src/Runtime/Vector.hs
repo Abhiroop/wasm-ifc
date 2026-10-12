@@ -135,7 +135,12 @@ vector2 op top below = case op of
     VReplace lane index -> replaceLane lane index below top
 
 vector3 :: VectorOp '[a, b, c] result -> HostType a -> HostType b -> HostType c -> HostType result
-vector3 VBitselect mask second first = vectorBitselect first second mask
+vector3 op top second first = case op of
+    VBitselect -> vectorBitselect first second top
+    VTernary ternary -> case ternary of
+        VMulAdd shape -> vectorBinary (VFloatBinary shape FAddLanes) (vectorBinary (VFloatBinary shape FMulLanes) first second) top
+        VNegMulAdd shape -> vectorBinary (VFloatBinary shape FAddLanes) (vectorUnary (VFloatUnary shape FNegLanes) (vectorBinary (VFloatBinary shape FMulLanes) first second)) top
+        VDotBytesAdd -> vectorBinary (VIntBinary I32x4 IAddLanes) (vectorUnary (VExtAddPairwise I32x4 Signed) (vectorBinary VDotBytes first second)) top
 
 vectorUnary :: VectorUnary -> Vector128 -> Vector128
 vectorUnary op vector@(Vector128 low high) = case op of
@@ -256,6 +261,9 @@ vectorBinary op first@(Vector128 firstLow firstHigh) second@(Vector128 secondLow
          in fromLanes 32 [wrapLane 32 (a + b) | (a, b) <- pairs products]
     VQ15MulrSat ->
         fromLanes 16 [saturateLane Signed 16 ((signedLane 16 a * signedLane 16 b + 0x4000) `div` 0x8000) | (a, b) <- zip (lanes 16 first) (lanes 16 second)]
+    VDotBytes ->
+        let products = [signedLane 8 a * signedLane 8 b | (a, b) <- zip (lanes 8 first) (lanes 8 second)]
+         in fromLanes 16 [saturateLane Signed 16 (a + b) | (a, b) <- pairs products]
 
 -- | @v128.bitselect@: each bit from the first vector where the mask has a one, from the second elsewhere.
 vectorBitselect :: Vector128 -> Vector128 -> Vector128 -> Vector128

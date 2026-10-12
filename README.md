@@ -100,9 +100,9 @@ cabal test          # unit tests, the spec testsuite (needs wasm-tools), the was
 
 ### Status
 
-WebAssembly 2.0, and five features of 3.0: several memories per module, 64-bit memories and
-tables, tail calls, extended constant expressions, and exceptions (thrown under a public pc
-only, and not across modules).
+WebAssembly 2.0, and six features of 3.0: several memories per module, 64-bit memories and
+tables, tail calls, extended constant expressions, the relaxed vector instructions, and
+exceptions (thrown under a public pc only, and not across modules).
 That is the numeric, comparison and conversion instructions, the vector instructions, memory
 including bulk memory, structured control, calls, reference types (`funcref`, `externref`),
 several tables with the table instructions and every kind of element segment, `call_indirect`,
