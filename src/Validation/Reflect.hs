@@ -54,6 +54,8 @@ module Validation.Reflect (
     memShapesSing,
     tableShapesSing,
     elemShapesSing,
+    SomeMemoryRef (..),
+    lookupMemoryRef,
     SomeTableRef (..),
     lookupTableRef,
     SomeElemRef (..),
@@ -75,6 +77,7 @@ import Syntax.Types
 import Syntax.TypesIFC
 
 -- Open import: the generated single-constructor 'SModuleShape' shares its name with its type.
+import Validation.Ref (MemoryRef (..))
 import Validation.Shape
 
 {- *** Reflecting term-level shapes to singletons ***
@@ -319,6 +322,15 @@ dataShapesSing (SModuleShape _ _ _ _ ds _) = ds
 -- | A bounds-checked index into the data index space.
 elemShapesSing :: SModuleShape shape -> Sing (ModuleElems shape)
 elemShapesSing (SModuleShape _ _ _ _ _ es) = es
+
+-- | @∃at. MemoryRef at ms@: a memory found by its index.
+data SomeMemoryRef (ms :: [MemShape]) where
+    SomeMemoryRef :: MemoryRef at ms -> SomeMemoryRef ms
+
+lookupMemoryRef :: Sing (ms :: [MemShape]) -> Word32 -> Maybe (SomeMemoryRef ms)
+lookupMemoryRef (SCons (SMemShape at _ _) _) 0 = Just (SomeMemoryRef (MemoryRef at Here))
+lookupMemoryRef (SCons _ rest) n = (\(SomeMemoryRef (MemoryRef at ix)) -> SomeMemoryRef (MemoryRef at (There ix))) <$> lookupMemoryRef rest (n - 1)
+lookupMemoryRef SNil _ = Nothing
 
 -- | @∃t lt lo hi. (Sing t, Sing lt, Elem ('TableShape t lt lo hi) ts)@: a table found by its index.
 data SomeTableRef (ts :: [TableShape]) where

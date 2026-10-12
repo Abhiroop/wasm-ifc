@@ -12,7 +12,7 @@ are summarised here, not repeated.
 ## Where things stand (2026-10-08)
 
 - WebAssembly: the spec testsuite, at the WebAssembly 3.0 release (all 257 scripts), passes for
-  the supported subset (33,439 assertions, none failing, 31,763 skipped, counted by feature
+  the supported subset (34,141 assertions, none failing, 31,061 skipped, counted by feature
   below); the wasi-testsuite passes 72 of 72. Both also with SecWasm's restrictions on.
 - Information flow: SecWasm's static rules in the single instruction type, with the repairs of
   the paper's findings (`br_table` raises down to its deepest target); inference of stores,
@@ -56,7 +56,7 @@ are summarised here, not repeated.
 ## WebAssembly coverage
 
 The supported subset is WebAssembly 2.0 without vector instructions and with imports of
-functions only. What the 3.0 suite skips
+functions only, plus several memories per module. What the 3.0 suite skips
 (`WASM_IFC_SPEC_REPORT=f cabal test wasm-ifc-spec; ./scripts/spec-report.py f`), by the features
 a skipped module uses according to `wasm-tools`, in assertions:
 
@@ -65,7 +65,6 @@ a skipped module uses according to `wasm-tools`, in assertions:
 | 25,355 | vector instructions |
 | 358 | none: imports of tables, memories and globals, and what depends on state shared between modules |
 | 2,280 | 64-bit memories and tables |
-| 834 | multiple memories |
 | 821 | garbage collection |
 | 424 | typed function references |
 | 88 | tail calls with typed function references (34 with tail calls alone) |
@@ -94,7 +93,9 @@ a skipped module uses according to `wasm-tools`, in assertions:
   (`Validation.Ref.FunctionRef`), but the word on the stack carries no proof of it, so the
   resolution answers "no function" for any other word and no type rules that case out. With
   linking the word would have to name a function of the store.
-- [ ] **P3** Tail calls; extended constant expressions; multiple memories; 64-bit memories.
+- [ ] **P3** A policy's regions are of memory 0 only; the other memories of a module have
+  their byte labels but no declared regions.
+- [ ] **P3** Tail calls; extended constant expressions; 64-bit memories.
 - [ ] **P3** Vector instructions; exceptions; typed function references; garbage collection.
 
 ## Performance

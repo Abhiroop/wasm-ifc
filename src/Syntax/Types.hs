@@ -187,3 +187,29 @@ type GlobalType = GlobalTypeOf ValType
 -- Template Haskell needs each type defined before its splice, and the witnesses (which use the
 -- value-type singleton) sit in between.
 $(genSingletons [''Mutability, ''AddrType, ''FuncTypeOf, ''GlobalTypeOf])
+
+{- | The value type of an address into a memory (or of an index into a table) of the given
+  address type: what the instructions on it take and what @memory.size@ yields.
+-}
+type AddrVal :: AddrType -> ValType
+type family AddrVal at where
+    AddrVal 'AddrI32 = 'I32
+    AddrVal 'AddrI64 = 'I64
+
+addrValSing :: Sing (at :: AddrType) -> Sing (AddrVal at)
+addrValSing SAddrI32 = SI32
+addrValSing SAddrI64 = SI64
+
+{- | The address type of a count of bytes that @memory.copy@ takes between two memories: the
+  narrower of theirs.
+-}
+type MinAddr :: AddrType -> AddrType -> AddrType
+type family MinAddr a b where
+    MinAddr 'AddrI64 'AddrI64 = 'AddrI64
+    MinAddr 'AddrI32 b = 'AddrI32
+    MinAddr 'AddrI64 'AddrI32 = 'AddrI32
+
+minAddrSing :: Sing (a :: AddrType) -> Sing (b :: AddrType) -> Sing (MinAddr a b)
+minAddrSing SAddrI64 SAddrI64 = SAddrI64
+minAddrSing SAddrI32 _ = SAddrI32
+minAddrSing SAddrI64 SAddrI32 = SAddrI32

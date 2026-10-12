@@ -51,6 +51,7 @@ module Runtime.MemInst (
     storeWordAt,
     writeBytesAt,
     copyWithinAt,
+    copyBetweenAt,
     fillBytesAt,
 ) where
 
@@ -185,6 +186,11 @@ loadChecked mem level addr count = case loadWordUnchecked mem addr count of
   lookup and no list. Not for the interpreter, which reads through 'loadChecked': this is for
   code outside the labelled machine (the benchmarks' erased copy).
 -}
+
+-- Inlined into each load of the interpreter: as a call it returns its word in a 'Just',
+-- which is allocated on every load (32 bytes), and GHC stopped inlining it of its own accord
+-- once the interpreter had a clause per address type.
+{-# INLINE loadWordUnchecked #-}
 loadWordUnchecked :: MemInst m -> Int -> Int -> Maybe Word64
 loadWordUnchecked mem addr count
     | not (inBounds mem addr count) = Nothing
@@ -271,10 +277,16 @@ copyWithin = copyWithinAt Low
   given one (the pc and the operands' levels, which decide whether and where bytes move).
 -}
 copyWithinAt :: SecLevel -> Int -> Int -> Int -> MemInst m -> Maybe (MemInst m)
-copyWithinAt context dst src count mem = do
-    payload <- readBytes mem src count
-    let sourceLevels = [levelOfRange mem a 1 | a <- [src .. src + count - 1]]
-    written <- writeBytes mem dst payload
+copyWithinAt context dst src count mem = copyBetweenAt context dst src count mem mem
+
+{- | @memory.copy@ from one memory to another (or the same): the bytes and their levels are read
+  from the first and written to the second, as 'copyWithinAt' does within one.
+-}
+copyBetweenAt :: SecLevel -> Int -> Int -> Int -> MemInst from -> MemInst to -> Maybe (MemInst to)
+copyBetweenAt context dst src count from to = do
+    payload <- readBytes from src count
+    let sourceLevels = [levelOfRange from a 1 | a <- [src .. src + count - 1]]
+    written <- writeBytes to dst payload
     Just (foldl' (\acc (i, level) -> setLevels (joinLevel context level) (dst + i) 1 acc) written (zip [0 ..] sourceLevels))
 
 {- | @memory.fill@: write @count@ copies of a byte from @dst@. 'Nothing' if the range is outside —

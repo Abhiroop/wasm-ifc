@@ -46,7 +46,7 @@ import Syntax.Immediates
 import Syntax.Indices
 import Syntax.Types
 import Syntax.TypesIFC
-import Validation.Ref (FunctionRef, LocalRef)
+import Validation.Ref (FunctionRef, LocalRef, MemoryRef)
 import Validation.Shape (
     Append (..),
     BranchTarget,
@@ -100,8 +100,8 @@ data RawInstr where
     -- carry a 'Signedness' for sign/zero extension.
     LoadN :: Sing (t :: ValType) -> Int -> Signedness -> MemArg -> RawInstr
     StoreN :: Sing (t :: ValType) -> Int -> MemArg -> RawInstr
-    MemorySize :: RawInstr
-    MemoryGrow :: RawInstr
+    MemorySize :: MemoryIdx -> RawInstr
+    MemoryGrow :: MemoryIdx -> RawInstr
     -- \*** Information flow (never decoded: the policy stage produces them, see
     --       "Validation.Policy") ***
 
@@ -115,10 +115,11 @@ data RawInstr where
     allowed when the policy says so
     -}
     Declassify :: SecLevel -> RawInstr
-    -- bulk memory: @memory.copy@, @memory.fill@, @memory.init@ from a data segment, @data.drop@
-    MemoryCopy :: RawInstr
-    MemoryFill :: RawInstr
-    MemoryInit :: DataIdx -> RawInstr
+    -- bulk memory: @memory.copy@ (the destination memory, then the source), @memory.fill@,
+    -- @memory.init@ from a data segment, @data.drop@
+    MemoryCopy :: MemoryIdx -> MemoryIdx -> RawInstr
+    MemoryFill :: MemoryIdx -> RawInstr
+    MemoryInit :: DataIdx -> MemoryIdx -> RawInstr
     DataDrop :: DataIdx -> RawInstr
     -- \*** References and tables ***
     RefNull :: ValType -> RawInstr
@@ -354,26 +355,26 @@ data
        here, not at run time. @memory.grow@ is allowed only in a public context with a public
        argument, since the memory's size is public (new bytes are public), and @memory.size@
        yields a public value. -}
-    IMemSize :: (ModuleMems m ~ (mem ': mems)) => Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck s (('I32 ':~ pc) ': s)
+    IMemSize :: MemoryRef at (ModuleMems m) -> Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck s ((AddrVal at ':~ pc) ': s)
     IMemGrow ::
-        (ModuleMems m ~ (mem ': mems)) =>
         FlowsInto (Join pc lv) 'Low ->
-        Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck (('I32 ':~ lv) ': s) (('I32 ':~ pc) ': s)
+        MemoryRef at (ModuleMems m) ->
+        Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck ((AddrVal at ':~ lv) ': s) ((AddrVal at ':~ pc) ': s)
     ILoadN ::
-        (ModuleMems m ~ (mem ': mems)) =>
         Sing (level :: SecLevel) ->
         AccessSite ->
         NarrowWidth t ->
         Signedness ->
         MemArg ->
-        Instr m f l (pc ': pcs) (pc ': pcs) ('BytesBelow level) (('I32 ':~ la) ': s) ((t ':~ Join pc (Join la level)) ': s)
+        MemoryRef at (ModuleMems m) ->
+        Instr m f l (pc ': pcs) (pc ': pcs) ('BytesBelow level) ((AddrVal at ':~ la) ': s) ((t ':~ Join pc (Join la level)) ': s)
     IStoreN ::
-        (ModuleMems m ~ (mem ': mems)) =>
         Sing (level :: SecLevel) ->
         FlowsInto (Join pc (Join la lv)) level ->
         NarrowWidth t ->
         MemArg ->
-        Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck ((t ':~ lv) ': ('I32 ':~ la) ': s) s
+        MemoryRef at (ModuleMems m) ->
+        Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck ((t ':~ lv) ': (AddrVal at ':~ la) ': s) s
     {- Bulk memory. Operands, top first: the byte count, then the source (an address, a fill
        value, or an offset into the segment), then the destination address. A segment is named
        by an 'Elem' into the module's data index space, so it exists. SecWasm covers
@@ -383,18 +384,19 @@ data
        copy and the fill value's for a fill; a data segment is public. That join is carried as a
        singleton so the interpreter can write it. -}
     IMemCopy ::
-        (ModuleMems m ~ (mem ': mems)) =>
         Sing (Join pc (Join ln (Join lsrc ldst))) ->
-        Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck (('I32 ':~ ln) ': ('I32 ':~ lsrc) ': ('I32 ':~ ldst) ': s) s
+        MemoryRef to (ModuleMems m) ->
+        MemoryRef from (ModuleMems m) ->
+        Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck ((AddrVal (MinAddr to from) ':~ ln) ': (AddrVal from ':~ lsrc) ': (AddrVal to ':~ ldst) ': s) s
     IMemFill ::
-        (ModuleMems m ~ (mem ': mems)) =>
         Sing (Join pc (Join ln (Join lsrc ldst))) ->
-        Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck (('I32 ':~ ln) ': ('I32 ':~ lsrc) ': ('I32 ':~ ldst) ': s) s
+        MemoryRef at (ModuleMems m) ->
+        Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck ((AddrVal at ':~ ln) ': ('I32 ':~ lsrc) ': (AddrVal at ':~ ldst) ': s) s
     IMemInit ::
-        (ModuleMems m ~ (mem ': mems)) =>
         Sing (Join pc (Join ln (Join lsrc ldst))) ->
         Elem 'DataShape (ModuleData m) ->
-        Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck (('I32 ':~ ln) ': ('I32 ':~ lsrc) ': ('I32 ':~ ldst) ': s) s
+        MemoryRef at (ModuleMems m) ->
+        Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck (('I32 ':~ ln) ': ('I32 ':~ lsrc) ': (AddrVal at ':~ ldst) ': s) s
     IDataDrop :: Elem 'DataShape (ModuleData m) -> Instr m f l p p 'NoDynamicCheck s s
     {- References. @ref.null@ and @ref.func@ are constants, typed like 'IConst'; a function
        is named by a reference that validation resolved from its witness ('FunctionRef').
@@ -485,21 +487,21 @@ data
        instruction: the machine puts it in front of what follows a construct that has to
        restore them, with the values it recorded at the construct's start. -}
     IRequireRestored :: RecordedGlobals (ModuleGlobals m) -> Instr m f l p p 'NoDynamicCheck s s
-    {- Memory (requires the module to declare a memory): the same rules as the narrow forms. -}
+    {- Memory (a memory of the module, named by a 'MemoryRef'): the same rules as the narrow forms. -}
     ILoad ::
-        (ModuleMems m ~ (mem ': mems)) =>
         Sing (level :: SecLevel) ->
         AccessSite ->
         IsNum t ->
         MemArg ->
-        Instr m f l (pc ': pcs) (pc ': pcs) ('BytesBelow level) (('I32 ':~ la) ': s) ((t ':~ Join pc (Join la level)) ': s)
+        MemoryRef at (ModuleMems m) ->
+        Instr m f l (pc ': pcs) (pc ': pcs) ('BytesBelow level) ((AddrVal at ':~ la) ': s) ((t ':~ Join pc (Join la level)) ': s)
     IStore ::
-        (ModuleMems m ~ (mem ': mems)) =>
         Sing (level :: SecLevel) ->
         FlowsInto (Join pc (Join la lv)) level ->
         IsNum t ->
         MemArg ->
-        Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck ((t ':~ lv) ': ('I32 ':~ la) ': s) s
+        MemoryRef at (ModuleMems m) ->
+        Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck ((t ':~ lv) ': (AddrVal at ':~ la) ': s) s
     {- Relabelling. SecWasm accepts a value of a lower level wherever a higher one is expected,
        by subtyping; an intrinsically-typed AST has no subtyping, so the validator inserts
        'IRelabel' where the policy or a call demands it. 'IDeclassify' goes the other way and is

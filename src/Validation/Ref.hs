@@ -23,6 +23,7 @@ module Validation.Ref (
     FunctionRef,
     resolveFunction,
     functionReference,
+    MemoryRef (..),
 ) where
 
 import Data.Kind (Type)
@@ -30,9 +31,9 @@ import Data.Singletons.Base.TH (Sing)
 import Data.Word (Word32)
 
 import Syntax.Immediates (Reference, referenceTo)
-import Syntax.Types (ValType)
+import Syntax.Types (AddrType, ValType)
 import Syntax.TypesIFC (LabelledFuncType, LabelledValType (..), SLabelledValType (..))
-import Validation.Shape (Elem (..))
+import Validation.Shape (Elem (..), MemShape (..))
 
 type LocalRef :: LabelledValType -> [LabelledValType] -> Type
 data LocalRef t ls where
@@ -75,3 +76,10 @@ resolveFunction ix = FunctionRef (referenceTo (positionOf 0 ix))
 
 functionReference :: FunctionRef fts -> Reference
 functionReference (FunctionRef reference) = reference
+
+{- | A memory of the module as an instruction names it: its witness, and the address type the
+  witness's shape has, as a singleton, since the machine reads an address off the stack by it.
+-}
+type MemoryRef :: AddrType -> [MemShape] -> Type
+data MemoryRef at ms where
+    MemoryRef :: !(Sing at) -> Elem ('MemShape at lo hi) ms -> MemoryRef at ms

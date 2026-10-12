@@ -3,6 +3,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE MagicHash #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TypeOperators #-}
 -- -O2 for this module alone: its specialisation passes (SpecConstr above all) are what stop the
@@ -109,6 +110,7 @@ import Data.Bits (
  )
 import Data.Text (Text)
 import Data.Word (Word32, Word64)
+import GHC.Exts (Int (I#))
 import GHC.Float (castDoubleToWord64, castFloatToWord32, castWord32ToFloat, castWord64ToDouble)
 
 import Data.ByteString qualified as BS
@@ -118,7 +120,7 @@ import Data.Singletons (Sing, fromSing)
 import Data.Type.Equality ((:~:) (Refl))
 import Runtime.Convert (convertVal)
 import Runtime.Host (WasiFunc)
-import Runtime.MemInst (LoadFailure (..), MemInst, checkedWord, copyWithinAt, fillBytesAt, growMemory, loadChecked, memoryPages, storeWordAt, writeBytesAt)
+import Runtime.MemInst (LoadFailure (..), MemInst, checkedWord, copyBetweenAt, fillBytesAt, growMemory, loadChecked, memoryPages, storeWordAt, writeBytesAt)
 import Runtime.Numeric (copysign32, copysign64, fromSigned32, fromSigned64, intDiv32, intDiv64, intRem32, intRem64, toSigned32, toSigned64, wasmMax, wasmMin)
 import Runtime.Obligation (CheckPassed (..))
 import Runtime.Stack
@@ -137,7 +139,7 @@ import Syntax.Instructions (
  )
 import Syntax.Types
 import Syntax.TypesIFC
-import Validation.Ref (functionReference)
+import Validation.Ref (MemoryRef (..), functionReference)
 import Validation.Reflect (appendNil)
 import Validation.Shape (Append (..), BranchTarget (..), DataShape (..), Elem (..), ElemShape (..), FrameShape (..), ModuleData, ModuleElems, ModuleFuncs, ModuleGlobals, ModuleMems, ModuleShape, ModuleTables, PreservedOf, Restores (..), ReturnsWith (..), appendFromSing, appendIs, withinReach)
 
@@ -430,43 +432,43 @@ stepInstr funcs store locals stack instr rest control = case instr of
     IFloatUn nt op -> stepUn NothingToCheck store locals stack (floatUnT nt op) rest control
     IFloatBin nt op -> stepBin NothingToCheck store locals stack (floatBinT nt op) rest control
     {- Memory size / grow & narrow access -}
-    IMemSize -> stepped NothingToCheck store locals (memoryPages (currentMem store) :# stack) rest control
-    IMemGrow _ -> case stack of
+    IMemSize (MemoryRef width ix) -> stepped NothingToCheck store locals (pagesAs width (memoryPages (memAt ix store)) :# stack) rest control
+    IMemGrow _ (MemoryRef width ix) -> case stack of
         delta :# r ->
-            let mem = currentMem store
-             in case growMemory delta mem of
-                    Just grown -> stepped NothingToCheck (storeMem grown store) locals (memoryPages mem :# r) rest control
-                    Nothing -> stepped NothingToCheck store locals (growFailed :# r) rest control
-    ILoadN level site nw sign memArg -> case stack of
+            let mem = memAt ix store
+             in case pagesFrom width delta >>= \pages -> growMemory pages mem of
+                    Just grown -> stepped NothingToCheck (storeMemAt ix grown store) locals (pagesAs width (memoryPages mem) :# r) rest control
+                    Nothing -> stepped NothingToCheck store locals (growFailed width :# r) rest control
+    ILoadN level site nw sign memArg (MemoryRef width ix) -> case stack of
         addr :# r ->
-            case loadChecked (currentMem store) level (effectiveAddr addr memArg) (narrowBytes nw) of
+            case loadChecked (memAt ix store) level (effectiveAddr width addr memArg) (narrowBytes nw) of
                 Right checked -> stepped (BytesWereBelow checked) store locals (narrowLoadT nw sign (checkedWord checked) :# r) rest control
                 Left failure -> Left (loadTrap site failure)
-    IStoreN level _ nw memArg -> case stack of
+    IStoreN level _ nw memArg (MemoryRef width ix) -> case stack of
         value :# addr :# r ->
-            case storeWordAt (fromSing level) (currentMem store) (effectiveAddr addr memArg) (narrowBytes nw) (narrowStoreT nw value) of
-                Just mem' -> stepped NothingToCheck (storeMem mem' store) locals r rest control
+            unboxedAddress (effectiveAddr width addr memArg) $ \address -> case storeWordAt (fromSing level) (memAt ix store) address (narrowBytes nw) (narrowStoreT nw value) of
+                Just mem' -> stepped NothingToCheck (storeMemAt ix mem' store) locals r rest control
                 Nothing -> Left OutOfBoundsMemoryAccess
     {- Bulk memory: each checks both ranges before writing anything -}
-    IMemCopy level -> case stack of
+    IMemCopy level (MemoryRef toWidth toIx) (MemoryRef fromWidth fromIx) -> case stack of
         count :# src :# dst :# r ->
-            case copyWithinAt (fromSing level) (fromIntegral dst) (fromIntegral src) (fromIntegral count) (currentMem store) of
-                Just mem' -> stepped NothingToCheck (storeMem mem' store) locals r rest control
+            case copyBetweenAt (fromSing level) (byteOffset toWidth dst) (byteOffset fromWidth src) (byteOffset (minAddrSing toWidth fromWidth) count) (memAt fromIx store) (memAt toIx store) of
+                Just mem' -> stepped NothingToCheck (storeMemAt toIx mem' store) locals r rest control
                 Nothing -> Left OutOfBoundsMemoryAccess
-    IMemFill level -> case stack of
+    IMemFill level (MemoryRef width ix) -> case stack of
         count :# value :# dst :# r ->
-            case fillBytesAt (fromSing level) (fromIntegral dst) (fromIntegral value) (fromIntegral count) (currentMem store) of
-                Just mem' -> stepped NothingToCheck (storeMem mem' store) locals r rest control
+            case fillBytesAt (fromSing level) (byteOffset width dst) (fromIntegral value) (byteOffset width count) (memAt ix store) of
+                Just mem' -> stepped NothingToCheck (storeMemAt ix mem' store) locals r rest control
                 Nothing -> Left OutOfBoundsMemoryAccess
-    IMemInit level segmentIx -> case stack of
+    IMemInit level segmentIx (MemoryRef width ix) -> case stack of
         count :# srcOffset :# dst :# r ->
             let segment = fromMaybe BS.empty (getSegment segmentIx store.dataSegments)
                 n = fromIntegral count
                 src = fromIntegral srcOffset
                 inSegment = src + n <= BS.length segment
-                written = writeBytesAt (fromSing level) (currentMem store) (fromIntegral dst) (BS.unpack (BS.take n (BS.drop src segment)))
+                written = writeBytesAt (fromSing level) (memAt ix store) (byteOffset width dst) (BS.unpack (BS.take n (BS.drop src segment)))
              in case (inSegment, written) of
-                    (True, Just mem') -> stepped NothingToCheck (storeMem mem' store) locals r rest control
+                    (True, Just mem') -> stepped NothingToCheck (storeMemAt ix mem' store) locals r rest control
                     _ -> Left OutOfBoundsMemoryAccess
     IDataDrop segmentIx -> stepped NothingToCheck (storeDropSegment segmentIx store) locals stack rest control
     {- References and tables. A reference is a word like any other value; the table
@@ -529,15 +531,15 @@ stepInstr funcs store locals stack instr rest control = case instr of
         | stillRestored recorded store.globals -> stepped NothingToCheck store locals stack rest control
         | otherwise -> Left GlobalNotRestored
     {- Memory -}
-    ILoad level site nt memArg -> case stack of
+    ILoad level site nt memArg (MemoryRef width ix) -> case stack of
         addr :# r ->
-            case loadChecked (currentMem store) level (effectiveAddr addr memArg) (numBytes nt) of
+            case loadChecked (memAt ix store) level (effectiveAddr width addr memArg) (numBytes nt) of
                 Right checked -> stepped (BytesWereBelow checked) store locals (loadValue nt (checkedWord checked) :# r) rest control
                 Left failure -> Left (loadTrap site failure)
-    IStore level _ nt memArg -> case stack of
+    IStore level _ nt memArg (MemoryRef width ix) -> case stack of
         value :# addr :# r ->
-            case storeWordAt (fromSing level) (currentMem store) (effectiveAddr addr memArg) (numBytes nt) (storedWord nt value) of
-                Just mem' -> stepped NothingToCheck (storeMem mem' store) locals r rest control
+            unboxedAddress (effectiveAddr width addr memArg) $ \address -> case storeWordAt (fromSing level) (memAt ix store) address (numBytes nt) (storedWord nt value) of
+                Just mem' -> stepped NothingToCheck (storeMemAt ix mem' store) locals r rest control
                 Nothing -> Left OutOfBoundsMemoryAccess
     {- Relabelling changes the level in the type only: the same word goes back on the stack -}
     IRelabel _ -> case stack of
@@ -753,8 +755,8 @@ loadTrap site failure = case failure of
     LoadOutOfBounds -> OutOfBoundsMemoryAccess
     LoadAboveLevel -> SecretRead site
 
-{- | The module's single memory, and a store update for it. The @ModuleMems mod ~ (m ': ms)@
-  constraint every memory instruction carries makes both total.
+{- | The module's first memory, and a store update for it: the memory the host reads and writes
+  (WASI's), which exists by the constraint a host function carries.
 -}
 currentMem :: (ModuleMems mod ~ (m ': ms)) => Store mod -> MemInst m
 currentMem store = firstMem store.memories
@@ -762,6 +764,16 @@ currentMem store = firstMem store.memories
 storeMem :: (ModuleMems mod ~ (m ': ms)) => MemInst m -> Store mod -> Store mod
 storeMem mem store =
     Store {globals = store.globals, memories = setFirstMem mem store.memories, tables = store.tables, dataSegments = store.dataSegments}
+
+-- | The memory an instruction names, which exists by its witness, and a store update for it.
+{-# INLINE memAt #-}
+memAt :: Elem m (ModuleMems mod) -> Store mod -> MemInst m
+memAt ix store = getMem ix store.memories
+
+{-# INLINE storeMemAt #-}
+storeMemAt :: Elem m (ModuleMems mod) -> MemInst m -> Store mod -> Store mod
+storeMemAt ix mem store =
+    Store {globals = store.globals, memories = setMem ix mem store.memories, tables = store.tables, dataSegments = store.dataSegments}
 
 -- The store's other updates. (Its field names are shared with 'ModuleInst', so the records are
 -- rebuilt rather than updated: GHC no longer disambiguates such updates by type.)
@@ -781,16 +793,53 @@ storeDropSegment :: Elem 'DataShape (ModuleData mod) -> Store mod -> Store mod
 storeDropSegment ix store =
     Store {globals = store.globals, memories = store.memories, tables = store.tables, dataSegments = dropSegment ix store.dataSegments}
 
--- | What @memory.grow@ pushes when it cannot grow: the spec's @-1@, as an unsigned i32.
-growFailed :: Word32
-growFailed = 0xFFFFFFFF
+-- | What @memory.grow@ pushes when it cannot grow: the spec's @-1@, at the memory's address type.
+growFailed :: Sing (at :: AddrType) -> HostType (AddrVal at)
+growFailed SAddrI32 = 0xFFFFFFFF
+growFailed SAddrI64 = 0xFFFFFFFFFFFFFFFF
+
+-- | A number of pages as a value of the memory's address type, and back ('Nothing' if too many).
+pagesAs :: Sing (at :: AddrType) -> Word32 -> HostType (AddrVal at)
+pagesAs SAddrI32 pages = pages
+pagesAs SAddrI64 pages = fromIntegral pages
+
+pagesFrom :: Sing (at :: AddrType) -> HostType (AddrVal at) -> Maybe Word32
+pagesFrom SAddrI32 pages = Just pages
+pagesFrom SAddrI64 pages = if pages > 0xFFFFFFFF then Nothing else Just (fromIntegral pages)
 
 {- | The effective byte address of a memory access: dynamic base + static @offset@, computed
   in 'Int' so it cannot wrap around 2^32. An over-large address then traps in
-  'readBytes'/'writeBytes' instead of silently aliasing a wrapped-around address.
+  'readBytes'/'writeBytes' instead of silently aliasing a wrapped-around address. With 64-bit
+  addresses the sum may pass what an 'Int' holds: it is then 'beyondEveryMemory', which traps
+  the same way.
 -}
-effectiveAddr :: Word32 -> MemArg -> Int
-effectiveAddr base memArg = fromIntegral base + fromIntegral memArg.offset
+{-# INLINE effectiveAddr #-}
+effectiveAddr :: Sing (at :: AddrType) -> HostType (AddrVal at) -> MemArg -> Int
+effectiveAddr SAddrI32 base memArg = fromIntegral base + fromIntegral memArg.offset
+effectiveAddr SAddrI64 base memArg =
+    let end = base + memArg.offset
+     in if end < base || end > fromIntegral beyondEveryMemory then beyondEveryMemory else fromIntegral end
+
+{- | Hand an address to its use as a machine integer. 'effectiveAddr' computes it in one branch
+  per address type, and what follows a store is too large for GHC to copy into both: it then
+  shares the code and passes the address boxed, 16 bytes allocated on every store. Taking the
+  box apart here makes what is shared take the bare integer.
+-}
+{-# INLINE unboxedAddress #-}
+unboxedAddress :: Int -> (Int -> result) -> result
+unboxedAddress (I# address) use = use (I# address)
+
+-- | An address or a count of bytes off the stack, as the memory takes it.
+{-# INLINE byteOffset #-}
+byteOffset :: Sing (at :: AddrType) -> HostType (AddrVal at) -> Int
+byteOffset SAddrI32 bytes = fromIntegral bytes
+byteOffset SAddrI64 bytes = if bytes > fromIntegral beyondEveryMemory then beyondEveryMemory else fromIntegral bytes
+
+{- | An address no memory reaches (a memory has at most 2^32 pages of 2^16 bytes), and small
+  enough that the sum of two of them, an address and a count, does not wrap an 'Int'.
+-}
+beyondEveryMemory :: Int
+beyondEveryMemory = 2 ^ (60 :: Int)
 
 {- | Resume the enclosing computation: put the produced values @vs@ on top of the frame's
   saved @below@ stack and run its continuation. Shared by every frame that completes.

@@ -73,9 +73,11 @@ referent :: Reference -> Maybe Word32
 referent (Reference word) = if word == 0 then Nothing else Just (fromIntegral (word - 1))
 
 {- | A memory immediate. Alignment is advisory (ignored at run time); @offset@ is added to
-  the dynamic address.
+  the dynamic address, and is as wide as the widest address (validation bounds it by the
+  address type of the memory); @memory@ is the index of the memory accessed, 0 unless the
+  module has several.
 -}
-data MemArg = MemArg {alignment :: Word32, offset :: Word32} deriving stock (Eq, Show)
+data MemArg = MemArg {alignment :: Word32, offset :: Word64, memory :: Word32} deriving stock (Eq, Show)
 
 {- | Where a load sits in the module, so that the trap of its run-time check can name it the way
   a policy declares it. A load written as an instruction is named by its function's index and

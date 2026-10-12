@@ -35,11 +35,12 @@ import Syntax.Types (
     IsInt (..),
     IsNum (..),
     Mutability (..),
+    SAddrType (..),
     SValType (..),
     ValType (..),
  )
 import Syntax.TypesIFC (AllAtLeast (..), DynamicCheck (..), FlowsInto (..), LabelledFuncType (..), LabelledValType (..), ResultsAtEndPc (..), SLabelledValType (..), SSecLevel (..), SecLevel (..), SegmentFlows (..))
-import Validation.Ref (LocalRef, resolveLocal)
+import Validation.Ref (LocalRef, MemoryRef (..), resolveLocal)
 import Validation.Shape (Append (..), BranchTarget (..), Elem (..), FrameLocals, FrameShape (..), MemShape (..), ModuleShape (..), PreservedGlobals (..), Restores (..), ReturnsWith (..))
 
 {- | The single i32 a completed run produced. (These modules import nothing, so a call into
@@ -250,7 +251,7 @@ type ExampleShape = 'ModuleShape '[] '[] '[ 'MemShape 'AddrI32 1 'Nothing] '[] '
   The proof it would need, that 'High flows into 'Low, has no constructor, and the only
   constructor whose source is 'High pins the target to 'High, so GHC refuses the declared level:
 
-  >     store = IStore SLow HighFlowsToHigh I32IsNum (MemArg 2 0)
+  >     store = IStore SLow HighFlowsToHigh I32IsNum (MemArg 2 0 0) (MemoryRef SAddrI32 Here)
   >
   >     • Couldn't match type ‘Low’ with ‘High’
   >       Expected: Sing High
@@ -266,7 +267,7 @@ secretStore = one :. secretValue :. store :. INil
     secretValue :: Instr ExampleShape frame labels ('Low ': pcs) ('Low ': pcs) 'NoDynamicCheck s (SecretI32 ': s)
     secretValue = IConst @'High I32IsNum 7
     store :: Instr ExampleShape frame labels ('Low ': pcs) ('Low ': pcs) 'NoDynamicCheck (SecretI32 ': PublicI32 ': s) s
-    store = IStore SHigh HighFlowsToHigh I32IsNum (MemArg 2 0)
+    store = IStore SHigh HighFlowsToHigh I32IsNum (MemArg 2 0 0) (MemoryRef SAddrI32 Here)
 
 -- | The instruction counts of 'secretPlusPublic', 'leakThroughControl' and 'secretStore'.
 labelledSumLength, leakLength, secretStoreLength :: Int

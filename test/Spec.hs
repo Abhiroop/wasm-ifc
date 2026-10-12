@@ -110,7 +110,7 @@ spec = do
             elabRun [] [I32] [] [Const SF32 (0 / 0), Convert (I32TruncF32 Signed)] []
                 `shouldSatisfy` trapContaining "InvalidConversionToInteger"
         it "traps on an out-of-bounds load" $
-            elabRunWithMemory [I32] [I32] [] [LocalGet (LocalIdx 0), Load SI32 (MemArg 0 0)] [70000]
+            elabRunWithMemory [I32] [I32] [] [LocalGet (LocalIdx 0), Load SI32 (MemArg 0 0 0)] [70000]
                 `shouldSatisfy` trapContaining "OutOfBoundsMemoryAccess"
         it "traps when a runaway recursion exhausts the call stack" $
             elabRun [] [] [] [Call (FunctionIdx 0)] [] `shouldSatisfy` trapContaining "CallStackExhausted"
@@ -122,10 +122,10 @@ spec = do
             elabRun [I32] [I32] [] countdown [deepest + 1] `shouldSatisfy` trapContaining "CallStackExhausted"
 
     describe "information flow through memory (SecWasm's run-time check)" $ do
-        let secretStore = [Const SI32 0, Const SI32 7, Annotated High (Store SI32 (MemArg 0 0))]
-            publicStore = [Const SI32 0, Const SI32 9, Store SI32 (MemArg 0 0)]
-            loadPublic = [Const SI32 0, Load SI32 (MemArg 0 0)]
-            loadSecret = [Const SI32 0, Annotated High (Load SI32 (MemArg 0 0))]
+        let secretStore = [Const SI32 0, Const SI32 7, Annotated High (Store SI32 (MemArg 0 0 0))]
+            publicStore = [Const SI32 0, Const SI32 9, Store SI32 (MemArg 0 0 0)]
+            loadPublic = [Const SI32 0, Load SI32 (MemArg 0 0 0)]
+            loadSecret = [Const SI32 0, Annotated High (Load SI32 (MemArg 0 0 0))]
         it "a load expecting public bytes traps on a byte a secret store wrote" $
             elabRunWithMemory [] [I32] [] (secretStore ++ loadPublic) [] `shouldSatisfy` trapContaining "SecretRead (AccessAt 0 1)"
         it "a load declared secret yields a secret, which a public function cannot return" $
@@ -133,20 +133,20 @@ spec = do
         it "a secret that was loaded stays secret when stored again (the store's level is inferred)" $
             -- A secret can only be observed publicly through a declassification, so the
             -- evidence is the trap on the public read of the copy.
-            elabRunWithMemory [] [I32] [] (secretStore ++ [Const SI32 8] ++ loadSecret ++ [Store SI32 (MemArg 0 0), Const SI32 8, Load SI32 (MemArg 0 0)]) []
+            elabRunWithMemory [] [I32] [] (secretStore ++ [Const SI32 8] ++ loadSecret ++ [Store SI32 (MemArg 0 0 0), Const SI32 8, Load SI32 (MemArg 0 0 0)]) []
                 `shouldSatisfy` trapContaining "SecretRead (AccessAt 0 3)"
         it "a public store over secret bytes makes them public again" $
             elabRunWithMemory [] [I32] [] (secretStore ++ publicStore ++ loadPublic) [] `shouldBe` Right ["9"]
         it "a narrow load sees the level of every byte it covers" $
-            elabRunWithMemory [] [I32] [] (secretStore ++ [Const SI32 2, LoadN SI32 1 Unsigned (MemArg 0 0)]) []
+            elabRunWithMemory [] [I32] [] (secretStore ++ [Const SI32 2, LoadN SI32 1 Unsigned (MemArg 0 0 0)]) []
                 `shouldSatisfy` trapContaining "SecretRead (AccessAt 0 1)"
         it "memory.copy carries the bytes' levels with them" $
-            elabRunWithMemory [] [I32] [] (secretStore ++ [Const SI32 16, Const SI32 0, Const SI32 4, MemoryCopy, Const SI32 16, Load SI32 (MemArg 0 0)]) []
+            elabRunWithMemory [] [I32] [] (secretStore ++ [Const SI32 16, Const SI32 0, Const SI32 4, MemoryCopy (MemoryIdx 0) (MemoryIdx 0), Const SI32 16, Load SI32 (MemArg 0 0 0)]) []
                 `shouldSatisfy` trapContaining "SecretRead (AccessAt 0 1)"
         it "a store may declare a level the value flows into, not one it does not" $ do
-            elabErrorWithMemory [] [] [] [Const SI32 0, Const SI32 1, Annotated High (Store SI32 (MemArg 0 0))] `shouldSatisfy` isRight
-            elabErrorWithMemory [] [] [] (secretStore ++ loadSecret ++ [Const SI32 4, Store SI32 (MemArg 0 0)]) `shouldSatisfy` isRight
-            elabErrorWithMemory [] [] [] (secretStore ++ [Const SI32 4] ++ loadSecret ++ [Annotated Low (Store SI32 (MemArg 0 0))])
+            elabErrorWithMemory [] [] [] [Const SI32 0, Const SI32 1, Annotated High (Store SI32 (MemArg 0 0 0))] `shouldSatisfy` isRight
+            elabErrorWithMemory [] [] [] (secretStore ++ loadSecret ++ [Const SI32 4, Store SI32 (MemArg 0 0 0)]) `shouldSatisfy` isRight
+            elabErrorWithMemory [] [] [] (secretStore ++ [Const SI32 4] ++ loadSecret ++ [Annotated Low (Store SI32 (MemArg 0 0 0))])
                 `shouldBe` Left (IllegalFlow "store" High Low)
         it "relabelling goes up freely and never down without declassification" $ do
             elabError [] [I32] [] [Const SI32 1, Relabel High, Relabel Low] `shouldBe` Left (IllegalFlow "relabel" High Low)
@@ -176,7 +176,7 @@ spec = do
             elabRunWithPolicy "func 0 : -{H}->\nexport f : H -> L" program [1] `shouldBe` Right ["0"]
             elabRunWithPolicy "func 0 : ->\nexport f : H -> L" program [1] `shouldSatisfy` errorContaining "IllegalFlow \"call\" High Low"
         it "a function bound at secret writes only to secret places" $
-            elabRunWithPolicy "func 0 : -{H}->\nexport f : -> L" (twoFunctions (FuncType [] []) [Const SI32 0, Const SI32 1, Store SI32 (MemArg 0 0)] (FuncType [] [I32]) [Call (FunctionIdx 0), Const SI32 0, Load SI32 (MemArg 0 0)]) {memories = [onePageMemory]} []
+            elabRunWithPolicy "func 0 : -{H}->\nexport f : -> L" (twoFunctions (FuncType [] []) [Const SI32 0, Const SI32 1, Store SI32 (MemArg 0 0 0)] (FuncType [] [I32]) [Call (FunctionIdx 0), Const SI32 0, Load SI32 (MemArg 0 0 0)]) {memories = [onePageMemory]} []
                 `shouldSatisfy` trapContaining "SecretRead (AccessAt 1 0)"
         it "two sources may speak about the same item only if they agree" $ do
             mergePolicies (policy "global 0 : H") (policy "global 0 : L") `shouldBe` Left (PolicyConflict "global 0")
@@ -205,25 +205,25 @@ spec = do
         it "a secret parameter may be dropped" $
             elabRunWithPolicy "export f : H -> L" (singleFunctionModule [] [I32] [I32] [] [LocalGet (LocalIdx 0), Drop, Const SI32 1]) [1] `shouldBe` Right ["1"]
         it "a function's store default declares its stores secret" $
-            elabRunWithPolicy "store-default func 0 : H" (withMemory [] [I32] [] [Const SI32 0, Const SI32 7, Store SI32 (MemArg 0 0), Const SI32 0, Load SI32 (MemArg 0 0)]) []
+            elabRunWithPolicy "store-default func 0 : H" (withMemory [] [I32] [] [Const SI32 0, Const SI32 7, Store SI32 (MemArg 0 0 0), Const SI32 0, Load SI32 (MemArg 0 0 0)]) []
                 `shouldSatisfy` trapContaining "SecretRead (AccessAt 0 1)"
         it "a store declared secret by position makes a later public read trap" $
-            elabRunWithPolicy "store 0 0 : H" (withMemory [] [I32] [] [Const SI32 0, Const SI32 7, Store SI32 (MemArg 0 0), Const SI32 0, Load SI32 (MemArg 0 0)]) []
+            elabRunWithPolicy "store 0 0 : H" (withMemory [] [I32] [] [Const SI32 0, Const SI32 7, Store SI32 (MemArg 0 0 0), Const SI32 0, Load SI32 (MemArg 0 0 0)]) []
                 `shouldSatisfy` trapContaining "SecretRead (AccessAt 0 1)"
         it "a region's bytes are secret from instantiation on, whatever a data segment wrote there" $ do
-            let withSegment = withData [RawDataSegment (Active [Const SI32 0]) "\7\0\0\0"]
-            elabRunWithPolicy "region 0 4 : H" (withSegment (withMemory [I32] [I32] [] [LocalGet (LocalIdx 0), Load SI32 (MemArg 0 0)])) [0]
+            let withSegment = withData [RawDataSegment (Active (MemoryIdx 0) [Const SI32 0]) "\7\0\0\0"]
+            elabRunWithPolicy "region 0 4 : H" (withSegment (withMemory [I32] [I32] [] [LocalGet (LocalIdx 0), Load SI32 (MemArg 0 0 0)])) [0]
                 `shouldSatisfy` trapContaining "SecretRead (AccessAt 0 0)"
-            elabRunWithPolicy "region 0 4 : H" (withSegment (withMemory [I32] [I32] [] [LocalGet (LocalIdx 0), Load SI32 (MemArg 0 0)])) [4] `shouldBe` Right ["0"]
+            elabRunWithPolicy "region 0 4 : H" (withSegment (withMemory [I32] [I32] [] [LocalGet (LocalIdx 0), Load SI32 (MemArg 0 0 0)])) [4] `shouldBe` Right ["0"]
         it "a load at a constant address in a region is declared at the region's level" $ do
-            let withSegment = withData [RawDataSegment (Active [Const SI32 0]) "\7\0\0\0"]
-                constantLoad = withSegment (withMemory [] [I32] [] [Const SI32 2, Load SI32 (MemArg 0 0)])
+            let withSegment = withData [RawDataSegment (Active (MemoryIdx 0) [Const SI32 0]) "\7\0\0\0"]
+                constantLoad = withSegment (withMemory [] [I32] [] [Const SI32 2, Load SI32 (MemArg 0 0 0)])
             elabRunWithPolicy "region 0 4 : H" constantLoad [] `shouldSatisfy` errorContaining "IllegalFlow \"result\""
             elabRunWithPolicy "region 0 4 : H\nexport f : -> H" constantLoad [] `shouldBe` Right ["0"]
         it "a region must lie in the memory as instantiated" $
             elabRunWithPolicy "region 65530 65540 : H" (withMemory [] [] [] []) [] `shouldSatisfy` errorContaining "RegionOutOfBounds"
         it "a public store over a region's bytes makes them public" $
-            elabRunWithPolicy "region 0 4 : H" (withMemory [I32] [I32] [] [Const SI32 0, Const SI32 7, Store SI32 (MemArg 0 0), LocalGet (LocalIdx 0), Load SI32 (MemArg 0 0)]) [0]
+            elabRunWithPolicy "region 0 4 : H" (withMemory [I32] [I32] [] [Const SI32 0, Const SI32 7, Store SI32 (MemArg 0 0 0), LocalGet (LocalIdx 0), Load SI32 (MemArg 0 0 0)]) [0]
                 `shouldBe` Right ["7"]
         it "a public result is relabelled where a secret one is declared" $
             elabRunWithPolicy "export f : -> H" (singleFunctionModule [] [] [I32] [] [Const SI32 1]) [] `shouldBe` Right ["1"]
@@ -235,7 +235,7 @@ spec = do
         it "a loop whose back edge carries a secret raises its parameter" $
             elabRunWithPolicy "export f : H -> H" (singleFunctionModule [] [I32] [I32] [] [Const SI32 0, Loop (FuncType [I32] [I32]) [Drop, LocalGet (LocalIdx 0), Const SI32 0, BrIf (LabelIdx 0)]]) [3] `shouldBe` Right ["3"]
         it "the load default makes every unannotated load secret" $
-            elabRunWithPolicy "load-default : H" (withMemory [] [I32] [] [Const SI32 0, Load SI32 (MemArg 0 0)]) [] `shouldSatisfy` errorContaining "IllegalFlow \"result\""
+            elabRunWithPolicy "load-default : H" (withMemory [] [I32] [] [Const SI32 0, Load SI32 (MemArg 0 0 0)]) [] `shouldSatisfy` errorContaining "IllegalFlow \"result\""
         it "a module without functions assembles (the index space is empty, not wrapped around)" $
             void (elaborateModule (singleFunctionModule [] [] [] [] []) {functions = [], exports = []}) `shouldSatisfy` isRight
         it "declares the levels of the standard streams and preopens for the host" $ do
@@ -375,7 +375,7 @@ spec = do
             declassify = ghost "declassify_i32" (FuncType [I32] [I32])
             withGhosts imports = ghostModule imports [I32]
         it "a store through the ghost is a secret store: a plain load then traps" $
-            elabRunModule (withGhosts [storeSecret] [Const SI32 0, Const SI32 7, Call (FunctionIdx 0), Const SI32 0, Load SI32 (MemArg 0 0)]) []
+            elabRunModule (withGhosts [storeSecret] [Const SI32 0, Const SI32 7, Call (FunctionIdx 0), Const SI32 0, Load SI32 (MemArg 0 0 0)]) []
                 `shouldSatisfy` trapContaining "SecretRead (AccessAt 1 0)"
         it "a public load through the ghost traps on a secret byte, naming the ghost call" $
             elabRunModule (withGhosts [storeSecret, ghost "load_public_i32" (FuncType [I32] [I32])] [Const SI32 0, Const SI32 7, Call (FunctionIdx 0), Const SI32 0, Call (FunctionIdx 1)]) []
@@ -506,7 +506,7 @@ spec = do
                     _ -> expectationFailure "expected a suspended fd_write call"
         it "writing secret bytes to a public descriptor traps; to a secret one it goes through" $ do
             -- An iovec at 8 pointing at 4 secret bytes at 0; fd 1 is stdout.
-            let body = [Const SI32 0, Const SI32 7, Annotated High (Store SI32 (MemArg 0 0)), Const SI32 8, Const SI32 0, Store SI32 (MemArg 0 0), Const SI32 12, Const SI32 4, Store SI32 (MemArg 0 0), Const SI32 1, Const SI32 8, Const SI32 1, Const SI32 16, Call (FunctionIdx 0)]
+            let body = [Const SI32 0, Const SI32 7, Annotated High (Store SI32 (MemArg 0 0 0)), Const SI32 8, Const SI32 0, Store SI32 (MemArg 0 0 0), Const SI32 12, Const SI32 4, Store SI32 (MemArg 0 0 0), Const SI32 1, Const SI32 8, Const SI32 1, Const SI32 16, Call (FunctionIdx 0)]
                 program = either (error . show) id (load (wasiModule fdWriteImport body [I32]))
             leaked <- runWithWasi noHost program "f" []
             fmap describeCompletion leaked `shouldBe` Left (Trapped InformationFlowViolation)
@@ -514,7 +514,7 @@ spec = do
             fmap describeCompletion allowed `shouldBe` Right "returned [I32Value 0]"
         it "an iovec array with a secret byte cannot direct a write to a public descriptor" $ do
             -- The data at 0 is public; the iovec at 8 has a secret pointer field.
-            let body = [Const SI32 8, Const SI32 0, Annotated High (Store SI32 (MemArg 0 0)), Const SI32 12, Const SI32 4, Store SI32 (MemArg 0 0), Const SI32 1, Const SI32 8, Const SI32 1, Const SI32 16, Call (FunctionIdx 0)]
+            let body = [Const SI32 8, Const SI32 0, Annotated High (Store SI32 (MemArg 0 0 0)), Const SI32 12, Const SI32 4, Store SI32 (MemArg 0 0 0), Const SI32 1, Const SI32 8, Const SI32 1, Const SI32 16, Call (FunctionIdx 0)]
                 program = either (error . show) id (load (wasiModule fdWriteImport body [I32]))
             leaked <- runWithWasi noHost program "f" []
             fmap describeCompletion leaked `shouldBe` Left (Trapped InformationFlowViolation)
@@ -522,7 +522,7 @@ spec = do
             fmap describeCompletion allowed `shouldBe` Right "returned [I32Value 0]"
         it "the byte count of a read from a secret descriptor is secret" $ do
             -- fd_read of no bytes from stdin (fd 0), then a public load of the count it stored at 16.
-            let body = [Const SI32 8, Const SI32 0, Store SI32 (MemArg 0 0), Const SI32 12, Const SI32 0, Store SI32 (MemArg 0 0), Const SI32 0, Const SI32 8, Const SI32 1, Const SI32 16, Call (FunctionIdx 0), Drop, Const SI32 16, Load SI32 (MemArg 0 0)]
+            let body = [Const SI32 8, Const SI32 0, Store SI32 (MemArg 0 0 0), Const SI32 12, Const SI32 0, Store SI32 (MemArg 0 0 0), Const SI32 0, Const SI32 8, Const SI32 1, Const SI32 16, Call (FunctionIdx 0), Drop, Const SI32 16, Load SI32 (MemArg 0 0 0)]
                 program = either (error . show) id (load (wasiModule (wasiImport "fd_read" (FuncType [I32, I32, I32, I32] [I32])) body [I32]))
             secret <- runWithWasi noHost {descriptorLevels = publicDescriptors {standardInput = High}} program "f" []
             fmap describeCompletion secret `shouldBe` Left (Trapped (SecretRead (AccessAt 1 2)))
@@ -535,13 +535,13 @@ spec = do
                 program storePath = either (error . show) id (load (wasiModule pathOpen (open storePath) [I32]))
                 cfg = WasiConfig [] [] [Preopen "/" "test"] publicDescriptors
                 name = [Const SI32 0, Const SI32 0x7A]
-            secret <- runWithWasi cfg (program (name ++ [Annotated High (StoreN SI32 1 (MemArg 0 0))])) "f" []
+            secret <- runWithWasi cfg (program (name ++ [Annotated High (StoreN SI32 1 (MemArg 0 0 0))])) "f" []
             fmap describeCompletion secret `shouldBe` Left (Trapped InformationFlowViolation)
-            public <- runWithWasi cfg (program (name ++ [StoreN SI32 1 (MemArg 0 0)])) "f" []
+            public <- runWithWasi cfg (program (name ++ [StoreN SI32 1 (MemArg 0 0 0)])) "f" []
             fmap describeCompletion public `shouldBe` Right "returned [I32Value 44]"
         it "args_sizes_get reports the argument count and buffer size" $ do
             let cfg = WasiConfig ["prog", "xy"] [] [] publicDescriptors
-                body = [Const SI32 0, Const SI32 4, Call (FunctionIdx 0), Drop, Const SI32 0, Load SI32 (MemArg 0 0), Const SI32 4, Load SI32 (MemArg 0 0), Add SI32]
+                body = [Const SI32 0, Const SI32 4, Call (FunctionIdx 0), Drop, Const SI32 0, Load SI32 (MemArg 0 0 0), Const SI32 4, Load SI32 (MemArg 0 0 0), Add SI32]
             completion <- runWithWasi cfg (either (error . show) id (load (wasiModule (wasiImport "args_sizes_get" (FuncType [I32, I32] [I32])) body [I32]))) "f" []
             fmap describeCompletion completion `shouldBe` Right "returned [I32Value 10]"
         it "must be declared at the host function's type" $
@@ -564,9 +564,19 @@ spec = do
         it "rejects a memory beyond 65536 pages" $
             void (elaborateModule (singleFunctionModule [memoryWithMax 1 70000] [] [] [] []))
                 `shouldBe` Left (InvalidMemoryLimits (Limits 1 (Just 70000)))
-        it "rejects two memories" $
-            void (elaborateModule (singleFunctionModule [onePageMemory, onePageMemory] [] [] [] []))
-                `shouldBe` Left TooManyMemories
+        it "keeps several memories apart, and copies between them" $ do
+            let inSecond = MemArg 0 0 1
+                twoMemories = elabRunIn [onePageMemory, onePageMemory] [] [I32] []
+            twoMemories [Const SI32 0, Const SI32 7, Store SI32 inSecond, Const SI32 0, Load SI32 (MemArg 0 0 0), Const SI32 0, Load SI32 inSecond, Add SI32] []
+                `shouldBe` Right ["7"]
+            twoMemories [Const SI32 0, Const SI32 9, Store SI32 inSecond, Const SI32 4, Const SI32 0, Const SI32 4, MemoryCopy (MemoryIdx 0) (MemoryIdx 1), Const SI32 4, Load SI32 (MemArg 0 0 0)] []
+                `shouldBe` Right ["9"]
+            twoMemories [Const SI32 0, Load SI32 (MemArg 0 0 2)] [] `shouldSatisfy` errorContaining "IndexOutOfRange Memories 2"
+        it "labels the bytes of each memory on their own" $ do
+            -- the secret argument goes to memory 1; a load declared public then reads memory 0 or memory 1 at the same address
+            let storing readFrom = singleFunctionModule [onePageMemory, onePageMemory] [I32] [I32] [] [Const SI32 0, LocalGet (LocalIdx 0), Store SI32 (MemArg 0 0 1), Const SI32 0, Load SI32 (MemArg 0 0 readFrom)]
+            elabRunWithPolicy "export f : H -> L" (storing 0) [5] `shouldBe` Right ["0"]
+            elabRunWithPolicy "export f : H -> L" (storing 1) [5] `shouldSatisfy` trapContaining "SecretRead"
         it "exposes an exported global's current value (the spec's get action)" $
             readExportedGlobal ((startModule [Const SI32 5, GlobalSet (GlobalIdx 0)]) {exports = [Export "g" (ExportGlobal (GlobalIdx 0))]}) "g"
                 `shouldBe` Right "5"
@@ -591,47 +601,47 @@ spec = do
 
     describe "data segments" $ do
         it "are copied into memory at instantiation" $
-            elabRunModule (withData [RawDataSegment (Active [Const SI32 8]) "hi"] (singleFunctionModule [onePageMemory] [] [I32] [] [Const SI32 9, LoadN SI32 1 Unsigned (MemArg 0 0)])) []
+            elabRunModule (withData [RawDataSegment (Active (MemoryIdx 0) [Const SI32 8]) "hi"] (singleFunctionModule [onePageMemory] [] [I32] [] [Const SI32 9, LoadN SI32 1 Unsigned (MemArg 0 0 0)])) []
                 `shouldBe` Right ["105"]
         it "must fit in the memory" $
-            void (load (withData [RawDataSegment (Active [Const SI32 65535]) "hi"] (singleFunctionModule [onePageMemory] [] [I32] [] [Const SI32 0])))
+            void (load (withData [RawDataSegment (Active (MemoryIdx 0) [Const SI32 65535]) "hi"] (singleFunctionModule [onePageMemory] [] [I32] [] [Const SI32 0])))
                 `shouldBe` Left (Uninstantiable (DataSegmentOutOfBounds 0))
         it "need a memory to land in, which validation checks" $
-            void (elaborateModule (withData [RawDataSegment (Active [Const SI32 0]) "hi"] (singleFunctionModule [] [] [I32] [] [Const SI32 0])))
+            void (elaborateModule (withData [RawDataSegment (Active (MemoryIdx 0) [Const SI32 0]) "hi"] (singleFunctionModule [] [] [I32] [] [Const SI32 0])))
                 `shouldBe` Left (NoMemory "data")
         it "need a constant offset, which validation checks" $
-            void (elaborateModule (withData [RawDataSegment (Active [Const SI32 0, Const SI32 0]) "hi"] (singleFunctionModule [onePageMemory] [] [I32] [] [Const SI32 0])))
+            void (elaborateModule (withData [RawDataSegment (Active (MemoryIdx 0) [Const SI32 0, Const SI32 0]) "hi"] (singleFunctionModule [onePageMemory] [] [I32] [] [Const SI32 0])))
                 `shouldBe` Left (InvalidDataSegmentOffset 0)
 
     describe "bulk memory" $ do
         it "memory.fill then memory.copy" $
-            elabRunWithMemory [] [I32] [] [Const SI32 0, Const SI32 7, Const SI32 4, MemoryFill, Const SI32 100, Const SI32 0, Const SI32 4, MemoryCopy, Const SI32 103, LoadN SI32 1 Unsigned (MemArg 0 0)] []
+            elabRunWithMemory [] [I32] [] [Const SI32 0, Const SI32 7, Const SI32 4, MemoryFill (MemoryIdx 0), Const SI32 100, Const SI32 0, Const SI32 4, MemoryCopy (MemoryIdx 0) (MemoryIdx 0), Const SI32 103, LoadN SI32 1 Unsigned (MemArg 0 0 0)] []
                 `shouldBe` Right ["7"]
         it "memory.copy traps when a range is out of bounds, writing nothing" $
-            elabRunWithMemory [] [I32] [] [Const SI32 65530, Const SI32 0, Const SI32 10, MemoryCopy, Const SI32 0] []
+            elabRunWithMemory [] [I32] [] [Const SI32 65530, Const SI32 0, Const SI32 10, MemoryCopy (MemoryIdx 0) (MemoryIdx 0), Const SI32 0] []
                 `shouldSatisfy` trapContaining "OutOfBoundsMemoryAccess"
         it "memory.fill with a huge count traps without allocating" $
-            elabRunWithMemory [] [I32] [] [Const SI32 1, Const SI32 0xAA, Const SI32 0xFFFFFFFF, MemoryFill, Const SI32 0] []
+            elabRunWithMemory [] [I32] [] [Const SI32 1, Const SI32 0xAA, Const SI32 0xFFFFFFFF, MemoryFill (MemoryIdx 0), Const SI32 0] []
                 `shouldSatisfy` trapContaining "OutOfBoundsMemoryAccess"
         it "memory.init copies from a passive segment" $
-            elabRunModule (withData [RawDataSegment Passive "xyz"] (singleFunctionModule [onePageMemory] [] [I32] [] [Const SI32 10, Const SI32 1, Const SI32 2, MemoryInit (DataIdx 0), Const SI32 10, LoadN SI32 1 Unsigned (MemArg 0 0)])) []
+            elabRunModule (withData [RawDataSegment Passive "xyz"] (singleFunctionModule [onePageMemory] [] [I32] [] [Const SI32 10, Const SI32 1, Const SI32 2, MemoryInit (DataIdx 0) (MemoryIdx 0), Const SI32 10, LoadN SI32 1 Unsigned (MemArg 0 0 0)])) []
                 `shouldBe` Right ["121"]
         it "memory.init traps after data.drop (except for zero bytes)" $
-            elabRunModule (withData [RawDataSegment Passive "xyz"] (singleFunctionModule [onePageMemory] [] [I32] [] [DataDrop (DataIdx 0), Const SI32 0, Const SI32 0, Const SI32 0, MemoryInit (DataIdx 0), Const SI32 10, Const SI32 0, Const SI32 1, MemoryInit (DataIdx 0), Const SI32 0])) []
+            elabRunModule (withData [RawDataSegment Passive "xyz"] (singleFunctionModule [onePageMemory] [] [I32] [] [DataDrop (DataIdx 0), Const SI32 0, Const SI32 0, Const SI32 0, MemoryInit (DataIdx 0) (MemoryIdx 0), Const SI32 10, Const SI32 0, Const SI32 1, MemoryInit (DataIdx 0) (MemoryIdx 0), Const SI32 0])) []
                 `shouldSatisfy` trapContaining "OutOfBoundsMemoryAccess"
         it "memory.init must name an existing segment" $
-            first unplaced (void (elaborateModule (singleFunctionModule [onePageMemory] [] [] [] [Const SI32 0, Const SI32 0, Const SI32 0, MemoryInit (DataIdx 3)])))
+            first unplaced (void (elaborateModule (singleFunctionModule [onePageMemory] [] [] [] [Const SI32 0, Const SI32 0, Const SI32 0, MemoryInit (DataIdx 3) (MemoryIdx 0)])))
                 `shouldBe` Left (IndexOutOfRange DataSegments 3)
 
     describe "memory.grow (the old size on success, -1 when it cannot grow)" $ do
         it "grows within the declared maximum" $
-            elabRunIn [memoryWithMax 1 2] [] [I32] [] [Const SI32 1, MemoryGrow] [] `shouldBe` Right ["1"]
+            elabRunIn [memoryWithMax 1 2] [] [I32] [] [Const SI32 1, MemoryGrow (MemoryIdx 0)] [] `shouldBe` Right ["1"]
         it "refuses to grow past the declared maximum" $
-            elabRunIn [memoryWithMax 1 2] [] [I32] [] [Const SI32 2, MemoryGrow] [] `shouldBe` Right ["4294967295"]
+            elabRunIn [memoryWithMax 1 2] [] [I32] [] [Const SI32 2, MemoryGrow (MemoryIdx 0)] [] `shouldBe` Right ["4294967295"]
         it "refuses to grow past 65536 pages" $
-            elabRunWithMemory [] [I32] [] [Const SI32 70000, MemoryGrow] [] `shouldBe` Right ["4294967295"]
+            elabRunWithMemory [] [I32] [] [Const SI32 70000, MemoryGrow (MemoryIdx 0)] [] `shouldBe` Right ["4294967295"]
         it "memory.size reflects a successful grow" $
-            elabRunWithMemory [] [I32] [] [Const SI32 3, MemoryGrow, Drop, MemorySize] [] `shouldBe` Right ["4"]
+            elabRunWithMemory [] [I32] [] [Const SI32 3, MemoryGrow (MemoryIdx 0), Drop, MemorySize (MemoryIdx 0)] [] `shouldBe` Right ["4"]
 
     describe "float rounding corner cases" $ do
         it "ceil keeps NaN" $
@@ -726,10 +736,10 @@ spec = do
         it "eqz on a float (an integer-only instruction)" $
             elabError [F32] [I32] [] [LocalGet (LocalIdx 0), Eqz SF32] `shouldSatisfy` isLeft
         it "4-byte narrow load of an i32 (not narrower than the value)" $
-            elabErrorWithMemory [I32] [I32] [] [LocalGet (LocalIdx 0), LoadN SI32 4 Signed (MemArg 0 0)]
+            elabErrorWithMemory [I32] [I32] [] [LocalGet (LocalIdx 0), LoadN SI32 4 Signed (MemArg 0 0 0)]
                 `shouldSatisfy` isLeft
         it "over-aligned load (2^align exceeds the access width)" $
-            elabErrorWithMemory [I32] [I32] [] [LocalGet (LocalIdx 0), Load SI32 (MemArg 3 0)]
+            elabErrorWithMemory [I32] [I32] [] [LocalGet (LocalIdx 0), Load SI32 (MemArg 3 0 0)]
                 `shouldSatisfy` isLeft
 
     describe "elaborator refines witnesses (accepts what the spec allows)" $ do
@@ -746,7 +756,7 @@ spec = do
                 [I32]
                 [I64]
                 []
-                [LocalGet (LocalIdx 0), Load SI64 (MemArg 3 0)]
+                [LocalGet (LocalIdx 0), Load SI64 (MemArg 3 0 0)]
                 [0]
                 `shouldBe` Right ["0"]
 

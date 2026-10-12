@@ -51,6 +51,8 @@ module Runtime.Stack (
     setGlobal,
     recordPreserved,
     stillRestored,
+    getMem,
+    setMem,
     firstMem,
     setFirstMem,
 ) where
@@ -256,6 +258,14 @@ type MemSpaceInst :: [MemShape] -> Type
 data MemSpaceInst ms where
     MNil :: MemSpaceInst '[]
     MCons :: !(MemInst m) -> !(MemSpaceInst ms) -> MemSpaceInst (m ': ms)
+
+getMem :: Elem m ms -> MemSpaceInst ms -> MemInst m
+getMem Here (MCons mem _) = mem
+getMem (There ix) (MCons _ rest) = getMem ix rest
+
+setMem :: Elem m ms -> MemInst m -> MemSpaceInst ms -> MemSpaceInst ms
+setMem Here mem (MCons _ rest) = MCons mem rest
+setMem (There ix) mem (MCons other rest) = MCons other (setMem ix mem rest)
 
 firstMem :: MemSpaceInst (m ': ms) -> MemInst m
 firstMem (MCons mem _) = mem

@@ -25,6 +25,7 @@ module Syntax.Module (
     -- * As validated
     Module (..),
     DataSegment (..),
+    DataPlacement (..),
     ElementSpace (..),
     ElementSegment (..),
     ElementMode (..),
@@ -37,7 +38,7 @@ import Data.ByteString (ByteString)
 import Data.ByteString.Lazy qualified as BL
 import Data.Singletons (Sing)
 import Data.Text (Text)
-import Data.Word (Word32)
+import Data.Word (Word32, Word64)
 
 import Syntax.Functions (FunctionSpace, RawFunction)
 import Syntax.Globals (GlobalSpace, RawGlobal (..))
@@ -47,7 +48,7 @@ import Syntax.Instructions (RawExpr, RawInstr (RefFunc))
 import Syntax.Types (FuncType, Limits, MemType, ValType (..))
 import Syntax.TypesIFC (LabelledFuncType (..), SecLevel (..))
 import Validation.Ref (FunctionRef, functionReference)
-import Validation.Shape (Elem, ElemShape (..), ModuleElems, ModuleFuncs, ModuleGlobals, ModuleShape, ModuleTables, TableShape (..))
+import Validation.Shape (Elem, ElemShape (..), MemShape (..), ModuleElems, ModuleFuncs, ModuleGlobals, ModuleMems, ModuleShape, ModuleTables, TableShape (..))
 
 data RawModule = RawModule
     { types :: [FuncType]
@@ -94,7 +95,7 @@ data RawTable = RawTable
     }
     deriving stock (Eq, Show)
 
-{- | A data segment: bytes that are either copied into memory 0 at a constant offset when the
+{- | A data segment: bytes that are either copied into a memory at a constant offset when the
   module is instantiated (active), or kept for @memory.init@ to copy later (passive).
 -}
 data RawDataSegment = RawDataSegment
@@ -103,7 +104,7 @@ data RawDataSegment = RawDataSegment
     }
 
 data DataMode
-    = Active RawExpr
+    = Active MemoryIdx RawExpr
     | Passive
 
 {- | An element segment: references of one type, each given by a constant expression (a
@@ -152,7 +153,7 @@ data ExportDesc
 data Module (shape :: ModuleShape) = Module
     { functions :: FunctionSpace shape (ModuleFuncs shape)
     , globals :: GlobalSpace (ModuleGlobals shape)
-    , dataSegments :: [DataSegment]
+    , dataSegments :: [DataSegment (ModuleMems shape)]
     , secretRegions :: [(Word32, Word32)]
     -- ^ the half-open address ranges of memory 0 whose bytes the policy declares secret
     , elementSegments :: ElementSpace shape (ModuleElems shape)
@@ -161,11 +162,15 @@ data Module (shape :: ModuleShape) = Module
     -- ^ the start function, known to take and return nothing
     }
 
--- | A data segment as validated: an active segment's constant offset, and the bytes.
-data DataSegment = DataSegment
-    { placement :: Maybe Word32
+-- | A data segment as validated: where an active segment goes, and the bytes.
+data DataSegment (ms :: [MemShape]) = DataSegment
+    { placement :: Maybe (DataPlacement ms)
     , bytes :: ByteString
     }
+
+-- | An active data segment's memory, and its constant offset there.
+data DataPlacement (ms :: [MemShape]) where
+    PlacedAt :: Elem ('MemShape at lo hi) ms -> Word64 -> DataPlacement ms
 
 {- | A module's element index space: one segment per element type in the shape, so that
   @table.init@ and @elem.drop@ find a segment of the type their witness names.

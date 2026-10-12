@@ -63,7 +63,7 @@ import Syntax.Types
 import Syntax.TypesIFC
 import Validation.LocalWebs (mergeModuleWebs, splitModuleLocals)
 import Validation.Policy (Assembled (..), LocalSplitting (..), Policy, PolicyError, Restrictions (..), assemble, emptyPolicy, modulePolicy)
-import Validation.Ref (resolveFunction, resolveLocal)
+import Validation.Ref (MemoryRef (..), resolveFunction, resolveLocal)
 import Validation.Reflect
 import Validation.Shape
 
@@ -116,8 +116,6 @@ data ElabError
       InvalidTableLimits Limits
     | -- | a memory's limits are not well-formed or exceed 65536 pages
       InvalidMemoryLimits Limits
-    | -- | more than one memory (the spec allows at most one)
-      TooManyMemories
     | -- | two exports share this name
       DuplicateExport Text
     | -- | the start function is not of type @[] -> []@
@@ -500,19 +498,40 @@ elabInstr env pcsIn@(SCons pc _) stackIn instr = case instr of
     Annotated level access -> elabMemory env pcsIn stackIn (Just level) Nothing access
     AtSite site (Annotated level access) -> elabMemory env pcsIn stackIn (Just level) (Just site) access
     AtSite site access -> elabMemory env pcsIn stackIn Nothing (Just site) access
-    MemorySize -> do
-        NonEmptyMems <- requireMemory env "memory.size"
-        Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (SI32 :%~ pc) stackIn) IMemSize)
-    MemoryCopy -> do
-        NonEmptyMems <- requireMemory env "memory.copy"
-        threeAddresses "memory.copy" stackIn pcsIn IMemCopy
-    MemoryFill -> do
-        NonEmptyMems <- requireMemory env "memory.fill"
-        threeAddresses "memory.fill" stackIn pcsIn IMemFill
-    MemoryInit (DataIdx d) -> do
-        NonEmptyMems <- requireMemory env "memory.init"
+    MemorySize (MemoryIdx i) -> do
+        SomeMemoryRef memory@(MemoryRef at _) <- memoryAt env "memory.size" i
+        Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (addrValSing at :%~ pc) stackIn) (IMemSize memory))
+    -- The three operands of a bulk instruction, top first: the count, the source, the
+    -- destination. Their types are those of the memories' addresses.
+    MemoryCopy (MemoryIdx to) (MemoryIdx from) -> do
+        SomeMemoryRef toMemory@(MemoryRef toAt _) <- memoryAt env "memory.copy" to
+        SomeMemoryRef fromMemory@(MemoryRef fromAt _) <- memoryAt env "memory.copy" from
+        case stackIn of
+            SCons (a :%~ ln) (SCons (b :%~ lsrc) (SCons (c :%~ ldst) rest)) -> do
+                Refl <- operandIs "memory.copy" (addrValSing (minAddrSing toAt fromAt)) a
+                Refl <- operandIs "memory.copy" (addrValSing fromAt) b
+                Refl <- operandIs "memory.copy" (addrValSing toAt) c
+                Right (Produces (sameLengthAs pcsIn) pcsIn rest (IMemCopy (sJoin pc (sJoin ln (sJoin lsrc ldst))) toMemory fromMemory))
+            _ -> Left (StackUnderflow "memory.copy")
+    MemoryFill (MemoryIdx i) -> do
+        SomeMemoryRef memory@(MemoryRef at _) <- memoryAt env "memory.fill" i
+        case stackIn of
+            SCons (a :%~ ln) (SCons (b :%~ lsrc) (SCons (c :%~ ldst) rest)) -> do
+                Refl <- operandIs "memory.fill" (addrValSing at) a
+                Refl <- operandIs "memory.fill" SI32 b
+                Refl <- operandIs "memory.fill" (addrValSing at) c
+                Right (Produces (sameLengthAs pcsIn) pcsIn rest (IMemFill (sJoin pc (sJoin ln (sJoin lsrc ldst))) memory))
+            _ -> Left (StackUnderflow "memory.fill")
+    MemoryInit (DataIdx d) (MemoryIdx i) -> do
+        SomeMemoryRef memory@(MemoryRef at _) <- memoryAt env "memory.init" i
         segmentIx <- note (IndexOutOfRange DataSegments d) (mkDataElem (dataShapesSing (env.shape)) d)
-        threeAddresses "memory.init" stackIn pcsIn (`IMemInit` segmentIx)
+        case stackIn of
+            SCons (a :%~ ln) (SCons (b :%~ lsrc) (SCons (c :%~ ldst) rest)) -> do
+                Refl <- operandIs "memory.init" SI32 a
+                Refl <- operandIs "memory.init" SI32 b
+                Refl <- operandIs "memory.init" (addrValSing at) c
+                Right (Produces (sameLengthAs pcsIn) pcsIn rest (IMemInit (sJoin pc (sJoin ln (sJoin lsrc ldst))) segmentIx memory))
+            _ -> Left (StackUnderflow "memory.init")
     Relabel target -> case stackIn of
         SCons (sv :%~ lv) rest -> withSomeSing target $ \starget -> do
             flows <- requireFlow "relabel" lv starget
@@ -526,13 +545,14 @@ elabInstr env pcsIn@(SCons pc _) stackIn instr = case instr of
     DataDrop (DataIdx d) -> do
         segmentIx <- note (IndexOutOfRange DataSegments d) (mkDataElem (dataShapesSing (env.shape)) d)
         Right (Produces (sameLengthAs pcsIn) pcsIn stackIn (IDataDrop segmentIx))
-    MemoryGrow -> case stackIn of
-        SCons (sc :%~ lc) rest -> do
-            NonEmptyMems <- requireMemory env "memory.grow"
-            Refl <- note (OperandMismatch "memory.grow" I32 (valTypeOf sc)) (decideEquality sc SI32)
-            publicContext <- requireFlow "memory.grow" (sJoin pc lc) SLow
-            Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (SI32 :%~ pc) rest) (IMemGrow publicContext))
-        _ -> Left (StackUnderflow "memory.grow")
+    MemoryGrow (MemoryIdx i) -> do
+        SomeMemoryRef memory@(MemoryRef at _) <- memoryAt env "memory.grow" i
+        case stackIn of
+            SCons (sc :%~ lc) rest -> do
+                Refl <- operandIs "memory.grow" (addrValSing at) sc
+                publicContext <- requireFlow "memory.grow" (sJoin pc lc) SLow
+                Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (addrValSing at :%~ pc) rest) (IMemGrow publicContext memory))
+            _ -> Left (StackUnderflow "memory.grow")
     {- References and tables -}
     RefNull t -> withSomeSing t $ \st -> do
         isRef <- note (Malformed "ref.null of a type that is not a reference type") (decideRef st)
@@ -997,45 +1017,45 @@ elabMemory ::
 elabMemory env pcsIn@(SCons pc _) stackIn annotation site access = case access of
     Load st memArg -> case stackIn of
         SCons (sc :%~ la) rest -> do
-            NonEmptyMems <- requireMemory env "load"
+            SomeMemoryRef memory@(MemoryRef at _) <- memoryAt env "load" memArg.memory
             isNum <- requireNum st
-            Refl <- note (OperandMismatch "load" I32 (valTypeOf sc)) (decideEquality sc SI32)
-            checkAlign memArg (numBytes isNum)
+            Refl <- operandIs "load" (addrValSing at) sc
+            checkAccess at memArg (numBytes isNum)
             loadSite <- note AnnotationMisplaced site
             withSomeSing loadLevel $ \level ->
-                Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (st :%~ sJoin pc (sJoin la level)) rest) (ILoad level loadSite isNum memArg))
+                Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (st :%~ sJoin pc (sJoin la level)) rest) (ILoad level loadSite isNum memArg memory))
         _ -> Left (StackUnderflow "load")
     LoadN st width sign memArg -> case stackIn of
         SCons (sc :%~ la) rest -> do
-            NonEmptyMems <- requireMemory env "load"
+            SomeMemoryRef memory@(MemoryRef at _) <- memoryAt env "load" memArg.memory
             nw <- requireNarrow st width
-            Refl <- note (OperandMismatch "load" I32 (valTypeOf sc)) (decideEquality sc SI32)
-            checkAlign memArg (narrowBytes nw)
+            Refl <- operandIs "load" (addrValSing at) sc
+            checkAccess at memArg (narrowBytes nw)
             loadSite <- note AnnotationMisplaced site
             withSomeSing loadLevel $ \level ->
-                Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (st :%~ sJoin pc (sJoin la level)) rest) (ILoadN level loadSite nw sign memArg))
+                Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (st :%~ sJoin pc (sJoin la level)) rest) (ILoadN level loadSite nw sign memArg memory))
         _ -> Left (StackUnderflow "load")
     Store st memArg -> case stackIn of
         SCons (sv :%~ lv) (SCons (sc :%~ la) rest) -> do
-            NonEmptyMems <- requireMemory env "store"
+            SomeMemoryRef memory@(MemoryRef at _) <- memoryAt env "store" memArg.memory
             mapM_ (const (Left AnnotationMisplaced)) site
             isNum <- requireNum st
             Refl <- note (OperandMismatch "store" (valTypeOf st) (valTypeOf sv)) (decideEquality sv st)
-            Refl <- note (OperandMismatch "store" I32 (valTypeOf sc)) (decideEquality sc SI32)
-            checkAlign memArg (numBytes isNum)
+            Refl <- operandIs "store" (addrValSing at) sc
+            checkAccess at memArg (numBytes isNum)
             storeAt (sJoin pc (sJoin la lv)) $ \level flows ->
-                Right (Produces (sameLengthAs pcsIn) pcsIn rest (IStore level flows isNum memArg))
+                Right (Produces (sameLengthAs pcsIn) pcsIn rest (IStore level flows isNum memArg memory))
         _ -> Left (StackUnderflow "store")
     StoreN st width memArg -> case stackIn of
         SCons (sv :%~ lv) (SCons (sc :%~ la) rest) -> do
-            NonEmptyMems <- requireMemory env "store"
+            SomeMemoryRef memory@(MemoryRef at _) <- memoryAt env "store" memArg.memory
             mapM_ (const (Left AnnotationMisplaced)) site
             nw <- requireNarrow st width
             Refl <- note (OperandMismatch "store" (valTypeOf st) (valTypeOf sv)) (decideEquality sv st)
-            Refl <- note (OperandMismatch "store" I32 (valTypeOf sc)) (decideEquality sc SI32)
-            checkAlign memArg (narrowBytes nw)
+            Refl <- operandIs "store" (addrValSing at) sc
+            checkAccess at memArg (narrowBytes nw)
             storeAt (sJoin pc (sJoin la lv)) $ \level flows ->
-                Right (Produces (sameLengthAs pcsIn) pcsIn rest (IStoreN level flows nw memArg))
+                Right (Produces (sameLengthAs pcsIn) pcsIn rest (IStoreN level flows nw memArg memory))
         _ -> Left (StackUnderflow "store")
     _ -> Left AnnotationMisplaced
   where
@@ -1047,22 +1067,17 @@ elabMemory env pcsIn@(SCons pc _) stackIn annotation site access = case access o
         Nothing -> k inferred (flowsSelf inferred)
         Just declared -> withSomeSing declared $ \level -> requireFlow "store" inferred level >>= k level
 
-{- | The bulk-memory instructions consume three i32 operands; the typed instruction is
-  polymorphic in what lies beneath.
--}
-threeAddresses ::
-    Text ->
-    Sing stackIn ->
-    Sing (pc ': pcs) ->
-    (forall s ln lsrc ldst. Sing (Join pc (Join ln (Join lsrc ldst))) -> Instr shape ('FrameShape locals ret) labels (pc ': pcs) (pc ': pcs) 'NoDynamicCheck (('I32 ':~ ln) ': ('I32 ':~ lsrc) ': ('I32 ':~ ldst) ': s) s) ->
-    Either ElabError (ElaboratedInstr shape ret locals labels (pc ': pcs) stackIn)
-threeAddresses name stackIn pcsIn@(SCons pc _) typed = case stackIn of
-    SCons (a :%~ ln) (SCons (b :%~ lsrc) (SCons (c :%~ ldst) rest)) -> do
-        Refl <- note (OperandMismatch name I32 (valTypeOf a)) (decideEquality a SI32)
-        Refl <- note (OperandMismatch name I32 (valTypeOf b)) (decideEquality b SI32)
-        Refl <- note (OperandMismatch name I32 (valTypeOf c)) (decideEquality c SI32)
-        Right (Produces (sameLengthAs pcsIn) pcsIn rest (typed (sJoin pc (sJoin ln (sJoin lsrc ldst)))))
-    _ -> Left (StackUnderflow name)
+-- | An operand has the type an instruction asks for.
+operandIs :: Text -> Sing (expected :: ValType) -> Sing (actual :: ValType) -> Either ElabError (actual :~: expected)
+operandIs name expected actual = note (OperandMismatch name (valTypeOf expected) (valTypeOf actual)) (decideEquality actual expected)
+
+-- | The memory an instruction names.
+memoryAt :: ElabEnv shape ret locals labels -> Text -> Word32 -> Either ElabError (SomeMemoryRef (ModuleMems shape))
+memoryAt env instrName i = case lookupMemoryRef (memShapesSing (env.shape)) i of
+    Just memory -> Right memory
+    Nothing
+        | i == 0 -> Left (NoMemory instrName)
+        | otherwise -> Left (IndexOutOfRange Memories i)
 
 -- | The table an instruction names.
 tableAt :: ElabEnv shape ret locals labels -> Word32 -> Either ElabError (SomeTableRef (ModuleTables shape))
@@ -1078,15 +1093,15 @@ nth xs i = case drop (fromIntegral i) xs of
     x : _ -> Just x
     [] -> Nothing
 
-{- | Require the module to declare a memory. The proof licenses the
-  @ModuleMems shape ~ (mem ': mems)@ constraint the typed memory instructions carry.
+{- | What validation asks of a memory access besides its operands: an alignment within the
+  access's width ('checkAlign'), and an offset that an address of the memory can hold.
 -}
-requireMemory ::
-    ElabEnv shape ret locals labels ->
-    Text ->
-    Either ElabError (NonEmptyMems (ModuleMems shape))
-requireMemory env instrName =
-    note (NoMemory instrName) (memsNonEmpty (memShapesSing (env.shape)))
+checkAccess :: Sing (at :: AddrType) -> MemArg -> Int -> Either ElabError ()
+checkAccess at memArg accessBytes = do
+    checkAlign memArg accessBytes
+    case at of
+        SAddrI32 | memArg.offset > 0xFFFFFFFF -> Left (Malformed "a memory access's offset is out of the range of the memory's addresses")
+        _ -> Right ()
 
 {- | The spec bounds a memory access's alignment by its width: @2^align <= accessBytes@. The
   binary format stores @align@ as the log2 exponent, so a valid exponent is at most 3 (for an
@@ -1212,19 +1227,22 @@ stepDead env pcsIn s instr = case instr of
     GlobalSet (GlobalIdx g) -> case lookupGlobalRef (globalTypesSing (env.shape)) g of
         Nothing -> Left (IndexOutOfRange Globals g)
         Just (SomeGlobalRef _ st _) -> popKnown (unlabelledTypeOf st) s
-    Load t _ -> pushKnown (valTypeOf t) <$> popKnown I32 s
-    Store t _ -> popKnown (valTypeOf t) s >>= popKnown I32
-    LoadN t _ _ _ -> pushKnown (valTypeOf t) <$> popKnown I32 s
-    StoreN t _ _ -> popKnown (valTypeOf t) s >>= popKnown I32
+    Load t memArg -> address "load" memArg.memory >>= \at -> pushKnown (valTypeOf t) <$> popKnown at s
+    Store t memArg -> address "store" memArg.memory >>= \at -> popKnown (valTypeOf t) s >>= popKnown at
+    LoadN t _ _ memArg -> address "load" memArg.memory >>= \at -> pushKnown (valTypeOf t) <$> popKnown at s
+    StoreN t _ memArg -> address "store" memArg.memory >>= \at -> popKnown (valTypeOf t) s >>= popKnown at
     Annotated _ access -> stepDead env pcsIn s access
     AtSite _ access -> stepDead env pcsIn s access
     Relabel _ -> Right s
     Declassify _ -> Right s
-    MemorySize -> Right (pushKnown I32 s)
-    MemoryGrow -> pushKnown I32 <$> popKnown I32 s
-    MemoryCopy -> popTypes [I32, I32, I32] s
-    MemoryFill -> popTypes [I32, I32, I32] s
-    MemoryInit _ -> popTypes [I32, I32, I32] s
+    MemorySize (MemoryIdx i) -> address "memory.size" i >>= \at -> Right (pushKnown at s)
+    MemoryGrow (MemoryIdx i) -> address "memory.grow" i >>= \at -> pushKnown at <$> popKnown at s
+    MemoryCopy (MemoryIdx to) (MemoryIdx from) -> do
+        SomeMemoryRef (MemoryRef toAt _) <- memoryAt env "memory.copy" to
+        SomeMemoryRef (MemoryRef fromAt _) <- memoryAt env "memory.copy" from
+        popTypes [valTypeOf (addrValSing (minAddrSing toAt fromAt)), valTypeOf (addrValSing fromAt), valTypeOf (addrValSing toAt)] s
+    MemoryFill (MemoryIdx i) -> address "memory.fill" i >>= \at -> popTypes [at, I32, at] s
+    MemoryInit _ (MemoryIdx i) -> address "memory.init" i >>= \at -> popTypes [I32, I32, at] s
     DataDrop _ -> Right s
     And t -> arith t
     Or t -> arith t
@@ -1318,6 +1336,8 @@ stepDead env pcsIn s instr = case instr of
         _ <- popTypes ts s1
         Right ()
     arith :: Sing (t :: ValType) -> Either ElabError PolyStack
+    -- The type of an address into the memory an instruction names.
+    address name i = (\(SomeMemoryRef (MemoryRef at _)) -> valTypeOf (addrValSing at)) <$> memoryAt env name i
     arith t = pushKnown (valTypeOf t) <$> (popKnown (valTypeOf t) s >>= popKnown (valTypeOf t))
     compare' :: Sing (t :: ValType) -> Either ElabError PolyStack
     compare' t = pushKnown I32 <$> (popKnown (valTypeOf t) s >>= popKnown (valTypeOf t))
@@ -1575,7 +1595,7 @@ elaborateUnder assembled choices =
             mapM_ declared (concat [functionsReferencedIn body | RawFunction _ _ body <- m.functions])
             functions <- gathered (elaborateFuncs ctxS assembled.sectionTypes assembled.declassify assembled.typingRestrictions ftsS entries)
             globals <- elaborateGlobals ftsS gsS (m.globals)
-            dataSegments <- traverse (elaborateData (memsNonEmpty msS)) (zip [0 ..] m.dataSegments)
+            dataSegments <- traverse (elaborateData msS) (zip [0 ..] m.dataSegments)
             elementSegments <- elaborateElements ctxS esS (zip [0 ..] m.elementSegments)
             start <- traverse (resolveStart ftsS) (m.start)
             when (not (null assembled.secretRegions) && null m.memories) (Left (NoMemory "region"))
@@ -1614,7 +1634,6 @@ elaborateUnder assembled choices =
 validateStructure :: RawModule -> Either ElabError ()
 validateStructure m = do
     mapM_ checkLimits [declared | RawMemory (MemType _ declared) <- m.memories]
-    when (length m.memories > 1) (Left TooManyMemories)
     mapM_ checkTableLimits [t.limits | t <- m.tables]
     checkDistinct [e.name | e <- m.exports]
     mapM_ checkExport m.exports
@@ -1756,14 +1775,16 @@ functionsReferencedIn = concatMap referenced
         If _ thenBody elseBody -> functionsReferencedIn thenBody ++ functionsReferencedIn elseBody
         _ -> []
 
--- | An active data segment needs a memory to land in and a constant @i32@ offset.
-elaborateData :: Maybe (NonEmptyMems ms) -> (Int, RawDataSegment) -> Either ElabError DataSegment
-elaborateData mems (index, RawDataSegment mode bytes) = case mode of
+-- | An active data segment needs a memory to land in and a constant offset of its address type.
+elaborateData :: Sing (ms :: [MemShape]) -> (Int, RawDataSegment) -> Either ElabError (DataSegment ms)
+elaborateData msS (index, RawDataSegment mode bytes) = case mode of
     Passive -> Right (DataSegment Nothing bytes)
-    Active offsetExpr -> do
-        NonEmptyMems <- note (NoMemory "data") mems
-        offset <- evalConstInit SNil (InvalidDataSegmentOffset index) SI32 offsetExpr
-        Right (DataSegment (Just offset) bytes)
+    Active (MemoryIdx i) offsetExpr -> do
+        SomeMemoryRef (MemoryRef at ix) <- note (if i == 0 then NoMemory "data" else IndexOutOfRange Memories i) (lookupMemoryRef msS i)
+        offset <- case at of
+            SAddrI32 -> fromIntegral <$> evalConstInit SNil (InvalidDataSegmentOffset index) SI32 offsetExpr
+            SAddrI64 -> evalConstInit SNil (InvalidDataSegmentOffset index) SI64 offsetExpr
+        Right (DataSegment (Just (PlacedAt ix offset)) bytes)
 
 {- | The element segments, each at the type the shape gives it: its items are constants of
   that type (so a table only ever holds functions that exist), and an active one needs a table

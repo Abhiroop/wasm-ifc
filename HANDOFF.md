@@ -477,3 +477,20 @@ saturating conversions, multiple values, bulk memory and reference types. Neithe
 vector instructions, tail calls, exceptions, multiple or 64-bit memories, extended constant
 expressions or garbage collection. Every feature the two toolchains use by default is
 implemented since e87e76a.
+
+## Several memories per module (item 13, 2026-10-12)
+
+- **What:** a module may declare any number of memories; every memory instruction, and an
+  active data segment, names the one it works on, and `memory.copy` may copy from one to
+  another. The typed instructions take a reference to their memory (`Validation.Ref.MemoryRef`)
+  where they used to ask that the module has one.
+- **Spec suite:** 34,141 passed, 0 failed, 31,061 skipped (33,439 and 31,763 before), the same
+  with SecWasm's restrictions on; 72 scripts run with nothing skipped.
+- **Information flow:** as the paper's "Beyond the Calculus" says, each memory has its own
+  byte labels; the rules of loads, stores and the bulk instructions are unchanged, and a byte
+  copied from one memory to another keeps its label, joined with the pc and the operands'. A
+  policy's `region` lines are of memory 0. Two unit examples (`test/Spec.hs`, "module-level
+  validation").
+- **Cost:** the allocation tripwire improved on the workloads that use memory (2 to 3 % less
+  than the reference): the word a load reads is no longer returned in an allocated `Just`.
+  The saved binary of the timing sweep (505ee9c) is from before this change.

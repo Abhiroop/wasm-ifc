@@ -95,7 +95,7 @@ import Syntax.Module (Export (..), ExportDesc (..))
 import Syntax.Types
 import Syntax.TypesIFC (LabelledGlobalType, LabelledValType, SLabelledFuncType (..), SLabelledValType (..), unlabelled)
 import Validation.Elaborate (elaborateModule)
-import Validation.Ref (localPosition, localType)
+import Validation.Ref (MemoryRef (..), localPosition, localType)
 import Validation.Shape (Append (..), BranchTarget (..), Elem (..), MemShape, SModuleShape (..), SomeFuncRef (..))
 
 -- *** Values, indices, the erased program ***
@@ -282,18 +282,18 @@ step funcs (Config store locals stack code control) = case code of
         EMemGrow -> case (store.memory, stack) of
             (Just mem, VI32 delta :> r) -> case growMemory delta mem of
                 Just grown -> stepped (withMemory grown store) locals (VI32 (memoryPages mem) :> r) rest control
-                Nothing -> stepped store locals (VI32 growFailed :> r) rest control
+                Nothing -> stepped store locals (VI32 (growFailed SAddrI32) :> r) rest control
             _ -> Left Stuck
         ELoadN (SomeNarrow it nw) sign memArg -> case (store.memory, stack) of
-            (Just mem, VI32 addr :> r) -> case loadWordUnchecked mem (effectiveAddr addr memArg) (narrowBytes nw) of
+            (Just mem, VI32 addr :> r) -> case loadWordUnchecked mem (effectiveAddr SAddrI32 addr memArg) (narrowBytes nw) of
                 Just word -> stepped store locals (taggedInt it (narrowLoadT nw sign word) :> r) rest control
                 Nothing -> Left (Trapped OutOfBoundsMemoryAccess)
             _ -> Left Stuck
         EStoreN (SomeNarrow it nw) memArg -> case (store.memory, it, stack) of
             (Just mem, I32IsInt, VI32 value :> VI32 addr :> r) ->
-                written store locals rest control (storeWord mem (effectiveAddr addr memArg) (narrowBytes nw) (narrowStoreT nw value)) r
+                written store locals rest control (storeWord mem (effectiveAddr SAddrI32 addr memArg) (narrowBytes nw) (narrowStoreT nw value)) r
             (Just mem, I64IsInt, VI64 value :> VI32 addr :> r) ->
-                written store locals rest control (storeWord mem (effectiveAddr addr memArg) (narrowBytes nw) (narrowStoreT nw value)) r
+                written store locals rest control (storeWord mem (effectiveAddr SAddrI32 addr memArg) (narrowBytes nw) (narrowStoreT nw value)) r
             _ -> Left Stuck
         {- Bulk memory: each checks both ranges before writing anything -}
         EMemCopy -> case (store.memory, stack) of
@@ -338,15 +338,15 @@ step funcs (Config store locals stack code control) = case code of
             Empty -> Left Stuck
         {- Memory -}
         ELoad ty memArg -> case (store.memory, stack) of
-            (Just mem, VI32 addr :> r) -> case loadWordUnchecked mem (effectiveAddr addr memArg) (byteWidth ty) of
+            (Just mem, VI32 addr :> r) -> case loadWordUnchecked mem (effectiveAddr SAddrI32 addr memArg) (byteWidth ty) of
                 Just word -> stepped store locals (loaded ty word :> r) rest control
                 Nothing -> Left (Trapped OutOfBoundsMemoryAccess)
             _ -> Left Stuck
         EStore ty memArg -> case (store.memory, ty, stack) of
-            (Just mem, I32, VI32 v :> VI32 addr :> r) -> written store locals rest control (storeWord mem (effectiveAddr addr memArg) (numBytes I32IsNum) (storedWord I32IsNum v)) r
-            (Just mem, I64, VI64 v :> VI32 addr :> r) -> written store locals rest control (storeWord mem (effectiveAddr addr memArg) (numBytes I64IsNum) (storedWord I64IsNum v)) r
-            (Just mem, F32, VF32 v :> VI32 addr :> r) -> written store locals rest control (storeWord mem (effectiveAddr addr memArg) (numBytes F32IsNum) (storedWord F32IsNum v)) r
-            (Just mem, F64, VF64 v :> VI32 addr :> r) -> written store locals rest control (storeWord mem (effectiveAddr addr memArg) (numBytes F64IsNum) (storedWord F64IsNum v)) r
+            (Just mem, I32, VI32 v :> VI32 addr :> r) -> written store locals rest control (storeWord mem (effectiveAddr SAddrI32 addr memArg) (numBytes I32IsNum) (storedWord I32IsNum v)) r
+            (Just mem, I64, VI64 v :> VI32 addr :> r) -> written store locals rest control (storeWord mem (effectiveAddr SAddrI32 addr memArg) (numBytes I64IsNum) (storedWord I64IsNum v)) r
+            (Just mem, F32, VF32 v :> VI32 addr :> r) -> written store locals rest control (storeWord mem (effectiveAddr SAddrI32 addr memArg) (numBytes F32IsNum) (storedWord F32IsNum v)) r
+            (Just mem, F64, VF64 v :> VI32 addr :> r) -> written store locals rest control (storeWord mem (effectiveAddr SAddrI32 addr memArg) (numBytes F64IsNum) (storedWord F64IsNum v)) r
             _ -> Left Stuck
         {- Calls: an indirect call first reads the table entry and compares its type -}
         ECall width ix -> enterCall funcs store locals width ix stack rest control
@@ -650,6 +650,11 @@ eraseExpr :: Expr m f l p q s o -> [Instruction]
 eraseExpr INil = []
 eraseExpr (instr :. rest) = eraseInstr instr : eraseExpr rest
 
+-- | Whether a memory is the first of its module with 32-bit addresses: the one the twin has.
+first32 :: MemoryRef at ms -> Bool
+first32 (MemoryRef SAddrI32 Here) = True
+first32 _ = False
+
 eraseInstr :: Instr m f l p q check s o -> Instruction
 eraseInstr instr = case instr of
     IConst nt v -> EConst (tagged nt v)
@@ -670,13 +675,21 @@ eraseInstr instr = case instr of
     IFloatUn ft op -> EFloatUn (floatType ft) op
     IFloatBin ft op -> EFloatBin (floatType ft) op
     IConvert op -> let (from, to) = convertEnds op in EConvert (SomeConvert from to op)
-    IMemSize -> EMemSize
-    IMemGrow _ -> EMemGrow
-    ILoadN _ _ nw sign memArg -> ELoadN (SomeNarrow (narrowInt nw) nw) sign memArg
-    IStoreN _ _ nw memArg -> EStoreN (SomeNarrow (narrowInt nw) nw) memArg
-    IMemCopy _ -> EMemCopy
-    IMemFill _ -> EMemFill
-    IMemInit _ ix -> EMemInit (positionOf ix)
+    -- The twin has one memory with 32-bit addresses: an access to any other is not modelled.
+    IMemSize memory | first32 memory -> EMemSize
+    IMemGrow _ memory | first32 memory -> EMemGrow
+    ILoadN _ _ nw sign memArg memory | first32 memory -> ELoadN (SomeNarrow (narrowInt nw) nw) sign memArg
+    IStoreN _ _ nw memArg memory | first32 memory -> EStoreN (SomeNarrow (narrowInt nw) nw) memArg
+    IMemCopy _ to from | first32 to, first32 from -> EMemCopy
+    IMemFill _ memory | first32 memory -> EMemFill
+    IMemInit _ ix memory | first32 memory -> EMemInit (positionOf ix)
+    IMemSize {} -> ENotModelled
+    IMemGrow {} -> ENotModelled
+    ILoadN {} -> ENotModelled
+    IStoreN {} -> ENotModelled
+    IMemCopy {} -> ENotModelled
+    IMemFill {} -> ENotModelled
+    IMemInit {} -> ENotModelled
     IDataDrop ix -> EDataDrop (positionOf ix)
     IDrop -> EDrop
     ISelect -> ESelect
@@ -700,11 +713,13 @@ eraseInstr instr = case instr of
     ITableCopy {} -> ENotModelled
     ITableInit {} -> ENotModelled
     IElemDrop {} -> ENotModelled
-    ILoad _ _ nt memArg -> ELoad (numType nt) memArg
+    ILoad _ _ nt memArg memory | first32 memory -> ELoad (numType nt) memArg
+    ILoad {} -> ENotModelled
     IRelabel _ -> ENop
     IRelabelResults _ -> ENop
     IDeclassify -> ENop
-    IStore _ _ nt memArg -> EStore (numType nt) memArg
+    IStore _ _ nt memArg memory | first32 memory -> EStore (numType nt) memArg
+    IStore {} -> ENotModelled
     ICall _ _ _ witness ix -> ECall (widthOf witness) (positionOf ix)
     ICallIndirect _ _ _ _ witness (SLabelledFuncType _ params results) -> ECallIndirect (widthOf witness) (FuncType (unlabelledTypes params) (unlabelledTypes results))
     IBlock _ _ _ _ witness body -> EBlock (widthOf witness) (eraseExpr body)

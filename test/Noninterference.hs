@@ -234,7 +234,7 @@ compileModule generated =
     constantType = FuncType [] [I32]
     body (stmts, result) = concatMap compileStmt stmts ++ compileExpr result
     -- the secret parameter, stored into the secret region, so the two runs' memories differ there
-    secretIntoMemory = [Const SI32 32, LocalGet (LocalIdx 0), Store SI32 (MemArg 0 0)]
+    secretIntoMemory = [Const SI32 32, LocalGet (LocalIdx 0), Store SI32 (MemArg 0 0 0)]
 
 -- | The policy the generated modules are checked under.
 policyText :: Text
@@ -254,7 +254,7 @@ compileStmt stmt = case stmt of
         [GlobalGet (GlobalIdx 2), Const SI32 amount, Sub SI32, GlobalSet (GlobalIdx 2)]
             ++ concatMap compileStmt body
             ++ [GlobalGet (GlobalIdx 2), Const SI32 amount, Add SI32, GlobalSet (GlobalIdx 2)]
-    StoreAt address value -> compileAddress address ++ compileExpr value ++ [Store SI32 (MemArg 0 0)]
+    StoreAt address value -> compileAddress address ++ compileExpr value ++ [Store SI32 (MemArg 0 0 0)]
     DropValue e -> compileExpr e ++ [Drop]
     IfThen c t e -> compileExpr c ++ [If noResult (concatMap compileStmt t) (concatMap compileStmt e)]
     BlockOf body -> [Block noResult (concatMap compileStmt body)]
@@ -274,7 +274,7 @@ compileExpr expr = case expr of
     Literal n -> [Const SI32 n]
     GetLocal i -> [LocalGet (LocalIdx i)]
     GetGlobal g -> [GlobalGet (GlobalIdx g)]
-    LoadAt level address -> compileAddress address ++ [Annotated level (Load SI32 (MemArg 0 0))]
+    LoadAt level address -> compileAddress address ++ [Annotated level (Load SI32 (MemArg 0 0 0))]
     Binary op x y -> compileExpr x ++ compileExpr y ++ [binaryInstr op]
     IfValue c t e -> compileExpr c ++ [If (FuncType [] [I32]) (compileExpr t) (compileExpr e)]
     CallHelper e -> compileExpr e ++ [Call (FunctionIdx 0)]

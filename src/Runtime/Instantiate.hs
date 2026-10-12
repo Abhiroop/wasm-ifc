@@ -27,11 +27,11 @@ import Runtime.Host (SomeWasiFunc (..), resolveWasiImport, wasiFuncType, wasiMod
 import Runtime.Interpreter (FuncInst (..), FuncSpaceInst (..), ModuleInst (..), Outcome (..), getFunc, runFunction)
 import Runtime.MemInst (allocMemory, labelRange, writeBytes)
 import Runtime.Module (SomeModuleInst (..))
-import Runtime.Stack (DataSpaceInst (..), ElemSpaceInst (..), MemSpaceInst (..), TableInsts (..), TableSpaceInst (..), ValueStack (..), getTable, initialGlobals, setTable)
+import Runtime.Stack (DataSpaceInst (..), ElemSpaceInst (..), MemSpaceInst (..), TableInsts (..), TableSpaceInst (..), ValueStack (..), getMem, getTable, initialGlobals, setMem, setTable)
 import Runtime.TableInst (allocTable, functionDirectory, writeEntries)
 import Runtime.Trap (Trap)
 import Syntax.Functions (FunctionSpace (..))
-import Syntax.Module (DataSegment (..), ElementMode (..), ElementSegment (..), ElementSpace (..), Module (..), SomeModule (..), constReference)
+import Syntax.Module (DataPlacement (..), DataSegment (..), ElementMode (..), ElementSegment (..), ElementSpace (..), Module (..), SomeModule (..), constReference)
 import Syntax.Types
 import Syntax.TypesIFC (LabelledFuncType (..), SLabelledFuncType (..), SSecLevel (..), SecLevel (..), decideAllPublic, decideSameValueTypes, decideSegmentFlows, unlabelled)
 import Validation.Policy (ghostModuleName)
@@ -133,13 +133,15 @@ allocateTables (SCons shape rest) = TCons (allocTable (limitsOf (fromSing shape)
     limitsOf (TableShape _ _ lo hi) = Limits (fromIntegral lo) (fmap fromIntegral hi)
 
 -- | Copy the active data segments into memory 0, in order.
-placeData :: [DataSegment] -> MemSpaceInst ms -> Either InstantiationError (MemSpaceInst ms)
-placeData segments mems = case (mems, [(i, off, s.bytes) | (i, s) <- zip [0 ..] segments, Just off <- [s.placement]]) of
-    (_, []) -> Right mems
-    (MCons mem rest, active) -> do
-        mem' <- foldl (\acc (i, off, payload) -> acc >>= \current -> note (DataSegmentOutOfBounds i) (writeBytes current (fromIntegral off) (BS.unpack payload))) (Right mem) active
-        Right (MCons mem' rest)
-    (MNil, (i, _, _) : _) -> Left (DataSegmentOutOfBounds i)
+placeData :: [DataSegment ms] -> MemSpaceInst ms -> Either InstantiationError (MemSpaceInst ms)
+placeData segments mems = foldM place mems (zip [0 ..] segments)
+  where
+    place current (i, segment) = case segment.placement of
+        Nothing -> Right current
+        Just (PlacedAt ix offset) -> do
+            -- (An offset past what an 'Int' holds is past the end of every memory.)
+            written <- note (DataSegmentOutOfBounds i) (if offset > 2 ^ (60 :: Int) then Nothing else writeBytes (getMem ix current) (fromIntegral offset) (BS.unpack segment.bytes))
+            Right (setMem ix written current)
 
 {- | Label the bytes of the policy's secret regions secret, once the data segments are placed
   (their bytes are public, the region's are secret, whatever a segment wrote there).
@@ -177,7 +179,7 @@ keptElements (Elements segment rest) = ECons kept (keptElements rest)
 {- | The data segments as @memory.init@ will find them: passive ones keep their bytes, active
 ones are already dropped (instantiation copied them).
 -}
-remainingData :: Sing (ds :: [DataShape]) -> [DataSegment] -> DataSpaceInst ds
+remainingData :: Sing (ds :: [DataShape]) -> [DataSegment ms] -> DataSpaceInst ds
 remainingData SNil _ = DNil
 remainingData (SCons SDataShape rest) (segment : more) = DCons (maybe (Just segment.bytes) (const Nothing) segment.placement) (remainingData rest more)
 remainingData (SCons SDataShape rest) [] = DCons Nothing (remainingData rest [])

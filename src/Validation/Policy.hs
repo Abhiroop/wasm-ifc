@@ -451,8 +451,8 @@ ghostType ghost = case ghost of
 -- | The instruction a call to a ghost stands for.
 ghostInstruction :: Ghost -> RawInstr
 ghostInstruction ghost = case ghost of
-    GhostLoad l t -> Annotated l (withSomeSing t (\st -> Load st (MemArg 0 0)))
-    GhostStore l t -> Annotated l (withSomeSing t (\st -> Store st (MemArg 0 0)))
+    GhostLoad l t -> Annotated l (withSomeSing t (\st -> Load st (MemArg 0 0 0)))
+    GhostStore l t -> Annotated l (withSomeSing t (\st -> Store st (MemArg 0 0 0)))
     GhostRelabel l _ -> Relabel l
     GhostDeclassify l _ -> Declassify l
 
@@ -624,6 +624,8 @@ assemble policy m = do
                 Just l -> Just l
                 Nothing
                     | isStore access -> Map.lookup i policy.storeDefaultsByIndex
+                    -- (The regions are of memory 0.)
+                    | memoryOf access /= 0 -> Nothing
                     | otherwise -> constantAddress >>= \k -> regionLevel (fromIntegral k + offsetOf access) (widthOf access)
             annotated = maybe access (`Annotated` access) declared
          in if isLoad access then AtSite (AccessAt i n) annotated else annotated
@@ -643,9 +645,13 @@ assemble policy m = do
         Load {} -> policy.loads
         LoadN {} -> policy.loads
         _ -> policy.stores
+    memoryOf instr = case instr of
+        Load _ memArg -> memArg.memory
+        LoadN _ _ _ memArg -> memArg.memory
+        _ -> 0
     offsetOf instr = case instr of
-        Load _ (MemArg _ off) -> fromIntegral off
-        LoadN _ _ _ (MemArg _ off) -> fromIntegral off
+        Load _ memArg -> fromIntegral memArg.offset
+        LoadN _ _ _ memArg -> fromIntegral memArg.offset
         _ -> 0 :: Integer
     widthOf instr = case instr of
         Load st _ -> case fromSing st of

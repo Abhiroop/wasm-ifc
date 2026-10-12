@@ -188,15 +188,17 @@ nth xs i
     | i < 0 = Nothing
     | otherwise = case drop i xs of x : _ -> Just x; [] -> Nothing
 
-{- | A memory access's alignment and offset. Since multiple memories, bit 6 of the alignment
-  field says that a memory index follows, and a field of 128 or more is malformed.
+{- | A memory access's alignment, memory and offset. Bit 6 of the alignment field says that a
+  memory index follows (otherwise the memory is 0), and a field of 128 or more is malformed.
+  The offset is a @u64@, which validation bounds by the address type of the memory.
 -}
 getMemArg :: Get MemArg
 getMemArg = do
-    alignment <- getULEB128
-    when (alignment >= 128) (fail "malformed memop flags")
-    when (alignment >= 64) (fail "unsupported: a memory index in a memory access (multiple memories)")
-    MemArg alignment <$> getULEB128
+    flags <- getULEB128
+    when (flags >= 128) (fail "malformed memop flags")
+    memory <- if flags >= 64 then getULEB128 else pure 0
+    offset <- getUnsignedLeb 64
+    pure (MemArg (if flags >= 64 then flags - 64 else flags) offset memory)
 
 -- *** Instructions ***
 
@@ -270,8 +272,8 @@ getInstr hasDataCount types opcode = case opcode of
     0x3C -> StoreN SI64 1 <$> getMemArg
     0x3D -> StoreN SI64 2 <$> getMemArg
     0x3E -> StoreN SI64 4 <$> getMemArg
-    0x3F -> reservedZero >> pure MemorySize
-    0x40 -> reservedZero >> pure MemoryGrow
+    0x3F -> MemorySize . MemoryIdx <$> getULEB128
+    0x40 -> MemoryGrow . MemoryIdx <$> getULEB128
     {- Constants -}
     0x41 -> Const SI32 . fromIntegral <$> getS32
     0x42 -> Const SI64 . fromIntegral <$> getS64
@@ -437,14 +439,12 @@ getInstr hasDataCount types opcode = case opcode of
             7 -> pure (Convert (I64TruncSatF64 Unsigned))
             8 -> do
                 unless hasDataCount (fail "data count section required")
-                segment <- getULEB128
-                reservedZero
-                pure (MemoryInit (DataIdx segment))
+                MemoryInit . DataIdx <$> getULEB128 <*> (MemoryIdx <$> getULEB128)
             9 -> do
                 unless hasDataCount (fail "data count section required")
                 DataDrop . DataIdx <$> getULEB128
-            10 -> reservedZero >> reservedZero >> pure MemoryCopy
-            11 -> reservedZero >> pure MemoryFill
+            10 -> MemoryCopy . MemoryIdx <$> getULEB128 <*> (MemoryIdx <$> getULEB128)
+            11 -> MemoryFill . MemoryIdx <$> getULEB128
             12 -> TableInit . ElemIdx <$> getULEB128 <*> (TableIdx <$> getULEB128)
             13 -> ElemDrop . ElemIdx <$> getULEB128
             14 -> TableCopy . TableIdx <$> getULEB128 <*> (TableIdx <$> getULEB128)
@@ -453,12 +453,6 @@ getInstr hasDataCount types opcode = case opcode of
             17 -> TableFill . TableIdx <$> getULEB128
             _ -> fail ("unsupported: 0xFC opcode " ++ show sub)
     _ -> fail ("unsupported opcode 0x" ++ showHex opcode "")
-
--- | The memory-index byte of @memory.size@/@memory.grow@, which must be @0x00@.
-reservedZero :: Get ()
-reservedZero = do
-    byte <- getWord8
-    when (byte /= 0) (fail "zero byte expected")
 
 -- *** Sections ***
 
@@ -539,17 +533,16 @@ parseSection sectionId acc = case sectionId of
     12 -> (\n -> acc {dataCountSection = Just n}) <$> getULEB128
     _ -> fail ("malformed section id " ++ show sectionId)
 
--- | A data segment: active for memory 0 (modes 0 and 2) or passive (mode 1).
+-- | A data segment: active for memory 0 (mode 0) or for a memory it names (mode 2), or passive (mode 1).
 getData :: Get RawDataSegment
 getData = do
     mode <- getULEB128
     case mode of
-        0 -> RawDataSegment . Active <$> getExpr False [] <*> payload
+        0 -> RawDataSegment . Active (MemoryIdx 0) <$> getExpr False [] <*> payload
         1 -> RawDataSegment Passive <$> payload
         2 -> do
             memIdx <- getULEB128
-            when (memIdx /= 0) (fail "unsupported: data segment for a memory other than 0")
-            RawDataSegment . Active <$> getExpr False [] <*> payload
+            RawDataSegment . Active (MemoryIdx memIdx) <$> getExpr False [] <*> payload
         _ -> fail ("unknown data segment mode " ++ show mode)
   where
     payload = getULEB128 >>= getByteString . fromIntegral
