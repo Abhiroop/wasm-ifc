@@ -2,8 +2,8 @@
 
 A Lean 4 development that proves termination-insensitive noninterference for the labelled
 typing rules of this repository on a core of WebAssembly: blocks, loops and conditionals with
-parameters and results, `br`, `br_if` and `br_table`, local and global variables, and
-arithmetic on one value type. It has no `sorry`, and its theorems depend on Lean's three
+parameters and results, `br`, `br_if` and `br_table`, calls of the module's functions
+(recursion included), local and global variables, and arithmetic on one value type. It has no `sorry`, and its theorems depend on Lean's three
 standard axioms only (`propext`, `Classical.choice`, `Quot.sound`).
 
 ```
@@ -18,10 +18,11 @@ cd lean && lake build        # Lean 4.35.0, no dependencies; elan reads lean-too
 | `confine` | `Confinement.lean` | A typed sequence that starts under a secret pc leaves the public variables unchanged, and if it leaves by a branch, the target's type is all secret and the pcs of the blocks it leaves are secret. |
 | `loop_alone` | `Confinement.lean` | The same for a loop whose body is typed under a secret pc, from any iteration on. |
 | `ni` | `Noninterference.lean` | Two runs of a typed sequence from stacks and states that agree where public end in related outcomes (`OutRel`). |
-| `tini` | `Noninterference.lean` | For a function body: two runs from states that agree on the public variables, if both end, end with results that agree where the result type is public and in states that agree on the public variables. |
+| `tini` | `Noninterference.lean` | For a function of a well-typed module: two calls with arguments that agree where the parameters are public, from global variables that agree where public, if both return, return results that agree where the result type is public and leave global variables that agree where public. |
 
-`Examples.lean` has a program that the rules type, with two runs of it, and a program with an
-implicit flow together with a proof that no typing of it exists.
+`Examples.lean` has a program that the rules type, with two runs of it, a program with an
+implicit flow together with a proof that no typing of it exists, and a well-typed module of two
+functions.
 
 ## The rules
 
@@ -34,6 +35,11 @@ type `Syntax.Instructions.Instr` for the instructions above:
 - `br_table` raises the pcs down to a depth that no target exceeds (the repaired rule).
 - The results of a block, a loop and a conditional are at least the pc at which the body
   starts (the paper's Property (E), a witness of `IBlock`, `ILoop` and `IIf`).
+- A call needs the caller's pc to flow into the callee's bound, and the arguments to flow into
+  the parameters. The arguments need not be at least the pc (SecWasm's lift raised them).
+- A module is well typed if every function body is typed as the paper's rule for functions
+  says. That a function's results be at least its bound, which that rule also asks, is not
+  used by the proof and is not part of `WellTyped`.
 - The code after `br`, `br_table` and `unreachable` is not typed.
 
 ## How the proof goes
@@ -62,8 +68,12 @@ paper's appendix B.4 has no counterpart here.
   them on the stack is put back under the body's results. SecWasm evaluates on one stack that
   holds the labels. On validated code the two agree, because a body never reaches below its
   parameters; this agreement is not proved here.
-- **The core is small.** One value type; two levels; no memory, no calls and no `return` (a
-  branch to the function's label leaves the function, and `tini` treats it so); no
-  `local.tee`; `unreachable` is the only trap. The proof for memory needs the labels of the
-  bytes in the relation between states, and the proof for calls an induction over the call
-  depth; neither is here.
+- **The core is small.** One value type; two levels; no memory, no indirect calls and no
+  `return` (a branch to the function's label leaves the function, and the semantics of a call
+  treats it so); no `local.tee`; `unreachable` is the only trap. The proof for memory needs
+  the labels of the bytes in the relation between states, and a second relation for what one
+  run under a secret pc does to them, since a store there may make a public byte secret; it
+  is not here.
+- **Parameters are numbered from the top of the stack.** Local `i` of a callee is the `i`-th
+  argument counted from the top, where WebAssembly counts from the bottom. The order plays no
+  part in the proofs.

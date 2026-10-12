@@ -3,7 +3,7 @@ The lift-free typing rules on a core of WebAssembly, and a big-step semantics fo
 
 The core has one value type (a number), local and global variables, and the structured
 control flow that the rules are about: blocks, loops and conditionals with parameters and
-results, `br`, `br_if` and `br_table`. It has no memory and no calls.
+results, `br`, `br_if` and `br_table`, and calls of the module's functions. It has no memory.
 
 The typing judgment is the paper's `Ls ⊢ e : P | st ⇒ P' | st'` (appendix B, "The Rules"):
 `Ls` lists the types of the enclosing labels, innermost first, `P` is the pc stack, and `st`
@@ -77,12 +77,23 @@ inductive Instr where
   | brIf (i : Nat)
   /-- `brTable ts d`: the targets, and the default one -/
   | brTable (ts : List Nat) (d : Nat)
+  | call (i : Nat)
   | unreachable
 
-/-- The levels of the local and of the global variables. -/
+/-- A function type: the parameters, the bound on the pc of its callers, and the results. -/
+structure FuncTy where
+  params : STy
+  bound : Lab
+  results : STy
+
+/--
+The levels of the local variables of the function being typed, those of the global variables,
+and the types of the module's functions.
+-/
 structure Ctx where
   locals : Nat → Lab
   globals : Nat → Lab
+  funcs : List FuncTy
 
 /--
 `Typed C Ls e P st P' st'`: under the labels `Ls`, the sequence `e` takes the pc stack `P` and
@@ -156,8 +167,40 @@ inductive Typed (C : Ctx) : List STy → List Instr → Pcs → STy → Pcs → 
       (∀ t, t ∈ d :: ts → Ls[t]? = some rs ∧ t ≤ k) → AllGe (pc.join l) rs → SFlows carried rs →
       Typed C Ls (.brTable ts d :: rest) (pc :: Pr) (l :: (carried ++ st))
         (raise (pc.join l) (pc :: Pr) k) stAny
+  /-- The caller's pc flows into the callee's bound. The arguments keep their own labels, below the parameters'. -/
+  | call {Ls rest pc Pr i ft targs st P' st'} :
+      C.funcs[i]? = some ft → Lab.le pc ft.bound → SFlows targs ft.params →
+      Typed C Ls rest (pc :: Pr) (ft.results ++ st) P' st' →
+      Typed C Ls (.call i :: rest) (pc :: Pr) (targs ++ st) P' st'
   | unreachable {Ls rest P st stAny} :
       Typed C Ls (.unreachable :: rest) P st P stAny
+
+/-- A function: its type, the levels of its local variables that are not parameters, and its body. -/
+structure Func where
+  ty : FuncTy
+  extra : List Lab
+  body : List Instr
+
+/--
+The levels of a function's local variables. Local `i` is the `i`-th parameter counted from the
+top of the caller's stack, then the other locals in order; a local the function does not
+declare is public. (WebAssembly numbers the parameters from the bottom. The order plays no
+part in the proofs.)
+-/
+def Func.locals (f : Func) : Nat → Lab := fun i => ((f.ty.params ++ f.extra)[i]?).getD Lab.L
+
+/-- The context in which the body of `f` is typed. -/
+def Ctx.enter (C : Ctx) (f : Func) : Ctx := { C with locals := f.locals }
+
+/--
+A module is well typed if each function has the type the context gives it and its body is
+typed as the paper's rule for functions says: under the one label of the function, whose type
+is the result type, from the empty segment, at the function's bound.
+-/
+def WellTyped (C : Ctx) (F : List Func) : Prop :=
+  ∀ (i : Nat) (f : Func), F[i]? = some f →
+    C.funcs[i]? = some f.ty ∧
+      ∃ P', Typed (C.enter f) [f.ty.results] f.body [f.ty.bound] [] P' f.ty.results
 
 /-- The values of the local and of the global variables. -/
 structure State where
@@ -200,75 +243,87 @@ def Out.exits : Out → Option Out
 /-- The target a `br_table` selects. -/
 def tableTarget (ts : List Nat) (d c : Nat) : Nat := (ts[c]?).getD d
 
+/-- The local variables of a new activation: the arguments, top first, and zeros. -/
+def frame (args : List Nat) : Nat → Nat := fun i => (args[i]?).getD 0
+
 /--
-`Eval n ls e σ s o`: with enclosing labels of arities `ls`, the sequence `e` on the segment `σ`
-and the state `s` ends as `o`. The semantics is big-step, and `n` is the size of the
-derivation. A block's body runs on the block's parameters alone; what lies below them on the
-stack waits for the body's results. `unreachable` has no rule: it traps.
+`Eval F n ls e σ s o`: in the module `F`, with enclosing labels of arities `ls`, the sequence
+`e` on the segment `σ` and the state `s` ends as `o`. The semantics is big-step, and `n` is
+the size of the derivation. A block's body runs on the block's parameters alone; what lies
+below them on the stack waits for the body's results. A call runs the callee's body on an
+empty segment with its own local variables, and the caller's are as before when it returns.
+`unreachable` has no rule: it traps.
 -/
-inductive Eval : Nat → List Nat → List Instr → List Nat → State → Out → Prop where
-  | nil {ls σ s} : Eval 0 ls [] σ s (.normal σ s)
+inductive Eval (F : List Func) : Nat → List Nat → List Instr → List Nat → State → Out → Prop where
+  | nil {ls σ s} : Eval F 0 ls [] σ s (.normal σ s)
   | const {n ls rest σ s o} (v : Nat) :
-      Eval n ls rest (v :: σ) s o → Eval (n + 1) ls (.const v :: rest) σ s o
+      Eval F n ls rest (v :: σ) s o → Eval F (n + 1) ls (.const v :: rest) σ s o
   | binop {n ls rest a b σ s o} (f : Nat → Nat → Nat) :
-      Eval n ls rest (f b a :: σ) s o → Eval (n + 1) ls (.binop f :: rest) (a :: b :: σ) s o
+      Eval F n ls rest (f b a :: σ) s o → Eval F (n + 1) ls (.binop f :: rest) (a :: b :: σ) s o
   | select {n ls rest c v1 v2 σ s o} :
-      Eval n ls rest ((if c = 0 then v1 else v2) :: σ) s o →
-      Eval (n + 1) ls (.select :: rest) (c :: v1 :: v2 :: σ) s o
+      Eval F n ls rest ((if c = 0 then v1 else v2) :: σ) s o →
+      Eval F (n + 1) ls (.select :: rest) (c :: v1 :: v2 :: σ) s o
   | drop {n ls rest v σ s o} :
-      Eval n ls rest σ s o → Eval (n + 1) ls (.drop :: rest) (v :: σ) s o
+      Eval F n ls rest σ s o → Eval F (n + 1) ls (.drop :: rest) (v :: σ) s o
   | nop {n ls rest σ s o} :
-      Eval n ls rest σ s o → Eval (n + 1) ls (.nop :: rest) σ s o
+      Eval F n ls rest σ s o → Eval F (n + 1) ls (.nop :: rest) σ s o
   | relabel {n ls rest σ s o} :
-      Eval n ls rest σ s o → Eval (n + 1) ls (.relabel :: rest) σ s o
+      Eval F n ls rest σ s o → Eval F (n + 1) ls (.relabel :: rest) σ s o
   | localGet {n ls rest σ s o} (i : Nat) :
-      Eval n ls rest (s.loc i :: σ) s o → Eval (n + 1) ls (.localGet i :: rest) σ s o
+      Eval F n ls rest (s.loc i :: σ) s o → Eval F (n + 1) ls (.localGet i :: rest) σ s o
   | localSet {n ls rest v σ s o} (i : Nat) :
-      Eval n ls rest σ (s.setLoc i v) o → Eval (n + 1) ls (.localSet i :: rest) (v :: σ) s o
+      Eval F n ls rest σ (s.setLoc i v) o → Eval F (n + 1) ls (.localSet i :: rest) (v :: σ) s o
   | globalGet {n ls rest σ s o} (i : Nat) :
-      Eval n ls rest (s.glob i :: σ) s o → Eval (n + 1) ls (.globalGet i :: rest) σ s o
+      Eval F n ls rest (s.glob i :: σ) s o → Eval F (n + 1) ls (.globalGet i :: rest) σ s o
   | globalSet {n ls rest v σ s o} (i : Nat) :
-      Eval n ls rest σ (s.setGlob i v) o → Eval (n + 1) ls (.globalSet i :: rest) (v :: σ) s o
+      Eval F n ls rest σ (s.setGlob i v) o → Eval F (n + 1) ls (.globalSet i :: rest) (v :: σ) s o
   | blockCont {n1 n2 ls rest ps rs body vs base s ob σ1 s1 o} :
       vs.length = ps.length →
-      Eval n1 (rs.length :: ls) body vs s ob → ob.lands = some (σ1, s1) →
-      Eval n2 ls rest (σ1 ++ base) s1 o →
-      Eval (n1 + n2 + 1) ls (.block ps rs body :: rest) (vs ++ base) s o
+      Eval F n1 (rs.length :: ls) body vs s ob → ob.lands = some (σ1, s1) →
+      Eval F n2 ls rest (σ1 ++ base) s1 o →
+      Eval F (n1 + n2 + 1) ls (.block ps rs body :: rest) (vs ++ base) s o
   | blockExit {n1 ls rest ps rs body vs base s ob o} :
       vs.length = ps.length →
-      Eval n1 (rs.length :: ls) body vs s ob → ob.exits = some o →
-      Eval (n1 + 1) ls (.block ps rs body :: rest) (vs ++ base) s o
+      Eval F n1 (rs.length :: ls) body vs s ob → ob.exits = some o →
+      Eval F (n1 + 1) ls (.block ps rs body :: rest) (vs ++ base) s o
   | loopDone {n1 n2 ls rest ps rs body vs base s σ1 s1 o} :
       vs.length = ps.length →
-      Eval n1 (ps.length :: ls) body vs s (.normal σ1 s1) →
-      Eval n2 ls rest (σ1 ++ base) s1 o →
-      Eval (n1 + n2 + 1) ls (.loop ps rs body :: rest) (vs ++ base) s o
+      Eval F n1 (ps.length :: ls) body vs s (.normal σ1 s1) →
+      Eval F n2 ls rest (σ1 ++ base) s1 o →
+      Eval F (n1 + n2 + 1) ls (.loop ps rs body :: rest) (vs ++ base) s o
   | loopAgain {n1 n2 ls rest ps rs body vs base s w s1 o} :
       vs.length = ps.length →
-      Eval n1 (ps.length :: ls) body vs s (.br 0 w s1) →
-      Eval n2 ls (.loop ps rs body :: rest) (w ++ base) s1 o →
-      Eval (n1 + n2 + 1) ls (.loop ps rs body :: rest) (vs ++ base) s o
+      Eval F n1 (ps.length :: ls) body vs s (.br 0 w s1) →
+      Eval F n2 ls (.loop ps rs body :: rest) (w ++ base) s1 o →
+      Eval F (n1 + n2 + 1) ls (.loop ps rs body :: rest) (vs ++ base) s o
   | loopExit {n1 ls rest ps rs body vs base s ob o} :
       vs.length = ps.length →
-      Eval n1 (ps.length :: ls) body vs s ob → ob.exits = some o →
-      Eval (n1 + 1) ls (.loop ps rs body :: rest) (vs ++ base) s o
+      Eval F n1 (ps.length :: ls) body vs s ob → ob.exits = some o →
+      Eval F (n1 + 1) ls (.loop ps rs body :: rest) (vs ++ base) s o
   | iteCont {n1 n2 ls rest ps rs thn els c vs base s ob σ1 s1 o} :
       vs.length = ps.length →
-      Eval n1 (rs.length :: ls) (if c = 0 then els else thn) vs s ob → ob.lands = some (σ1, s1) →
-      Eval n2 ls rest (σ1 ++ base) s1 o →
-      Eval (n1 + n2 + 1) ls (.ite ps rs thn els :: rest) (c :: (vs ++ base)) s o
+      Eval F n1 (rs.length :: ls) (if c = 0 then els else thn) vs s ob → ob.lands = some (σ1, s1) →
+      Eval F n2 ls rest (σ1 ++ base) s1 o →
+      Eval F (n1 + n2 + 1) ls (.ite ps rs thn els :: rest) (c :: (vs ++ base)) s o
   | iteExit {n1 ls rest ps rs thn els c vs base s ob o} :
       vs.length = ps.length →
-      Eval n1 (rs.length :: ls) (if c = 0 then els else thn) vs s ob → ob.exits = some o →
-      Eval (n1 + 1) ls (.ite ps rs thn els :: rest) (c :: (vs ++ base)) s o
+      Eval F n1 (rs.length :: ls) (if c = 0 then els else thn) vs s ob → ob.exits = some o →
+      Eval F (n1 + 1) ls (.ite ps rs thn els :: rest) (c :: (vs ++ base)) s o
   | br {ls rest i n σ s} :
-      ls[i]? = some n → Eval 1 ls (.br i :: rest) σ s (.br i (σ.take n) s)
+      ls[i]? = some n → Eval F 1 ls (.br i :: rest) σ s (.br i (σ.take n) s)
   | brIfTaken {ls rest i n c σ s} :
-      c ≠ 0 → ls[i]? = some n → Eval 1 ls (.brIf i :: rest) (c :: σ) s (.br i (σ.take n) s)
+      c ≠ 0 → ls[i]? = some n → Eval F 1 ls (.brIf i :: rest) (c :: σ) s (.br i (σ.take n) s)
   | brIfNot {n ls rest i σ s o} :
-      Eval n ls rest σ s o → Eval (n + 1) ls (.brIf i :: rest) (0 :: σ) s o
+      Eval F n ls rest σ s o → Eval F (n + 1) ls (.brIf i :: rest) (0 :: σ) s o
   | brTable {ls rest ts d c n σ s} :
       ls[tableTarget ts d c]? = some n →
-      Eval 1 ls (.brTable ts d :: rest) (c :: σ) s (.br (tableTarget ts d c) (σ.take n) s)
+      Eval F 1 ls (.brTable ts d :: rest) (c :: σ) s (.br (tableTarget ts d c) (σ.take n) s)
+  /-- The callee ends at the end of its body or by a branch to its label (a `return`). -/
+  | call {n1 n2 ls rest i f args base s ob r t o} :
+      F[i]? = some f → args.length = f.ty.params.length →
+      Eval F n1 [f.ty.results.length] f.body [] { loc := frame args, glob := s.glob } ob →
+      ob.lands = some (r, t) →
+      Eval F n2 ls rest (r ++ base) { loc := s.loc, glob := t.glob } o →
+      Eval F (n1 + n2 + 1) ls (.call i :: rest) (args ++ base) s o
 
 end WasmIfc

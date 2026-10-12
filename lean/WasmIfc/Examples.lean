@@ -10,6 +10,7 @@ namespace WasmIfc
 def exampleCtx : Ctx where
   locals := fun i => if i = 0 then Lab.H else Lab.L
   globals := fun _ => Lab.L
+  funcs := []
 
 /--
 A constant, then a block that a `br_if` leaves if the secret local is not zero, then a write of
@@ -28,7 +29,7 @@ example : Typed exampleCtx [[]] writeAfterBlock [Lab.L] [] [Lab.L] [] := by
 
 /-- A run in which the branch is taken, and one in which it is not: both write 7. -/
 example (s : State) (h : s.loc 0 = 5) :
-    Eval 5 [0] writeAfterBlock [] s (.normal [] (s.setGlob 0 7)) := by
+    Eval [] 5 [0] writeAfterBlock [] s (.normal [] (s.setGlob 0 7)) := by
   refine .const 7 (Eval.blockCont (n1 := 2) (n2 := 1) (vs := []) (base := [7])
     (ob := .br 0 [] s) (σ1 := []) (s1 := s) rfl ?_ rfl (.globalSet 0 .nil))
   refine .localGet 0 ?_
@@ -36,7 +37,7 @@ example (s : State) (h : s.loc 0 = 5) :
   exact Eval.brIfTaken (ls := [0, 0]) (i := 0) (n := 0) (c := 5) (σ := []) (by decide) rfl
 
 example (s : State) (h : s.loc 0 = 0) :
-    Eval 6 [0] writeAfterBlock [] s (.normal [] (s.setGlob 0 7)) := by
+    Eval [] 6 [0] writeAfterBlock [] s (.normal [] (s.setGlob 0 7)) := by
   refine .const 7 (Eval.blockCont (n1 := 3) (n2 := 1) (vs := []) (base := [7])
     (ob := .normal [] s) (σ1 := []) (s1 := s) rfl ?_ rfl (.globalSet 0 .nil))
   refine .localGet 0 ?_
@@ -81,5 +82,30 @@ example (pc : Lab) (P' : Pcs) (st st' : STy) :
         have hH : Lab.le Lab.H Lab.L := by
           cases pc <;> simpa [Lab.join, exampleCtx] using hpc
         exact absurd (hH rfl) (by decide)
+
+/-! ### A module of two functions -/
+
+/-- Function 0 returns its public parameter; function 1 calls it on a constant. -/
+def identity : Func := { ty := ⟨[Lab.L], Lab.L, [Lab.L]⟩, extra := [], body := [.localGet 0] }
+
+def callsIdentity : Func :=
+  { ty := ⟨[], Lab.L, [Lab.L]⟩, extra := [], body := [.const 3, .call 0] }
+
+def moduleCtx : Ctx where
+  locals := fun _ => Lab.L
+  globals := fun _ => Lab.L
+  funcs := [identity.ty, callsIdentity.ty]
+
+example : WellTyped moduleCtx [identity, callsIdentity] := by
+  intro i f hf
+  match i, hf with
+  | 0, hf =>
+    cases hf
+    exact ⟨rfl, _, .localGet 0 .nil⟩
+  | 1, hf =>
+    cases hf
+    exact ⟨rfl, _, .const 3 (Typed.call (ft := identity.ty) (targs := [Lab.L]) (st := []) rfl
+      (Lab.le_refl _) (SFlows.refl _) .nil)⟩
+  | i + 2, hf => simp at hf
 
 end WasmIfc

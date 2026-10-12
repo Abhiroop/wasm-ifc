@@ -8,6 +8,8 @@ import WasmIfc.Basic
 
 namespace WasmIfc
 
+variable {F : List Func}
+
 theorem hiUpTo_zero_cons (P : Pcs) : HiUpTo 0 (Lab.H :: P) := by
   intro k p hk hp
   have hk0 : k = 0 := by omega
@@ -67,6 +69,21 @@ theorem exits_info {Ls : List STy} {l0 : STy} {p : Lab} {P1 : Pcs} {st : STy} {o
       obtain ⟨rs, h1, h2, h3, h4⟩ := h
       exact ⟨rfl, trivial, fun _ => ⟨rs, by simpa using h1, h2, h3, h4.tail⟩⟩
 
+/-- A function body ends at its end or by a branch to the function's label, with as many values as it has results. -/
+theorem top_lands {rs : STy} {P : Pcs} {o : Out} (h : Info [rs] P rs o) :
+    ∃ r t, o.lands = some (r, t) ∧ r.length = rs.length ∧ o.state = t ∧
+      (o.isBr → AllGe Lab.H rs) := by
+  cases o with
+  | normal σ s => exact ⟨σ, s, rfl, h, rfl, fun hbr => False.elim hbr⟩
+  | br i w s =>
+    obtain ⟨rs', h1, h2, h3, _⟩ := h
+    cases i with
+    | zero =>
+      simp at h1
+      subst h1
+      exact ⟨w, s, rfl, h3, rfl, fun _ => h2⟩
+    | succ i => simp at h1
+
 /-- The arm a condition selects is typed, and ends below the join of the two arms' pc stacks. -/
 theorem arm_typed {C : Ctx} {Ls : List STy} {thn els : List Instr} {pcl pc p1 p2 : Lab}
     {Pr P1 P2 : Pcs} {ps rs : STy}
@@ -83,63 +100,63 @@ theorem arm_typed {C : Ctx} {Ls : List STy} {thn els : List Instr} {pcl pc p1 p2
 Confinement. A typed sequence that starts under a secret pc leaves the public variables as
 they were, and its outcome is as `Info` describes.
 -/
-theorem confine (C : Ctx) : ∀ (n : Nat) {Ls : List STy} {e : List Instr} {P P' : Pcs}
-    {st st' : STy} {σ : List Nat} {s : State} {o : Out},
+theorem confine : ∀ (n : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : Pcs}
+    {st st' : STy} {σ : List Nat} {s : State} {o : Out}, WellTyped C F →
     Typed C Ls e P st P' st' → HiUpTo 0 P → σ.length = st.length →
-    Eval n (Ls.map List.length) e σ s o → StRel C s o.state ∧ Info Ls P' st' o := by
+    Eval F n (Ls.map List.length) e σ s o → StRel C s o.state ∧ Info Ls P' st' o := by
   intro n
   induction n using Nat.strongRecOn with
   | ind n ih =>
-    intro Ls e P P' st st' σ s o ht hP hlen he
+    intro C Ls e P P' st st' σ s o hF ht hP hlen he
     cases he with
     | nil =>
       cases ht with
       | nil => exact ⟨StRel.refl _ _, hlen⟩
     | const v he' =>
       cases ht with
-      | const _ ht' => exact ih _ (by omega) ht' hP (by simp [hlen]) he'
+      | const _ ht' => exact ih _ (by omega) hF ht' hP (by simp [hlen]) he'
     | binop f he' =>
       cases ht with
-      | binop _ ht' => exact ih _ (by omega) ht' hP (by simpa using hlen) he'
+      | binop _ ht' => exact ih _ (by omega) hF ht' hP (by simpa using hlen) he'
     | select he' =>
       cases ht with
-      | select ht' => exact ih _ (by omega) ht' hP (by simpa using hlen) he'
+      | select ht' => exact ih _ (by omega) hF ht' hP (by simpa using hlen) he'
     | drop he' =>
       cases ht with
-      | drop ht' => exact ih _ (by omega) ht' hP (by simpa using hlen) he'
+      | drop ht' => exact ih _ (by omega) hF ht' hP (by simpa using hlen) he'
     | nop he' =>
       cases ht with
-      | nop ht' => exact ih _ (by omega) ht' hP hlen he'
+      | nop ht' => exact ih _ (by omega) hF ht' hP hlen he'
     | relabel he' =>
       cases ht with
-      | relabel hf ht' => exact ih _ (by omega) ht' hP (hlen.trans hf.length_eq) he'
+      | relabel hf ht' => exact ih _ (by omega) hF ht' hP (hlen.trans hf.length_eq) he'
     | localGet i he' =>
       cases ht with
-      | localGet _ ht' => exact ih _ (by omega) ht' hP (by simp [hlen]) he'
+      | localGet _ ht' => exact ih _ (by omega) hF ht' hP (by simp [hlen]) he'
     | localSet i he' =>
       cases ht with
       | localSet _ hpc hl ht' =>
-        obtain ⟨h1, h2⟩ := ih _ (by omega) ht' hP (by simpa using hlen) he'
+        obtain ⟨h1, h2⟩ := ih _ (by omega) hF ht' hP (by simpa using hlen) he'
         exact ⟨(StRel.setLoc_high _ _ (hpc hP.head)).trans h1, h2⟩
     | globalGet i he' =>
       cases ht with
-      | globalGet _ ht' => exact ih _ (by omega) ht' hP (by simp [hlen]) he'
+      | globalGet _ ht' => exact ih _ (by omega) hF ht' hP (by simp [hlen]) he'
     | globalSet i he' =>
       cases ht with
       | globalSet _ hpc hl ht' =>
-        obtain ⟨h1, h2⟩ := ih _ (by omega) ht' hP (by simpa using hlen) he'
+        obtain ⟨h1, h2⟩ := ih _ (by omega) hF ht' hP (by simpa using hlen) he'
         exact ⟨(StRel.setGlob_high _ _ (hpc hP.head)).trans h1, h2⟩
     | blockCont hvs hb hl hr =>
       cases ht with
       | block hfl hge hbody hrest =>
         have hpc := hP.head
         subst hpc
-        obtain ⟨hs1, hi1⟩ := ih _ (by omega) hbody (hiUpTo_zero_cons _) hvs hb
+        obtain ⟨hs1, hi1⟩ := ih _ (by omega) hF hbody (hiUpTo_zero_cons _) hvs hb
         obtain ⟨hlen1, hst1⟩ := lands_info hi1 hl
         have hfl' := hfl.length_eq
         have hbase : (_ ++ _ : List Nat).length = (_ ++ _ : STy).length := hlen
         simp only [List.length_append] at hbase
-        obtain ⟨h1, h2⟩ := ih _ (by omega) hrest (HiUpTo.sflows (rise hbody).tail hP)
+        obtain ⟨h1, h2⟩ := ih _ (by omega) hF hrest (HiUpTo.sflows (rise hbody).tail hP)
           (by simp only [List.length_append]; omega) hr
         exact ⟨(hst1 ▸ hs1).trans h1, h2⟩
     | blockExit hvs hb hx =>
@@ -147,7 +164,7 @@ theorem confine (C : Ctx) : ∀ (n : Nat) {Ls : List STy} {e : List Instr} {P P'
       | block hfl hge hbody hrest =>
         have hpc := hP.head
         subst hpc
-        obtain ⟨hs1, hi1⟩ := ih _ (by omega) hbody (hiUpTo_zero_cons _) hvs hb
+        obtain ⟨hs1, hi1⟩ := ih _ (by omega) hF hbody (hiUpTo_zero_cons _) hvs hb
         obtain ⟨hst, _, hinfo⟩ := exits_info hi1 hx
         exact ⟨hst ▸ hs1, (hinfo _).mono (rise hrest)⟩
     | loopDone hvs hb hr =>
@@ -155,12 +172,12 @@ theorem confine (C : Ctx) : ∀ (n : Nat) {Ls : List STy} {e : List Instr} {P P'
       | loop hpc hp hfl hge hbody hrest =>
         have hpcL := hpc hP.head
         subst hpcL
-        obtain ⟨hs1, hi1⟩ := ih _ (by omega) hbody (hiUpTo_zero_cons _) hvs hb
+        obtain ⟨hs1, hi1⟩ := ih _ (by omega) hF hbody (hiUpTo_zero_cons _) hvs hb
         have hlen1 : (_ : List Nat).length = (_ : STy).length := hi1
         have hfl' := hfl.length_eq
         have hbase : (_ ++ _ : List Nat).length = (_ ++ _ : STy).length := hlen
         simp only [List.length_append] at hbase
-        obtain ⟨h1, h2⟩ := ih _ (by omega) hrest (HiUpTo.sflows (rise hbody).tail hP)
+        obtain ⟨h1, h2⟩ := ih _ (by omega) hF hrest (HiUpTo.sflows (rise hbody).tail hP)
           (by simp only [List.length_append]; omega) hr
         exact ⟨hs1.trans h1, h2⟩
     | loopAgain hvs hb hr =>
@@ -168,14 +185,14 @@ theorem confine (C : Ctx) : ∀ (n : Nat) {Ls : List STy} {e : List Instr} {P P'
       | loop hpc hp hfl hge hbody hrest =>
         have hpcL := hpc hP.head
         subst hpcL
-        obtain ⟨hs1, hi1⟩ := ih _ (by omega) hbody (hiUpTo_zero_cons _) hvs hb
+        obtain ⟨hs1, hi1⟩ := ih _ (by omega) hF hbody (hiUpTo_zero_cons _) hvs hb
         obtain ⟨rs', hr1, _, hr3, _⟩ := hi1
         simp at hr1
         subst hr1
         have hfl' := hfl.length_eq
         have hbase : (_ ++ _ : List Nat).length = (_ ++ _ : STy).length := hlen
         simp only [List.length_append] at hbase
-        obtain ⟨h1, h2⟩ := ih _ (by omega)
+        obtain ⟨h1, h2⟩ := ih _ (by omega) hF
           (Typed.loop hpc hp (SFlows.refl _) hge hbody hrest) hP
           (by simp only [List.length_append]; omega) hr
         exact ⟨hs1.trans h1, h2⟩
@@ -184,7 +201,7 @@ theorem confine (C : Ctx) : ∀ (n : Nat) {Ls : List STy} {e : List Instr} {P P'
       | loop hpc hp hfl hge hbody hrest =>
         have hpcL := hpc hP.head
         subst hpcL
-        obtain ⟨hs1, hi1⟩ := ih _ (by omega) hbody (hiUpTo_zero_cons _) hvs hb
+        obtain ⟨hs1, hi1⟩ := ih _ (by omega) hF hbody (hiUpTo_zero_cons _) hvs hb
         obtain ⟨hst, _, hinfo⟩ := exits_info hi1 hx
         exact ⟨hst ▸ hs1, (hinfo _).mono (rise hrest)⟩
     | iteCont hvs hb hl hr =>
@@ -193,12 +210,12 @@ theorem confine (C : Ctx) : ∀ (n : Nat) {Ls : List STy} {e : List Instr} {P P'
         have hpc := hP.head
         subst hpc
         obtain ⟨p', Px, harm, hPx⟩ := arm_typed h1 h2 _
-        obtain ⟨hs1, hi1⟩ := ih _ (by omega) harm (by rw [Lab.H_join]; exact hiUpTo_zero_cons _) hvs hb
+        obtain ⟨hs1, hi1⟩ := ih _ (by omega) hF harm (by rw [Lab.H_join]; exact hiUpTo_zero_cons _) hvs hb
         obtain ⟨hlen1, hst1⟩ := lands_info hi1 hl
         have hfl' := hfl.length_eq
         have hbase : (_ :: (_ ++ _) : List Nat).length = (_ :: (_ ++ _) : STy).length := hlen
         simp only [List.length_append, List.length_cons] at hbase
-        obtain ⟨h3, h4⟩ := ih _ (by omega) hrest
+        obtain ⟨h3, h4⟩ := ih _ (by omega) hF hrest
           (HiUpTo.sflows (sflows_joinEach (rise h1).tail (rise h2).tail).2.2 hP)
           (by simp only [List.length_append]; omega) hr
         exact ⟨(hst1 ▸ hs1).trans h3, h4⟩
@@ -208,7 +225,7 @@ theorem confine (C : Ctx) : ∀ (n : Nat) {Ls : List STy} {e : List Instr} {P P'
         have hpc := hP.head
         subst hpc
         obtain ⟨p', Px, harm, hPx⟩ := arm_typed h1 h2 _
-        obtain ⟨hs1, hi1⟩ := ih _ (by omega) harm (by rw [Lab.H_join]; exact hiUpTo_zero_cons _) hvs hb
+        obtain ⟨hs1, hi1⟩ := ih _ (by omega) hF harm (by rw [Lab.H_join]; exact hiUpTo_zero_cons _) hvs hb
         obtain ⟨hst, _, hinfo⟩ := exits_info hi1 hx
         exact ⟨hst ▸ hs1, ((hinfo _).mono hPx).mono (rise hrest)⟩
     | br hn =>
@@ -240,7 +257,7 @@ theorem confine (C : Ctx) : ∀ (n : Nat) {Ls : List STy} {e : List Instr} {P P'
       | brIf hLs hge hfl hrest =>
         have hpc := hP.head
         subst hpc
-        exact ih _ (by omega) hrest (hiUpTo_zero_raise _ _ _) (by simpa using hlen) he'
+        exact ih _ (by omega) hF hrest (hiUpTo_zero_raise _ _ _) (by simpa using hlen) he'
     | brTable hn =>
       cases ht with
       | brTable hall hge hfl =>
@@ -254,41 +271,58 @@ theorem confine (C : Ctx) : ∀ (n : Nat) {Ls : List STy} {e : List Instr} {P P'
         rw [Lab.H_join] at hge ⊢
         refine ⟨StRel.refl _ _, _, hLs, hge, ?_, hiUpTo_raise _ _ _ hk⟩
         simp only [List.length_take]; omega
+    | call hf hargs hb hl hr =>
+      cases ht with
+      | call hft hpc hfl hrest =>
+        obtain ⟨hty, P'', hbodyT⟩ := hF _ _ hf
+        cases hft.symm.trans hty
+        have hbound := hpc hP.head
+        obtain ⟨hs1, hi1⟩ := ih _ (by omega) (hF.enter _) hbodyT
+          (by rw [hbound]; exact hiUpTo_zero_cons _) rfl hb
+        obtain ⟨r', t', hl', hlen', hst', _⟩ := top_lands hi1
+        rw [hl] at hl'
+        cases hl'
+        have hfl' := hfl.length_eq
+        have hbase : (_ ++ _ : List Nat).length = (_ ++ _ : STy).length := hlen
+        simp only [List.length_append] at hbase
+        obtain ⟨h1, h2⟩ := ih _ (by omega) hF hrest hP
+          (by simp only [List.length_append]; omega) hr
+        exact ⟨(StRel.call_conf (hst' ▸ hs1)).trans h1, h2⟩
 
 /--
 A loop whose body is typed under a secret pc, run from some iteration on. Either it reaches the
 code after the loop, by a strictly smaller derivation, with the public variables as they were
 and the loop's results on the stack; or it leaves by a branch past the loop.
 -/
-theorem loop_alone (C : Ctx) : ∀ (n : Nat) {Ls : List STy} {ps rs : STy} {body rest : List Instr}
-    {Pb P1 : Pcs} {p : Lab} {σ vs base : List Nat} {s : State} {o : Out},
+theorem loop_alone : ∀ (n : Nat) {C : Ctx} {Ls : List STy} {ps rs : STy} {body rest : List Instr}
+    {Pb P1 : Pcs} {p : Lab} {σ vs base : List Nat} {s : State} {o : Out}, WellTyped C F →
     Typed C (ps :: Ls) body (Lab.H :: Pb) ps (p :: P1) rs → vs.length = ps.length →
     σ = vs ++ base →
-    Eval n (Ls.map List.length) (.loop ps rs body :: rest) σ s o →
+    Eval F n (Ls.map List.length) (.loop ps rs body :: rest) σ s o →
     (∃ m σb s2, m < n ∧ σb.length = rs.length ∧ StRel C s s2 ∧
-        Eval m (Ls.map List.length) rest (σb ++ base) s2 o) ∨
+        Eval F m (Ls.map List.length) rest (σb ++ base) s2 o) ∨
       (StRel C s o.state ∧ o.isBr ∧ ∀ st, Info Ls P1 st o) := by
   intro n
   induction n using Nat.strongRecOn with
   | ind n ih =>
-    intro Ls ps rs body rest Pb P1 p σ vs base s o hbody hvs hσ he
+    intro C Ls ps rs body rest Pb P1 p σ vs base s o hF hbody hvs hσ he
     cases he with
     | loopDone hvs' hb hr =>
       obtain ⟨rfl, rfl⟩ := List.append_inj hσ (hvs'.trans hvs.symm)
-      obtain ⟨hs1, hi1⟩ := confine C _ hbody (hiUpTo_zero_cons _) hvs hb
+      obtain ⟨hs1, hi1⟩ := confine _ hF hbody (hiUpTo_zero_cons _) hvs hb
       exact .inl ⟨_, _, _, by omega, hi1, hs1, hr⟩
     | loopAgain hvs' hb hr =>
       obtain ⟨rfl, rfl⟩ := List.append_inj hσ (hvs'.trans hvs.symm)
-      obtain ⟨hs1, hi1⟩ := confine C _ hbody (hiUpTo_zero_cons _) hvs hb
+      obtain ⟨hs1, hi1⟩ := confine _ hF hbody (hiUpTo_zero_cons _) hvs hb
       obtain ⟨rs', hr1, _, hr3, _⟩ := hi1
       simp at hr1
       subst hr1
-      rcases ih _ (by omega) hbody hr3 rfl hr with ⟨m, σb, s2, hm, hlen, hs2, he2⟩ | ⟨hs2, hbr, hinfo⟩
+      rcases ih _ (by omega) hF hbody hr3 rfl hr with ⟨m, σb, s2, hm, hlen, hs2, he2⟩ | ⟨hs2, hbr, hinfo⟩
       · exact .inl ⟨m, σb, s2, by omega, hlen, hs1.trans hs2, he2⟩
       · exact .inr ⟨hs1.trans hs2, hbr, hinfo⟩
     | loopExit hvs' hb hx =>
       obtain ⟨rfl, rfl⟩ := List.append_inj hσ (hvs'.trans hvs.symm)
-      obtain ⟨hs1, hi1⟩ := confine C _ hbody (hiUpTo_zero_cons _) hvs hb
+      obtain ⟨hs1, hi1⟩ := confine _ hF hbody (hiUpTo_zero_cons _) hvs hb
       obtain ⟨hst, hbr, hinfo⟩ := exits_info hi1 hx
       exact .inr ⟨hst ▸ hs1, hbr, hinfo⟩
 

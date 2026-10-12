@@ -243,6 +243,41 @@ theorem StRel.setGlob_high {C : Ctx} (s : State) {i : Nat} (v : Nat) (hi : C.glo
   · subst hji; rw [hi] at hj; cases hj
   · simp [State.setGlob, hji]
 
+/-! ### Calls -/
+
+/-- Arguments that agree where the parameters are public make frames that agree on the public locals. -/
+theorem frame_rel {ps : STy} {a b : List Nat} (h : StkRel ps a b) :
+    ∀ (extra : List Lab) (i : Nat), ((ps ++ extra)[i]?).getD Lab.L = Lab.L →
+      (a[i]?).getD 0 = (b[i]?).getD 0 := by
+  induction h with
+  | nil => intro _ _ _; rfl
+  | cons hv _ ih =>
+    intro extra i hi
+    cases i with
+    | zero => simpa using hv (by simpa using hi)
+    | succ i => simpa using ih extra i (by simpa using hi)
+
+/-- The states in which two calls of `f` start its body. -/
+theorem StRel.enter {C : Ctx} {f : Func} {a0 a1 : List Nat} {s0 s1 : State}
+    (ha : StkRel f.ty.params a0 a1) (hs : StRel C s0 s1) :
+    StRel (C.enter f) { loc := frame a0, glob := s0.glob } { loc := frame a1, glob := s1.glob } :=
+  ⟨fun i hi => frame_rel ha f.extra i hi, hs.2⟩
+
+/-- The states in which two callers go on: their own locals, and the globals as the callees left them. -/
+theorem StRel.leave {C : Ctx} {f : Func} {s0 s1 t0 t1 : State} (hs : StRel C s0 s1)
+    (ht : StRel (C.enter f) t0 t1) :
+    StRel C { loc := s0.loc, glob := t0.glob } { loc := s1.loc, glob := t1.glob } :=
+  ⟨hs.1, ht.2⟩
+
+/-- A callee that left the public globals as they were leaves the caller's state so. -/
+theorem StRel.call_conf {C : Ctx} {f : Func} {args : List Nat} {s t : State}
+    (h : StRel (C.enter f) { loc := frame args, glob := s.glob } t) :
+    StRel C s { loc := s.loc, glob := t.glob } :=
+  ⟨fun _ _ => rfl, fun i hi => h.2 i hi⟩
+
+theorem WellTyped.enter {C : Ctx} {F : List Func} (h : WellTyped C F) (g : Func) :
+    WellTyped (C.enter g) F := fun i f hf => h i f hf
+
 /-! ### What is known of one run's outcome, and how two outcomes relate -/
 
 /--
@@ -306,6 +341,7 @@ theorem rise {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : Pcs} {st st' : S
   | br _ _ _ => exact sflows_raise _ _ _
   | brIf _ _ _ _ ih => exact SFlows.trans (sflows_raise _ _ _) ih
   | brTable _ _ _ => exact sflows_raise _ _ _
+  | call _ _ _ _ ih => exact ih
   | unreachable => exact SFlows.refl _
 
 end WasmIfc

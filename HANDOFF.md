@@ -607,19 +607,19 @@ implemented since e87e76a.
   tag from another module, which is not supported (42 assertions skipped). Four unit examples
   (`test/Spec.hs`, "exceptions").
 
-## Lean: noninterference on the control-flow core (item 12, first step, 2026-10-12)
+## Lean: noninterference on the control-flow core with calls (item 12, first step, 2026-10-12)
 
-- **Where:** `lean/` (Lean 4.35.0, no dependencies; `cd lean && lake build`). 1,605 lines in
+- **Where:** `lean/` (Lean 4.35.0, no dependencies; `cd lean && lake build`). 1,773 lines in
   five files; `lean/README.md` states what is proved and what differs from the paper.
 - **What is proved** (`WasmIfc.tini`, from `WasmIfc.ni`): termination-insensitive
-  noninterference for the lift-free rules on a core with blocks, loops and conditionals (with
-  parameters and results), `br`, `br_if`, the repaired `br_table`, local and global variables
-  and arithmetic. Also `WasmIfc.rise`, the paper's `lem:rise`. **No `sorry`; the theorems
+  noninterference for a function of a well-typed module, under the lift-free rules, on a core
+  with blocks, loops and conditionals (with parameters and results), `br`, `br_if`, the
+  repaired `br_table`, calls (recursion included), local and global variables and arithmetic. Also `WasmIfc.rise`, the paper's `lem:rise`. **No `sorry`; the theorems
   depend on `propext`, `Classical.choice` and `Quot.sound` only** (`#print axioms`).
 - **Against the plan's steps (a) to (f):** (a) in part. The rules are the W-rules themselves,
   so for this core there is no erasure and no inclusion to prove, and the theorem is the main
-  theorem's statement for the typed program. Not covered: memory, calls, `return` (it is a
-  branch to the function's label), `local.tee`, bulk memory, WASI, the features of 3.0, and
+  theorem's statement for the typed program. Not covered: memory, indirect calls, `return` (it
+  is a branch to the function's label), `local.tee`, bulk memory, WASI, the features of 3.0, and
   the correspondence with SecWasm's flat-stack semantics (the Lean semantics evaluates a
   block's body on the block's parameters alone). (b) to (f): not done.
 - **The lift-free invariant holds on this core**, which is what step (a) was to find out.
@@ -632,6 +632,10 @@ implemented since e87e76a.
      than the other. Without (E) a block with parameters under a secret pc may pass a public
      parameter through as a public result, and the proof would have to track which values
      were moved and which computed (the `tk` box of step 7). With (E) it does not.
+  3. **The case of `call` needs neither the lift nor well-formed function types.** The
+     arguments keep their own labels below the parameters', and the premise that a function's
+     results be at least its bound is not used: where two runs of a callee diverge, one of them
+     returns early under a secret pc, and the rule for the branch makes the result type secret.
 - **Toolchain:** elan and Lean are installed under `~/.elan` (3 GB, user space).
 
 ## WASI sockets (item 14, 2026-10-12)
