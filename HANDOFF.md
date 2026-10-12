@@ -605,6 +605,20 @@ implemented since e87e76a.
   tag from another module, which is not supported (42 assertions skipped). Four unit examples
   (`test/Spec.hs`, "exceptions").
 
+## A load no longer boxes its word (2026-10-12)
+
+- `Runtime.MemInst.loadChecked` now takes what to do with a failure and with the word, where
+  it returned an `Either`. The word then reaches the code after the load in one place and
+  unboxed; before, GHC shared that code between the ways of reading a word and passed the
+  word boxed, 16 bytes on every load (32 once exceptions had made the interpreter larger).
+  The evidence a load presents is unchanged: `CheckedRead` is still built in that function
+  only, and the two obligation tests that use it are adapted.
+- **Cost:** allocation on the tripwire's memory workloads, against the reference of 95a0f15:
+  `memory-random` −7.3 %, `coremark-100` −6.9 %, `pb-2mm-small` −5.3 %, `pb-seidel-2d-small`
+  −4.9 %; the five others unchanged. No timing was run (the machine is loaded).
+- The frozen binaries for the clean benchmark are of db01cdc, before this change. If the
+  benchmark has not started when this is read, freeze the binaries again.
+
 ## Where coverage stands (2026-10-12, for the paper's claim)
 
 Supported, with the 3.0 suite passing on all of it: **every instruction and type of

@@ -28,6 +28,5 @@ loadStep ::
     Either Trap (StepResult ('BytesBelow level) mod res)
 -- The correct step: read through the checked read at the load's level, push its word, present it.
 loadStep store locals level nt memArg (addr :# r) rest control =
-    case loadChecked (currentMem store) level (effectiveAddr SAddrI32 addr memArg) (numBytes nt) of
-        Left _ -> Left OutOfBoundsMemoryAccess
-        Right checked -> Right (Stepped (BytesWereBelow checked) (Config store locals (loadValue nt (checkedWord checked) :# r) rest control))
+    loadChecked (currentMem store) level (effectiveAddr SAddrI32 addr memArg) (numBytes nt) (\_ -> Left OutOfBoundsMemoryAccess) $ \checked ->
+        Right (Stepped (BytesWereBelow checked) (Config store locals (loadValue nt (checkedWord checked) :# r) rest control))

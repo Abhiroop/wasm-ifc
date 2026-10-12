@@ -28,6 +28,5 @@ loadStep ::
     Either Trap (StepResult ('BytesBelow level) mod res)
 -- Wrong: compares the bytes with another level than the one the load declares.
 loadStep store locals _ nt memArg (addr :# r) rest control =
-    case loadChecked (currentMem store) SHigh (effectiveAddr SAddrI32 addr memArg) (numBytes nt) of
-        Left _ -> Left OutOfBoundsMemoryAccess
-        Right checked -> Right (Stepped (BytesWereBelow checked) (Config store locals (loadValue nt (checkedWord checked) :# r) rest control))
+    loadChecked (currentMem store) SHigh (effectiveAddr SAddrI32 addr memArg) (numBytes nt) (\_ -> Left OutOfBoundsMemoryAccess) $ \checked ->
+        Right (Stepped (BytesWereBelow checked) (Config store locals (loadValue nt (checkedWord checked) :# r) rest control))

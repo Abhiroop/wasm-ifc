@@ -1,5 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE MagicHash #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 
 {- | Linear memory: the one piece of mutable runtime state the interpreter still keeps
@@ -64,6 +65,7 @@ import Data.Maybe (fromMaybe)
 import Data.Vector.Unboxed qualified as UV
 import Data.Vector.Unboxed.Mutable qualified as MV
 import Data.Word (Word32, Word64, Word8)
+import GHC.Word (Word64 (W64#))
 
 import Data.Singletons (Sing)
 import Syntax.Types (AddrType (..), Limits (..))
@@ -185,17 +187,24 @@ data LoadFailure
 {- | A load with SecWasm's run-time check (E-LOAD): read a little-endian word of @count@ bytes
   (1 to 8) at effective address @addr@, and compare the join of its bytes' labels with @level@,
   the level the load declares. The comparison is skipped when the load declares 'High, since
-  nothing exceeds it.
+  nothing exceeds it. The caller says what to do with a failure and with the word.
+
+  The word goes to its use in one place and as a machine word. Returned in an 'Either'
+  instead, it reaches the code after the load from several branches (one per way of reading
+  it), and GHC shares that code and passes the word boxed: 16 bytes allocated on every load.
 -}
 {-# INLINE loadChecked #-}
-loadChecked :: MemInst m -> Sing (level :: SecLevel) -> Int -> Int -> Either LoadFailure (CheckedRead level)
-loadChecked mem level addr count = case loadWordUnchecked mem addr count of
-    Nothing -> Left LoadOutOfBounds
-    Just word -> case level of
-        SHigh -> Right (CheckedRead word)
+loadChecked :: MemInst m -> Sing (level :: SecLevel) -> Int -> Int -> (LoadFailure -> result) -> (CheckedRead level -> result) -> result
+loadChecked mem level addr count failed loaded
+    | not (inBounds mem addr count) = failed LoadOutOfBounds
+    | aboveLevel = failed LoadAboveLevel
+    | otherwise = case wordInBounds mem addr count of W64# bits -> loaded (CheckedRead (W64# bits))
+  where
+    aboveLevel = case level of
+        SHigh -> False
         SLow -> case levelOfRange mem addr count of
-            Low -> Right (CheckedRead word)
-            High -> Left LoadAboveLevel
+            Low -> False
+            High -> True
 
 {- | Read a little-endian word of @count@ bytes (1 to 8) at effective address @addr@,
   zero-extended, whatever its bytes' labels; 'Nothing' if the range falls outside the memory. A
@@ -210,9 +219,15 @@ loadChecked mem level addr count = case loadWordUnchecked mem addr count of
 {-# INLINE loadWordUnchecked #-}
 loadWordUnchecked :: MemInst m -> Int -> Int -> Maybe Word64
 loadWordUnchecked mem addr count
-    | not (inBounds mem addr count) = Nothing
-    | offset + count <= chunkSize = Just (maybe 0 assemble (IntMap.lookup chunkIx mem.chunks))
-    | otherwise = Just (foldr (.|.) 0 [fromIntegral b `shiftL` (8 * i) | (i, b) <- zip [0 ..] (bytesAt mem addr count)])
+    | inBounds mem addr count = Just (wordInBounds mem addr count)
+    | otherwise = Nothing
+
+-- | The word of @count@ bytes at @addr@, a range that is inside the memory.
+{-# INLINE wordInBounds #-}
+wordInBounds :: MemInst m -> Int -> Int -> Word64
+wordInBounds mem addr count
+    | offset + count <= chunkSize = maybe 0 assemble (IntMap.lookup chunkIx mem.chunks)
+    | otherwise = foldr (.|.) 0 [fromIntegral b `shiftL` (8 * i) | (i, b) <- zip [0 ..] (bytesAt mem addr count)]
   where
     (chunkIx, offset) = addr `quotRem` chunkSize
     assemble stored = go 0 0

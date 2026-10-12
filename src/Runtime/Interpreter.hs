@@ -454,9 +454,9 @@ stepInstr funcs store locals stack instr rest control = case instr of
                     Nothing -> stepped NothingToCheck store locals (growFailed width :# r) rest control
     ILoadN level site nw sign memArg (MemoryRef width ix) -> case stack of
         addr :# r ->
-            case loadChecked (memAt ix store) level (effectiveAddr width addr memArg) (narrowBytes nw) of
-                Right checked -> stepped (BytesWereBelow checked) store locals (narrowLoadT nw sign (checkedWord checked) :# r) rest control
-                Left failure -> Left (loadTrap site failure)
+            let address = effectiveAddr width addr memArg
+             in loadChecked (memAt ix store) level address (narrowBytes nw) (Left . loadTrap site) $ \checked ->
+                    stepped (BytesWereBelow checked) store locals (narrowLoadT nw sign (checkedWord checked) :# r) rest control
     IStoreN level _ nw memArg (MemoryRef width ix) -> case stack of
         value :# addr :# r ->
             unboxedAddress (effectiveAddr width addr memArg) $ \address -> case storeWordAt (fromSing level) (memAt ix store) address (narrowBytes nw) (narrowStoreT nw value) of
@@ -498,17 +498,19 @@ stepInstr funcs store locals stack instr rest control = case instr of
         addr :# r ->
             let address = effectiveAddr width addr memArg
                 mem = memAt ix store
+                failed = Left . loadTrap site
              in case kind of
-                    LoadWhole -> case (,) <$> loadChecked mem level address 8 <*> loadChecked mem level (address + 8) 8 of
-                        Right (low, high) -> stepped (BothWereBelow low high) store locals (Vector128 (checkedWord low) (checkedWord high) :# r) rest control
-                        Left failure -> Left (loadTrap site failure)
-                    _ -> case loadChecked mem level address (loadedBytes kind) of
-                        Right checked -> stepped (BytesWereBelow checked) store locals (loadedVector kind (checkedWord checked) 0 :# r) rest control
-                        Left failure -> Left (loadTrap site failure)
+                    LoadWhole ->
+                        loadChecked mem level address 8 failed $ \low ->
+                            loadChecked mem level (address + 8) 8 failed $ \high ->
+                                stepped (BothWereBelow low high) store locals (Vector128 (checkedWord low) (checkedWord high) :# r) rest control
+                    _ ->
+                        loadChecked mem level address (loadedBytes kind) failed $ \checked ->
+                            stepped (BytesWereBelow checked) store locals (loadedVector kind (checkedWord checked) 0 :# r) rest control
     IVectorLoadLane level site laneWidth lane memArg (MemoryRef width ix) -> case stack of
-        vector :# addr :# r -> case loadChecked (memAt ix store) level (effectiveAddr width addr memArg) (laneBytes laneWidth) of
-            Right checked -> stepped (BytesWereBelow checked) store locals (replaceLaneBits (8 * laneBytes laneWidth) lane vector (checkedWord checked) :# r) rest control
-            Left failure -> Left (loadTrap site failure)
+        vector :# addr :# r ->
+            loadChecked (memAt ix store) level (effectiveAddr width addr memArg) (laneBytes laneWidth) (Left . loadTrap site) $ \checked ->
+                stepped (BytesWereBelow checked) store locals (replaceLaneBits (8 * laneBytes laneWidth) lane vector (checkedWord checked) :# r) rest control
     IVectorStore level _ memArg (MemoryRef width ix) -> case stack of
         Vector128 low high :# addr :# r ->
             let address = effectiveAddr width addr memArg
@@ -594,9 +596,9 @@ stepInstr funcs store locals stack instr rest control = case instr of
     {- Memory -}
     ILoad level site nt memArg (MemoryRef width ix) -> case stack of
         addr :# r ->
-            case loadChecked (memAt ix store) level (effectiveAddr width addr memArg) (numBytes nt) of
-                Right checked -> stepped (BytesWereBelow checked) store locals (loadValue nt (checkedWord checked) :# r) rest control
-                Left failure -> Left (loadTrap site failure)
+            let address = effectiveAddr width addr memArg
+             in loadChecked (memAt ix store) level address (numBytes nt) (Left . loadTrap site) $ \checked ->
+                    stepped (BytesWereBelow checked) store locals (loadValue nt (checkedWord checked) :# r) rest control
     IStore level _ nt memArg (MemoryRef width ix) -> case stack of
         value :# addr :# r ->
             unboxedAddress (effectiveAddr width addr memArg) $ \address -> case storeWordAt (fromSing level) (memAt ix store) address (numBytes nt) (storedWord nt value) of
@@ -915,7 +917,8 @@ effectiveAddr SAddrI64 base memArg =
 {- | Hand an address to its use as a machine integer. 'effectiveAddr' computes it in one branch
   per address type, and what follows a store is too large for GHC to copy into both: it then
   shares the code and passes the address boxed, 16 bytes allocated on every store. Taking the
-  box apart here makes what is shared take the bare integer.
+  box apart here makes what is shared take the bare integer. (A load needs none of this for
+  its address; its word is what 'Runtime.MemInst.loadChecked' hands over unboxed.)
 -}
 {-# INLINE unboxedAddress #-}
 unboxedAddress :: Int -> (Int -> result) -> result
