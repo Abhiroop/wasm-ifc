@@ -3,7 +3,8 @@
 A Lean 4 development that proves termination-insensitive noninterference for the labelled
 typing rules of this repository on a core of WebAssembly: blocks, loops and conditionals with
 parameters and results, `br`, `br_if` and `br_table`, calls of the module's functions
-(recursion included), local and global variables, and arithmetic on one value type. It has no `sorry`, and its theorems depend on Lean's three
+(recursion included), a memory whose cells carry a level with SecWasm's run-time check on
+loads, local and global variables, and arithmetic on one value type. It has no `sorry`, and its theorems depend on Lean's three
 standard axioms only (`propext`, `Classical.choice`, `Quot.sound`).
 
 ```
@@ -15,14 +16,14 @@ cd lean && lake build        # Lean 4.35.0, no dependencies; elan reads lean-too
 | Theorem | File | Statement |
 |---|---|---|
 | `rise` | `Basic.lean` | A typed sequence ends with a pc stack that is entrywise at least the one it started with (the paper's `lem:rise`). |
-| `confine` | `Confinement.lean` | A typed sequence that starts under a secret pc leaves the public variables unchanged, and if it leaves by a branch, the target's type is all secret and the pcs of the blocks it leaves are secret. |
+| `confine` | `Confinement.lean` | A typed sequence that starts under a secret pc leaves the public variables unchanged and changes no public memory cell except to make it secret (`Conf`), and if it leaves by a branch, the target's type is all secret and the pcs of the blocks it leaves are secret. |
 | `loop_alone` | `Confinement.lean` | The same for a loop whose body is typed under a secret pc, from any iteration on. |
 | `ni` | `Noninterference.lean` | Two runs of a typed sequence from stacks and states that agree where public end in related outcomes (`OutRel`). |
-| `tini` | `Noninterference.lean` | For a function of a well-typed module: two calls with arguments that agree where the parameters are public, from global variables that agree where public, if both return, return results that agree where the result type is public and leave global variables that agree where public. |
+| `tini` | `Noninterference.lean` | For a function of a well-typed module: two calls with arguments that agree where the parameters are public, from states that agree where public, if both return, return results that agree where the result type is public and leave states that agree where public. Two states agree where public (`StRel`) if they have the same public variables and the same value in every memory cell that is public in both. |
 
 `Examples.lean` has a program that the rules type, with two runs of it, a program with an
-implicit flow together with a proof that no typing of it exists, and a well-typed module of two
-functions.
+implicit flow and a store of a secret into a public cell, each with a proof that no typing of
+it exists, and a well-typed module of two functions.
 
 ## The rules
 
@@ -35,6 +36,9 @@ type `Syntax.Instructions.Instr` for the instructions above:
 - `br_table` raises the pcs down to a depth that no target exceeds (the repaired rule).
 - The results of a block, a loop and a conditional are at least the pc at which the body
   starts (the paper's Property (E), a witness of `IBlock`, `ILoop` and `IIf`).
+- A load declares a level, and its result is at least that level, the address's and the pc. A
+  store declares the level it gives the cell, which is at least the pc, the address's and the
+  value's. At run time a load traps unless the cell's level flows into the declared one.
 - A call needs the caller's pc to flow into the callee's bound, and the arguments to flow into
   the parameters. The arguments need not be at least the pc (SecWasm's lift raised them).
 - A module is well typed if every function body is typed as the paper's rule for functions
@@ -68,12 +72,14 @@ paper's appendix B.4 has no counterpart here.
   them on the stack is put back under the body's results. SecWasm evaluates on one stack that
   holds the labels. On validated code the two agree, because a body never reaches below its
   parameters; this agreement is not proved here.
-- **The core is small.** One value type; two levels; no memory, no indirect calls and no
-  `return` (a branch to the function's label leaves the function, and the semantics of a call
-  treats it so); no `local.tee`; `unreachable` is the only trap. The proof for memory needs
-  the labels of the bytes in the relation between states, and a second relation for what one
-  run under a secret pc does to them, since a store there may make a public byte secret; it
-  is not here.
+- **The core is small.** One value type; two levels; no indirect calls and no `return` (a
+  branch to the function's label leaves the function, and the semantics of a call treats it
+  so); no `local.tee`, no `memory.grow`, no bulk memory. The memory is unbounded and its cells
+  hold whole values, so a load traps only by the level check. `unreachable` is the other trap.
+- **Two relations between states.** `StRel` relates the states of two runs and is not
+  transitive, because a cell that is secret in the middle state says nothing. `Conf` relates a
+  state to a later one of the same run under a secret pc, in which a public cell may have
+  become secret. This is SecWasm's Definition 6 with the paper's convention (C5).
 - **Parameters are numbered from the top of the stack.** Local `i` of a callee is the `i`-th
   argument counted from the top, where WebAssembly counts from the bottom. The order plays no
   part in the proofs.

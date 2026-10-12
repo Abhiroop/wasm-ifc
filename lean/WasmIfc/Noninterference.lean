@@ -214,7 +214,7 @@ theorem after_body {C : Ctx} {Ls : List STy} {rs st st' : STy} {p : Lab} {P1 P' 
       have hP1 : HiUpTo 0 P1 := (hinfo1 st').hiUpTo_zero hbr1
       obtain ⟨hs0, hi0⟩ := confine _ hF hrest hP1
         (by simp only [List.length_append, hlen0, hbase.length_left]) he0
-      exact .inr ⟨⟨hs0.symm.trans hs, hi0, (hinfo1 st').mono (rise hrest)⟩, .inr hbr1⟩
+      exact .inr ⟨⟨hs.conf_left hs0, hi0, (hinfo1 st').mono (rise hrest)⟩, .inr hbr1⟩
   | exit hx0 =>
     cases hc1 with
     | land hl1 hm1 he1 =>
@@ -222,7 +222,7 @@ theorem after_body {C : Ctx} {Ls : List STy} {rs st st' : STy} {p : Lab} {P1 P' 
       have hP1 : HiUpTo 0 P1 := (hinfo0 st').hiUpTo_zero hbr0
       obtain ⟨hs1, hi1⟩ := confine _ hF hrest hP1
         (by simp only [List.length_append, hlen1, hbase.length_right]) he1
-      exact .inr ⟨⟨hs.trans hs1, (hinfo0 st').mono (rise hrest), hi1⟩, .inl hbr0⟩
+      exact .inr ⟨⟨hs.conf_right hs1, (hinfo0 st').mono (rise hrest), hi1⟩, .inl hbr0⟩
     | exit hx1 => exact (join_exit_exit hrel hx0 hx1 st').mono (rise hrest)
 
 /-! ### After the body of a loop -/
@@ -253,9 +253,9 @@ public variables as in `t` and the loop's results on the stack, or it branches p
 -/
 def Tail (F : List Func) (C : Ctx) (Ls : List STy) (P1 : Pcs) (rs : STy) (rest : List Instr) (base : List Nat)
     (t : State) (n : Nat) (o : Out) : Prop :=
-  (∃ m σb s2, m < n ∧ σb.length = rs.length ∧ StRel C t s2 ∧
+  (∃ m σb s2, m < n ∧ σb.length = rs.length ∧ Conf C t s2 ∧
       Eval F m (Ls.map List.length) rest (σb ++ base) s2 o) ∨
-    (StRel C t o.state ∧ o.isBr ∧ ∀ st, Info Ls P1 st o)
+    (Conf C t o.state ∧ o.isBr ∧ ∀ st, Info Ls P1 st o)
 
 theorem loop_tail {C : Ctx} {Ls : List STy} {ps rs : STy} {body rest : List Instr} {Pb P1 : Pcs}
     {p : Lab} {base : List Nat} {ob o : Out} {n : Nat} (hF : WellTyped C F)
@@ -266,7 +266,7 @@ theorem loop_tail {C : Ctx} {Ls : List STy} {ps rs : STy} {body rest : List Inst
   cases hc with
   | done hob hm he =>
     subst hob
-    exact .inl ⟨_, _, _, hm, hi, StRel.refl _ _, he⟩
+    exact .inl ⟨_, _, _, hm, hi, Conf.refl _ _, he⟩
   | again hob hm he =>
     subst hob
     obtain ⟨rs', h1, _, h3, _⟩ := hi
@@ -279,7 +279,7 @@ theorem loop_tail {C : Ctx} {Ls : List STy} {ps rs : STy} {body rest : List Inst
     obtain ⟨hst, hbr, hinfo⟩ := exits_info hi hx
     refine .inr ⟨?_, hbr, hinfo⟩
     rw [hst]
-    exact StRel.refl _ _
+    exact Conf.refl _ _
 
 /-- Two runs that are each on their own, after a loop whose result type is all secret. -/
 theorem after_tails {C : Ctx} {Ls : List STy} {rs st st' : STy} {P1 P' : Pcs}
@@ -296,19 +296,19 @@ theorem after_tails {C : Ctx} {Ls : List STy} {rs st st' : STy} {P1 P' : Pcs}
   rcases h0 with ⟨m0, σ0, s0, hm0, hlen0, hs0, he0⟩ | ⟨hs0, hbr0, hinfo0⟩
   · rcases h1 with ⟨m1, σ1, s1, hm1, hlen1, hs1, he1⟩ | ⟨hs1, hbr1, hinfo1⟩
     · exact hIH _ hm0 _ _ _ _ _ _ _ he0 he1 ((StkRel.of_allH hall hlen0 hlen1).append hbase)
-        (hs0.symm.trans (hs.trans hs1))
+        ((hs.conf_left hs0).conf_right hs1)
     · have hP1 := (hinfo1 st').hiUpTo_zero hbr1
       obtain ⟨hs0', hi0⟩ := confine _ hF hrest hP1
         (by simp only [List.length_append, hlen0, hbase.length_left]) he0
-      exact .inr ⟨⟨(hs0.trans hs0').symm.trans (hs.trans hs1), hi0,
+      exact .inr ⟨⟨(hs.conf_left (hs0.trans hs0')).conf_right hs1, hi0,
         (hinfo1 st').mono (rise hrest)⟩, .inr hbr1⟩
   · rcases h1 with ⟨m1, σ1, s1, hm1, hlen1, hs1, he1⟩ | ⟨hs1, hbr1, hinfo1⟩
     · have hP1 := (hinfo0 st').hiUpTo_zero hbr0
       obtain ⟨hs1', hi1⟩ := confine _ hF hrest hP1
         (by simp only [List.length_append, hlen1, hbase.length_right]) he1
-      exact .inr ⟨⟨hs0.symm.trans (hs.trans (hs1.trans hs1')), (hinfo0 st').mono (rise hrest),
+      exact .inr ⟨⟨(hs.conf_left hs0).conf_right (hs1.trans hs1'), (hinfo0 st').mono (rise hrest),
         hi1⟩, .inl hbr0⟩
-    · exact .inr ⟨⟨hs0.symm.trans (hs.trans hs1), (hinfo0 st').mono (rise hrest),
+    · exact .inr ⟨⟨(hs.conf_left hs0).conf_right hs1, (hinfo0 st').mono (rise hrest),
         (hinfo1 st').mono (rise hrest)⟩, .inl hbr0⟩
 
 /-- The values a branch carries agree where the label's type is public. -/
@@ -429,7 +429,7 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
         cases he1 with
         | globalGet _ he1' =>
           exact ih _ (by omega) hF ht' he0' he1'
-            (.cons (fun hl => hs.2 i (Lab.join_eq_L hl).1) hσ) hs
+            (.cons (fun hl => hs.2.1 i (Lab.join_eq_L hl).1) hσ) hs
     | globalSet i hpc hl ht' =>
       cases he0 with
       | globalSet _ he0' =>
@@ -439,6 +439,34 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
           | cons hv hσ' =>
             exact ih _ (by omega) hF ht' he0' he1' hσ'
               (hs.setGlob (fun hi => hv (Lab.eq_L_of_le hl hi)))
+    | load lm ht' =>
+      cases he0 with
+      | load _ hlab0 he0' =>
+        cases he1 with
+        | load _ hlab1 he1' =>
+          cases hσ with
+          | cons ha hσ' =>
+            refine ih _ (by omega) hF ht' he0' he1' (.cons (fun hl => ?_) hσ') hs
+            obtain ⟨hl', _⟩ := Lab.join_eq_L hl
+            obtain ⟨hla, hlm⟩ := Lab.join_eq_L hl'
+            have haa := ha hla
+            subst haa
+            subst hlm
+            exact hs.2.2 _ (Lab.eq_L_of_le hlab0 rfl) (Lab.eq_L_of_le hlab1 rfl)
+    | store lm hle ht' =>
+      cases he0 with
+      | store _ he0' =>
+        cases he1 with
+        | store _ he1' =>
+          cases hσ with
+          | cons hv hσ' =>
+            cases hσ' with
+            | cons ha hσ'' =>
+              refine ih _ (by omega) hF ht' he0' he1' hσ'' (hs.setMem (fun hlm => ?_))
+              have hj := Lab.eq_L_of_le hle hlm
+              obtain ⟨hj', hlv⟩ := Lab.join_eq_L hj
+              obtain ⟨_, hla⟩ := Lab.join_eq_L hj'
+              exact ⟨ha hla, hv hlv⟩
     | block hfl hge hbody hrest =>
       obtain ⟨vs0, base0, m0, ob0, rfl, hvs0, hm0, hb0, hc0⟩ := block_inv he0
       obtain ⟨vs1, base1, m1, ob1, rfl, hvs1, hm1, hb1, hc1⟩ := block_inv he1
@@ -526,7 +554,7 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
           obtain ⟨hs0, hi0⟩ := confine _ hF harm0 (hiUpTo_zero_cons _) hvs0 hb0
           obtain ⟨hs1, hi1⟩ := confine _ hF harm1 (hiUpTo_zero_cons _) hvs1 hb1
           have hrel : BodyRel C _ _ (Lab.H :: joinEach _ _) ob0 ob1 :=
-            .inr ⟨⟨hs0.symm.trans (hs.trans hs1), hi0.mono (.cons (Lab.le_H _) hPa),
+            .inr ⟨⟨(hs.conf_left hs0).conf_right hs1, hi0.mono (.cons (Lab.le_H _) hPa),
               hi1.mono (.cons (Lab.le_H _) hPb)⟩, .inl hge⟩
           exact after_body hF
             (fun m hm σ0 s0 o0 m1 σ1 s1 o1 h0 h1 hσ hs => ih m hm hF hrest h0 h1 hσ hs)
@@ -559,7 +587,7 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
             rw [Lab.join_H] at hge hrest
             obtain ⟨hs1, hi1⟩ := confine _ hF hrest (hiUpTo_raise _ 0 _ (Nat.zero_le _))
               hσ'.length_right he1'
-            refine .inr ⟨⟨hs.trans hs1, ⟨_, hLs, hge, ?_,
+            refine .inr ⟨⟨hs.conf_right hs1, ⟨_, hLs, hge, ?_,
               HiUpTo.sflows (rise hrest) (hiUpTo_raise _ _ _ (Nat.le_refl _))⟩, hi1⟩, .inl trivial⟩
             have h1 := hσ'.length_left
             have h2 := hfl.length_eq
@@ -578,7 +606,7 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
             rw [Lab.join_H] at hge hrest
             obtain ⟨hs0, hi0⟩ := confine _ hF hrest (hiUpTo_raise _ 0 _ (Nat.zero_le _))
               hσ'.length_left he0'
-            refine .inr ⟨⟨hs0.symm.trans hs, hi0, ⟨_, hLs, hge, ?_,
+            refine .inr ⟨⟨hs.conf_left hs0, hi0, ⟨_, hLs, hge, ?_,
               HiUpTo.sflows (rise hrest) (hiUpTo_raise _ _ _ (Nat.le_refl _))⟩⟩, .inr trivial⟩
             have h1 := hσ'.length_right
             have h2 := hfl.length_eq
@@ -634,24 +662,24 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
 /-! ### A function of a well-typed module -/
 
 /--
-Termination-insensitive noninterference for a function of a well-typed module. Two calls of the
-function with arguments that agree where its parameters are public, from global variables that
-agree where public, if both return, return results that agree where its result type is public
-and leave global variables that agree where public. A call returns at the end of the body or by
-a branch to the function's label, which is how `return` leaves it. The function may call the
-module's functions, itself included.
+Termination-insensitive noninterference for a function of a well-typed module. Take two calls
+of the function, from states that agree where public (the global variables, and the memory
+cells that are public in both), with arguments that agree where the function's parameters are
+public. If both return, their results agree where the result type is public, and the states
+they leave agree where public. A call returns at the end of the body or by a branch to the
+function's label, which is how `return` leaves it; a call that traps or runs forever does not
+return. The function may call the module's functions, itself included.
 -/
 theorem tini {C : Ctx} (hF : WellTyped C F) {i : Nat} {f : Func} (hf : F[i]? = some f)
-    {a0 a1 : List Nat} {g0 g1 : Nat → Nat} {n0 n1 : Nat} {o0 o1 : Out}
-    (h0 : Eval F n0 [f.ty.results.length] f.body [] { loc := frame a0, glob := g0 } o0)
-    (h1 : Eval F n1 [f.ty.results.length] f.body [] { loc := frame a1, glob := g1 } o1)
-    (ha : StkRel f.ty.params a0 a1) (hg : ∀ j, C.globals j = Lab.L → g0 j = g1 j) :
+    {a0 a1 : List Nat} {s0 s1 : State} {n0 n1 : Nat} {o0 o1 : Out}
+    (h0 : Eval F n0 [f.ty.results.length] f.body [] { s0 with loc := frame a0 } o0)
+    (h1 : Eval F n1 [f.ty.results.length] f.body [] { s1 with loc := frame a1 } o1)
+    (ha : StkRel f.ty.params a0 a1) (hs : StRel C s0 s1) :
     ∃ r0 t0 r1 t1, o0.lands = some (r0, t0) ∧ o1.lands = some (r1, t1) ∧
-      StkRel f.ty.results r0 r1 ∧ ∀ j, C.globals j = Lab.L → t0.glob j = t1.glob j := by
+      StkRel f.ty.results r0 r1 ∧ StRel C { t0 with loc := s0.loc } { t1 with loc := s1.loc } := by
   obtain ⟨_, P', hbody⟩ := hF _ _ hf
-  have hs : StRel (C.enter f) { loc := frame a0, glob := g0 } { loc := frame a1, glob := g1 } :=
-    ⟨fun j hj => frame_rel ha f.extra j hj, hg⟩
-  obtain ⟨r0, t0, r1, t1, hl0, hl1, hres, hst⟩ := fun_result (ni n0 (hF.enter f) hbody h0 h1 .nil hs)
-  exact ⟨r0, t0, r1, t1, hl0, hl1, hres, hst.2⟩
+  obtain ⟨r0, t0, r1, t1, hl0, hl1, hres, hst⟩ :=
+    fun_result (ni n0 (hF.enter f) hbody h0 h1 .nil (StRel.enter ha hs))
+  exact ⟨r0, t0, r1, t1, hl0, hl1, hres, StRel.leave hs hst⟩
 
 end WasmIfc

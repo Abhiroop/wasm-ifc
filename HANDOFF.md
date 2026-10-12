@@ -607,19 +607,21 @@ implemented since e87e76a.
   tag from another module, which is not supported (42 assertions skipped). Four unit examples
   (`test/Spec.hs`, "exceptions").
 
-## Lean: noninterference on the control-flow core with calls (item 12, first step, 2026-10-12)
+## Lean: noninterference on a core with control flow, calls and memory (item 12, 2026-10-12)
 
-- **Where:** `lean/` (Lean 4.35.0, no dependencies; `cd lean && lake build`). 1,773 lines in
+- **Where:** `lean/` (Lean 4.35.0, no dependencies; `cd lean && lake build`). 1,930 lines in
   five files; `lean/README.md` states what is proved and what differs from the paper.
 - **What is proved** (`WasmIfc.tini`, from `WasmIfc.ni`): termination-insensitive
   noninterference for a function of a well-typed module, under the lift-free rules, on a core
   with blocks, loops and conditionals (with parameters and results), `br`, `br_if`, the
-  repaired `br_table`, calls (recursion included), local and global variables and arithmetic. Also `WasmIfc.rise`, the paper's `lem:rise`. **No `sorry`; the theorems
+  repaired `br_table`, calls (recursion included), `load` and `store` on a memory whose cells
+  carry a level, with the run-time check of loads, local and global variables and arithmetic. Also `WasmIfc.rise`, the paper's `lem:rise`. **No `sorry`; the theorems
   depend on `propext`, `Classical.choice` and `Quot.sound` only** (`#print axioms`).
 - **Against the plan's steps (a) to (f):** (a) in part. The rules are the W-rules themselves,
   so for this core there is no erasure and no inclusion to prove, and the theorem is the main
-  theorem's statement for the typed program. Not covered: memory, indirect calls, `return` (it
-  is a branch to the function's label), `local.tee`, bulk memory, WASI, the features of 3.0, and
+  theorem's statement for the typed program. Not covered: indirect calls, `return` (it is a
+  branch to the function's label), `local.tee`, `memory.grow`, a bounded memory of bytes, more
+  than one value type, more than two levels, bulk memory, WASI, the features of 3.0, and
   the correspondence with SecWasm's flat-stack semantics (the Lean semantics evaluates a
   block's body on the block's parameters alone). (b) to (f): not done.
 - **The lift-free invariant holds on this core**, which is what step (a) was to find out.

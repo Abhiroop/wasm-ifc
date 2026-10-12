@@ -3,7 +3,8 @@ The lift-free typing rules on a core of WebAssembly, and a big-step semantics fo
 
 The core has one value type (a number), local and global variables, and the structured
 control flow that the rules are about: blocks, loops and conditionals with parameters and
-results, `br`, `br_if` and `br_table`, and calls of the module's functions. It has no memory.
+results, `br`, `br_if` and `br_table`, calls of the module's functions, and a memory whose
+cells carry a level, with SecWasm's run-time check on loads.
 
 The typing judgment is the paper's `Ls ⊢ e : P | st ⇒ P' | st'` (appendix B, "The Rules"):
 `Ls` lists the types of the enclosing labels, innermost first, `P` is the pc stack, and `st`
@@ -70,6 +71,10 @@ inductive Instr where
   | localSet (i : Nat)
   | globalGet (i : Nat)
   | globalSet (i : Nat)
+  /-- `load lm`: read a cell, which must be labelled at most `lm` -/
+  | load (lm : Lab)
+  /-- `store lm`: write a cell and label it `lm` -/
+  | store (lm : Lab)
   | block (ps rs : STy) (body : List Instr)
   | loop (ps rs : STy) (body : List Instr)
   | ite (ps rs : STy) (thn els : List Instr)
@@ -136,6 +141,13 @@ inductive Typed (C : Ctx) : List STy → List Instr → Pcs → STy → Pcs → 
       Lab.le pc (C.globals i) → Lab.le l (C.globals i) →
       Typed C Ls rest (pc :: Pr) st P' st' →
       Typed C Ls (.globalSet i :: rest) (pc :: Pr) (l :: st) P' st'
+  | load {Ls rest pc Pr la st P' st'} (lm : Lab) :
+      Typed C Ls rest (pc :: Pr) (((la.join lm).join pc) :: st) P' st' →
+      Typed C Ls (.load lm :: rest) (pc :: Pr) (la :: st) P' st'
+  | store {Ls rest pc Pr lv la st P' st'} (lm : Lab) :
+      Lab.le ((pc.join la).join lv) lm →
+      Typed C Ls rest (pc :: Pr) st P' st' →
+      Typed C Ls (.store lm :: rest) (pc :: Pr) (lv :: la :: st) P' st'
   /-- The results are at least the pc at which the body starts (the paper's Property (E)). -/
   | block {Ls rest pc Pr tin ps rs body p P1 st P' st'} :
       SFlows tin ps → AllGe pc rs →
@@ -202,16 +214,23 @@ def WellTyped (C : Ctx) (F : List Func) : Prop :=
     C.funcs[i]? = some f.ty ∧
       ∃ P', Typed (C.enter f) [f.ty.results] f.body [f.ty.bound] [] P' f.ty.results
 
-/-- The values of the local and of the global variables. -/
+/-- The values of the local and of the global variables, and the memory: each cell's value and level. -/
 structure State where
   loc : Nat → Nat
   glob : Nat → Nat
+  mem : Nat → Nat
+  lab : Nat → Lab
 
 def State.setLoc (s : State) (i v : Nat) : State :=
   { s with loc := fun j => if j = i then v else s.loc j }
 
 def State.setGlob (s : State) (i v : Nat) : State :=
   { s with glob := fun j => if j = i then v else s.glob j }
+
+/-- Write a cell and give it a level. -/
+def State.setMem (s : State) (a v : Nat) (l : Lab) : State :=
+  { s with mem := fun x => if x = a then v else s.mem x,
+           lab := fun x => if x = a then l else s.lab x }
 
 /--
 How a sequence ends: at its end, with the current segment of the stack, or by a branch to the
@@ -252,7 +271,8 @@ def frame (args : List Nat) : Nat → Nat := fun i => (args[i]?).getD 0
 the size of the derivation. A block's body runs on the block's parameters alone; what lies
 below them on the stack waits for the body's results. A call runs the callee's body on an
 empty segment with its own local variables, and the caller's are as before when it returns.
-`unreachable` has no rule: it traps.
+A trap is the absence of a rule: `unreachable` has none, and a `load` has one only if the
+cell's level flows into the level the load declares (SecWasm's run-time check).
 -/
 inductive Eval (F : List Func) : Nat → List Nat → List Instr → List Nat → State → Out → Prop where
   | nil {ls σ s} : Eval F 0 ls [] σ s (.normal σ s)
@@ -277,6 +297,11 @@ inductive Eval (F : List Func) : Nat → List Nat → List Instr → List Nat �
       Eval F n ls rest (s.glob i :: σ) s o → Eval F (n + 1) ls (.globalGet i :: rest) σ s o
   | globalSet {n ls rest v σ s o} (i : Nat) :
       Eval F n ls rest σ (s.setGlob i v) o → Eval F (n + 1) ls (.globalSet i :: rest) (v :: σ) s o
+  | load {n ls rest a σ s o} (lm : Lab) :
+      Lab.le (s.lab a) lm →
+      Eval F n ls rest (s.mem a :: σ) s o → Eval F (n + 1) ls (.load lm :: rest) (a :: σ) s o
+  | store {n ls rest v a σ s o} (lm : Lab) :
+      Eval F n ls rest σ (s.setMem a v lm) o → Eval F (n + 1) ls (.store lm :: rest) (v :: a :: σ) s o
   | blockCont {n1 n2 ls rest ps rs body vs base s ob σ1 s1 o} :
       vs.length = ps.length →
       Eval F n1 (rs.length :: ls) body vs s ob → ob.lands = some (σ1, s1) →
@@ -321,9 +346,9 @@ inductive Eval (F : List Func) : Nat → List Nat → List Instr → List Nat �
   /-- The callee ends at the end of its body or by a branch to its label (a `return`). -/
   | call {n1 n2 ls rest i f args base s ob r t o} :
       F[i]? = some f → args.length = f.ty.params.length →
-      Eval F n1 [f.ty.results.length] f.body [] { loc := frame args, glob := s.glob } ob →
+      Eval F n1 [f.ty.results.length] f.body [] { s with loc := frame args } ob →
       ob.lands = some (r, t) →
-      Eval F n2 ls rest (r ++ base) { loc := s.loc, glob := t.glob } o →
+      Eval F n2 ls rest (r ++ base) { t with loc := s.loc } o →
       Eval F (n1 + n2 + 1) ls (.call i :: rest) (args ++ base) s o
 
 end WasmIfc

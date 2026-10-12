@@ -201,18 +201,49 @@ theorem StkRel.of_allH : ∀ {st : STy} {a b : List Nat}, AllGe Lab.H st →
   | _ :: _, [], _, _, ha, _ => by simp at ha
   | _ :: _, _ :: _, [], _, _, hb => by simp at hb
 
-/-! ### Two states that agree on the public variables -/
+/-! ### Two states that agree where public, and one state after a run under a secret pc -/
 
+/--
+`StRel C s t`: two runs' states agree on the public variables and on the memory cells that are
+public in both. A cell that is secret in one of them is not compared: a load that declares it
+public traps in that run.
+-/
 def StRel (C : Ctx) (s t : State) : Prop :=
-  (∀ i, C.locals i = Lab.L → s.loc i = t.loc i) ∧ (∀ i, C.globals i = Lab.L → s.glob i = t.glob i)
-
-theorem StRel.refl (C : Ctx) (s : State) : StRel C s s := ⟨fun _ _ => rfl, fun _ _ => rfl⟩
+  (∀ i, C.locals i = Lab.L → s.loc i = t.loc i) ∧
+    (∀ i, C.globals i = Lab.L → s.glob i = t.glob i) ∧
+    (∀ a, s.lab a = Lab.L → t.lab a = Lab.L → s.mem a = t.mem a)
 
 theorem StRel.symm {C : Ctx} {s t : State} (h : StRel C s t) : StRel C t s :=
-  ⟨fun i hi => (h.1 i hi).symm, fun i hi => (h.2 i hi).symm⟩
+  ⟨fun i hi => (h.1 i hi).symm, fun i hi => (h.2.1 i hi).symm,
+    fun a ha hb => (h.2.2 a hb ha).symm⟩
 
-theorem StRel.trans {C : Ctx} {s t u : State} (h1 : StRel C s t) (h2 : StRel C t u) : StRel C s u :=
-  ⟨fun i hi => (h1.1 i hi).trans (h2.1 i hi), fun i hi => (h1.2 i hi).trans (h2.2 i hi)⟩
+/--
+`Conf C s t`: `t` is what a run under a secret pc may make of `s`. The public variables are as
+they were. A cell that is public in `t` was public in `s` and has its value; a cell may have
+become secret. (SecWasm's Definition 6, with the convention (C5) of the paper's appendix.)
+-/
+def Conf (C : Ctx) (s t : State) : Prop :=
+  (∀ i, C.locals i = Lab.L → s.loc i = t.loc i) ∧
+    (∀ i, C.globals i = Lab.L → s.glob i = t.glob i) ∧
+    (∀ a, t.lab a = Lab.L → s.lab a = Lab.L ∧ s.mem a = t.mem a)
+
+theorem Conf.refl (C : Ctx) (s : State) : Conf C s s :=
+  ⟨fun _ _ => rfl, fun _ _ => rfl, fun _ h => ⟨h, rfl⟩⟩
+
+theorem Conf.trans {C : Ctx} {s t u : State} (h1 : Conf C s t) (h2 : Conf C t u) : Conf C s u :=
+  ⟨fun i hi => (h1.1 i hi).trans (h2.1 i hi), fun i hi => (h1.2.1 i hi).trans (h2.2.1 i hi),
+    fun a ha => ⟨(h1.2.2 a (h2.2.2 a ha).1).1, ((h1.2.2 a (h2.2.2 a ha).1).2).trans (h2.2.2 a ha).2⟩⟩
+
+/-- The first run goes on alone under a secret pc: the two still agree. -/
+theorem StRel.conf_left {C : Ctx} {s s' t : State} (h : StRel C s t) (hc : Conf C s s') :
+    StRel C s' t :=
+  ⟨fun i hi => (hc.1 i hi).symm.trans (h.1 i hi), fun i hi => (hc.2.1 i hi).symm.trans (h.2.1 i hi),
+    fun a ha hb => (hc.2.2 a ha).2.symm.trans (h.2.2 a (hc.2.2 a ha).1 hb)⟩
+
+/-- The second run goes on alone under a secret pc: the two still agree. -/
+theorem StRel.conf_right {C : Ctx} {s t t' : State} (h : StRel C s t) (hc : Conf C t t') :
+    StRel C s t' :=
+  (h.symm.conf_left hc).symm
 
 theorem StRel.setLoc {C : Ctx} {s t : State} {i v0 v1 : Nat} (hv : C.locals i = Lab.L → v0 = v1)
     (h : StRel C s t) : StRel C (s.setLoc i v0) (t.setLoc i v1) := by
@@ -223,25 +254,56 @@ theorem StRel.setLoc {C : Ctx} {s t : State} {i v0 v1 : Nat} (hv : C.locals i = 
 
 theorem StRel.setGlob {C : Ctx} {s t : State} {i v0 v1 : Nat} (hv : C.globals i = Lab.L → v0 = v1)
     (h : StRel C s t) : StRel C (s.setGlob i v0) (t.setGlob i v1) := by
-  refine ⟨h.1, fun j hj => ?_⟩
+  refine ⟨h.1, fun j hj => ?_, h.2.2⟩
   by_cases hji : j = i
   · subst hji; simp [State.setGlob, hv hj]
-  · simp [State.setGlob, hji, h.2 j hj]
+  · simp [State.setGlob, hji, h.2.1 j hj]
+
+/--
+Two stores at the same level. At a public level the addresses and the values agree. At a
+secret level they need not, and each run's cell becomes secret.
+-/
+theorem StRel.setMem {C : Ctx} {s t : State} {a0 a1 v0 v1 : Nat} {lm : Lab}
+    (hv : lm = Lab.L → a0 = a1 ∧ v0 = v1) (h : StRel C s t) :
+    StRel C (s.setMem a0 v0 lm) (t.setMem a1 v1 lm) := by
+  refine ⟨h.1, h.2.1, fun x hx hy => ?_⟩
+  cases lm with
+  | L =>
+    obtain ⟨rfl, rfl⟩ := hv rfl
+    by_cases hxa : x = a0
+    · simp [State.setMem, hxa]
+    · simp only [State.setMem, hxa, ite_false] at hx hy ⊢
+      exact h.2.2 x hx hy
+  | H =>
+    by_cases hx0 : x = a0
+    · simp [State.setMem, hx0] at hx
+    · by_cases hx1 : x = a1
+      · simp [State.setMem, hx1] at hy
+      · simp only [State.setMem, hx0, hx1, ite_false] at hx hy ⊢
+        exact h.2.2 x hx hy
 
 /-- A write to a secret local variable leaves the state as the attacker sees it. -/
-theorem StRel.setLoc_high {C : Ctx} (s : State) {i : Nat} (v : Nat) (hi : C.locals i = Lab.H) :
-    StRel C s (s.setLoc i v) := by
-  refine ⟨fun j hj => ?_, fun _ _ => rfl⟩
+theorem Conf.setLoc_high {C : Ctx} (s : State) {i : Nat} (v : Nat) (hi : C.locals i = Lab.H) :
+    Conf C s (s.setLoc i v) := by
+  refine ⟨fun j hj => ?_, fun _ _ => rfl, fun _ h => ⟨h, rfl⟩⟩
   by_cases hji : j = i
   · subst hji; rw [hi] at hj; cases hj
   · simp [State.setLoc, hji]
 
-theorem StRel.setGlob_high {C : Ctx} (s : State) {i : Nat} (v : Nat) (hi : C.globals i = Lab.H) :
-    StRel C s (s.setGlob i v) := by
-  refine ⟨fun _ _ => rfl, fun j hj => ?_⟩
+theorem Conf.setGlob_high {C : Ctx} (s : State) {i : Nat} (v : Nat) (hi : C.globals i = Lab.H) :
+    Conf C s (s.setGlob i v) := by
+  refine ⟨fun _ _ => rfl, fun j hj => ?_, fun _ h => ⟨h, rfl⟩⟩
   by_cases hji : j = i
   · subst hji; rw [hi] at hj; cases hj
   · simp [State.setGlob, hji]
+
+/-- A store at a secret level makes its cell secret and touches no other. -/
+theorem Conf.setMem_high (C : Ctx) (s : State) (a v : Nat) : Conf C s (s.setMem a v Lab.H) := by
+  refine ⟨fun _ _ => rfl, fun _ _ => rfl, fun x hx => ?_⟩
+  by_cases hxa : x = a
+  · simp [State.setMem, hxa] at hx
+  · simp only [State.setMem, hxa, ite_false] at hx ⊢
+    exact ⟨hx, trivial⟩
 
 /-! ### Calls -/
 
@@ -260,20 +322,19 @@ theorem frame_rel {ps : STy} {a b : List Nat} (h : StkRel ps a b) :
 /-- The states in which two calls of `f` start its body. -/
 theorem StRel.enter {C : Ctx} {f : Func} {a0 a1 : List Nat} {s0 s1 : State}
     (ha : StkRel f.ty.params a0 a1) (hs : StRel C s0 s1) :
-    StRel (C.enter f) { loc := frame a0, glob := s0.glob } { loc := frame a1, glob := s1.glob } :=
+    StRel (C.enter f) { s0 with loc := frame a0 } { s1 with loc := frame a1 } :=
   ⟨fun i hi => frame_rel ha f.extra i hi, hs.2⟩
 
-/-- The states in which two callers go on: their own locals, and the globals as the callees left them. -/
+/-- The states in which two callers go on: their own locals, and the rest as the callees left it. -/
 theorem StRel.leave {C : Ctx} {f : Func} {s0 s1 t0 t1 : State} (hs : StRel C s0 s1)
     (ht : StRel (C.enter f) t0 t1) :
-    StRel C { loc := s0.loc, glob := t0.glob } { loc := s1.loc, glob := t1.glob } :=
+    StRel C { t0 with loc := s0.loc } { t1 with loc := s1.loc } :=
   ⟨hs.1, ht.2⟩
 
-/-- A callee that left the public globals as they were leaves the caller's state so. -/
-theorem StRel.call_conf {C : Ctx} {f : Func} {args : List Nat} {s t : State}
-    (h : StRel (C.enter f) { loc := frame args, glob := s.glob } t) :
-    StRel C s { loc := s.loc, glob := t.glob } :=
-  ⟨fun _ _ => rfl, fun i hi => h.2 i hi⟩
+/-- A callee that ran under a secret pc leaves the caller's state as such a run may. -/
+theorem Conf.call {C : Ctx} {f : Func} {args : List Nat} {s t : State}
+    (h : Conf (C.enter f) { s with loc := frame args } t) : Conf C s { t with loc := s.loc } :=
+  ⟨fun _ _ => rfl, h.2⟩
 
 theorem WellTyped.enter {C : Ctx} {F : List Func} (h : WellTyped C F) (g : Func) :
     WellTyped (C.enter g) F := fun i f hf => h i f hf
@@ -335,6 +396,8 @@ theorem rise {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : Pcs} {st st' : S
   | localSet _ _ _ _ ih => exact ih
   | globalGet _ _ ih => exact ih
   | globalSet _ _ _ _ ih => exact ih
+  | load _ _ ih => exact ih
+  | store _ _ _ ih => exact ih
   | block _ _ _ _ ihb ihr => exact SFlows.trans ihb.tail ihr
   | loop _ _ _ _ _ _ ihb ihr => exact SFlows.trans ihb.tail ihr
   | ite _ _ _ _ _ ih1 ih2 ihr => exact SFlows.trans (sflows_joinEach ih1.tail ih2.tail).2.2 ihr

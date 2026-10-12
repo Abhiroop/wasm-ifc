@@ -103,7 +103,7 @@ they were, and its outcome is as `Info` describes.
 theorem confine : ∀ (n : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : Pcs}
     {st st' : STy} {σ : List Nat} {s : State} {o : Out}, WellTyped C F →
     Typed C Ls e P st P' st' → HiUpTo 0 P → σ.length = st.length →
-    Eval F n (Ls.map List.length) e σ s o → StRel C s o.state ∧ Info Ls P' st' o := by
+    Eval F n (Ls.map List.length) e σ s o → Conf C s o.state ∧ Info Ls P' st' o := by
   intro n
   induction n using Nat.strongRecOn with
   | ind n ih =>
@@ -111,7 +111,7 @@ theorem confine : ∀ (n : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P'
     cases he with
     | nil =>
       cases ht with
-      | nil => exact ⟨StRel.refl _ _, hlen⟩
+      | nil => exact ⟨Conf.refl _ _, hlen⟩
     | const v he' =>
       cases ht with
       | const _ ht' => exact ih _ (by omega) hF ht' hP (by simp [hlen]) he'
@@ -137,7 +137,7 @@ theorem confine : ∀ (n : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P'
       cases ht with
       | localSet _ hpc hl ht' =>
         obtain ⟨h1, h2⟩ := ih _ (by omega) hF ht' hP (by simpa using hlen) he'
-        exact ⟨(StRel.setLoc_high _ _ (hpc hP.head)).trans h1, h2⟩
+        exact ⟨(Conf.setLoc_high _ _ (hpc hP.head)).trans h1, h2⟩
     | globalGet i he' =>
       cases ht with
       | globalGet _ ht' => exact ih _ (by omega) hF ht' hP (by simp [hlen]) he'
@@ -145,7 +145,19 @@ theorem confine : ∀ (n : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P'
       cases ht with
       | globalSet _ hpc hl ht' =>
         obtain ⟨h1, h2⟩ := ih _ (by omega) hF ht' hP (by simpa using hlen) he'
-        exact ⟨(StRel.setGlob_high _ _ (hpc hP.head)).trans h1, h2⟩
+        exact ⟨(Conf.setGlob_high _ _ (hpc hP.head)).trans h1, h2⟩
+    | load lm hlab he' =>
+      cases ht with
+      | load _ ht' => exact ih _ (by omega) hF ht' hP (by simpa using hlen) he'
+    | store lm he' =>
+      cases ht with
+      | store _ hle ht' =>
+        have hpc := hP.head
+        subst hpc
+        have hlm := hle (by rw [Lab.H_join, Lab.H_join])
+        subst hlm
+        obtain ⟨h1, h2⟩ := ih _ (by omega) hF ht' (hiUpTo_zero_cons _) (by simpa using hlen) he'
+        exact ⟨(Conf.setMem_high _ _ _ _).trans h1, h2⟩
     | blockCont hvs hb hl hr =>
       cases ht with
       | block hfl hge hbody hrest =>
@@ -237,7 +249,7 @@ theorem confine : ∀ (n : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P'
         have hfl' := hfl.length_eq
         have hbase : _ = (_ ++ _ : STy).length := hlen
         simp only [List.length_append] at hbase
-        refine ⟨StRel.refl _ _, _, hLs, hge, ?_, hiUpTo_raise _ _ _ (Nat.le_refl _)⟩
+        refine ⟨Conf.refl _ _, _, hLs, hge, ?_, hiUpTo_raise _ _ _ (Nat.le_refl _)⟩
         simp only [List.length_take]; omega
     | brIfTaken hc hn =>
       cases ht with
@@ -249,7 +261,7 @@ theorem confine : ∀ (n : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P'
         have hbase : (_ :: _ : List Nat).length = (_ :: (_ ++ _) : STy).length := hlen
         simp only [List.length_append, List.length_cons] at hbase
         rw [Lab.H_join] at hge hrest
-        refine ⟨StRel.refl _ _, _, hLs, hge, ?_, ?_⟩
+        refine ⟨Conf.refl _ _, _, hLs, hge, ?_, ?_⟩
         · simp only [List.length_take]; omega
         · exact HiUpTo.sflows (rise hrest) (hiUpTo_raise _ _ _ (Nat.le_refl _))
     | brIfNot he' =>
@@ -269,7 +281,7 @@ theorem confine : ∀ (n : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P'
         have hbase : (_ :: _ : List Nat).length = (_ :: (_ ++ _) : STy).length := hlen
         simp only [List.length_append, List.length_cons] at hbase
         rw [Lab.H_join] at hge ⊢
-        refine ⟨StRel.refl _ _, _, hLs, hge, ?_, hiUpTo_raise _ _ _ hk⟩
+        refine ⟨Conf.refl _ _, _, hLs, hge, ?_, hiUpTo_raise _ _ _ hk⟩
         simp only [List.length_take]; omega
     | call hf hargs hb hl hr =>
       cases ht with
@@ -287,7 +299,7 @@ theorem confine : ∀ (n : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P'
         simp only [List.length_append] at hbase
         obtain ⟨h1, h2⟩ := ih _ (by omega) hF hrest hP
           (by simp only [List.length_append]; omega) hr
-        exact ⟨(StRel.call_conf (hst' ▸ hs1)).trans h1, h2⟩
+        exact ⟨(Conf.call (hst' ▸ hs1)).trans h1, h2⟩
 
 /--
 A loop whose body is typed under a secret pc, run from some iteration on. Either it reaches the
@@ -299,9 +311,9 @@ theorem loop_alone : ∀ (n : Nat) {C : Ctx} {Ls : List STy} {ps rs : STy} {body
     Typed C (ps :: Ls) body (Lab.H :: Pb) ps (p :: P1) rs → vs.length = ps.length →
     σ = vs ++ base →
     Eval F n (Ls.map List.length) (.loop ps rs body :: rest) σ s o →
-    (∃ m σb s2, m < n ∧ σb.length = rs.length ∧ StRel C s s2 ∧
+    (∃ m σb s2, m < n ∧ σb.length = rs.length ∧ Conf C s s2 ∧
         Eval F m (Ls.map List.length) rest (σb ++ base) s2 o) ∨
-      (StRel C s o.state ∧ o.isBr ∧ ∀ st, Info Ls P1 st o) := by
+      (Conf C s o.state ∧ o.isBr ∧ ∀ st, Info Ls P1 st o) := by
   intro n
   induction n using Nat.strongRecOn with
   | ind n ih =>
