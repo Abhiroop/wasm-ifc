@@ -33,11 +33,11 @@ import Test.Hspec
 import Text.Read (readMaybe)
 
 import Codec.Wasm (decodeModule)
-import Runtime.Instantiate (ForeignFunctions, InstantiationError (..), instantiateWith)
-import Runtime.Module (ForeignCall (..), Invocation (..), RunError (..), SomeModuleInst, Value (..), answerForeign, exportSignature, foreignCall, invokeExport, readGlobalExport, valueType)
+import Runtime.Instantiate (Embedder (..), InstantiationError (..), instantiateWith)
+import Runtime.Module (ForeignCall (..), Invocation (..), RunError (..), SomeModuleInst, Value (..), answerForeign, exportSignature, exportedGlobal, foreignCall, invokeExport, readGlobalExport, valueType)
 import Runtime.Trap (Trap (..))
 import Syntax.Immediates (Reference (..), isNullReference, nullReference, referenceTo)
-import Syntax.Types (FuncTypeOf (..), ValType (..))
+import Syntax.Types (AddrType (..), FuncTypeOf (..), Limits (..), MemType (..), Mutability (..), ValType (..))
 import Validation.Elaborate (elaborateModuleWith)
 import Validation.Policy (Policy (..), Restrictions (..), emptyPolicy)
 
@@ -205,16 +205,39 @@ runScript dir = fmap (reverse . snd) . foldM step (State Map.empty Map.empty Not
         (state', outcome) <- runCommand dir state cmd
         pure (state', (cmd.line, outcome) : acc)
 
-{- | The functions a module of the script may import: the printing functions of the suite's
-  @spectest@ module, and the exported functions of the modules registered so far.
+{- | What a module of the script may import. From the suite's @spectest@ module: its printing
+  functions, its four immutable globals, its memory and its tables. From the modules registered
+  so far: their exported functions, and their exported globals that cannot be written, by
+  value. A registered module's memories, tables and mutable globals are not provided: they would
+  have to be shared with it, and an import here is a copy ('Embedder').
 -}
-providedBy :: State -> ForeignFunctions
-providedBy state moduleName fieldName
-    | moduleName == "spectest" = (`FuncType` []) <$> lookup fieldName spectestPrints
-    | otherwise = case Map.lookup moduleName state.registered >>= (`Map.lookup` state.instances) of
-        Just (Loaded m) -> exportSignature m fieldName
-        _ -> Nothing
+providedBy :: State -> Embedder
+providedBy state =
+    Embedder
+        { functions = \moduleName fieldName ->
+            if moduleName == "spectest"
+                then (`FuncType` []) <$> lookup fieldName spectestPrints
+                else registered moduleName >>= (`exportSignature` fieldName)
+        , globals = \moduleName fieldName ->
+            if moduleName == "spectest"
+                then (,) Immutable <$> lookup fieldName spectestGlobals
+                else registered moduleName >>= (`exportedGlobal` fieldName) >>= copyable
+        , memories = \moduleName fieldName -> if (moduleName, fieldName) == ("spectest", "memory") then Just (MemType AddrI32 (Limits 1 (Just 2))) else Nothing
+        , tables = \moduleName fieldName -> case (moduleName, fieldName) of
+            ("spectest", "table") -> Just (FuncRef, AddrI32, Limits 10 (Just 20))
+            ("spectest", "table64") -> Just (FuncRef, AddrI64, Limits 10 (Just 20))
+            _ -> Nothing
+        }
   where
+    -- A global is given by value if it cannot be written and holds no function of its own
+    -- module, which a reference in another module cannot name.
+    copyable global = case global of
+        (Immutable, FuncRefValue reference) | not (isNullReference reference) -> Nothing
+        (Immutable, _) -> Just global
+        _ -> Nothing
+    registered moduleName = case Map.lookup moduleName state.registered >>= (`Map.lookup` state.instances) of
+        Just (Loaded m) -> Just m
+        _ -> Nothing
     spectestPrints =
         [ ("print", [])
         , ("print_i32", [I32])
@@ -223,6 +246,12 @@ providedBy state moduleName fieldName
         , ("print_f64", [F64])
         , ("print_i32_f32", [I32, F32])
         , ("print_f64_f64", [F64, F64])
+        ]
+    spectestGlobals =
+        [ ("global_i32", I32Value 666)
+        , ("global_i64", I64Value 666)
+        , ("global_f32", F32Value 666.6)
+        , ("global_f64", F64Value 666.6)
         ]
 
 {- | Call an exported function of an instance, answering the calls it makes to the functions
@@ -349,7 +378,7 @@ runCommand dir state cmd = case cmd.kind of
   extensions. (@gc-types@ enables no instruction: it lets @wasm-tools@ accept @externref@.)
 -}
 supportedFeatures :: String
-supportedFeatures = "-all,mutable-global,saturating-float-to-int,sign-extension,multi-value,bulk-memory,reference-types,multi-memory,memory64,tail-call,floats,gc-types"
+supportedFeatures = "-all,mutable-global,saturating-float-to-int,sign-extension,multi-value,bulk-memory,reference-types,multi-memory,memory64,tail-call,extended-const,floats,gc-types"
 
 {- | The features of WebAssembly 3.0 beyond 'supportedFeatures', each with the flags that
   enable it in @wasm-tools@ together with the features it builds on.
@@ -400,7 +429,7 @@ neededFeatures path = do
 {- | Decode, validate and instantiate a module. With @WASM_IFC_SECWASM_RESTRICTIONS@ set in the
   environment, validation applies SecWasm's restrictions ("Validation.Policy").
 -}
-loadModule :: ForeignFunctions -> FilePath -> IO (Either Rejection SomeModuleInst)
+loadModule :: Embedder -> FilePath -> IO (Either Rejection SomeModuleInst)
 loadModule provided path = do
     bytes <- BL.readFile path
     restricted <- lookupEnv "WASM_IFC_SECWASM_RESTRICTIONS"

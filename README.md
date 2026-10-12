@@ -99,13 +99,14 @@ cabal test          # unit tests, the spec testsuite (needs wasm-tools), the was
 
 ### Status
 
-WebAssembly 2.0 without vector instructions and with imports of functions only, and three
-features of 3.0, several memories per module, 64-bit memories and tables, and tail calls: the numeric, comparison and conversion
+WebAssembly 2.0 without vector instructions and without state shared between modules, and four
+features of 3.0: several memories per module, 64-bit memories and tables, tail calls and
+extended constant expressions. That is the numeric, comparison and conversion
 instructions, memory including bulk memory, structured control, calls, reference types
 (`funcref`, `externref`), several tables with the table instructions and every kind of element
-segment, `call_indirect`, globals, typed `select`, whole-module validation and the start
+segment, `call_indirect`, globals, typed `select`, imports, whole-module validation and the start
 function. The official spec testsuite, at the
-WebAssembly 3.0 release, passes for this subset (36,401 assertions over 257 scripts, none
+WebAssembly 3.0 release, passes for this subset (36,726 assertions over 257 scripts, none
 failing; the rest need features listed below, and `scripts/spec-report.py` counts them by
 feature), and so does
 every program in the official wasi-testsuite (72 of 72), over the complete WASI Preview 1
@@ -124,11 +125,13 @@ its rule depends on, and the machine's step for it type-checks only with evidenc
 checked memory read, or the checked table lookup, hands out (`Runtime.Obligation`;
 `test/obligations-must-not-compile.sh` checks that four wrong steps are rejected).
 
-A module may import functions of its embedder (`instantiateWith`): a call to one suspends the
-machine, and the embedder answers with the results, which is how the spec runner links the
-modules of a script. Not yet: a noninterference proof; imports of tables, memories and
-globals, so no state is shared between modules; vector instructions; and the rest of what WebAssembly 3.0 adds ( extended constant expressions, exceptions, typed function references,
-garbage collection).
+A module imports from its embedder (`instantiateWith`). A call to an imported function suspends
+the machine, and the embedder answers with the results, which is how the spec runner links the
+modules of a script. An imported global, memory or table is given by value: the module gets the
+global's value, or a new memory or table of the type provided, and owns it from then on. Not
+yet: a noninterference proof; state shared between modules (a memory, table or mutable global
+that two instances both see); vector instructions; and the rest of what WebAssembly 3.0 adds
+(exceptions, typed function references, garbage collection).
 The backlog is `TODO.md`; what the paper can cite is in `HANDOFF.md`.
 
 ### Toolchain

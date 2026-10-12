@@ -527,3 +527,45 @@ implemented since e87e76a.
   function whose type has a typed function reference, which is not supported, so they are
   skipped whole. Five unit examples cover the rule and the constant depth (`test/Spec.hs`,
   "tail calls").
+
+## Imported state and constant expressions (item 13, 2026-10-12)
+
+- **Imports of globals, memories and tables, by value.** An embedder
+  (`Runtime.Instantiate.Embedder`) provides, by the two names of an import: a global's value
+  and whether it may be written, or the type of a memory or a table. The module gets the value,
+  or a new empty memory or table of that type, and owns it: nothing it writes reaches the
+  embedder. The provided type must match the import's as the spec says (the global's type and
+  mutability; the limits of a memory or table within the declared ones). For an immutable
+  global this is the spec's meaning exactly. For the rest it is the spec's meaning as long as
+  nobody else sees the same object, which is why **state shared between two modules is still
+  not supported**: the spec runner provides the suite's `spectest` module and a registered
+  module's immutable globals, and skips 301 assertions that need a registered module's memory,
+  table or mutable global.
+- **Constant expressions.** The initial value of a global and the offset of a data or element
+  segment may read an imported immutable global and add, subtract and multiply integers
+  (WebAssembly 3.0's extended constant expressions); an element may be the value of an
+  imported global. They are kept as expressions (`Syntax.Globals.ConstExpr`) and evaluated when
+  the module is instantiated, since only then is the imported value known.
+- **Information flow.** An imported global has the level the policy declares for its index
+  (`global N : H`), like any global; the embedder is trusted to give a value of that level, as
+  it is for the results of a function it provides. New static checks, at validation: what a
+  global's initialiser reads must flow into the global's level; the offset of a data or element
+  segment, and an element, must read nothing secret (where the bytes of a segment land is
+  public). An imported memory starts public, an imported table has its declared level. Five
+  unit examples (`test/Spec.hs`, "state an embedder provides").
+- **Spec suite:** 36,726 passed, 0 failed, 28,476 skipped (36,401 and 28,801 before); 98
+  scripts run with nothing skipped.
+
+## Where coverage stands (2026-10-12, for the paper's claim)
+
+Supported, with the 3.0 suite passing on all of it: **WebAssembly 2.0 except vector
+instructions**, and of what 3.0 adds, **several memories, 64-bit memories and tables, tail
+calls and extended constant expressions**. With one restriction that cuts across versions:
+**a module does not share a memory, a table or a mutable global with another module**; what it
+imports of these it gets by value.
+
+Not supported: vector instructions (2.0); exceptions, typed function references and garbage
+collection (3.0).
+
+Every feature that clang 23 (wasi-sdk 34) and rustc 1.99 enable by default for
+`wasm32-wasip1` is supported. Counts by feature are in `TODO.md`.

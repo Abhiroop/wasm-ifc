@@ -25,7 +25,6 @@ module Runtime.Stack (
     LocalSpaceInst,
     noLocals,
     GlobalSpaceInst (..),
-    initialGlobals,
     MemSpaceInst (..),
     TableSpaceInst (..),
     TableInsts (..),
@@ -69,7 +68,6 @@ import Data.List.Singletons (type (++))
 import Data.Singletons.Base.TH (SList (SCons, SNil), Sing)
 import Runtime.MemInst (MemInst)
 import Runtime.TableInst (FunctionDirectory, TableInst, functionDirectory)
-import Syntax.Globals (Global (..), GlobalSpace (..))
 import Syntax.Immediates (HostType, Reference (..))
 import Syntax.Types
 import Syntax.TypesIFC
@@ -212,11 +210,6 @@ unpackValue SExternRef w = Reference w
 lengthOf :: Sing (ls :: [LabelledValType]) -> Int
 lengthOf SNil = 0
 lengthOf (SCons _ rest) = 1 + lengthOf rest
-
--- | The globals as a module starts: each at its validated initial value.
-initialGlobals :: GlobalSpace gs -> GlobalSpaceInst gs
-initialGlobals NoGlobals = GNil
-initialGlobals (Declared (Global value) rest) = GCons value (initialGlobals rest)
 
 getGlobal :: Elem ('GlobalType mut (t ':~ l)) gs -> GlobalSpaceInst gs -> HostType t
 getGlobal Here (GCons x _) = x

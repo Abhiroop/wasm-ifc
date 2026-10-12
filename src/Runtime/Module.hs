@@ -19,6 +19,8 @@ module Runtime.Module (
     foreignCall,
     answerForeign,
     exportSignature,
+    exportedGlobal,
+    fromValue,
     exportedResultLevels,
     exportedGlobalLevel,
     readMemoryLevels,
@@ -213,6 +215,13 @@ readTable (SomeModuleInst _ inst _) = entriesAt inst.tables.instances
     entriesAt TNil _ = Nothing
     entriesAt (TCons table _) 0 = readEntries 0 (tableSize table) table
     entriesAt (TCons _ rest) n = entriesAt rest (n - 1)
+
+-- | Whether an exported global may be written, and its current value.
+exportedGlobal :: SomeModuleInst -> Text -> Maybe (Mutability, Value)
+exportedGlobal (SomeModuleInst shapeS inst exports) name = do
+    GlobalIdx idx <- exportedGlobalIndex name exports
+    SomeGlobalRef smut (st :%~ _) globalIx <- lookupGlobalRef (globalTypesSing shapeS) idx
+    pure (fromSing smut, toValue st (getGlobal globalIx inst.globals))
 
 -- | The current value of an exported global (the spec's @get@ action).
 readGlobalExport :: SomeModuleInst -> Text -> Either RunError Value

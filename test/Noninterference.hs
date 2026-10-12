@@ -35,7 +35,7 @@ import Syntax.Globals (RawGlobal (..))
 import Syntax.Immediates
 import Syntax.Indices
 import Syntax.Instructions (RawInstr (..))
-import Syntax.Module (ElemMode (..), Export (..), ExportDesc (..), RawElementSegment (..), RawMemory (..), RawModule (..), RawTable (..))
+import Syntax.Module (ElemMode (..), Export (..), ExportDesc (..), RawElementSegment (..), RawMemory (..), RawModule (..), RawTable (..), importsNoState)
 import Syntax.Types
 import Syntax.TypesIFC (SecLevel (..))
 import Validation.Elaborate (elaborateModuleWith)
@@ -227,6 +227,7 @@ compileModule generated =
         , exports = [Export "f" (ExportFunc (FunctionIdx 1)), Export "public" (ExportGlobal (GlobalIdx 0)), Export "preserved" (ExportGlobal (GlobalIdx 2))]
         , start = Nothing
         , customSections = []
+        , stateImports = importsNoState
         }
   where
     helperType = FuncType [I32] [I32]

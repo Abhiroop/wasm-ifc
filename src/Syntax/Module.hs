@@ -10,6 +10,8 @@
 module Syntax.Module (
     -- * As decoded
     RawModule (..),
+    StateImports (..),
+    importsNoState,
     referencedFunctions,
     RawImport (..),
     ImportDesc (..),
@@ -29,8 +31,6 @@ module Syntax.Module (
     ElementSpace (..),
     ElementSegment (..),
     ElementMode (..),
-    ConstRef (..),
-    constReference,
     SomeModule (..),
 ) where
 
@@ -38,16 +38,14 @@ import Data.ByteString (ByteString)
 import Data.ByteString.Lazy qualified as BL
 import Data.Singletons (Sing)
 import Data.Text (Text)
-import Data.Word (Word32, Word64)
+import Data.Word (Word32)
 
 import Syntax.Functions (FunctionSpace, RawFunction)
-import Syntax.Globals (GlobalSpace, RawGlobal (..))
-import Syntax.Immediates (Reference, nullReference)
+import Syntax.Globals (ConstExpr, GlobalSpace, RawGlobal (..))
 import Syntax.Indices (FunctionIdx, GlobalIdx, MemoryIdx, TableIdx)
 import Syntax.Instructions (RawExpr, RawInstr (RefFunc))
-import Syntax.Types (AddrType, FuncType, Limits, MemType, ValType (..))
+import Syntax.Types (AddrType, AddrVal, FuncType, IsRef, Limits, MemType, ValType (..))
 import Syntax.TypesIFC (LabelledFuncType (..), SecLevel (..))
-import Validation.Ref (FunctionRef, functionReference)
 import Validation.Shape (Elem, ElemShape (..), MemShape (..), ModuleElems, ModuleFuncs, ModuleGlobals, ModuleMems, ModuleShape, ModuleTables, TableShape (..))
 
 data RawModule = RawModule
@@ -58,6 +56,7 @@ data RawModule = RawModule
     , functions :: [RawFunction]
     -- ^ function + code sections, merged by the decoder
     , globals :: [RawGlobal]
+    -- ^ the global index space: the imported globals ('stateImports'), then the defined ones
     , memories :: [RawMemory]
     , tables :: [RawTable]
     , elementSegments :: [RawElementSegment]
@@ -68,7 +67,25 @@ data RawModule = RawModule
     {- ^ every custom section, by name, in order; the @ifc@ ones carry the module's security
     policy ("Validation.Policy") and the rest are ignored
     -}
+    , stateImports :: StateImports
+    -- ^ which globals, memories and tables are imported
     }
+
+{- | The imports that are not functions. An imported global, memory or table comes first in its
+  index space, before those the module defines, and is listed there with its type like them
+  (an imported global with an empty initialiser); here are the module and field names each is
+  imported under, in order. So the first @length globals@ entries of a module's globals are the
+  imported ones, and likewise for the other two.
+-}
+data StateImports = StateImports
+    { globals :: [(Text, Text)]
+    , memories :: [(Text, Text)]
+    , tables :: [(Text, Text)]
+    }
+    deriving stock (Eq, Show)
+
+importsNoState :: StateImports
+importsNoState = StateImports [] [] []
 
 -- | An import: where it comes from and what it must be.
 data RawImport = RawImport
@@ -158,6 +175,10 @@ data Module (shape :: ModuleShape) = Module
     , secretRegions :: [(Word32, Word32)]
     -- ^ the half-open address ranges of memory 0 whose bytes the policy declares secret
     , elementSegments :: ElementSpace shape (ModuleElems shape)
+    , memoryImports :: [(Text, Text)]
+    -- ^ the names the first memories of the shape are imported under
+    , tableImports :: [(Text, Text)]
+    -- ^ likewise for its first tables
     , exports :: [Export]
     , start :: Maybe (Elem ('LabelledFuncType 'Low '[] '[]) (ModuleFuncs shape))
     -- ^ the start function, known to take and return nothing
@@ -171,7 +192,7 @@ data DataSegment (ms :: [MemShape]) = DataSegment
 
 -- | An active data segment's memory, and its constant offset there.
 data DataPlacement (ms :: [MemShape]) where
-    PlacedAt :: Elem ('MemShape at lo hi) ms -> Word64 -> DataPlacement ms
+    PlacedAt :: Sing at -> Elem ('MemShape at lo hi) ms -> ConstExpr (AddrVal at) -> DataPlacement ms
 
 {- | A module's element index space: one segment per element type in the shape, so that
   @table.init@ and @elem.drop@ find a segment of the type their witness names.
@@ -180,10 +201,11 @@ data ElementSpace (shape :: ModuleShape) (es :: [ElemShape]) where
     NoElements :: ElementSpace shape '[]
     Elements :: ElementSegment shape t -> ElementSpace shape es -> ElementSpace shape ('ElemShape t ': es)
 
--- | An element segment as validated: where it goes, and its references, each resolved.
+-- | An element segment as validated: where it goes, and its references, each a constant of its type.
 data ElementSegment (shape :: ModuleShape) (t :: ValType) = ElementSegment
     { mode :: ElementMode shape t
-    , items :: [ConstRef (ModuleFuncs shape) t]
+    , entryType :: IsRef t
+    , items :: [ConstExpr t]
     }
 
 {- | What becomes of an element segment at instantiation: it is written into a table of its
@@ -191,18 +213,9 @@ data ElementSegment (shape :: ModuleShape) (t :: ValType) = ElementSegment
   only use is to declare its functions for @ref.func@).
 -}
 data ElementMode (shape :: ModuleShape) (t :: ValType) where
-    WrittenTo :: Elem ('TableShape t lt at lo hi) (ModuleTables shape) -> Word64 -> ElementMode shape t
+    WrittenTo :: Sing at -> Elem ('TableShape t lt at lo hi) (ModuleTables shape) -> ConstExpr (AddrVal at) -> ElementMode shape t
     KeptForInit :: ElementMode shape t
     DeclaredOnly :: ElementMode shape t
-
--- | A constant of a reference type: null, or a function of the module.
-data ConstRef (fts :: [LabelledFuncType]) (t :: ValType) where
-    NullConst :: ConstRef fts t
-    FunctionConst :: FunctionRef fts -> ConstRef fts 'FuncRef
-
-constReference :: ConstRef fts t -> Reference
-constReference NullConst = nullReference
-constReference (FunctionConst function) = functionReference function
 
 -- | A validated module with its shape hidden, together with the shape's singleton.
 data SomeModule where

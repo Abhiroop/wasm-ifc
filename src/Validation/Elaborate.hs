@@ -43,7 +43,7 @@ import Data.Singletons.Base.TH (SList (SCons, SNil), Sing, fromSing)
 import Data.Singletons.Decide (decideEquality)
 import Runtime.MemInst (maxMemoryPages)
 import Syntax.Functions (Function (..), FunctionSpace (..), RawFunction (RawFunction))
-import Syntax.Globals (Global (..), GlobalSpace (..), RawGlobal (RawGlobal))
+import Syntax.Globals (ConstExpr (..), ConstOp (..), Global (..), GlobalSpace (..), RawGlobal (..))
 import Syntax.Immediates
 import Syntax.Indices (DataIdx (..), ElemIdx (..), FunctionIdx (..), GlobalIdx (..), LabelIdx (..), LocalIdx (..), MemoryIdx (..), TableIdx (..), TypeIdx (..))
 import Syntax.Instructions (
@@ -63,7 +63,7 @@ import Syntax.Types
 import Syntax.TypesIFC
 import Validation.LocalWebs (mergeModuleWebs, splitModuleLocals)
 import Validation.Policy (Assembled (..), LocalSplitting (..), Policy, PolicyError, Restrictions (..), assemble, emptyPolicy, modulePolicy)
-import Validation.Ref (MemoryRef (..), TableRef (..), resolveFunction, resolveLocal)
+import Validation.Ref (MemoryRef (..), TableRef (..), functionReference, resolveFunction, resolveLocal)
 import Validation.Reflect
 import Validation.Shape
 
@@ -1649,12 +1649,13 @@ elaborateUnder assembled choices =
         SomeModuleShape ctxS@(SModuleShape ftsS gsS msS _ _ esS) -> do
             mapM_ declared (concat [functionsReferencedIn body | RawFunction _ _ body <- m.functions])
             functions <- gathered (elaborateFuncs ctxS assembled.sectionTypes assembled.declassify assembled.typingRestrictions ftsS entries)
-            globals <- elaborateGlobals ftsS gsS (m.globals)
-            dataSegments <- traverse (elaborateData msS) (zip [0 ..] m.dataSegments)
-            elementSegments <- elaborateElements ctxS esS (zip [0 ..] m.elementSegments)
+            let constEnv = ConstEnv ftsS (zip assembled.globalTypes (map Just m.stateImports.globals ++ repeat Nothing))
+            globals <- elaborateGlobals constEnv gsS (m.globals)
+            dataSegments <- traverse (elaborateData constEnv msS) (zip [0 ..] m.dataSegments)
+            elementSegments <- elaborateElements constEnv ctxS esS (zip [0 ..] m.elementSegments)
             start <- traverse (resolveStart ftsS) (m.start)
             when (not (null assembled.secretRegions) && null m.memories) (Left (NoMemory "region"))
-            Right (SomeModule ctxS (Module {functions, globals, dataSegments, secretRegions = assembled.secretRegions, elementSegments, exports = m.exports, start}))
+            Right (SomeModule ctxS (Module {functions, globals, dataSegments, secretRegions = assembled.secretRegions, elementSegments, memoryImports = m.stateImports.memories, tableImports = m.stateImports.tables, exports = m.exports, start}))
   where
     m = assembled.annotated
     entries = zip3 [0 ..] assembled.loadDefaults (map Left m.imports ++ map (\(i, f) -> Right (f, Map.findWithDefault [] i choices.localLevels)) (zip [importCount ..] m.functions))
@@ -1791,34 +1792,79 @@ elaborateFunctionIn ctxS types loadDefault declassify restrictions index localLe
         SCons SLow _ -> ReturnsUnderPublicPc
         _ -> RestoresOnReturn (preservedOf (globalTypesSing ctxS))
 
-elaborateGlobals :: forall fts gs. Sing (fts :: [LabelledFuncType]) -> Sing gs -> [RawGlobal] -> Either ElabError (GlobalSpace gs)
-elaborateGlobals ftsS = go 0
-  where
-    go :: Word32 -> Sing gs' -> [RawGlobal] -> Either ElabError (GlobalSpace gs')
-    go _ SNil [] = Right NoGlobals
-    go index (SCons (SGlobalType _ (sn :%~ _)) gs) (RawGlobal _ initExpr : rest) = do
-        value <- evalConstInit ftsS (InvalidGlobalInitializer index) sn initExpr
-        rest' <- go (index + 1) gs rest
-        Right (Declared (Global value) rest')
-    go _ _ _ = Left (Malformed "global/type count mismatch")
-
-{- | A constant expression of the given type: exactly one constant instruction, a numeric
-  constant or, for a reference type, @ref.null@ or @ref.func@.
+{- | What a constant expression may name: the module's function types, and for each global its
+  labelled type and, if it is imported, the names it is imported under.
 -}
-evalConstInit :: Sing (fts :: [LabelledFuncType]) -> ElabError -> Sing (n :: ValType) -> [RawInstr] -> Either ElabError (HostType n)
-evalConstInit ftsS invalid sn expr = case (expr, decideRef sn) of
-    ([Const st literal], _) | Just Refl <- decideEquality st sn -> Right literal
-    (_, Just isRef) -> withReference isRef (constReference <$> constRef ftsS invalid sn expr)
-    _ -> Left invalid
+data ConstEnv (fts :: [LabelledFuncType]) = ConstEnv
+    { functionTypes :: Sing fts
+    , globals :: [(LabelledGlobalType, Maybe (Text, Text))]
+    }
 
--- | A constant expression of a reference type: null at that type, or a function that exists.
-constRef :: Sing (fts :: [LabelledFuncType]) -> ElabError -> Sing (t :: ValType) -> [RawInstr] -> Either ElabError (ConstRef fts t)
-constRef ftsS invalid st expr = case (expr, st) of
-    ([RefNull t], _) | t == valTypeOf st -> Right NullConst
-    ([RefFunc (FunctionIdx f)], SFuncRef) -> case lookupFuncRef ftsS f of
-        Just (SomeFuncRef _ _ _ ix) -> Right (FunctionConst (resolveFunction ix))
-        Nothing -> Left (IndexOutOfRange Functions f)
-    _ -> Left invalid
+{- | The globals, each at the type the shape gives it. An imported one is whatever its embedder
+  provides under its names. A defined one is initialised by a constant expression of its type,
+  which may read imported globals: what it reads must flow into the global's level.
+-}
+elaborateGlobals :: forall fts gs. ConstEnv fts -> Sing gs -> [RawGlobal] -> Either ElabError (GlobalSpace gs)
+elaborateGlobals env = go 0 (map snd env.globals)
+  where
+    go :: Word32 -> [Maybe (Text, Text)] -> Sing gs' -> [RawGlobal] -> Either ElabError (GlobalSpace gs')
+    go _ _ SNil [] = Right NoGlobals
+    go index (origin : origins) (SCons (SGlobalType smut (sn :%~ level)) gs) (RawGlobal _ initExpr : rest) = do
+        global <- case origin of
+            Just (moduleName, fieldName) -> Right (ProvidedGlobal moduleName fieldName smut sn)
+            Nothing -> do
+                (value, sourceLevel) <- constExpr env (InvalidGlobalInitializer index) sn initExpr
+                when (sourceLevel == High && fromSing level == Low) (Left (IllegalFlow "global" High Low))
+                Right (Global value)
+        Declared global <$> go (index + 1) origins gs rest
+    go _ _ _ _ = Left (Malformed "global/type count mismatch")
+
+-- | A constant expression in the making: its type, its value, and the level of what it sourceLevel.
+data SomeConst where
+    SomeConst :: Sing (t :: ValType) -> ConstExpr t -> SecLevel -> SomeConst
+
+{- | A constant expression of the given type, with the level of the imported globals it sourceLevel
+  (public if it sourceLevel none). It may be a constant, @ref.null@, @ref.func@ of a function that
+  exists, @global.get@ of an imported immutable global, and additions, subtractions and
+  multiplications of integers of these (WebAssembly 3.0's extended constant expressions). The
+  instructions are run on a stack of expressions, and must leave exactly one, of that type.
+-}
+constExpr :: forall fts t. ConstEnv fts -> ElabError -> Sing (t :: ValType) -> [RawInstr] -> Either ElabError (ConstExpr t, SecLevel)
+constExpr env invalid expected instrs = do
+    left <- foldM step [] instrs
+    case left of
+        [SomeConst st value level] | Just Refl <- decideEquality st expected -> Right (value, level)
+        _ -> Left invalid
+  where
+    step :: [SomeConst] -> RawInstr -> Either ElabError [SomeConst]
+    step stack instr = case (instr, stack) of
+        (Const st literal, _) -> Right (SomeConst st (ConstValue literal) Low : stack)
+        (RefNull t, _) -> withSomeSing t $ \st -> case decideRef st of
+            Just isRef -> Right (SomeConst st (withReference isRef (ConstValue nullReference)) Low : stack)
+            Nothing -> Left invalid
+        (RefFunc (FunctionIdx f), _) -> case lookupFuncRef env.functionTypes f of
+            Just (SomeFuncRef _ _ _ ix) -> Right (SomeConst SFuncRef (ConstValue (functionReference (resolveFunction ix))) Low : stack)
+            Nothing -> Left (IndexOutOfRange Functions f)
+        (GlobalGet (GlobalIdx g), _) -> case nth env.globals g of
+            Nothing -> Left (IndexOutOfRange Globals g)
+            Just (GlobalType Immutable (t :~ level), Just (moduleName, fieldName)) ->
+                withSomeSing t $ \st -> Right (SomeConst st (ConstImported moduleName fieldName st) level : stack)
+            Just _ -> Left invalid
+        (Add st, SomeConst sb b lb : SomeConst sa a la : below) -> binary ConstAdd st sa a la sb b lb below
+        (Sub st, SomeConst sb b lb : SomeConst sa a la : below) -> binary ConstSub st sa a la sb b lb below
+        (Mul st, SomeConst sb b lb : SomeConst sa a la : below) -> binary ConstMul st sa a la sb b lb below
+        _ -> Left invalid
+    binary :: ConstOp -> Sing (n :: ValType) -> Sing (a :: ValType) -> ConstExpr a -> SecLevel -> Sing (b :: ValType) -> ConstExpr b -> SecLevel -> [SomeConst] -> Either ElabError [SomeConst]
+    binary op st sa a la sb b lb below = case (decideInt st, decideEquality sa st, decideEquality sb st) of
+        (Just isInt, Just Refl, Just Refl) -> Right (SomeConst st (ConstBinary isInt op a b) (join la lb) : below)
+        _ -> Left invalid
+
+-- | A constant expression that places a segment: of the address type, and reading nothing secret.
+placementExpr :: ConstEnv fts -> Text -> ElabError -> Sing (at :: AddrType) -> [RawInstr] -> Either ElabError (ConstExpr (AddrVal at))
+placementExpr env name invalid at offsetExpr = do
+    (offset, sourceLevel) <- constExpr env invalid (addrValSing at) offsetExpr
+    when (sourceLevel == High) (Left (IllegalFlow name High Low))
+    Right offset
 
 -- | The functions a body takes references to, at any depth.
 functionsReferencedIn :: [RawInstr] -> [FunctionIdx]
@@ -1832,36 +1878,38 @@ functionsReferencedIn = concatMap referenced
         _ -> []
 
 -- | An active data segment needs a memory to land in and a constant offset of its address type.
-elaborateData :: Sing (ms :: [MemShape]) -> (Int, RawDataSegment) -> Either ElabError (DataSegment ms)
-elaborateData msS (index, RawDataSegment mode bytes) = case mode of
+elaborateData :: ConstEnv fts -> Sing (ms :: [MemShape]) -> (Int, RawDataSegment) -> Either ElabError (DataSegment ms)
+elaborateData env msS (index, RawDataSegment mode bytes) = case mode of
     Passive -> Right (DataSegment Nothing bytes)
     Active (MemoryIdx i) offsetExpr -> do
         SomeMemoryRef (MemoryRef at ix) <- note (if i == 0 then NoMemory "data" else IndexOutOfRange Memories i) (lookupMemoryRef msS i)
-        offset <- case at of
-            SAddrI32 -> fromIntegral <$> evalConstInit SNil (InvalidDataSegmentOffset index) SI32 offsetExpr
-            SAddrI64 -> evalConstInit SNil (InvalidDataSegmentOffset index) SI64 offsetExpr
-        Right (DataSegment (Just (PlacedAt ix offset)) bytes)
+        offset <- placementExpr env "data" (InvalidDataSegmentOffset index) at offsetExpr
+        Right (DataSegment (Just (PlacedAt at ix offset)) bytes)
 
 {- | The element segments, each at the type the shape gives it: its items are constants of
   that type (so a table only ever holds functions that exist), and an active one needs a table
   of that type to land in and a constant @i32@ offset.
 -}
-elaborateElements :: forall shape es. SModuleShape shape -> Sing (es :: [ElemShape]) -> [(Int, RawElementSegment)] -> Either ElabError (ElementSpace shape es)
-elaborateElements ctxS = go
+elaborateElements :: forall shape es. ConstEnv (ModuleFuncs shape) -> SModuleShape shape -> Sing (es :: [ElemShape]) -> [(Int, RawElementSegment)] -> Either ElabError (ElementSpace shape es)
+elaborateElements env ctxS = go
   where
     go :: Sing (es' :: [ElemShape]) -> [(Int, RawElementSegment)] -> Either ElabError (ElementSpace shape es')
     go SNil [] = Right NoElements
     go (SCons (SElemShape st) es) ((index, RawElementSegment mode _ items) : rest) = do
-        references <- traverse (constRef (funcTypesSing ctxS) (InvalidElementItem index) st) items
+        isRef <- note (Malformed "an element segment of a type that is not a reference type") (decideRef st)
+        references <- traverse (item index st) items
         placement <- case mode of
             ElemPassive -> Right KeptForInit
             ElemDeclarative -> Right DeclaredOnly
             ElemActive (TableIdx t) offsetExpr -> do
                 SomeTableRef tableType _ (TableRef at tix) <- note (IndexOutOfRange Tables t) (lookupTableRef (tableShapesSing ctxS) t)
                 Refl <- note (OperandMismatch "elem" (valTypeOf tableType) (valTypeOf st)) (decideEquality tableType st)
-                offset <- case at of
-                    SAddrI32 -> fromIntegral <$> evalConstInit (funcTypesSing ctxS) (InvalidElementSegmentOffset index) SI32 offsetExpr
-                    SAddrI64 -> evalConstInit (funcTypesSing ctxS) (InvalidElementSegmentOffset index) SI64 offsetExpr
-                Right (WrittenTo tix offset)
-        Elements (ElementSegment placement references) <$> go es rest
+                WrittenTo at tix <$> placementExpr env "elem" (InvalidElementSegmentOffset index) at offsetExpr
+        Elements (ElementSegment placement isRef references) <$> go es rest
     go _ _ = Left (Malformed "element segment/type count mismatch")
+    -- An item is public, whatever the table it may be written to: it sourceLevel nothing secret.
+    item :: Int -> Sing (t :: ValType) -> [RawInstr] -> Either ElabError (ConstExpr t)
+    item index st expr = do
+        (value, sourceLevel) <- constExpr env (InvalidElementItem index) st expr
+        when (sourceLevel == High) (Left (IllegalFlow "elem" High Low))
+        Right value

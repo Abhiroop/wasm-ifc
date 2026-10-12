@@ -12,7 +12,7 @@ are summarised here, not repeated.
 ## Where things stand (2026-10-08)
 
 - WebAssembly: the spec testsuite, at the WebAssembly 3.0 release (all 257 scripts), passes for
-  the supported subset (36,401 assertions, none failing, 28,801 skipped, counted by feature
+  the supported subset (36,726 assertions, none failing, 28,476 skipped, counted by feature
   below); the wasi-testsuite passes 72 of 72. Both also with SecWasm's restrictions on.
 - Information flow: SecWasm's static rules in the single instruction type, with the repairs of
   the paper's findings (`br_table` raises down to its deepest target); inference of stores,
@@ -55,33 +55,31 @@ are summarised here, not repeated.
 
 ## WebAssembly coverage
 
-The supported subset is WebAssembly 2.0 without vector instructions and with imports of
-functions only, plus several memories per module, 64-bit memories and tables, and tail calls.
-What the 3.0 suite skips
+The supported subset is WebAssembly 2.0 without vector instructions and without state shared
+between modules, plus several memories per module, 64-bit memories and tables, tail calls and
+extended constant expressions. What the 3.0 suite skips
 (`WASM_IFC_SPEC_REPORT=f cabal test wasm-ifc-spec; ./scripts/spec-report.py f`), by the features
 a skipped module uses according to `wasm-tools`, in assertions:
 
 | Skipped | Features the module uses beyond the subset |
 |---:|---|
-| 25,355 | vector instructions |
-| 547 | none: imports of tables, memories and globals, and what depends on state shared between modules |
-| 821 | garbage collection |
+| 25,356 | vector instructions |
+| 823 | garbage collection |
 | 512 | typed function references (88 of them in the scripts for tail calls) |
+| 301 | none: a memory, a table or a mutable global of another module of the script, and what depends on state shared with one |
 | 114 | exceptions (45 more with another feature) |
-| 79 | extended constant expressions |
 | 1,245 | none: malformed modules given as text, which the harness does not run |
 
 `return_call.wast` and `return_call_indirect.wast` have one function each with a typed function
 reference in its type, so their main modules are skipped whole.
 
-- [ ] **P2** Imports of globals, memories and tables; `global.get` of an imported global in
-  initialisers. A function is imported by suspending on the call (`ForeignFunc`), which shares
-  nothing; a table, a memory or a mutable global imported from another module is state two
-  instances share, which the store of one typed machine per module does not express. Imports
-  by value (the embedder gives the initial contents, the module owns them) would cover the
-  suite's `spectest` module and immutable globals: some part, not counted, of the 287
-  assertions on modules with such imports (the other 71 of the 358 depend on shared state or
-  on commands the runner does not perform).
+- [ ] **P2** State shared between modules. A function is imported by suspending on the call
+  (`ForeignFunc`), and a global, memory or table by value (`Runtime.Instantiate.Embedder`): the
+  module gets a copy and owns it. A memory, a table or a mutable global that two instances both
+  see is not expressed by the store of one typed machine per module; the spec runner does not
+  provide those of a registered module, and skips what depends on them. A funcref global that
+  holds a function of another module is not provided either: a reference names a function of
+  its own module.
 - [ ] **P3** A start function that calls an imported function fails to instantiate
   (`StartFunctionNeedsHost`): nobody answers calls during instantiation.
 - [ ] **P3** The spec runner keeps an instance as it was before a call that trapped, so what the
@@ -101,7 +99,6 @@ reference in its type, so their main modules are skipped whole.
   instruction (`IRelabelTop`) before what the caller returns to; a long chain of such calls
   between functions of different result levels grows that continuation. A function that calls
   itself in tail position, or one of the same result levels, does not.
-- [ ] **P3** Extended constant expressions.
 - [ ] **P3** Vector instructions; exceptions; typed function references; garbage collection.
 
 ## Performance

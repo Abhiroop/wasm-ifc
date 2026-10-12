@@ -472,7 +472,7 @@ getInstr hasDataCount types opcode = case opcode of
 -}
 data Sections = Sections
     { typeSection :: [FuncType]
-    , importSection :: [RawImport]
+    , importSection :: [Import]
     , functionSection :: [Word32]
     -- ^ function section: type index per function
     , codeSection :: [([ValType], [RawInstr])]
@@ -558,23 +558,28 @@ getData = do
   where
     payload = getULEB128 >>= getByteString . fromIntegral
 
--- | An import: module name, field name, and what it is. Only function imports are supported.
-getImport :: [FuncType] -> Get RawImport
+-- | An import as the binary lists it: its two names, and the type of what is imported.
+data Import
+    = FunctionImport RawImport
+    | TableImport Text Text RawTable
+    | MemoryImport Text Text RawMemory
+    | GlobalImport Text Text GlobalType
+
+getImport :: [FuncType] -> Get Import
 getImport types = do
     moduleName <- getName
     fieldName <- getName
     kind <- getWord8
-    desc <- case kind of
+    case kind of
         0x00 -> do
             typeIdx <- getULEB128
             case nth types (fromIntegral typeIdx) of
-                Just ft -> pure (ImportFunc ft)
+                Just ft -> pure (FunctionImport (RawImport moduleName fieldName (ImportFunc ft)))
                 Nothing -> fail ("import type index out of range: " ++ show typeIdx)
-        0x01 -> fail "unsupported: table import"
-        0x02 -> fail "unsupported: memory import"
-        0x03 -> fail "unsupported: global import"
+        0x01 -> TableImport moduleName fieldName <$> getTable
+        0x02 -> MemoryImport moduleName fieldName <$> getMemory
+        0x03 -> GlobalImport moduleName fieldName <$> getGlobalType
         _ -> fail ("unknown import kind 0x" ++ showHex kind "")
-    pure (RawImport moduleName fieldName desc)
 
 -- | A table type: the reference type of its entries, then its limits.
 getTable :: Get RawTable
@@ -664,18 +669,23 @@ assemble secs = do
     pure
         RawModule
             { types = secs.typeSection
-            , imports = secs.importSection
+            , imports = [imported | FunctionImport imported <- secs.importSection]
             , functions = funcs
-            , globals = secs.globalSection
-            , memories = secs.memorySection
-            , tables = secs.tableSection
+            , globals = [RawGlobal globalType [] | (_, _, globalType) <- importedGlobals] ++ secs.globalSection
+            , memories = [memory | (_, _, memory) <- importedMemories] ++ secs.memorySection
+            , tables = [table | (_, _, table) <- importedTables] ++ secs.tableSection
             , elementSegments = secs.elementSection
             , dataSegments = secs.dataSection
             , exports = secs.exportSection
             , start = secs.startSection
             , customSections = secs.customs
+            , stateImports = StateImports (map names importedGlobals) (map names importedMemories) (map names importedTables)
             }
   where
+    importedGlobals = [(moduleName, fieldName, globalType) | GlobalImport moduleName fieldName globalType <- secs.importSection]
+    importedMemories = [(moduleName, fieldName, memory) | MemoryImport moduleName fieldName memory <- secs.importSection]
+    importedTables = [(moduleName, fieldName, table) | TableImport moduleName fieldName table <- secs.importSection]
+    names (moduleName, fieldName, _) = (moduleName, fieldName)
     toFunction (typeIdx, (locals, body)) =
         case nth secs.typeSection (fromIntegral typeIdx) of
             Just sig -> Right (RawFunction sig locals body)

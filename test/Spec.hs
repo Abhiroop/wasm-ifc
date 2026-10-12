@@ -29,7 +29,7 @@ import Noninterference (Observation (..), compileModule, genModule, holdsValueAc
 import Runtime.Bytes (bytesOfWord32, bytesOfWord64, word32OfBytes, word64OfBytes)
 import Runtime.Convert (convertVal)
 import Runtime.Host (WasiFunc (..))
-import Runtime.Instantiate (InstantiationError (..), instantiate, instantiateWith)
+import Runtime.Instantiate (Embedder (Embedder), InstantiationError (..), instantiate, instantiateWith, providesFunctions, providesNothing)
 import Runtime.Interpreter (HostRequest (..), callDepthBound, resumeWith)
 import Runtime.Module (ForeignCall (..), Invocation (..), RunError (..), SomeHostRequest (..), SomeModuleInst, Value (..), answerForeign, continueWith, exportSignature, foreignCall, invokeExport, readGlobalExport, renderValue)
 import Runtime.Numeric (intDiv32)
@@ -41,7 +41,7 @@ import Syntax.Globals (RawGlobal (..))
 import Syntax.Immediates
 import Syntax.Indices
 import Syntax.Instructions
-import Syntax.Module (DataMode (..), ElemMode (..), Export (..), ExportDesc (..), ImportDesc (..), RawDataSegment (..), RawElementSegment (..), RawImport (..), RawMemory (..), RawModule (..), RawTable (..))
+import Syntax.Module (DataMode (..), ElemMode (..), Export (..), ExportDesc (..), ImportDesc (..), RawDataSegment (..), RawElementSegment (..), RawImport (..), RawMemory (..), RawModule (..), RawTable (..), StateImports (StateImports), importsNoState)
 import Syntax.Types
 import Syntax.TypesIFC (LabelledFuncType (..), LabelledValType (..), SecLevel (..))
 import Validation.Elaborate (ElabError (..), IndexSpace (..), Inferred (..), elaborateModule, elaborateModuleInferring, elaborateModuleWith)
@@ -491,7 +491,7 @@ spec = do
         let importing = wasiModule (RawImport "m" "double" (ImportFunc (FuncType [I32] [I32]))) [Const SI32 21, Call (FunctionIdx 0)] [I32]
             validated = either (error . show) id (elaborateModule importing)
             doubling moduleName name = if (moduleName, name) == ("m", "double") then Just (FuncType [I32] [I32]) else Nothing
-            calledOut = either (error . show) id (instantiateWith doubling validated) `invokeExport` "f"
+            calledOut = either (error . show) id (instantiateWith (providesFunctions doubling) validated) `invokeExport` "f"
         it "a call suspends the module with its arguments, and the answer resumes it" $
             case calledOut [] of
                 Right (CalledHost request) -> do
@@ -506,9 +506,46 @@ spec = do
                 _ -> expectationFailure "the module did not call out"
         it "an import links only to a function that is provided, at its type" $ do
             void (instantiate validated) `shouldBe` Left (UnsupportedImport "m" "double")
-            void (instantiateWith (\_ _ -> Just (FuncType [I64] [I32])) validated) `shouldBe` Left (ImportTypeMismatch "double")
+            void (instantiateWith (providesFunctions (\_ _ -> Just (FuncType [I64] [I32]))) validated) `shouldBe` Left (ImportTypeMismatch "double")
         it "an import is called with public arguments only" $
             elabRunWithPolicy "import m.double : H -> L" importing [] `shouldSatisfy` errorContaining "PolicyImportNotPublic"
+
+    describe "state an embedder provides" $ do
+        -- global 0 is the import env.base (an immutable i32); global 1 is defined from it; the function returns global 1
+        let fromBase initialiser =
+                (singleFunctionModule [] [] [I32] [] [GlobalGet (GlobalIdx 1)])
+                    { globals = [RawGlobal (GlobalType Immutable I32) [], RawGlobal (GlobalType Immutable I32) initialiser]
+                    , stateImports = StateImports [("env", "base")] [] []
+                    }
+            giving :: Integer -> Embedder
+            giving base = providingGlobals (\moduleName name -> if (moduleName, name) == ("env", "base") then Just (Immutable, I32Value (fromInteger base)) else Nothing)
+            providingGlobals given = Embedder nothing given nothing nothing
+            nothing _ _ = Nothing
+            runWith embedder policyText m = do
+                policy <- first show (parsePolicy policyText)
+                validated <- first show (elaborateModuleWith policy m)
+                inst <- first show (instantiateWith embedder validated)
+                invokeWithIntegers inst []
+        it "an imported global has the value given, and a constant expression may compute with it" $ do
+            runWith (giving 7) "" (fromBase [GlobalGet (GlobalIdx 0)]) `shouldBe` Right ["7"]
+            runWith (giving 7) "" (fromBase [GlobalGet (GlobalIdx 0), Const SI32 3, Mul SI32, Const SI32 1, Sub SI32]) `shouldBe` Right ["20"]
+        it "an import links only to a global that is provided, at its type and mutability" $ do
+            runWith providesNothing "" (fromBase [Const SI32 0]) `shouldSatisfy` errorContaining "UnsupportedImport \"env\" \"base\""
+            runWith (providingGlobals (\_ _ -> Just (Mutable, I32Value 7))) "" (fromBase [Const SI32 0]) `shouldSatisfy` errorContaining "ImportTypeMismatch"
+            runWith (providingGlobals (\_ _ -> Just (Immutable, I64Value 7))) "" (fromBase [Const SI32 0]) `shouldSatisfy` errorContaining "ImportTypeMismatch"
+        it "a secret imported global makes what is initialised from it secret" $ do
+            runWith (giving 7) "global 0 : H" (fromBase [GlobalGet (GlobalIdx 0)]) `shouldSatisfy` errorContaining "IllegalFlow \"global\" High Low"
+            runWith (giving 7) "global 0 : H\nglobal 1 : H\nexport f : -> H" (fromBase [GlobalGet (GlobalIdx 0)]) `shouldBe` Right ["7"]
+        it "a segment is not placed by a secret" $ do
+            let placed = (fromBase [Const SI32 0]) {memories = [onePageMemory], dataSegments = [RawDataSegment (Active (MemoryIdx 0) [GlobalGet (GlobalIdx 0)]) "hi"]}
+            runWith (giving 8) "" placed `shouldBe` Right ["0"]
+            runWith (giving 8) "global 0 : H" placed `shouldSatisfy` errorContaining "IllegalFlow \"data\" High Low"
+        it "an imported memory is a new one of the size provided, which must fit the import" $ do
+            let importing declared = (singleFunctionModule [RawMemory (MemType AddrI32 declared)] [] [I32] [] [MemorySize (MemoryIdx 0)]) {stateImports = StateImports [] [("env", "memory")] []}
+                twoPages = Embedder nothing nothing (\_ _ -> Just (MemType AddrI32 (Limits 2 (Just 3)))) nothing
+            runWith twoPages "" (importing (Limits 1 Nothing)) `shouldBe` Right ["2"]
+            runWith twoPages "" (importing (Limits 1 (Just 2))) `shouldSatisfy` errorContaining "ImportTypeMismatch"
+            runWith providesNothing "" (importing (Limits 1 Nothing)) `shouldSatisfy` errorContaining "UnsupportedImport"
 
     describe "WASI imports" $ do
         it "resolve to typed host functions; proc_exit ends the run with its code" $ do
@@ -974,6 +1011,7 @@ moduleOf memories funcs exported =
         , exports = [Export "f" (ExportFunc exported)]
         , start = Nothing
         , customSections = []
+        , stateImports = importsNoState
         }
 
 {- | Validate and instantiate a module and run its export @f@ on integer arguments.
@@ -1076,6 +1114,7 @@ startModule startBody =
         { globals = [RawGlobal (GlobalType Mutable I32) [Const SI32 0]]
         , start = Just (FunctionIdx 0)
         , customSections = []
+        , stateImports = importsNoState
         }
 
 withData :: [RawDataSegment] -> RawModule -> RawModule
