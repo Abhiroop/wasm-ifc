@@ -66,7 +66,7 @@ import Syntax.TypesIFC
 import Syntax.Vector (SomeVectorOp (..), VectorBinary (VShuffle), VectorOp (..), laneBytes, laneCount, loadedBytes)
 import Validation.LocalWebs (mergeModuleWebs, splitModuleLocals)
 import Validation.Policy (Assembled (..), LocalSplitting (..), Policy, PolicyError, Restrictions (..), assemble, emptyPolicy, modulePolicy)
-import Validation.Ref (MemoryRef (..), TableRef (..), functionReference, resolveFunction, resolveLocal)
+import Validation.Ref (MemoryRef (..), TableRef (..), resolveFunction, resolveLocal)
 import Validation.Reflect
 import Validation.Shape
 
@@ -1988,7 +1988,7 @@ constExpr env invalid expected instrs = do
             Just isRef -> Right (SomeConst st (withReference isRef (ConstValue nullReference)) Low : stack)
             Nothing -> Left invalid
         (RefFunc (FunctionIdx f), _) -> case lookupFuncRef env.functionTypes f of
-            Just (SomeFuncRef _ _ _ ix) -> Right (SomeConst SFuncRef (ConstValue (functionReference (resolveFunction ix))) Low : stack)
+            Just SomeFuncRef {} -> Right (SomeConst SFuncRef (ConstFunction f) Low : stack)
             Nothing -> Left (IndexOutOfRange Functions f)
         (GlobalGet (GlobalIdx g), _) -> case nth env.globals g of
             Nothing -> Left (IndexOutOfRange Globals g)

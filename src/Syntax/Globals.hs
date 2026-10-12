@@ -16,6 +16,7 @@ module Syntax.Globals (
 
 import Data.Singletons (Sing)
 import Data.Text (Text)
+import Data.Word (Word32)
 import Syntax.Immediates (HostType)
 import Syntax.Instructions (RawExpr)
 import Syntax.Types
@@ -37,6 +38,8 @@ data RawGlobal = RawGlobal
 -}
 data ConstExpr (t :: ValType) where
     ConstValue :: HostType t -> ConstExpr t
+    -- | @ref.func@: the function of the module with this index, whose reference names the instance too
+    ConstFunction :: Word32 -> ConstExpr 'FuncRef
     ConstImported :: Text -> Text -> Sing t -> ConstExpr t
     ConstBinary :: IsInt t -> ConstOp -> ConstExpr t -> ConstExpr t -> ConstExpr t
 

@@ -19,7 +19,7 @@ import Data.Bifunctor (first)
 import Data.ByteString.Lazy qualified as BL
 import Data.List (isInfixOf, isPrefixOf, sort, sortOn)
 import Data.Map.Strict qualified as Map
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, isJust)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Word (Word64)
@@ -33,12 +33,18 @@ import Test.Hspec
 import Text.Read (readMaybe)
 
 import Codec.Wasm (decodeModule)
-import Runtime.Instantiate (Embedder (..), InstantiationError (..), instantiateWith)
-import Runtime.Module (ForeignCall (..), Invocation (..), RunError (..), SomeModuleInst, Value (..), answerForeign, exportSignature, exportedGlobal, foreignCall, invokeExport, readGlobalExport, valueType)
+import Runtime.Instantiate (InstantiationError (..))
+import Runtime.Link (World, callExport, emptyWorld, instantiateIn, register, viewInstance)
+import Runtime.Module (RunError (..), Value (..), readGlobalExport, valueType)
 import Runtime.Trap (Trap (..))
 import Runtime.Vector (fromLanes, lanes)
+import Syntax.Functions (RawFunction (..))
+import Syntax.Globals (RawGlobal (..))
 import Syntax.Immediates (Reference (..), Vector128 (..), isNullReference, nullReference, referenceTo)
-import Syntax.Types (AddrType (..), FuncTypeOf (..), Limits (..), MemType (..), Mutability (..), ValType (..))
+import Syntax.Indices (FunctionIdx (..), GlobalIdx (..), MemoryIdx (..), TableIdx (..))
+import Syntax.Instructions (RawInstr (..))
+import Syntax.Module (Export (..), ExportDesc (..), RawMemory (..), RawModule (..), RawTable (..), importsNoState)
+import Syntax.Types (AddrType (..), FuncTypeOf (..), GlobalTypeOf (..), Limits (..), MemType (..), Mutability (..), SValType (..), ValType (..))
 import Validation.Elaborate (elaborateModuleWith)
 import Validation.Policy (Policy (..), Restrictions (..), emptyPolicy)
 
@@ -168,8 +174,8 @@ instance FromJSON Literal where
 
 data Outcome = Passed | Failed String | Skipped String
 
--- | A module the script refers to: usable, or unavailable for a stated reason.
-data Loaded = Loaded SomeModuleInst | Unavailable String
+-- | A module the script refers to: an instance of the script's world, or unavailable for a stated reason.
+data Loaded = Loaded Int | Unavailable String
 
 -- | Which stage rejected a module, and why.
 data Rejection
@@ -183,7 +189,8 @@ isUnsupported rejection = case rejection of
     AtDecode err -> any (`isInfixOf` err) ["unsupported", "not supported", "unknown valtype", "unknown limits flag"]
     AtValidation _ -> False
     AtInstantiation (UnsupportedImport _ _) -> True
-    -- (A start function that calls an import: instantiation has nobody to answer the call.)
+    AtInstantiation (ImportedTwice _ _) -> True
+    -- (A start function that calls into a host: the world of a script has none.)
     AtInstantiation StartFunctionNeedsHost -> True
     AtInstantiation _ -> False
 
@@ -192,112 +199,82 @@ describeRejection rejection = case rejection of
     AtDecode err -> "decode error: " ++ err
     AtValidation err -> "validation error: " ++ err
     AtInstantiation (UnsupportedImport modName field) -> "unsupported import: " ++ T.unpack modName ++ "." ++ T.unpack field
+    AtInstantiation (ImportedTwice modName field) -> "the same object imported twice: " ++ T.unpack modName ++ "." ++ T.unpack field
     AtInstantiation err -> "instantiation error: " ++ show err
 
 -- | The instance a @module@ command yields, unavailable if any stage rejected it.
-toLoaded :: Either Rejection SomeModuleInst -> Loaded
+toLoaded :: Either Rejection Int -> Loaded
 toLoaded = either (Unavailable . describeRejection) Loaded
 
-{- | The script's instances: the named ones, the anonymous latest one, and which of them the
-  last @module@ command made current. Invocations update the instance they ran on, since
-  module state persists across a script.
+{- | The script's instances: the world they are linked in, the named ones, the anonymous latest
+  one, and which of them the last @module@ command made current. A module a script registers
+  is importable under that name ('Runtime.Link.register'), and what it shares with those that
+  import it is shared.
 -}
 data State = State
-    { instances :: Map.Map Int Loaded
+    { world :: World
+    , instances :: Map.Map Int Loaded
     -- ^ every module the script has loaded, in order
     , named :: Map.Map Text Int
     , latest :: Maybe Int
     -- ^ the module the last @module@ command loaded, which an action without a name means
-    , registered :: Map.Map Text Int
-    -- ^ the modules registered for import, by the module name they are imported under
+    , registers :: Bool
+    -- ^ whether the script has registered a module for import
     }
 
 runScript :: FilePath -> [Command] -> IO [(Int, Outcome)]
-runScript dir = fmap (reverse . snd) . foldM step (State Map.empty Map.empty Nothing Map.empty, [])
+runScript dir = fmap (reverse . snd) . foldM step (State withSpectest Map.empty Map.empty Nothing False, [])
   where
     step (state, acc) cmd = do
         (state', outcome) <- runCommand dir state cmd
         pure (state', (cmd.line, outcome) : acc)
 
-{- | What a module of the script may import. From the suite's @spectest@ module: its printing
-  functions, its four immutable globals, its memory and its tables. From the modules registered
-  so far: their exported functions, and their exported globals that cannot be written, by
-  value. A registered module's memories, tables and mutable globals are not provided: they would
-  have to be shared with it, and an import here is a copy ('Embedder').
+{- | A world with the suite's @spectest@ module in it: its printing functions, which do
+  nothing, its four globals, its memory and its two tables. It is a module like any other, so
+  the modules of a script that import its memory or its table share them.
 -}
-providedBy :: State -> Embedder
-providedBy state =
-    Embedder
-        { functions = \moduleName fieldName ->
-            if moduleName == "spectest"
-                then (`FuncType` []) <$> lookup fieldName spectestPrints
-                else registered moduleName >>= (`exportSignature` fieldName)
-        , globals = \moduleName fieldName ->
-            if moduleName == "spectest"
-                then (,) Immutable <$> lookup fieldName spectestGlobals
-                else registered moduleName >>= (`exportedGlobal` fieldName) >>= copyable
-        , memories = \moduleName fieldName -> if (moduleName, fieldName) == ("spectest", "memory") then Just (MemType AddrI32 (Limits 1 (Just 2))) else Nothing
-        , tables = \moduleName fieldName -> case (moduleName, fieldName) of
-            ("spectest", "table") -> Just (FuncRef, AddrI32, Limits 10 (Just 20))
-            ("spectest", "table64") -> Just (FuncRef, AddrI64, Limits 10 (Just 20))
-            _ -> Nothing
-        }
+withSpectest :: World
+withSpectest = case elaborateModuleWith emptyPolicy spectest of
+    Left invalid -> error ("the spectest module is invalid: " ++ show invalid)
+    Right validated -> case instantiateIn emptyWorld validated of
+        (world, Right x, _) -> register "spectest" x world
+        (_, Left failure, _) -> error ("the spectest module does not instantiate: " ++ show failure)
   where
-    -- A global is given by value if it cannot be written and holds no function of its own
-    -- module, which a reference in another module cannot name.
-    copyable global = case global of
-        (Immutable, FuncRefValue reference) | not (isNullReference reference) -> Nothing
-        (Immutable, _) -> Just global
-        _ -> Nothing
-    registered moduleName = case Map.lookup moduleName state.registered >>= (`Map.lookup` state.instances) of
-        Just (Loaded m) -> Just m
-        _ -> Nothing
-    spectestPrints =
-        [ ("print", [])
-        , ("print_i32", [I32])
-        , ("print_i64", [I64])
-        , ("print_f32", [F32])
-        , ("print_f64", [F64])
-        , ("print_i32_f32", [I32, F32])
-        , ("print_f64_f64", [F64, F64])
+    prints = [("print", []), ("print_i32", [I32]), ("print_i64", [I64]), ("print_f32", [F32]), ("print_f64", [F64]), ("print_i32_f32", [I32, F32]), ("print_f64_f64", [F64, F64])]
+    globals =
+        [ ("global_i32", I32, [Const SI32 666])
+        , ("global_i64", I64, [Const SI64 666])
+        , ("global_f32", F32, [Const SF32 666.6])
+        , ("global_f64", F64, [Const SF64 666.6])
         ]
-    spectestGlobals =
-        [ ("global_i32", I32Value 666)
-        , ("global_i64", I64Value 666)
-        , ("global_f32", F32Value 666.6)
-        , ("global_f64", F64Value 666.6)
-        ]
-
-{- | Call an exported function of an instance, answering the calls it makes to the functions
-  'providedBy' gives it: a print returns nothing, and a function of a registered module is
-  called in that module's instance, which keeps what the call did to it. (A module cannot
-  import from one loaded later it, so the instance being called is never called back.)
--}
-callExport :: State -> Int -> Text -> [Value] -> (State, Either RunError [Value])
-callExport state i name args = case Map.lookup i state.instances of
-    Just (Loaded m) -> serve state (invokeExport m name args)
-    _ -> (state, Left (NoSuchExport name))
-  where
-    serve current result = case result of
-        Left err -> (current, Left err)
-        Right (Returned m' results) -> (current {instances = Map.insert i (Loaded m') current.instances}, Right results)
-        Right (CalledHost request) -> case foreignCall request of
-            Nothing -> (current, Left HostCallNotServed)
-            Just (ForeignCall moduleName fieldName arguments)
-                | moduleName == "spectest" -> serve current (answerForeign request [])
-                | Just j <- Map.lookup moduleName current.registered -> case callExport current j fieldName arguments of
-                    (later, Right results) -> serve later (answerForeign request results)
-                    (later, Left err) -> (later, Left err)
-                | otherwise -> (current, Left (ForeignCallUnanswered moduleName fieldName))
+    spectest =
+        RawModule
+            { types = [FuncType params [] | (_, params) <- prints]
+            , imports = []
+            , functions = [RawFunction (FuncType params []) [] [] | (_, params) <- prints]
+            , globals = [RawGlobal (GlobalType Immutable t) initialiser | (_, t, initialiser) <- globals]
+            , memories = [RawMemory (MemType AddrI32 (Limits 1 (Just 2)))]
+            , tables = [RawTable FuncRef AddrI32 (Limits 10 (Just 20)), RawTable FuncRef AddrI64 (Limits 10 (Just 20))]
+            , elementSegments = []
+            , dataSegments = []
+            , exports =
+                [Export name (ExportFunc (FunctionIdx i)) | (i, (name, _)) <- zip [0 ..] prints]
+                    ++ [Export name (ExportGlobal (GlobalIdx i)) | (i, (name, _, _)) <- zip [0 ..] globals]
+                    ++ [Export "memory" (ExportMem (MemoryIdx 0)), Export "table" (ExportTable (TableIdx 0)), Export "table64" (ExportTable (TableIdx 1))]
+            , start = Nothing
+            , customSections = []
+            , stateImports = importsNoState
+            , tags = []
+            }
 
 runCommand :: FilePath -> State -> Command -> IO (State, Outcome)
 runCommand dir state cmd = case cmd.kind of
     "module" -> do
         let path = dir </> fromMaybe "" cmd.filename
-        result <-
+        (world', result) <-
             if cmd.moduleType `elem` [Just "binary", Nothing]
-                then loadModule (providedBy state) path
-                else pure (Left (AtDecode "unsupported: text-format module"))
+                then loadModule state.world path
+                else pure (state.world, Left (AtDecode "unsupported: text-format module"))
         -- A valid module we reject is a gap, not a failure, if it needs a feature we lack.
         missing <- case result of
             Left _ | cmd.moduleType `elem` [Just "binary", Nothing] -> neededFeatures path
@@ -305,7 +282,7 @@ runCommand dir state cmd = case cmd.kind of
         -- A module we could not load may have imported a table, memory or global of a
         -- registered module and changed it, which linking between modules would have done
         -- here; what the script asserts about the modules loaded before it is then unknown.
-        let unlinked = not (Map.null state.registered) && either (const True) (const False) result
+        let unlinked = state.registers && either (const True) (const False) result && isJust missing
             stale loadedBefore = case loadedBefore of
                 Loaded _ | unlinked -> Unavailable "its state may depend on a module that could not be linked"
                 other -> other
@@ -321,7 +298,8 @@ runCommand dir state cmd = case cmd.kind of
             index = Map.size state.instances
             state' =
                 state
-                    { instances = Map.insert index loaded (Map.map stale state.instances)
+                    { world = world'
+                    , instances = Map.insert index loaded (Map.map stale state.instances)
                     , named = maybe state.named (\n -> Map.insert n index state.named) cmd.name
                     , latest = Just index
                     }
@@ -337,7 +315,8 @@ runCommand dir state cmd = case cmd.kind of
     "assert_unlinkable" -> rejectedBy unlinkable
     "assert_uninstantiable" -> rejectedBy uninstantiable
     "register" -> pure $ case (cmd.registerAs, instanceNamed cmd.name) of
-        (Just importedAs, Just i) -> (state {registered = Map.insert importedAs i state.registered}, Passed)
+        (Just importedAs, Just i) | Just (Loaded x) <- Map.lookup i state.instances -> (state {world = register importedAs x state.world, registers = True}, Passed)
+        (Just _, Just i) | Just (Unavailable reason) <- Map.lookup i state.instances -> (state {registers = True}, Skipped reason)
         _ -> (state, Skipped "command register")
     other -> pure (state, Skipped ("command " ++ T.unpack other))
   where
@@ -345,7 +324,7 @@ runCommand dir state cmd = case cmd.kind of
     withAction check = case cmd.action of
         Nothing -> (state, Failed "command without an action")
         Just act -> case instanceNamed act.actionModule >>= \i -> (,) i <$> Map.lookup i state.instances of
-            Just (i, Loaded _) -> check state i act
+            Just (_, Loaded x) -> check state x act
             Just (_, Unavailable reason) -> (state, Skipped reason)
             Nothing -> (state, Skipped "unknown module")
     instanceNamed which = maybe state.latest (`Map.lookup` state.named) which
@@ -371,16 +350,16 @@ runCommand dir state cmd = case cmd.kind of
         | cmd.moduleType /= Just "binary" = pure (state, Skipped "text-format module")
         | otherwise = do
             let path = dir </> fromMaybe "" cmd.filename
-            result <- loadModule (providedBy state) path
+            (world', result) <- loadModule state.world path
             -- A module that uses a feature we lack is a gap whatever we answer: the decoder
             -- turns it away before the stage the assertion names is reached.
             missing <- neededFeatures path
             -- Such a module may have written into a registered module's table or memory
-            -- before it failed, which persists; without linking we cannot say what.
+            -- before it failed, which persists; if we could not load it we cannot say what.
             let stale loadedBefore = case loadedBefore of
-                    Loaded _ | not (Map.null state.registered) -> Unavailable "its state may depend on a module that could not be linked"
+                    Loaded _ | state.registers, isJust missing -> Unavailable "its state may depend on a module that could not be linked"
                     other -> other
-            pure . (,) state {instances = Map.map stale state.instances} $ case result of
+            pure . (,) state {world = world', instances = Map.map stale state.instances} $ case result of
                 _ | Just features <- missing -> Skipped ("needs " ++ features)
                 Left rejection
                     | expected rejection -> Passed
@@ -445,27 +424,28 @@ neededFeatures path = do
 {- | Decode, validate and instantiate a module. With @WASM_IFC_SECWASM_RESTRICTIONS@ set in the
   environment, validation applies SecWasm's restrictions ("Validation.Policy").
 -}
-loadModule :: Embedder -> FilePath -> IO (Either Rejection SomeModuleInst)
-loadModule provided path = do
+loadModule :: World -> FilePath -> IO (World, Either Rejection Int)
+loadModule world path = do
     bytes <- BL.readFile path
     restricted <- lookupEnv "WASM_IFC_SECWASM_RESTRICTIONS"
     let policy = case restricted of
             Nothing -> emptyPolicy
             Just _ -> emptyPolicy {restrictions = SecWasmRestrictions}
-    pure $ do
-        raw <- first AtDecode (decodeModule bytes)
-        validated <- first (AtValidation . show) (elaborateModuleWith policy raw)
-        first AtInstantiation (instantiateWith provided validated)
+    pure $ case first AtDecode (decodeModule bytes) >>= first (AtValidation . show) . elaborateModuleWith policy of
+        Left rejection -> (world, Left rejection)
+        -- (An instance that failed while it was being initialised stays in the world, with
+        -- what it had written.)
+        Right validated -> case instantiateIn world validated of
+            (world', result, _) -> (world', first AtInstantiation result)
 
--- | Perform an action on an instance: @invoke@ an exported function, or @get@ an exported global.
+-- | Perform an action on an instance of the world: @invoke@ an exported function, or @get@ an exported global.
 invoke :: State -> Int -> Action -> (State, Either RunError [Value])
-invoke state i act = case Map.lookup i state.instances of
-    Just (Loaded m)
-        | act.actionKind == "get" -> (state, (: []) <$> readGlobalExport m act.field)
-        | otherwise -> case traverse literalValue act.args of
-            Nothing -> (state, Left (NoSuchExport "(non-numeric argument)"))
-            Just values -> callExport state i act.field values
-    _ -> (state, Left (NoSuchExport act.field))
+invoke state x act
+    | act.actionKind == "get" = (state, maybe (Left (NoSuchExport act.field)) (\m -> (: []) <$> readGlobalExport m act.field) (viewInstance state.world x))
+    | otherwise = case traverse literalValue act.args of
+        Nothing -> (state, Left (NoSuchExport "(non-numeric argument)"))
+        Just values -> case callExport state.world x act.field values of
+            (world', result) -> (state {world = world'}, result)
 
 -- | The actions the harness performs; anything else is skipped, not failed.
 knownAction :: Action -> Bool
@@ -477,6 +457,7 @@ assertReturn state i act expectations
     | not (knownAction act) = (state, Skipped ("action " ++ T.unpack act.actionKind))
     | any (\a -> a.litType `notElem` numericTypes) act.args = (state, Skipped "non-numeric argument")
     | otherwise = case invoke state i act of
+        (later, Left ExceptionAcrossModules) -> (later, Skipped "an exception across modules")
         (later, Left err) -> (later, Failed ("invoke " ++ T.unpack act.field ++ ": " ++ show err))
         (later, Right results)
             | length results /= length expectations -> (later, Failed ("expected " ++ show (length expectations) ++ " result(s), got " ++ show results))
@@ -493,6 +474,7 @@ assertTrap state i act expectedText
             -- (The suite's text may say more than ours, as in "uninitialized element 2".)
             | maybe False (trapText trap `T.isPrefixOf`) expectedText -> (later, Passed)
             | otherwise -> (later, Failed ("trapped with " ++ show trap ++ ", expected " ++ maybe "?" T.unpack expectedText))
+        (later, Left ExceptionAcrossModules) -> (later, Skipped "an exception across modules")
         (later, Left err) -> (later, Failed ("invoke " ++ T.unpack act.field ++ ": " ++ show err))
         (later, Right results) -> (later, Failed ("expected a trap (" ++ maybe "?" T.unpack expectedText ++ "), got " ++ show results))
 

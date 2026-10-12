@@ -101,6 +101,7 @@ library
       , Runtime.Interpreter
       , Runtime.Module
       , Runtime.Instantiate
+      , Runtime.Link
       , Runtime.Host
       , Runtime.Wasi
       , Codec.Wasm

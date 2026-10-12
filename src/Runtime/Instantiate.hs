@@ -13,9 +13,15 @@ module Runtime.Instantiate (
     Embedder (..),
     providesNothing,
     providesFunctions,
+    newMemory,
+    newTable,
     instantiateWith,
+    instantiateUntilStart,
+    StateImports (..),
+    stateImportsOf,
 ) where
 
+import Control.Applicative ((<|>))
 import Control.Monad (foldM, when)
 import Data.Bifunctor (first)
 import Data.ByteString qualified as BS
@@ -26,18 +32,18 @@ import Data.Text (Text)
 import Data.Word (Word32, Word64)
 
 import Runtime.Host (SomeWasiFunc (..), resolveWasiImport, wasiFuncType, wasiModuleName)
-import Runtime.Interpreter (FuncInst (..), FuncSpaceInst (..), ModuleInst (..), Outcome (..), getFunc, runFunction)
-import Runtime.MemInst (allocMemory, labelRange, writeBytes)
-import Runtime.Module (SomeModuleInst (..), Value, fromValue)
+import Runtime.Interpreter (ForeignTarget (..), FuncInst (..), FuncSpaceInst (..), ModuleInst (..), Outcome (..), getFunc, runFunction)
+import Runtime.MemInst (MemInst, allocMemory, labelRange, retypeMemory, writeBytes)
+import Runtime.Module (GivenMemory (..), GivenTable (..), SomeModuleInst (..), Value, fromValue)
 import Runtime.Stack (DataSpaceInst (..), ElemSpaceInst (..), GlobalSpaceInst (..), MemSpaceInst (..), TableInsts (..), TableSpaceInst (..), ValueStack (..), getMem, getTable, setMem, setTable)
 import Runtime.TableInst (allocTable, functionDirectory, writeEntries)
 import Runtime.Trap (Trap)
 import Syntax.Functions (FunctionSpace (..))
 import Syntax.Globals (ConstExpr (..), ConstOp (..), Global (..), GlobalSpace (..))
-import Syntax.Immediates (HostType, Reference, withReference)
-import Syntax.Module (DataPlacement (..), DataSegment (..), ElementMode (..), ElementSegment (..), ElementSpace (..), Module (..), SomeModule (..))
+import Syntax.Immediates (HostType, Reference, functionReferenceIn, withReference)
+import Syntax.Module (DataPlacement (..), DataSegment (..), ElementMode (..), ElementSegment (..), ElementSpace (..), Export, Module (..), SomeModule (..))
 import Syntax.Types
-import Syntax.TypesIFC (LabelledFuncType (..), SLabelledFuncType (..), SSecLevel (..), SecLevel (..), decideAllPublic, decideSameValueTypes, decideSegmentFlows, unlabelled)
+import Syntax.TypesIFC (LabelledFuncType (..), SLabelledFuncType (..), SLabelledValType (..), SSecLevel (..), SecLevel (..), decideAllPublic, decideSameValueTypes, decideSegmentFlows, unlabelled)
 import Validation.Policy (ghostModuleName)
 import Validation.Reflect (NonEmptyMems (..), allFuncRefs, memsNonEmpty)
 import Validation.Shape
@@ -47,10 +53,17 @@ data InstantiationError
       UnsupportedImport Text Text
     | -- | the import's declared type is not the host function's
       ImportTypeMismatch Text
+    | -- | a global or a table is imported at another level than the one it has where it is defined
+      ImportLevelMismatch Text
     | {- | the policy declares an import callable from a secret context or with secret arguments,
       which the host, whose effects are observable, cannot be
       -}
       ImportNotPublic Text
+    | {- | the module imports one memory, one table or one global that can be written under two
+      of its indices. An instance holds each of its indices' objects by itself, so two of them
+      cannot be one object inside it ("Runtime.Link").
+      -}
+      ImportedTwice Text Text
     | -- | a WASI import requires the module to have a memory
       WasiNeedsMemory
     | -- | a memory or a table declares a minimum size beyond what this machine holds
@@ -75,54 +88,124 @@ instantiate = instantiateWith providesNothing
 
     * A function: its type, parameters and results in declared order. The embedder answers
       the calls to it ('Runtime.Module.answerForeign').
-    * A global: whether it may be written, and its value. The module gets the value, not the
-      global: nothing the module writes to it reaches the embedder, so an embedder that shares
-      a mutable global with others must not provide it here.
-    * A memory or a table: its type. The module gets a new, empty one of that type, of which
-      the same holds.
+    * A global: whether it may be written, its level, and its value now.
+    * A memory or a table: its type and the memory or table itself, as it is now.
 
-  So no state is shared with what a module imports: an import is a way to give a module its
-  starting state, and calls are the only way out.
+  The module starts with what it is given. Whether it then /shares/ it is the embedder's
+  doing: an embedder that links instances hands a memory, a table or a mutable global back and
+  forth whenever control passes between them ("Runtime.Link"); one that does not has given a
+  copy. The number is the instance's among those the embedder links, which the references to
+  its functions carry.
+
+  A level is part of what is given, and instantiation compares it with the level the importing
+  module's policy declares: a global that cannot be written may be imported at its level or
+  above, and one that can, like a table, at exactly its level, since both sides read and write
+  it. A memory has no level of its own; its bytes carry theirs.
 -}
 data Embedder = Embedder
-    { functions :: Text -> Text -> Maybe FuncType
-    , globals :: Text -> Text -> Maybe (Mutability, Value)
-    , memories :: Text -> Text -> Maybe MemType
-    , tables :: Text -> Text -> Maybe (ValType, AddrType, Limits)
+    { instanceNumber :: Word32
+    , functions :: Text -> Text -> Maybe FuncType
+    , globals :: Text -> Text -> Maybe (Mutability, SecLevel, Value)
+    , memories :: Text -> Text -> Maybe GivenMemory
+    , tables :: Text -> Text -> Maybe GivenTable
     }
 
 providesNothing :: Embedder
-providesNothing = Embedder none none none none
+providesNothing = Embedder 0 none none none none
   where
     none _ _ = Nothing
 
 -- | An embedder that provides functions only.
 providesFunctions :: (Text -> Text -> Maybe FuncType) -> Embedder
-providesFunctions answered = Embedder answered none none none
+providesFunctions answered = Embedder 0 answered none none none
   where
     none _ _ = Nothing
 
+-- | A new, empty memory of a type, to give to a module that imports one.
+newMemory :: MemType -> Maybe GivenMemory
+newMemory (MemType addresses limits) = GivenMemory addresses limits <$> (allocMemory addresses limits :: Maybe (MemInst ('MemShape 'AddrI32 0 'Nothing)))
+
+-- | A new public table of a type, every entry null.
+newTable :: ValType -> AddrType -> Limits -> Maybe GivenTable
+newTable entries indices limits = GivenTable entries indices Low limits <$> allocTable limits
+
 -- | 'instantiate' for a module that imports from its embedder.
 instantiateWith :: Embedder -> SomeModule -> Either InstantiationError SomeModuleInst
-instantiateWith embedder (SomeModule shapeS m) = case shapeS of
-    SModuleShape ftsS _ msS tsS dsS _ _ -> do
+instantiateWith embedder m = do
+    Prepared shapeS inst exports failed start <- prepare embedder m
+    maybe (Right ()) Left failed
+    started <- runStart inst start
+    Right (SomeModuleInst shapeS started exports)
+
+{- | Instantiate a module up to its start function, for an embedder that runs the start function
+  itself (it may call functions of other instances). An error on the left is one before
+  anything was written: an import that is missing or does not match. Otherwise the instance
+  comes back with the error of the active segment that did not fit, if one did not: the
+  segments before it are written, in the instance's own and in the imported memories and
+  tables, and stay so, as the specification has it. Last is the index of the start function.
+-}
+instantiateUntilStart :: Embedder -> SomeModule -> Either InstantiationError (SomeModuleInst, Maybe InstantiationError, Maybe Word32)
+instantiateUntilStart embedder m = do
+    Prepared shapeS inst exports failed start <- prepare embedder m
+    Right (SomeModuleInst shapeS inst exports, failed, fmap position start)
+  where
+    position :: Elem a xs -> Word32
+    position Here = 0
+    position (There rest) = 1 + position rest
+
+-- | An instance with its active segments placed as far as they fit, and its start function not yet run.
+data Prepared where
+    Prepared ::
+        Sing (shape :: ModuleShape) ->
+        ModuleInst shape ->
+        [Export] ->
+        Maybe InstantiationError ->
+        Maybe (Elem ('LabelledFuncType 'Low '[] '[]) (ModuleFuncs shape)) ->
+        Prepared
+
+prepare :: Embedder -> SomeModule -> Either InstantiationError Prepared
+prepare embedder (SomeModule shapeS m) = case shapeS of
+    SModuleShape ftsS gsS msS tsS dsS _ _ -> do
         funcs <- link embedder.functions (memsNonEmpty msS) ftsS m.functions
-        globals <- instantiateGlobals embedder m.globals
-        placed <- placeData embedder m.dataSegments =<< allocateMemories embedder (map Just m.memoryImports ++ repeat Nothing) msS
-        mems <- labelRegions m.secretRegions placed
+        globals <- instantiateGlobals embedder gsS m.globals
+        allocated <- allocateMemories embedder (map Just m.memoryImports ++ repeat Nothing) msS
         emptyTables <- allocateTables embedder (map Just m.tableImports ++ repeat Nothing) tsS
         kept <- keptElements embedder m.elementSegments
-        tables <- placeElements embedder 0 m.elementSegments (TableSpaceInst (functionDirectory (allFuncRefs ftsS)) emptyTables kept IntMap.empty)
-        let inst = ModuleInst {functions = funcs, globals, memories = mems, tables, dataSegments = remainingData dsS m.dataSegments}
-        started <- runStart inst m.start
-        Right (SomeModuleInst shapeS started m.exports)
+        -- The active segments are placed in the specification's order, the element segments
+        -- first, and placing stops at the first that does not fit.
+        let (tables, elementsFailed) = placeElements embedder 0 m.elementSegments (TableSpaceInst (functionDirectory embedder.instanceNumber (allFuncRefs ftsS)) emptyTables kept IntMap.empty)
+            (placed, dataFailed) = maybe (placeData embedder m.dataSegments allocated) (const (allocated, Nothing)) elementsFailed
+            (mems, regionsFailed) = case elementsFailed <|> dataFailed of
+                Just _ -> (placed, Nothing)
+                Nothing -> case labelRegions m.secretRegions placed of
+                    Left failure -> (placed, Just failure)
+                    Right labelled -> (labelled, Nothing)
+            inst = ModuleInst {functions = funcs, globals, memories = mems, tables, dataSegments = remainingData dsS m.dataSegments}
+        Right (Prepared shapeS inst m.exports (elementsFailed <|> dataFailed <|> regionsFailed) m.start)
+
+-- | The globals, memories and tables a module imports, each list in the order of its index space.
+data StateImports = StateImports
+    { globals :: [(Text, Text)]
+    , memories :: [(Text, Text)]
+    , tables :: [(Text, Text)]
+    }
+
+stateImportsOf :: SomeModule -> StateImports
+stateImportsOf (SomeModule _ m) = StateImports (provided m.globals) m.memoryImports m.tableImports
+  where
+    provided :: GlobalSpace gs -> [(Text, Text)]
+    provided NoGlobals = []
+    provided (Declared global rest) = case global of
+        ProvidedGlobal moduleName fieldName _ _ -> (moduleName, fieldName) : provided rest
+        Global _ -> provided rest
 
 -- | The value of a constant expression, with the imported globals as the embedder provides them.
 evalConst :: Embedder -> ConstExpr t -> Either InstantiationError (HostType t)
 evalConst embedder expr = case expr of
     ConstValue value -> Right value
+    ConstFunction index -> Right (functionReferenceIn embedder.instanceNumber index)
     ConstImported moduleName fieldName st -> do
-        (_, value) <- note (UnsupportedImport moduleName fieldName) (embedder.globals moduleName fieldName)
+        (_, _, value) <- note (UnsupportedImport moduleName fieldName) (embedder.globals moduleName fieldName)
         note (ImportTypeMismatch fieldName) (fromValue st value)
     ConstBinary isInt op a b -> apply isInt op <$> evalConst embedder a <*> evalConst embedder b
   where
@@ -138,16 +221,19 @@ evalConst embedder expr = case expr of
   one at the value its embedder provides, which must be a global of the declared type that may
   be written exactly if the import says so.
 -}
-instantiateGlobals :: Embedder -> GlobalSpace gs -> Either InstantiationError (GlobalSpaceInst gs)
-instantiateGlobals _ NoGlobals = Right GNil
-instantiateGlobals embedder (Declared global rest) = case global of
-    Global initialiser -> GCons <$> evalConst embedder initialiser <*> instantiateGlobals embedder rest
+instantiateGlobals :: Embedder -> Sing gs -> GlobalSpace gs -> Either InstantiationError (GlobalSpaceInst gs)
+instantiateGlobals _ SNil NoGlobals = Right GNil
+instantiateGlobals embedder (SCons (SGlobalType _ (_ :%~ declaredLevel)) more) (Declared global rest) = case global of
+    Global initialiser -> GCons <$> evalConst embedder initialiser <*> instantiateGlobals embedder more rest
     ProvidedGlobal moduleName fieldName smut st -> do
-        (mutability, provided) <- note (UnsupportedImport moduleName fieldName) (embedder.globals moduleName fieldName)
+        (mutability, level, provided) <- note (UnsupportedImport moduleName fieldName) (embedder.globals moduleName fieldName)
         -- (A preserved global is a mutable one that the policy marks.)
         when ((mutability == Immutable) /= (fromSing smut == Immutable)) (Left (ImportTypeMismatch fieldName))
+        -- Both sides write a global that can be written, so its level is one; a global that
+        -- cannot is only read here, at its level or above.
+        when (if mutability == Immutable then level == High && fromSing declaredLevel == Low else level /= fromSing declaredLevel) (Left (ImportLevelMismatch fieldName))
         value <- note (ImportTypeMismatch fieldName) (fromValue st provided)
-        GCons value <$> instantiateGlobals embedder rest
+        GCons value <$> instantiateGlobals embedder more rest
 
 {- | Link the functions: a defined one is its own instance; an import must come from the WASI
   module, name a function the host provides, be declared at exactly that function's type, and
@@ -164,7 +250,7 @@ link provided mems (SCons (SLabelledFuncType boundS psS rsS) rest) (Imported mod
         when (params /= reverse (map unlabelled (fromSing psS)) || results /= reverse (map unlabelled (fromSing rsS))) (Left (ImportTypeMismatch fieldName))
         public <- note (ImportNotPublic fieldName) (decideAllPublic psS)
         case boundS of
-            SLow -> FsCons (ForeignFunc moduleName fieldName psS rsS public) <$> link provided mems rest more
+            SLow -> FsCons (ForeignFunc (ImportedAs moduleName fieldName) psS rsS public) <$> link provided mems rest more
             SHigh -> Left (ImportNotPublic fieldName)
     | moduleName /= wasiModuleName = Left (UnsupportedImport moduleName fieldName)
     | otherwise = case resolveWasiImport fieldName of
@@ -191,27 +277,29 @@ allocateMemories _ _ SNil = Right MNil
 allocateMemories embedder origins (SCons shape rest) = case fromSing shape of
     MemShape addresses lo hi -> do
         let declared = Limits (fromIntegral lo) (fmap fromIntegral hi)
-        limits <- case take 1 origins of
+        memory <- case take 1 origins of
             [Just (moduleName, fieldName)] -> do
-                MemType providedAddresses provided <- note (UnsupportedImport moduleName fieldName) (embedder.memories moduleName fieldName)
+                GivenMemory providedAddresses provided given <- note (UnsupportedImport moduleName fieldName) (embedder.memories moduleName fieldName)
                 when (providedAddresses /= addresses || not (provided `fitsImport` declared)) (Left (ImportTypeMismatch fieldName))
-                Right provided
-            _ -> Right declared
-        MCons <$> note MinimumTooLarge (allocMemory addresses limits) <*> allocateMemories embedder (drop 1 origins) rest
+                Right (retypeMemory given)
+            _ -> note MinimumTooLarge (allocMemory addresses declared)
+        MCons memory <$> allocateMemories embedder (drop 1 origins) rest
 
 -- | Every table, its entries null, from the shape: as 'allocateMemories'.
 allocateTables :: Embedder -> [Maybe (Text, Text)] -> Sing (ts :: [TableShape]) -> Either InstantiationError (TableInsts ts)
 allocateTables _ _ SNil = Right TNil
 allocateTables embedder origins (SCons shape rest) = case fromSing shape of
-    TableShape entries _ indices lo hi -> do
+    TableShape entries declaredLevel indices lo hi -> do
         let declared = Limits (fromIntegral lo) (fmap fromIntegral hi)
-        limits <- case take 1 origins of
+        table <- case take 1 origins of
             [Just (moduleName, fieldName)] -> do
-                (providedEntries, providedIndices, provided) <- note (UnsupportedImport moduleName fieldName) (embedder.tables moduleName fieldName)
-                when (providedEntries /= entries || providedIndices /= indices || not (provided `fitsImport` declared)) (Left (ImportTypeMismatch fieldName))
-                Right provided
-            _ -> Right declared
-        TCons <$> note MinimumTooLarge (allocTable limits) <*> allocateTables embedder (drop 1 origins) rest
+                given <- note (UnsupportedImport moduleName fieldName) (embedder.tables moduleName fieldName)
+                when (given.entries /= entries || given.indices /= indices || not (given.limits `fitsImport` declared)) (Left (ImportTypeMismatch fieldName))
+                -- (Both sides read and write the table, so its level is one.)
+                when (given.level /= declaredLevel) (Left (ImportLevelMismatch fieldName))
+                Right given.table
+            _ -> note MinimumTooLarge (allocTable declared)
+        TCons table <$> allocateTables embedder (drop 1 origins) rest
 
 {- | Whether what is provided has the limits an import declares (the spec's matching of
   limits): at least the minimum, and, if the import declares a maximum, one within it.
@@ -219,10 +307,16 @@ allocateTables embedder origins (SCons shape rest) = case fromSing shape of
 fitsImport :: Limits -> Limits -> Bool
 fitsImport provided declared = provided.min >= declared.min && maybe True (\most -> maybe False (<= most) provided.max) declared.max
 
--- | Copy the active data segments into their memories, in order.
-placeData :: Embedder -> [DataSegment ms] -> MemSpaceInst ms -> Either InstantiationError (MemSpaceInst ms)
-placeData embedder segments mems = foldM place mems (zip [0 ..] segments)
+{- | Copy the active data segments into their memories, in order, up to the first that does not
+  fit: the memories as they then are, and that segment's error.
+-}
+placeData :: Embedder -> [DataSegment ms] -> MemSpaceInst ms -> (MemSpaceInst ms, Maybe InstantiationError)
+placeData embedder segments mems = go mems (zip [0 ..] segments)
   where
+    go current [] = (current, Nothing)
+    go current (indexed : rest) = case place current indexed of
+        Left failure -> (current, Just failure)
+        Right written -> go written rest
     place current (i, segment) = case segment.placement of
         Nothing -> Right current
         Just (PlacedAt at ix offsetExpr) -> do
@@ -246,11 +340,16 @@ labelRegions regions (MCons mem rest) = do
     Right (MCons mem' rest)
 labelRegions ((lo, hi) : _) MNil = Left (RegionOutOfBounds lo hi)
 
--- | Write the active element segments into their tables, in order.
-placeElements :: Embedder -> Int -> ElementSpace shape es -> TableSpaceInst fts (ModuleTables shape) kept tags -> Either InstantiationError (TableSpaceInst fts (ModuleTables shape) kept tags)
-placeElements _ _ NoElements tables = Right tables
-placeElements embedder index (Elements segment rest) tables = do
-    written <- case segment.mode of
+{- | Write the active element segments into their tables, in order, up to the first that does
+  not fit: the tables as they then are, and that segment's error.
+-}
+placeElements :: Embedder -> Int -> ElementSpace shape es -> TableSpaceInst fts (ModuleTables shape) kept tags -> (TableSpaceInst fts (ModuleTables shape) kept tags, Maybe InstantiationError)
+placeElements _ _ NoElements tables = (tables, Nothing)
+placeElements embedder index (Elements segment rest) tables = case written of
+    Left failure -> (tables, Just failure)
+    Right placed -> placeElements embedder (index + 1) rest placed
+  where
+    written = case segment.mode of
         WrittenTo at tableIx offsetExpr -> do
             offset <- offsetOf at <$> evalConst embedder offsetExpr
             references <- segmentReferences embedder segment
@@ -259,7 +358,6 @@ placeElements embedder index (Elements segment rest) tables = do
             Right (setTable tableIx table tables)
         KeptForInit -> Right tables
         DeclaredOnly -> Right tables
-    placeElements embedder (index + 1) rest written
 
 -- | The references of an element segment, each the value of its constant expression.
 segmentReferences :: Embedder -> ElementSegment shape t -> Either InstantiationError [Reference]

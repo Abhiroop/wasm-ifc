@@ -29,7 +29,7 @@ module Runtime.Obligation (
 import Data.Kind (Type)
 
 import Runtime.MemInst (CheckedRead)
-import Runtime.TableInst (CheckedCallee)
+import Runtime.TableInst (CheckedCallee, ElsewhereCallee)
 import Syntax.TypesIFC (DynamicCheck (..))
 
 type CheckPassed :: DynamicCheck -> Type
@@ -44,3 +44,7 @@ data CheckPassed check where
     and the expected bound flows into its bound.
     -}
     CalleeWasWithin :: !(CheckedCallee bound ps rs fts) -> CheckPassed ('CalleeWithin bound)
+    {- | The table entry names a function of another instance, and the expected type is one a
+    call out of the module may have; the embedder compares the value types.
+    -}
+    CalleeWasElsewhere :: !(ElsewhereCallee bound ps rs) -> CheckPassed ('CalleeWithin bound)

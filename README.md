@@ -100,9 +100,9 @@ cabal test          # unit tests, the spec testsuite (needs wasm-tools), the was
 
 ### Status
 
-WebAssembly 2.0 without state shared between modules, and five features of 3.0: several
-memories per module, 64-bit memories and tables, tail calls, extended constant expressions,
-and exceptions (thrown under a public pc only).
+WebAssembly 2.0, and five features of 3.0: several memories per module, 64-bit memories and
+tables, tail calls, extended constant expressions, and exceptions (thrown under a public pc
+only, and not across modules).
 That is the numeric, comparison and conversion instructions, the vector instructions, memory
 including bulk memory, structured control, calls, reference types (`funcref`, `externref`),
 several tables with the table instructions and every kind of element segment, `call_indirect`,
@@ -129,13 +129,20 @@ its rule depends on, and the machine's step for it type-checks only with evidenc
 checked memory read, or the checked table lookup, hands out (`Runtime.Obligation`;
 `test/obligations-must-not-compile.sh` checks that four wrong steps are rejected).
 
-A module imports from its embedder (`instantiateWith`). A call to an imported function suspends
-the machine, and the embedder answers with the results, which is how the spec runner links the
-modules of a script. An imported global, memory or table is given by value: the module gets the
-global's value, or a new memory or table of the type provided, and owns it from then on. Not
-yet: a noninterference proof; state shared between modules (a memory, table or mutable global
-that two instances both see, or an exception tag); and the rest of what WebAssembly 3.0 adds
-(typed function references, garbage collection).
+Modules are linked in a world (`Runtime.Link`): a module imports functions, memories, tables
+and globals from the modules registered there, and what it imports is shared, not copied. The
+interpreter stays pure and an instance owns its state. Only one instance runs at a time, and
+control passes between instances at a call out of a module and at its return, so an instance
+takes what it imports from the instance that defines it when control comes to it, and gives it
+back when control leaves. A reference to a function names its instance, so a shared table
+holds functions of several modules and an indirect call can cross to another one. A trap keeps
+what was written before it. Calls between modules carry public values, a global and a table
+are imported at the level they have where they are defined, and the bytes of a shared memory
+keep their levels. A module on its own imports from an embedder (`instantiateWith`), which
+answers its calls. Not yet: a module that imports the same memory, table or writable global
+twice; an exception that crosses from a function to the module that called it, and an
+imported tag; and the rest of what WebAssembly 3.0 adds (typed function references, garbage
+collection). The Lean proof of noninterference (`lean/`) covers a core, not the whole.
 The backlog is `TODO.md`; what the paper can cite is in `HANDOFF.md`.
 
 ### Toolchain

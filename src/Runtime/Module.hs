@@ -17,6 +17,8 @@ module Runtime.Module (
     SomeHostRequest (..),
     ForeignCall (..),
     foreignCall,
+    ForeignTarget (..),
+    targetNames,
     answerForeign,
     exportSignature,
     exportedGlobal,
@@ -28,19 +30,39 @@ module Runtime.Module (
     invokeExport,
     readGlobalExport,
     continueWith,
+
+    -- * An instance among others
+    Instance,
+    instanceOf,
+    instanceModule,
+    Progress (..),
+    enterFunction,
+    resumeInstance,
+    abandonCall,
+    exportOf,
+    functionType,
+    GivenMemory (..),
+    GivenTable (..),
+    memoryAt,
+    putMemoryAt,
+    tableAt,
+    putTableAt,
+    globalAt,
+    putGlobalAt,
 ) where
 
 import Data.Bifunctor (first)
+import Data.Maybe (fromMaybe)
 import Data.Singletons (Sing, fromSing)
 import Data.Singletons.Base.TH (SList (SCons, SNil))
 import Data.Text (Text)
 import Data.Word (Word32, Word64, Word8)
 
 import Numeric (showHex)
-import Runtime.Interpreter (Config, FuncSpaceInst, Halt (..), HostRequest (..), ModuleInst (..), Outcome (..), getFunc, resumeWith, run, runFunction, storeToModule)
-import Runtime.MemInst (levelOfRange, readBytes)
-import Runtime.Stack (MemSpaceInst (..), TableInsts (..), TableSpaceInst (..), ValueStack (..), getGlobal)
-import Runtime.TableInst (readEntries, tableSize)
+import Runtime.Interpreter (Config, ForeignTarget (..), FuncSpaceInst, Halt (..), HostRequest (..), ModuleInst (..), Outcome (..), Store (..), Suspended, getFunc, moduleToStore, resumeWith, run, runFunction, runKeeping, startFunction, storeToModule)
+import Runtime.MemInst (MemInst, levelOfRange, memoryPages, readBytes, retypeMemory)
+import Runtime.Stack (GlobalSpaceInst (..), MemSpaceInst (..), TableInsts (..), TableSpaceInst (..), ValueStack (..), getGlobal)
+import Runtime.TableInst (TableInst, readEntries, tableSize)
 import Runtime.Trap (Trap)
 import Syntax.Immediates (HostType, Reference, Vector128 (..), isNullReference, referent)
 import Syntax.Indices (FunctionIdx (..), GlobalIdx (..))
@@ -48,7 +70,7 @@ import Syntax.Module (Export (..), ExportDesc (..))
 import Syntax.Types
 import Syntax.TypesIFC
 import Validation.Reflect (SomeGlobalRef (..), declaredOrder, funcTypesSing, globalTypesSing, lookupFuncRef, lookupGlobalRef, stackOrder)
-import Validation.Shape (ModuleFuncs, ModuleShape, SomeFuncRef (..))
+import Validation.Shape
 
 {- | An instantiated module with its shape hidden: the shape's singleton, the instance, and
 the exports (for resolving entry points).
@@ -89,17 +111,21 @@ renderValue (FuncRefValue r) = maybe "null" (\index -> "func " ++ show index) (r
 renderValue (ExternRefValue r) = maybe "null" (\index -> "extern " ++ show index) (referent r)
 renderValue (ExnRefValue r) = maybe "null" (\index -> "exception " ++ show index) (referent r)
 
--- | A call the module made to a function its embedder provides, arguments in declared order.
+{- | A call the module made out of itself: to a function it imports or to one of another
+  instance that a reference names. The arguments are in declared order; the types are the ones
+  the call expects of the function.
+-}
 data ForeignCall = ForeignCall
-    { moduleName :: Text
-    , fieldName :: Text
+    { target :: ForeignTarget
+    , expected :: FuncType
     , arguments :: [Value]
     }
 
 -- | The call a suspended invocation waits on, if it is one to an embedder's function.
 foreignCall :: SomeHostRequest -> Maybe ForeignCall
 foreignCall (SomeHostRequest _ _ _ _ request) = case request of
-    ForeignRequest moduleName fieldName psS _ args _ _ _ -> Just (ForeignCall moduleName fieldName (declaredOrder (toValues psS args)))
+    ForeignRequest target psS _ args rsS _ _ ->
+        Just (ForeignCall target (FuncType (declaredOrder (unlabelledTypes psS)) (declaredOrder (unlabelledTypes rsS))) (declaredOrder (toValues psS args)))
     HostRequest {} -> Nothing
 
 {- | Continue an invocation suspended on a call to an embedder's function, with that
@@ -107,10 +133,15 @@ foreignCall (SomeHostRequest _ _ _ _ request) = case request of
 -}
 answerForeign :: SomeHostRequest -> [Value] -> Either RunError Invocation
 answerForeign (SomeHostRequest shapeS funcs exports rsS request) results = case request of
-    ForeignRequest moduleName fieldName _ _ _ resultTypes store suspended -> do
-        answered <- note (ForeignResultMismatch moduleName fieldName) (if map valueType results == declaredOrder (unlabelledTypes resultTypes) then buildStack resultTypes (stackOrder results) else Nothing)
+    ForeignRequest target _ _ _ resultTypes store suspended -> do
+        answered <- note (uncurry ForeignResultMismatch (targetNames target)) (if map valueType results == declaredOrder (unlabelledTypes resultTypes) then buildStack resultTypes (stackOrder results) else Nothing)
         continueWith shapeS funcs exports rsS (resumeWith store answered suspended)
     HostRequest {} -> Left (ForeignResultMismatch "" "")
+
+-- | The names a call out of a module is reported under: those of the import, or none for a reference.
+targetNames :: ForeignTarget -> (Text, Text)
+targetNames (ImportedAs moduleName fieldName) = (moduleName, fieldName)
+targetNames (ReferencedBy _) = ("", "a function reference")
 
 data RunError
     = -- | no export of that name and kind (a function to invoke, a global to read)
@@ -126,6 +157,11 @@ data RunError
     | Trapped Trap
     | -- | the function called into the host, and the caller had no host to offer
       HostCallNotServed
+    | {- | an exception left a function that another module had called. A tag belongs to one
+      module here, so the caller could catch it only by a clause for all exceptions, and the
+      linker does not carry it over ("Runtime.Link").
+      -}
+      ExceptionAcrossModules
     deriving stock (Eq, Show)
 
 {- | How an invocation ends, short of a trap: with its results and the module as the call left
@@ -278,10 +314,10 @@ fromValue SI64 (I64Value w) = Just w
 fromValue SF32 (F32Value f) = Just f
 fromValue SF64 (F64Value d) = Just d
 fromValue SV128 (V128Value v) = Just v
--- (From outside, the only reference to a function or to an exception is null: one that names
--- a function comes from the module's own code, 'Validation.Ref.FunctionRef', and an exception
--- from its store.)
-fromValue SFuncRef (FuncRefValue r) | isNullReference r = Just r
+-- (A reference to a function names the instance it belongs to, so one from outside means the
+-- same function here, or none; a call through one that names none traps. From outside, the
+-- only reference to an exception is null: another names an exception in the module's store.)
+fromValue SFuncRef (FuncRefValue r) = Just r
 fromValue SExternRef (ExternRefValue r) = Just r
 fromValue SExnRef (ExnRefValue r) | isNullReference r = Just r
 fromValue _ _ = Nothing
@@ -302,3 +338,188 @@ toValue SExnRef = ExnRefValue
 
 note :: e -> Maybe a -> Either e a
 note e = maybe (Left e) Right
+
+{- * An instance among others
+
+   What an embedder that links several modules needs of one of them: to enter it and be told
+   when it calls out, to resume it when the call returns, and to read and replace the memories,
+   tables and globals it shares with the others ("Runtime.Link").
+-}
+
+{- | An instance together with the calls out of it that have not returned, innermost first. A
+  call out suspends the activation that made it; the instance may be entered again meanwhile
+  (the function it called calls back), and that activation runs on the same state. The state
+  is the instance's one store, which every activation continues from: what a nested one wrote
+  is there when an outer one resumes, and what ran before a trap wrote stays written.
+-}
+data Instance where
+    Instance :: Sing (shape :: ModuleShape) -> FuncSpaceInst shape (ModuleFuncs shape) -> [Export] -> Store shape -> [Pending shape] -> Instance
+
+-- | An activation waiting for results of type @rs@, to finish a call whose own results are @res@.
+data Pending (shape :: ModuleShape) where
+    Pending :: Sing (res :: [LabelledValType]) -> Sing (rs :: [LabelledValType]) -> Suspended shape res rs -> Pending shape
+
+instanceOf :: SomeModuleInst -> Instance
+instanceOf (SomeModuleInst shapeS inst exports) = Instance shapeS inst.functions exports (moduleToStore inst) []
+
+-- | The instance as it stands, for the readers of "Runtime.Module".
+instanceModule :: Instance -> SomeModuleInst
+instanceModule (Instance shapeS funcs exports store _) = SomeModuleInst shapeS (storeToModule funcs store) exports
+
+-- | How far a call got: it returned, or it calls out and waits ('resumeInstance').
+data Progress = Returns [Value] | Calls ForeignCall
+
+{- | Call a function of the instance, by its index, with arguments in declared order. The
+  instance comes back as the call left it, also when the call trapped.
+-}
+enterFunction :: Instance -> Word32 -> [Value] -> (Instance, Either RunError Progress)
+enterFunction inst@(Instance shapeS funcs exports store pending) idx args = case lookupFuncRef (funcTypesSing shapeS) idx of
+    Nothing -> (inst, Left (NoSuchExport "a function by its index"))
+    Just (SomeFuncRef _ psS rsS funcIx) ->
+        case checkArguments (declaredOrder (unlabelledTypes psS)) args >> note (ArgumentCount 0 0) (buildStack psS (stackOrder args)) of
+            Left err -> (inst, Left err)
+            Right argStack -> case startFunction rsS store (getFunc funcIx funcs) argStack of
+                Left trap -> (inst, Left (Trapped trap))
+                Right (Left request) -> suspendOn shapeS funcs exports pending rsS request
+                Right (Right config) -> advance shapeS funcs exports pending rsS (runKeeping funcs config)
+
+{- | Give the innermost waiting activation the results of its call, in declared order, and run
+  it on from the instance's state as it is now.
+-}
+resumeInstance :: Instance -> [Value] -> (Instance, Either RunError Progress)
+resumeInstance inst@(Instance shapeS funcs exports store pending) results = case pending of
+    [] -> (inst, Left HostCallNotServed)
+    Pending resS rsS suspended : outer ->
+        case if map valueType results == declaredOrder (unlabelledTypes rsS) then buildStack rsS (stackOrder results) else Nothing of
+            Nothing -> (Instance shapeS funcs exports store outer, Left (ForeignResultMismatch "" "a call out of the module"))
+            Just answered -> advance shapeS funcs exports outer resS (runKeeping funcs (resumeWith store answered suspended))
+
+-- | Drop the innermost waiting activation: its call trapped, and so does it.
+abandonCall :: Instance -> Instance
+abandonCall (Instance shapeS funcs exports store pending) = Instance shapeS funcs exports store (drop 1 pending)
+
+advance ::
+    Sing (shape :: ModuleShape) ->
+    FuncSpaceInst shape (ModuleFuncs shape) ->
+    [Export] ->
+    [Pending shape] ->
+    Sing (res :: [LabelledValType]) ->
+    Either (Trap, Store shape) (Halt shape res) ->
+    (Instance, Either RunError Progress)
+advance shapeS funcs exports pending resS outcome = case outcome of
+    Left (trap, store) -> (Instance shapeS funcs exports store pending, Left (Trapped trap))
+    Right (Finished store results) -> (Instance shapeS funcs exports store pending, Right (Returns (declaredOrder (toValues resS results))))
+    Right (AwaitingHost request) -> suspendOn shapeS funcs exports pending resS request
+
+suspendOn ::
+    Sing (shape :: ModuleShape) ->
+    FuncSpaceInst shape (ModuleFuncs shape) ->
+    [Export] ->
+    [Pending shape] ->
+    Sing (res :: [LabelledValType]) ->
+    HostRequest shape res ->
+    (Instance, Either RunError Progress)
+suspendOn shapeS funcs exports pending resS request = case request of
+    ForeignRequest target psS _ args rsS store suspended ->
+        ( Instance shapeS funcs exports store (Pending resS rsS suspended : pending)
+        , Right (Calls (ForeignCall target (FuncType (declaredOrder (unlabelledTypes psS)) (declaredOrder (unlabelledTypes rsS))) (declaredOrder (toValues psS args))))
+        )
+    -- (A module linked with others has no WASI host here.)
+    HostRequest _ _ store _ _ -> (Instance shapeS funcs exports store pending, Left HostCallNotServed)
+
+-- | What the instance exports under a name.
+exportOf :: Instance -> Text -> Maybe ExportDesc
+exportOf (Instance _ _ exports _ _) name = case [desc | Export n desc <- exports, n == name] of
+    desc : _ -> Just desc
+    [] -> Nothing
+
+{- | The type of a function of the instance, by its index, in declared order, and the levels of
+  its results: who calls it from outside observes them.
+-}
+functionType :: Instance -> Word32 -> Maybe (FuncType, [SecLevel])
+functionType (Instance shapeS _ _ _ _) idx = do
+    SomeFuncRef _ psS rsS _ <- lookupFuncRef (funcTypesSing shapeS) idx
+    pure (FuncType (declaredOrder (unlabelledTypes psS)) (declaredOrder (unlabelledTypes rsS)), declaredOrder [level | _ :~ level <- fromSing rsS])
+
+{- | A memory as one module gives it to another: its address type, its size now with the
+  maximum it was declared with (what an import's limits are matched against), and the memory.
+-}
+data GivenMemory where
+    GivenMemory :: AddrType -> Limits -> MemInst m -> GivenMemory
+
+-- | A table as one module gives it to another, likewise, with the level of its entries.
+data GivenTable = GivenTable
+    { entries :: ValType
+    , indices :: AddrType
+    , level :: SecLevel
+    , limits :: Limits
+    , table :: TableInst
+    }
+
+-- | A memory of the instance, by its index.
+memoryAt :: Instance -> Int -> Maybe GivenMemory
+memoryAt (Instance shapeS _ _ store _) = case shapeS of
+    SModuleShape _ _ msS _ _ _ _ -> go msS store.memories
+  where
+    go :: Sing (ms :: [MemShape]) -> MemSpaceInst ms -> Int -> Maybe GivenMemory
+    go (SCons shape rest) (MCons mem more) n
+        | n == 0 = case fromSing shape of
+            MemShape addresses _ most -> Just (GivenMemory addresses (Limits (fromIntegral (memoryPages mem)) (fmap fromIntegral most)) mem)
+        | otherwise = go rest more (n - 1)
+    go SNil MNil _ = Nothing
+
+-- | Replace a memory of the instance by one given (an index it has not leaves it as it is).
+putMemoryAt :: Int -> GivenMemory -> Instance -> Instance
+putMemoryAt index (GivenMemory _ _ given) (Instance shapeS funcs exports store pending) =
+    Instance shapeS funcs exports Store {globals = store.globals, memories = go store.memories index, tables = store.tables, dataSegments = store.dataSegments} pending
+  where
+    go :: MemSpaceInst ms -> Int -> MemSpaceInst ms
+    go (MCons mem more) n
+        | n == 0 = MCons (retypeMemory given) more
+        | otherwise = MCons mem (go more (n - 1))
+    go MNil _ = MNil
+
+-- | A table of the instance, by its index.
+tableAt :: Instance -> Int -> Maybe GivenTable
+tableAt (Instance shapeS _ _ store _) = case shapeS of
+    SModuleShape _ _ _ tsS _ _ _ -> go tsS store.tables.instances
+  where
+    go :: Sing (ts :: [TableShape]) -> TableInsts ts -> Int -> Maybe GivenTable
+    go (SCons shape rest) (TCons held more) n
+        | n == 0 = case fromSing shape of
+            TableShape entryType tableLevel indexType _ most -> Just (GivenTable entryType indexType tableLevel (Limits (fromIntegral (tableSize held)) (fmap fromIntegral most)) held)
+        | otherwise = go rest more (n - 1)
+    go SNil TNil _ = Nothing
+
+-- | Replace a table of the instance.
+putTableAt :: Int -> TableInst -> Instance -> Instance
+putTableAt index given (Instance shapeS funcs exports store pending) =
+    Instance shapeS funcs exports Store {globals = store.globals, memories = store.memories, tables = replaced, dataSegments = store.dataSegments} pending
+  where
+    replaced = TableSpaceInst store.tables.directory (go store.tables.instances index) store.tables.segments store.tables.caught
+    go :: TableInsts ts -> Int -> TableInsts ts
+    go (TCons held more) n
+        | n == 0 = TCons given more
+        | otherwise = TCons held (go more (n - 1))
+    go TNil _ = TNil
+
+-- | A global of the instance, by its index: whether it may be written, its level, its value now.
+globalAt :: Instance -> Int -> Maybe (Mutability, SecLevel, Value)
+globalAt (Instance shapeS _ _ store _) = go (globalTypesSing shapeS) store.globals
+  where
+    go :: Sing (gs :: [LabelledGlobalType]) -> GlobalSpaceInst gs -> Int -> Maybe (Mutability, SecLevel, Value)
+    go (SCons (SGlobalType smut (st :%~ sl)) rest) (GCons value more) n
+        | n == 0 = Just (fromSing smut, fromSing sl, toValue st value)
+        | otherwise = go rest more (n - 1)
+    go SNil GNil _ = Nothing
+
+-- | Give a global of the instance a value (one of another type leaves it as it is).
+putGlobalAt :: Int -> Value -> Instance -> Instance
+putGlobalAt index given (Instance shapeS funcs exports store pending) =
+    Instance shapeS funcs exports Store {globals = go (globalTypesSing shapeS) store.globals index, memories = store.memories, tables = store.tables, dataSegments = store.dataSegments} pending
+  where
+    go :: Sing (gs :: [LabelledGlobalType]) -> GlobalSpaceInst gs -> Int -> GlobalSpaceInst gs
+    go (SCons (SGlobalType _ (st :%~ _)) rest) (GCons value more) n
+        | n == 0 = GCons (fromMaybe value (fromValue st given)) more
+        | otherwise = GCons value (go rest more (n - 1))
+    go SNil GNil _ = GNil

@@ -112,7 +112,7 @@ import Runtime.Bytes (bytesOfWord32, bytesOfWord64, word32OfBytes, word64OfBytes
 import Runtime.Host (WasiFunc (..))
 import Runtime.Interpreter (HostRequest (..), currentMem, resumeWith, storeMem)
 import Runtime.MemInst (MemInst, levelOfRange, readBytes, writeBytes, writeBytesAt)
-import Runtime.Module (Invocation (..), RunError (..), SomeHostRequest (..), SomeModuleInst, Value, continueWith, invokeExport)
+import Runtime.Module (Invocation (..), RunError (..), SomeHostRequest (..), SomeModuleInst, Value, continueWith, invokeExport, targetNames)
 import Runtime.Numeric (toSigned64)
 import Runtime.Stack (ValueStack (..), retagStack)
 import Runtime.Trap (Trap (..))
@@ -1223,7 +1223,7 @@ runWithWasi cfg wasmModule name args = do
                     serve (continueWith shapeS funcs exports rsS (resumeWith (storeMem mem' store) (retagStack resultsAgree results) suspended))
         -- (Instantiation links no function but WASI's unless an embedder provides it, and
         -- this driver provides none.)
-        serve (Right (CalledHost (SomeHostRequest _ _ _ _ (ForeignRequest moduleName fieldName _ _ _ _ _ _)))) = pure (Left (ForeignCallUnanswered moduleName fieldName))
+        serve (Right (CalledHost (SomeHostRequest _ _ _ _ (ForeignRequest target _ _ _ _ _ _)))) = pure (Left (uncurry ForeignCallUnanswered (targetNames target)))
     serve (invokeExport wasmModule name args) `finally` closeHost host
 
 -- | Close what the host still holds open when a run ends: files, sockets and connections.

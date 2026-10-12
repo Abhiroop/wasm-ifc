@@ -55,35 +55,36 @@ are summarised here, not repeated.
 
 ## WebAssembly coverage
 
-The supported subset is WebAssembly 2.0 without state shared between modules, plus several
-memories per module, 64-bit memories and tables, tail calls, extended constant expressions and
-exceptions. What the 3.0 suite skips
+The supported subset is WebAssembly 2.0, plus several memories per module, 64-bit memories and
+tables, tail calls, extended constant expressions and exceptions. What the 3.0 suite skips
 (`WASM_IFC_SPEC_REPORT=f cabal test wasm-ifc-spec; ./scripts/spec-report.py f`), by the features
 a skipped module uses according to `wasm-tools`, in assertions:
 
 | Skipped | Features the module uses beyond the subset |
 |---:|---|
-| 860 | garbage collection |
-| 509 | typed function references (88 of them in the scripts for tail calls) |
-| 371 | none: a memory, a table, a mutable global or an exception tag of another module of the script, and what depends on state shared with one |
-| 77 | three or more features at once |
+| 877 | garbage collection |
+| 514 | typed function references (88 of them in the scripts for tail calls) |
+| 77 | three or more features at once (the relaxed vector instructions) |
+| 68 | none: an imported exception tag (67), and an exception that crosses modules (1) |
+| 12 | none: the script instantiates one module definition several times (`module definition`, `module instance`), which the harness does not do |
+| 10 | none: a module that imports the same memory twice |
 | 1,245 | none: malformed modules given as text, which the harness does not run |
 
 `return_call.wast` and `return_call_indirect.wast` have one function each with a typed function
 reference in its type, so their main modules are skipped whole.
 
-- [ ] **P2** State shared between modules. A function is imported by suspending on the call
-  (`ForeignFunc`), and a global, memory or table by value (`Runtime.Instantiate.Embedder`): the
-  module gets a copy and owns it. A memory, a table or a mutable global that two instances both
-  see is not expressed by the store of one typed machine per module; the spec runner does not
-  provide those of a registered module, and skips what depends on them. A funcref global that
-  holds a function of another module is not provided either: a reference names a function of
-  its own module.
-- [ ] **P3** A start function that calls an imported function fails to instantiate
-  (`StartFunctionNeedsHost`): nobody answers calls during instantiation.
-- [ ] **P3** The spec runner keeps an instance as it was before a call that trapped, so what the
-  call wrote before trapping is lost; no assertion of the suite depends on it today.
-- [ ] **P3** A reference to a function is a word, the function's index, which the table
+- [ ] **P2** A module that imports the same memory, table or writable global under two of its
+  indices is not linked (`ImportedTwice`). Sharing is by handing an object over when control
+  passes between instances (`Runtime.Link`), and inside one instance each index holds its own
+  object. A way that keeps the design: rename the uses of the second index to the first before
+  the module is validated, which the linker can do since it knows from the import names that
+  the two are one. 10 assertions of the suite (`imports1`, `imports2`, `data0`, `data1`).
+- [ ] **P3** `Runtime.Link` has no WASI host: a module linked with others that calls a WASI
+  function fails with `HostCallNotServed`. The CLI runs one module.
+- [ ] **P3** `Runtime.Module.invokeExport` and the CLI give back no instance after a trap, so
+  what the call wrote before trapping is lost to whoever would go on with the instance. The
+  linker keeps it (`Runtime.Module.enterFunction`), and so does the spec runner now.
+- [ ] **P3** A reference to a function is a word, the function's instance and index, which the table
   resolves in the module's directory of functions (`Runtime/TableInst.hs`). The typed
   instructions and element segments only make references to functions that exist
   (`Validation.Ref.FunctionRef`), but the word on the stack carries no proof of it, so the

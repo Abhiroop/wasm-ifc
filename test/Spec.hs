@@ -37,9 +37,10 @@ import Noninterference (Observation (..), compileModule, genModule, holdsValueAc
 import Runtime.Bytes (bytesOfWord32, bytesOfWord64, word32OfBytes, word64OfBytes)
 import Runtime.Convert (convertVal)
 import Runtime.Host (WasiFunc (..))
-import Runtime.Instantiate (Embedder (Embedder), InstantiationError (..), instantiate, instantiateWith, providesFunctions, providesNothing)
+import Runtime.Instantiate (Embedder (Embedder), InstantiationError (..), instantiate, instantiateWith, newMemory, providesFunctions, providesNothing)
 import Runtime.Interpreter (HostRequest (..), callDepthBound, resumeWith)
-import Runtime.Module (ForeignCall (..), Invocation (..), RunError (..), SomeHostRequest (..), SomeModuleInst, Value (..), answerForeign, continueWith, exportSignature, foreignCall, invokeExport, readGlobalExport, renderValue)
+import Runtime.Link (World, callExport, emptyWorld, instantiateIn, register)
+import Runtime.Module (ForeignCall (..), ForeignTarget (..), Invocation (..), RunError (..), SomeHostRequest (..), SomeModuleInst, Value (..), answerForeign, continueWith, exportSignature, foreignCall, invokeExport, readGlobalExport, renderValue)
 import Runtime.Numeric (intDiv32)
 import Runtime.Stack (ValueStack (..), retagStack)
 import Runtime.Trap (Trap (..))
@@ -549,7 +550,7 @@ spec = do
         it "a call suspends the module with its arguments, and the answer resumes it" $
             case calledOut [] of
                 Right (CalledHost request) -> do
-                    fmap (\asked -> (asked.moduleName, asked.fieldName, asked.arguments)) (foreignCall request) `shouldBe` Just ("m", "double", [I32Value 21])
+                    fmap (\asked -> (asked.target, asked.arguments)) (foreignCall request) `shouldBe` Just (ImportedAs "m" "double", [I32Value 21])
                     case answerForeign request [I32Value 42] of
                         Right (Returned _ results) -> results `shouldBe` [I32Value 42]
                         _ -> expectationFailure "the module did not return after the answer"
@@ -572,8 +573,8 @@ spec = do
                     , stateImports = StateImports [("env", "base")] [] []
                     }
             giving :: Integer -> Embedder
-            giving base = providingGlobals (\moduleName name -> if (moduleName, name) == ("env", "base") then Just (Immutable, I32Value (fromInteger base)) else Nothing)
-            providingGlobals given = Embedder nothing given nothing nothing
+            giving base = providingGlobals (\moduleName name -> if (moduleName, name) == ("env", "base") then Just (Immutable, Low, I32Value (fromInteger base)) else Nothing)
+            providingGlobals given = Embedder 0 nothing given nothing nothing
             nothing _ _ = Nothing
             runWith embedder policyText m = do
                 policy <- first show (parsePolicy policyText)
@@ -585,8 +586,8 @@ spec = do
             runWith (giving 7) "" (fromBase [GlobalGet (GlobalIdx 0), Const SI32 3, Mul SI32, Const SI32 1, Sub SI32]) `shouldBe` Right ["20"]
         it "an import links only to a global that is provided, at its type and mutability" $ do
             runWith providesNothing "" (fromBase [Const SI32 0]) `shouldSatisfy` errorContaining "UnsupportedImport \"env\" \"base\""
-            runWith (providingGlobals (\_ _ -> Just (Mutable, I32Value 7))) "" (fromBase [Const SI32 0]) `shouldSatisfy` errorContaining "ImportTypeMismatch"
-            runWith (providingGlobals (\_ _ -> Just (Immutable, I64Value 7))) "" (fromBase [Const SI32 0]) `shouldSatisfy` errorContaining "ImportTypeMismatch"
+            runWith (providingGlobals (\_ _ -> Just (Mutable, Low, I32Value 7))) "" (fromBase [Const SI32 0]) `shouldSatisfy` errorContaining "ImportTypeMismatch"
+            runWith (providingGlobals (\_ _ -> Just (Immutable, Low, I64Value 7))) "" (fromBase [Const SI32 0]) `shouldSatisfy` errorContaining "ImportTypeMismatch"
         it "a secret imported global makes what is initialised from it secret" $ do
             runWith (giving 7) "global 0 : H" (fromBase [GlobalGet (GlobalIdx 0)]) `shouldSatisfy` errorContaining "IllegalFlow \"global\" High Low"
             runWith (giving 7) "global 0 : H\nglobal 1 : H\nexport f : -> H" (fromBase [GlobalGet (GlobalIdx 0)]) `shouldBe` Right ["7"]
@@ -594,12 +595,108 @@ spec = do
             let placed = (fromBase [Const SI32 0]) {memories = [onePageMemory], dataSegments = [RawDataSegment (Active (MemoryIdx 0) [GlobalGet (GlobalIdx 0)]) "hi"]}
             runWith (giving 8) "" placed `shouldBe` Right ["0"]
             runWith (giving 8) "global 0 : H" placed `shouldSatisfy` errorContaining "IllegalFlow \"data\" High Low"
-        it "an imported memory is a new one of the size provided, which must fit the import" $ do
+        it "an imported memory is the one provided, which must fit the import" $ do
             let importing declared = (singleFunctionModule [RawMemory (MemType AddrI32 declared)] [] [I32] [] [MemorySize (MemoryIdx 0)]) {stateImports = StateImports [] [("env", "memory")] []}
-                twoPages = Embedder nothing nothing (\_ _ -> Just (MemType AddrI32 (Limits 2 (Just 3)))) nothing
+                twoPages = Embedder 0 nothing nothing (\_ _ -> newMemory (MemType AddrI32 (Limits 2 (Just 3)))) nothing
             runWith twoPages "" (importing (Limits 1 Nothing)) `shouldBe` Right ["2"]
             runWith twoPages "" (importing (Limits 1 (Just 2))) `shouldSatisfy` errorContaining "ImportTypeMismatch"
             runWith providesNothing "" (importing (Limits 1 Nothing)) `shouldSatisfy` errorContaining "UnsupportedImport"
+
+    describe "modules linked in a world" $ do
+        let poke = RawFunction (FuncType [I32, I32] []) [] [LocalGet (LocalIdx 0), LocalGet (LocalIdx 1), Store SI32 (MemArg 0 0 0)]
+            peek = RawFunction (FuncType [I32] [I32]) [] [LocalGet (LocalIdx 0), Load SI32 (MemArg 0 0 0)]
+            pokeAndPeek = [Export "poke" (ExportFunc (FunctionIdx 0)), Export "peek" (ExportFunc (FunctionIdx 1))]
+            -- defines a memory and exports it
+            memoryOwner = (moduleOf [onePageMemory] [poke, peek] (FunctionIdx 0)) {exports = Export "mem" (ExportMem (MemoryIdx 0)) : pokeAndPeek}
+            -- imports that memory as its own memory 0
+            memorySharer = (moduleOf [onePageMemory] [poke, peek] (FunctionIdx 0)) {stateImports = StateImports [] [("owner", "mem")] [], exports = pokeAndPeek}
+            int32 = map (I32Value . fromInteger)
+            invoked world x name args = callExport world x name (int32 args)
+        it "a memory one module imports from another is one memory" $ do
+            let (world, linked) = worldOf [("owner", "", memoryOwner), ("sharer", "", memorySharer)]
+            linked `shouldBe` [Right 0, Right 1]
+            let (written, _) = invoked world 1 "poke" [0, 42]
+            snd (invoked written 0 "peek" [0]) `shouldBe` Right [I32Value 42]
+            let (again, _) = invoked written 0 "poke" [4, 7]
+            snd (invoked again 1 "peek" [4]) `shouldBe` Right [I32Value 7]
+        it "the bytes of a shared memory keep their levels" $ do
+            let hides = RawFunction (FuncType [] []) [] [Const SI32 0, Const SI32 7, Annotated High (Store SI32 (MemArg 0 0 0))]
+                owner = (moduleOf [onePageMemory] [hides] (FunctionIdx 0)) {exports = [Export "mem" (ExportMem (MemoryIdx 0)), Export "hide" (ExportFunc (FunctionIdx 0))]}
+                (world, _) = worldOf [("owner", "", owner), ("sharer", "", memorySharer)]
+                (hidden, _) = invoked world 0 "hide" []
+            snd (invoked hidden 1 "peek" [0]) `shouldSatisfy` either (isInfixOf "SecretRead" . show) (const False)
+        it "a table two modules share holds functions of both, and an indirect call crosses to the other" $ do
+            let returning n = RawFunction (FuncType [] [I32]) [] [Const SI32 n]
+                indirect = RawFunction (FuncType [I32] [I32]) [] [LocalGet (LocalIdx 0), CallIndirect (TableIdx 0) (TypeIdx 0)]
+                twoEntries = [RawTable FuncRef AddrI32 (Limits 2 Nothing)]
+                owner =
+                    (moduleOf [] [returning 1, indirect] (FunctionIdx 0))
+                        { tables = twoEntries
+                        , elementSegments = [activeElements [Const SI32 0] [FunctionIdx 0]]
+                        , exports = [Export "tab" (ExportTable (TableIdx 0)), Export "call" (ExportFunc (FunctionIdx 1))]
+                        }
+                sharer =
+                    (moduleOf [] [returning 2, indirect] (FunctionIdx 0))
+                        { tables = twoEntries
+                        , elementSegments = [activeElements [Const SI32 1] [FunctionIdx 0]]
+                        , stateImports = StateImports [] [] [("owner", "tab")]
+                        , exports = [Export "call" (ExportFunc (FunctionIdx 1))]
+                        }
+                (world, linked) = worldOf [("owner", "", owner), ("sharer", "", sharer)]
+            linked `shouldBe` [Right 0, Right 1]
+            snd (invoked world 0 "call" [1]) `shouldBe` Right [I32Value 2]
+            snd (invoked world 1 "call" [0]) `shouldBe` Right [I32Value 1]
+        it "a global that can be written is one global, and a module called back finds its state as its caller left it" $ do
+            -- owner: global 0; function 0 adds one to it; function 1 sets it to 10, calls entry 1 of
+            -- its table, and returns the global. sharer: puts a function there that calls the first back.
+            let bump = RawFunction (FuncType [] []) [] [GlobalGet (GlobalIdx 0), Const SI32 1, Add SI32, GlobalSet (GlobalIdx 0)]
+                runs = RawFunction (FuncType [] [I32]) [] [Const SI32 10, GlobalSet (GlobalIdx 0), Const SI32 1, CallIndirect (TableIdx 0) (TypeIdx 0), GlobalGet (GlobalIdx 0)]
+                counter = [RawGlobal (GlobalType Mutable I32) [Const SI32 0]]
+                owner =
+                    (moduleOf [] [bump, runs] (FunctionIdx 0))
+                        { globals = counter
+                        , tables = [RawTable FuncRef AddrI32 (Limits 2 Nothing)]
+                        , exports = [Export "g" (ExportGlobal (GlobalIdx 0)), Export "tab" (ExportTable (TableIdx 0)), Export "bump" (ExportFunc (FunctionIdx 0)), Export "run" (ExportFunc (FunctionIdx 1))]
+                        }
+                callsBack = RawFunction (FuncType [] []) [] [Call (FunctionIdx 0)]
+                readsGlobal = RawFunction (FuncType [] [I32]) [] [GlobalGet (GlobalIdx 0)]
+                sharer =
+                    (moduleOf [] [callsBack, readsGlobal] (FunctionIdx 1))
+                        { imports = [RawImport "owner" "bump" (ImportFunc (FuncType [] []))]
+                        , types = [FuncType [] [], FuncType [] [], FuncType [] [I32]]
+                        , globals = [RawGlobal (GlobalType Mutable I32) []]
+                        , tables = [RawTable FuncRef AddrI32 (Limits 2 Nothing)]
+                        , elementSegments = [activeElements [Const SI32 1] [FunctionIdx 1]]
+                        , stateImports = StateImports [("owner", "g")] [] [("owner", "tab")]
+                        , exports = [Export "read" (ExportFunc (FunctionIdx 2))]
+                        }
+                (world, linked) = worldOf [("owner", "", owner), ("sharer", "", sharer)]
+            linked `shouldBe` [Right 0, Right 1]
+            let (ran, result) = invoked world 0 "run" []
+            result `shouldBe` Right [I32Value 11]
+            snd (invoked ran 1 "read" []) `shouldBe` Right [I32Value 11]
+        it "what the segments before one that does not fit wrote stays written" $ do
+            let failing =
+                    (moduleOf [onePageMemory] [RawFunction (FuncType [] []) [] []] (FunctionIdx 0))
+                        { stateImports = StateImports [] [("owner", "mem")] []
+                        , dataSegments = [RawDataSegment (Active (MemoryIdx 0) [Const SI32 0]) "*", RawDataSegment (Active (MemoryIdx 0) [Const SI32 70000]) "x"]
+                        }
+                (world, linked) = worldOf [("owner", "", memoryOwner), ("failing", "", failing)]
+            linked `shouldBe` [Right 0, Left "DataSegmentOutOfBounds 1"]
+            snd (invoked world 0 "peek" [0]) `shouldBe` Right [I32Value 42]
+        it "a global is imported at the level it has, and a function with secret results is not given to another module" $ do
+            let nothing = RawFunction (FuncType [] []) [] []
+                secretGlobal = (moduleOf [] [nothing] (FunctionIdx 0)) {globals = [RawGlobal (GlobalType Mutable I32) [Const SI32 0]], exports = [Export "g" (ExportGlobal (GlobalIdx 0))]}
+                importsGlobal = (moduleOf [] [nothing] (FunctionIdx 0)) {globals = [RawGlobal (GlobalType Mutable I32) []], stateImports = StateImports [("owner", "g")] [] []}
+            snd (worldOf [("owner", "global 0 : H", secretGlobal), ("sharer", "", importsGlobal)]) `shouldBe` [Right 0, Left "ImportLevelMismatch \"g\""]
+            snd (worldOf [("owner", "global 0 : H", secretGlobal), ("sharer", "global 0 : H", importsGlobal)]) `shouldBe` [Right 0, Right 1]
+            let secretResult = moduleOf [] [RawFunction (FuncType [] [I32]) [] [Const SI32 1]] (FunctionIdx 0)
+                importsFunction = (moduleOf [] [nothing] (FunctionIdx 1)) {imports = [RawImport "owner" "f" (ImportFunc (FuncType [] [I32]))], types = [FuncType [] [I32], FuncType [] []]}
+            snd (worldOf [("owner", "export f : -> H", secretResult), ("sharer", "", importsFunction)]) `shouldBe` [Right 0, Left "UnsupportedImport \"owner\" \"f\""]
+            snd (worldOf [("owner", "", secretResult), ("sharer", "", importsFunction)]) `shouldBe` [Right 0, Right 1]
+        it "a module that imports one memory twice is not linked" $ do
+            let twice = (moduleOf [onePageMemory, onePageMemory] [poke] (FunctionIdx 0)) {stateImports = StateImports [] [("owner", "mem"), ("owner", "mem")] []}
+            snd (worldOf [("owner", "", memoryOwner), ("twice", "", twice)]) `shouldBe` [Right 0, Left "ImportedTwice \"owner\" \"mem\""]
 
     describe "WASI imports" $ do
         it "resolve to typed host functions; proc_exit ends the run with its code" $ do
@@ -1203,6 +1300,18 @@ wasiModule imported body results =
 
 noHost :: WasiConfig
 noHost = WasiConfig [] [] [] [] publicDescriptors
+
+{- | Instantiate modules in a new world, in order, each under its policy, and register each
+  under its name: the world, and for each module its number there or why it has none.
+-}
+worldOf :: [(Text, Text, RawModule)] -> (World, [Either String Int])
+worldOf = foldl add (emptyWorld, [])
+  where
+    add (world, linked) (name, policyText, m) = case first show (parsePolicy policyText) >>= first show . (`elaborateModuleWith` m) of
+        Left invalid -> (world, linked ++ [Left invalid])
+        Right validated -> case instantiateIn world validated of
+            (world', Right x, _) -> (register name x world', linked ++ [Right x])
+            (world', Left refused, _) -> (world', linked ++ [Left (show refused)])
 
 {- | A module for the socket tests: it imports @sock_accept@, @sock_recv@, @sock_send@,
   @fd_fdstat_set_flags@, @fd_write@ and @poll_oneoff@ as functions 0 to 5, and exports @f@

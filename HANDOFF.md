@@ -697,22 +697,68 @@ implemented since e87e76a.
 - The frozen binaries for the clean benchmark are of db01cdc, before this change. If the
   benchmark has not started when this is read, freeze the binaries again.
 
+## State shared between modules (2026-10-12)
+
+- **What:** `Runtime.Link`, a world of instances. A module imports functions, memories, tables
+  and globals from the modules registered in it, and a memory, a table or a writable global
+  that two modules both see is one object. This removes the restriction that cut across
+  versions ("imports are by value").
+- **How, without a shared mutable store:** the interpreter is still pure and an instance still
+  owns its state. Only one instance runs at a time, and control passes between instances at
+  two points, a call out of a module and its return. An instance takes what it imports from
+  the instance that defines it when control comes to it, and gives it back when control
+  leaves, by a call, a return or a trap. A memory and a table are persistent structures, so
+  this costs nothing. In C terms: no two modules hold a pointer to the same buffer; the buffer
+  is passed along with the control, and nobody else can run in between.
+- **What had to change for it:**
+  - A reference to a function names its instance (the high bits of the word), so a shared
+    table holds functions of several modules. An indirect call through an entry of another
+    instance leaves the module like a call of an import, and the linker compares the
+    function's type with the expected one (`ElsewhereCallee`, `CalleeWasElsewhere`).
+  - An instance keeps one state for all its activations (`Runtime.Module.Instance`), so a
+    module that is called back while a call out of it waits resumes from what the nested
+    activation left.
+  - A trap keeps what was written before it (`runKeeping`), and so does an active segment
+    that does not fit: the segments before it stay written, in the importing module's own
+    and in the imported memories and tables, as the specification has it. Element segments
+    are now placed before data segments, the specification's order.
+  - The suite's `spectest` module is an ordinary module of the script's world.
+- **Information flow at the boundary:**
+  - Calls between modules carry public values: an import is typed at public parameters and a
+    public bound (as before), and a function whose results its own policy declares secret is
+    not given to other modules, by name or by reference.
+  - A global is imported at the level it has where it is defined (exactly, if it can be
+    written; at that level or above, if not), and a table at exactly its level. Before, an
+    imported global took whatever level the importer's policy gave it, which could lower a
+    secret one; `ImportLevelMismatch` now refuses that.
+  - The bytes of a shared memory keep their levels, so a secret byte one module stored traps
+    a public load in another.
+  **For the paper track:** none of this is in section 5 or 6. The rule is short ("an import
+  has the level of what is imported; calls between modules are public").
+- **Two limits, each refused by name:**
+  - A module that imports the same memory, table or writable global twice is not linked
+    (`ImportedTwice`): inside one instance two indices are two objects. 10 assertions.
+  - An exception does not cross from a function to the module that called it
+    (`ExceptionAcrossModules`), and a tag is not imported. 68 assertions.
+- **Spec suite:** 62,399 passed, 0 failed, 2,803 skipped (62,137 and 3,065 before). Every skip
+  for an unsupported import and for state that may depend on an unlinked module is gone (292),
+  and so are the three for a start function that calls an import. Seven unit examples
+  (`test/Spec.hs`, "modules linked in a world").
+
 ## Where coverage stands (2026-10-12, for the paper's claim)
 
 Supported, with the 3.0 suite passing on all of it: **every instruction and type of
-WebAssembly 2.0**, and of what 3.0 adds, **several memories, 64-bit memories and tables, tail
-calls, extended constant expressions and exceptions** (thrown under a public pc only). With one
-restriction that cuts across versions: **a module does not share a memory, a table, a mutable
-global or an exception tag with another module**; what it imports of the first three it gets
-by value. A program that is one module, as every WASI program is, is not affected.
+WebAssembly 2.0, linking between modules included**, and of what 3.0 adds, **several memories,
+64-bit memories and tables, tail calls, extended constant expressions and exceptions** (thrown
+under a public pc only, and within one module).
 
-Not supported: typed function references and garbage collection (both 3.0). So the paper's
-"3.0 without garbage collection" is short of one feature, typed function references, which
-changes the value types (references to a function type, nullable or not, with subtyping) and
-is not a matter of days.
+Not supported: typed function references, the relaxed vector instructions and garbage
+collection (all 3.0). So the paper's "3.0 without garbage collection" is short of typed
+function references, which change the value types (references to a function type, nullable or
+not, with subtyping), and of the relaxed vector instructions, which are a small addition.
 
 Every feature that clang 23 (wasi-sdk 34) and rustc 1.99 enable by default for
-`wasm32-wasip1` is supported. The suite's 3,065 skipped assertions are: 1,245 malformed modules
-given as text, which the harness does not run; 1,446 on modules that use the two unsupported
-features (alone or with others); 371 that need state or a tag shared between modules; 3 whose
-start function calls an import. Counts by feature are in `TODO.md`.
+`wasm32-wasip1` is supported. The suite's 2,803 skipped assertions are: 1,245 malformed modules
+given as text, which the harness does not run; 1,468 on modules that use the unsupported
+features (alone or with others); 68 for a tag or an exception across modules; 12 for a script
+command the harness lacks; 10 for an object imported twice. Counts by feature are in `TODO.md`.

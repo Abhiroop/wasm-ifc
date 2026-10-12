@@ -17,6 +17,8 @@ module Syntax.Immediates (
     isNullReference,
     referenceTo,
     referent,
+    functionReferenceIn,
+    functionReferent,
     MemArg (..),
     AccessSite (..),
     Signedness (..),
@@ -28,6 +30,7 @@ module Syntax.Immediates (
     decideNarrow,
 ) where
 
+import Data.Bits (shiftL, shiftR, (.&.), (.|.))
 import Data.Kind (Type)
 import Data.Singletons (Sing)
 import Data.Word (Word32, Word64)
@@ -81,6 +84,20 @@ referenceTo index = Reference (fromIntegral index + 1)
 -- | The index a reference refers to, or 'Nothing' for null.
 referent :: Reference -> Maybe Word32
 referent (Reference word) = if word == 0 then Nothing else Just (fromIntegral (word - 1))
+
+{- | The reference to a function, by the instance it belongs to and its index there. An
+  embedder that links several instances numbers them, so that a reference means the same
+  function in each of them (a table two modules share holds functions of both). A module
+  instantiated alone is instance 0, and its references are those of 'referenceTo'.
+-}
+functionReferenceIn :: Word32 -> Word32 -> Reference
+functionReferenceIn inst index = Reference ((fromIntegral inst `shiftL` 33) .|. (fromIntegral index + 1))
+
+-- | The instance and the index a reference to a function names, or 'Nothing' for null.
+functionReferent :: Reference -> Maybe (Word32, Word32)
+functionReferent (Reference word)
+    | word == 0 = Nothing
+    | otherwise = Just (fromIntegral (word `shiftR` 33), fromIntegral ((word .&. 0x1FFFFFFFF) - 1))
 
 {- | A memory immediate. Alignment is advisory (ignored at run time); @offset@ is added to
   the dynamic address, and is as wide as the widest address (validation bounds it by the

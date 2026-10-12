@@ -44,6 +44,7 @@ So progress reads: every well-typed configuration either steps, finishes, or tra
 -}
 module Runtime.Interpreter (
     FuncInst (..),
+    ForeignTarget (..),
     FuncSpaceInst (..),
     getFunc,
     ModuleInst (..),
@@ -66,7 +67,9 @@ module Runtime.Interpreter (
     step,
     stepInstr,
     run,
+    runKeeping,
     runFunction,
+    startFunction,
     callDepthBound,
 
     -- * Per-type operations
@@ -124,7 +127,7 @@ import Runtime.MemInst (LoadFailure (..), MemInst, checkedWord, copyBetweenAt, f
 import Runtime.Numeric (copysign32, copysign64, fromSigned32, fromSigned64, intDiv32, intDiv64, intRem32, intRem64, toSigned32, toSigned64, wasmMax, wasmMin)
 import Runtime.Obligation (CheckPassed (..))
 import Runtime.Stack
-import Runtime.TableInst (TableInst, enteredCallee, fillEntries, getEntry, growTable, lookupChecked, readEntries, setEntry, tableSize, writeEntries)
+import Runtime.TableInst (ElsewhereCallee (..), TableInst, enteredCallee, fillEntries, getEntry, growTable, lookupChecked, lookupElsewhere, ownReference, readEntries, setEntry, tableSize, writeEntries)
 import Runtime.Trap (Trap (..))
 import Runtime.Vector (laneBitsAt, loadedVector, replaceLaneBits, vector1, vector2, vector3)
 import Syntax.Functions (Function (..))
@@ -179,12 +182,18 @@ data FuncInst (mod :: ModuleShape) (ft :: LabelledFuncType) where
     it suspends the machine ('ForeignRequest'), and the embedder answers with the results.
     -}
     ForeignFunc ::
-        Text ->
-        Text ->
+        ForeignTarget ->
         Sing ps ->
         Sing rs ->
         AllPublic ps ->
         FuncInst mod ('LabelledFuncType 'Low ps rs)
+
+{- | The function of the embedder that a call out of the module goes to: one the module imports,
+  by the names it imports it under, or one of another instance that a reference names (a table
+  two modules share holds functions of both).
+-}
+data ForeignTarget = ImportedAs Text Text | ReferencedBy Reference
+    deriving stock (Eq, Show)
 
 -- | The instance of a module's function index space: one 'FuncInst' per type in 'ModuleFuncs'.
 data FuncSpaceInst (mod :: ModuleShape) (fts :: [LabelledFuncType]) where
@@ -325,10 +334,9 @@ data HostRequest (mod :: ModuleShape) (res :: LabelledResultType) where
         SameValueTypes hostResults rs ->
         Suspended mod res rs ->
         HostRequest mod res
-    -- | A call to a 'ForeignFunc': its names, its arguments (public, by their type), and where its results go.
+    -- | A call out of the module: its target, its arguments (public, by their type), and where its results go.
     ForeignRequest ::
-        Text ->
-        Text ->
+        ForeignTarget ->
         Sing ps ->
         AllPublic ps ->
         ValueStack ps ->
@@ -526,7 +534,7 @@ stepInstr funcs store locals stack instr rest control = case instr of
        instructions trap on an index past the table (or past the segment), and otherwise move
        references between a table, the stack and an element segment unchanged. -}
     IRefNull isRef -> withReference isRef (stepped NothingToCheck store locals (nullReference :# stack) rest control)
-    IRefFunc function -> stepped NothingToCheck store locals (functionReference function :# stack) rest control
+    IRefFunc function -> stepped NothingToCheck store locals (ownReference store.tables.directory (functionReference function) :# stack) rest control
     IRefIsNull isRef -> case stack of
         reference :# r -> stepped NothingToCheck store locals ((if withReference isRef (isNullReference reference) then 1 else 0) :# r) rest control
     ITableGet isRef (TableRef width tableIx) -> withReference isRef $ case stack of
@@ -619,7 +627,11 @@ stepInstr funcs store locals stack instr rest control = case instr of
     ICallIndirect (TableRef width tableIx) _ flows _ witness expected -> case stack of
         -- (An index past what a table holds is past the end of this one.)
         index :# below' -> case maybe (Left UndefinedElement) (\at -> lookupChecked store.tables.directory (getTable tableIx store.tables) at expected) (countFrom width index) of
-            Left trap -> Left trap
+            -- (No function of this module there: one of another instance, perhaps.)
+            Left trap -> case (calleeElsewhere trap store (getTable tableIx store.tables) (countFrom width index) expected, expected) of
+                (Left stays, _) -> Left stays
+                (Right callee@(ElsewhereCallee reference allPublic), SLabelledFuncType _ params results) ->
+                    enterCallee (CalleeWasElsewhere callee) funcs store locals flows witness (Elsewhere reference params results allPublic) below' rest control
             Right checked -> enteredCallee checked $ \ix ->
                 enterCall (CalleeWasWithin checked) funcs store locals flows witness ix below' rest control
     {- Structured control: push the matching frame and run the body -}
@@ -677,13 +689,17 @@ stepInstr funcs store locals stack instr rest control = case instr of
        returns to (see 'tailCall'); the function's own frame and labels are dropped. -}
     IReturnCall _ flows _ witness ix _ results ->
         let (args, _) = splitStack witness stack
-         in tailCall NothingToCheck funcs store flows witness ix args results control
+         in tailCall NothingToCheck funcs store flows witness (Within ix) args results control
     IReturnCallIndirect (TableRef width tableIx) _ flows _ witness expected _ results -> case stack of
         index :# below' -> case maybe (Left UndefinedElement) (\at -> lookupChecked store.tables.directory (getTable tableIx store.tables) at expected) (countFrom width index) of
-            Left trap -> Left trap
+            Left trap -> case (calleeElsewhere trap store (getTable tableIx store.tables) (countFrom width index) expected, expected) of
+                (Left stays, _) -> Left stays
+                (Right callee@(ElsewhereCallee reference allPublic), SLabelledFuncType _ params results') ->
+                    let (args, _) = splitStack witness below'
+                     in tailCall (CalleeWasElsewhere callee) funcs store flows witness (Elsewhere reference params results' allPublic) args results control
             Right checked -> enteredCallee checked $ \ix ->
                 let (args, _) = splitStack witness below'
-                 in tailCall (CalleeWasWithin checked) funcs store flows witness ix args results control
+                 in tailCall (CalleeWasWithin checked) funcs store flows witness (Within ix) args results control
     IRelabelTop flows from to -> case splitStack from stack of
         (top, below') -> stepped NothingToCheck store locals (appendWith to (relabelStack flows top) below') rest control
     {- Inert -}
@@ -723,13 +739,46 @@ enterCall evidence funcs store locals flows witness ix stack rest control = case
         let (args, below) = splitStack witness stack
             suspended = Suspended (appendFromSameValues resultsAgree) locals below rest control
          in Right (HostCall evidence (HostRequest wasiFunc (relabelStack argsAgree (relabelStack flows args)) store resultsAgree suspended))
-    ForeignFunc moduleName fieldName params results allPublic ->
+    ForeignFunc target params results allPublic ->
         let (args, below) = splitStack witness stack
             suspended = Suspended (appendFromSing results) locals below rest control
-         in Right (HostCall evidence (ForeignRequest moduleName fieldName params allPublic (relabelStack flows args) results store suspended))
+         in Right (HostCall evidence (ForeignRequest target params allPublic (relabelStack flows args) results store suspended))
     GhostFunc -> Left InformationFlowViolation
   where
     depth = activationDepth control + 1
+
+-- | What a call enters: a function of the module, or one of another instance that a reference names.
+data Callee (mod :: ModuleShape) (ps :: [LabelledValType]) (rs :: [LabelledValType]) where
+    Within :: Elem ('LabelledFuncType bound ps rs) (ModuleFuncs mod) -> Callee mod ps rs
+    Elsewhere :: Reference -> Sing ps -> Sing rs -> AllPublic ps -> Callee mod ps rs
+
+-- | 'enterCall' for either kind of callee; a call elsewhere suspends the machine like one of an import.
+enterCallee ::
+    CheckPassed check ->
+    FuncSpaceInst mod (ModuleFuncs mod) ->
+    Store mod ->
+    LocalSpaceInst locals ->
+    SegmentFlows args ps ->
+    Append args s full ->
+    Callee mod ps rs ->
+    ValueStack full ->
+    Expr mod ('FrameShape locals ret) labels pcA7 pcB7 (rs ++ s) out ->
+    Control mod res ret locals labels out ->
+    Either Trap (StepResult check mod res)
+enterCallee evidence funcs store locals flows witness callee stack rest control = case callee of
+    Within ix -> enterCall evidence funcs store locals flows witness ix stack rest control
+    Elsewhere reference params results allPublic ->
+        let (args, below) = splitStack witness stack
+            suspended = Suspended (appendFromSing results) locals below rest control
+         in Right (HostCall evidence (ForeignRequest (ReferencedBy reference) params allPublic (relabelStack flows args) results store suspended))
+
+{- | What an indirect call found no function of this module at: a function of another instance,
+  or the trap the lookup gave.
+-}
+calleeElsewhere :: Trap -> Store mod -> TableInst -> Maybe Word32 -> Sing ('LabelledFuncType lf ps rs) -> Either Trap (ElsewhereCallee lf ps rs)
+calleeElsewhere trap store table at expected = case (trap, at) of
+    (UninitializedElement, Just index) -> lookupElsewhere store.tables.directory table index expected
+    _ -> Left trap
 
 -- | The 'Append' witness for a result segment whose shape a 'SameValueTypes' witness gives.
 appendFromSameValues :: SameValueTypes hostResults rs -> Append rs below (rs ++ below)
@@ -1018,7 +1067,7 @@ tailCall ::
     Store mod ->
     SegmentFlows args ps ->
     Append args s full ->
-    Elem ('LabelledFuncType bound ps rs) (ModuleFuncs mod) ->
+    Callee mod ps rs ->
     ValueStack args ->
     TailResults rs ret ->
     Control mod res ret locals labels cur ->
@@ -1030,17 +1079,17 @@ tailCall evidence funcs store flows witness ix args results control = case contr
     CallBoundary _ below callerLocals cont callerControl ->
         let onStack = appendOnto witness
          in case results of
-                SameResults _ -> enterCall evidence funcs store callerLocals flows onStack ix (appendWith onStack args below) cont callerControl
+                SameResults _ -> enterCallee evidence funcs store callerLocals flows onStack ix (appendWith onStack args below) cont callerControl
                 RaisedResults _ raised -> case segmentAppends below raised of
-                    (from, to) -> enterCall evidence funcs store callerLocals flows onStack ix (appendWith onStack args below) (IRelabelTop raised from to :. cont) callerControl
+                    (from, to) -> enterCallee evidence funcs store callerLocals flows onStack ix (appendWith onStack args below) (IRelabelTop raised from to :. cont) callerControl
     EntryBoundary ->
         let onStack = appendOnto witness
             atBottom = appendWith onStack args VNil
          in case results of
                 SameResults resultTypes -> case appendIs (appendNil resultTypes) of
-                    Refl -> enterCall evidence funcs store noLocals flows onStack ix atBottom INil EntryBoundary
+                    Refl -> enterCallee evidence funcs store noLocals flows onStack ix atBottom INil EntryBoundary
                 RaisedResults resultTypes raised -> case (segmentAppends VNil raised, appendIs (appendNil resultTypes)) of
-                    ((from, to), Refl) -> enterCall evidence funcs store noLocals flows onStack ix atBottom (IRelabelTop raised from to :. INil) EntryBoundary
+                    ((from, to), Refl) -> enterCallee evidence funcs store noLocals flows onStack ix atBottom (IRelabelTop raised from to :. INil) EntryBoundary
 
 -- | A segment on top of another stack than the one a witness was made for.
 appendOnto :: Append args s full -> Append args below (args ++ below)
@@ -1119,16 +1168,25 @@ data Halt (mod :: ModuleShape) (res :: LabelledResultType) where
   preservation that 'step' carries.)
 -}
 run :: FuncSpaceInst mod (ModuleFuncs mod) -> Config mod res -> Either Trap (Halt mod res)
-run funcs (Config store locals stack code control) = case code of
+run funcs config = case runKeeping funcs config of
+    Left (trap, _) -> Left trap
+    Right halt -> Right halt
+
+{- | 'run', which on a trap also gives the store the trapping instruction found: what the
+  instructions before it wrote stays written, as the specification has it, and an embedder
+  that keeps the instance goes on from there.
+-}
+runKeeping :: FuncSpaceInst mod (ModuleFuncs mod) -> Config mod res -> Either (Trap, Store mod) (Halt mod res)
+runKeeping funcs (Config store locals stack code control) = case code of
     INil -> case popControl store locals stack control of
         Done store' vs -> Right (Finished store' vs)
         HostCall _ request -> Right (AwaitingHost request)
-        Stepped _ next -> run funcs next
+        Stepped _ next -> runKeeping funcs next
     instr :. rest -> case stepInstr funcs store locals stack instr rest control of
-        Left t -> Left t
+        Left t -> Left (t, store)
         Right (Done store' vs) -> Right (Finished store' vs)
         Right (HostCall _ request) -> Right (AwaitingHost request)
-        Right (Stepped _ next) -> run funcs next
+        Right (Stepped _ next) -> runKeeping funcs next
 
 -- | How a fuel-bounded run ends: halted like 'run', or stopped with the budget spent.
 data Fuelled (mod :: ModuleShape) (res :: LabelledResultType) where
@@ -1168,14 +1226,27 @@ runFunction ::
     FuncInst mod ('LabelledFuncType bound ps rs) ->
     ValueStack ps ->
     Either Trap (Outcome mod rs)
-runFunction resultTypes tm (WasmFunc (Function params declared returns body)) args = do
-    halt <- run (tm.functions) (Config store locals VNil body entry)
-    Right $ case halt of
-        Finished store' results ->
-            Completed (storeToModule tm.functions store') results
-        AwaitingHost request -> NeedsHost request
+runFunction resultTypes tm function args = case startFunction resultTypes (moduleToStore tm) function args of
+    Left trap -> Left trap
+    Right (Left request) -> Right (NeedsHost request)
+    Right (Right config) -> do
+        halt <- run (tm.functions) config
+        Right $ case halt of
+            Finished store' results -> Completed (storeToModule tm.functions store') results
+            AwaitingHost request -> NeedsHost request
+
+{- | Where a call of a function from outside begins: the configuration to run for a function of
+  the module, or the request that a function of the host or of the embedder is at once.
+-}
+startFunction ::
+    Sing (rs :: [LabelledValType]) ->
+    Store mod ->
+    FuncInst mod ('LabelledFuncType bound ps rs) ->
+    ValueStack ps ->
+    Either Trap (Either (HostRequest mod rs) (Config mod rs))
+startFunction resultTypes store (WasmFunc (Function params declared returns body)) args =
+    Right (Right (Config store locals VNil body entry))
   where
-    store = moduleToStore tm
     locals = seedLocals (segmentSelf params) params declared args
     -- The entry function is held to what every callee is: if it may return under a secret
     -- pc, it returns behind a comparison of the preserved globals with their values now.
@@ -1184,12 +1255,11 @@ runFunction resultTypes tm (WasmFunc (Function params declared returns body)) ar
         Refl -> case restoringOnReturn returns store INil of
             INil -> EntryBoundary
             comparison -> CallBoundary 1 VNil noLocals comparison EntryBoundary
-runFunction _ tm (HostFunc wasiFunc argsAgree resultsAgree) args =
-    let store = moduleToStore tm
-     in Right (NeedsHost (HostRequest wasiFunc (relabelStack argsAgree args) store resultsAgree (Suspended (appendNilSameValues resultsAgree) noLocals VNil INil EntryBoundary)))
-runFunction _ tm (ForeignFunc moduleName fieldName params results allPublic) args =
-    Right (NeedsHost (ForeignRequest moduleName fieldName params allPublic args results (moduleToStore tm) (Suspended (appendNil results) noLocals VNil INil EntryBoundary)))
-runFunction _ _ GhostFunc _ = Left InformationFlowViolation
+startFunction _ store (HostFunc wasiFunc argsAgree resultsAgree) args =
+    Right (Left (HostRequest wasiFunc (relabelStack argsAgree args) store resultsAgree (Suspended (appendNilSameValues resultsAgree) noLocals VNil INil EntryBoundary)))
+startFunction _ store (ForeignFunc target params results allPublic) args =
+    Right (Left (ForeignRequest target params allPublic args results store (Suspended (appendNil results) noLocals VNil INil EntryBoundary)))
+startFunction _ _ GhostFunc _ = Left InformationFlowViolation
 
 {- *** Numeric dispatch ***
 

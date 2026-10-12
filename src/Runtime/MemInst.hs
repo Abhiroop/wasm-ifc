@@ -34,6 +34,7 @@
 module Runtime.MemInst (
     MemInst,
     allocMemory,
+    retypeMemory,
     growMemory,
     memoryPages,
     maxMemoryPages,
@@ -140,6 +141,13 @@ allocMemory addresses declared
     | otherwise = Just (MemInst (fromIntegral (maybe held (min held) declared.max)) (fromIntegral declared.min) IntMap.empty IntMap.empty)
   where
     held = fromIntegral (pagesHeld addresses)
+
+{- | The same memory at another shape. The shape is a phantom: the contents do not depend on it,
+  and what limits growth is kept in the memory itself. A module that imports a memory holds it
+  at the shape its import declares, which need not be the shape it was defined at.
+-}
+retypeMemory :: MemInst m -> MemInst m'
+retypeMemory (MemInst most pages chunks levels) = MemInst most pages chunks levels
 
 -- | Size of a memory in whole pages.
 memoryPages :: MemInst m -> Word32

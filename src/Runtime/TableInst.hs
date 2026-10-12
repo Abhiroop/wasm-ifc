@@ -29,9 +29,12 @@ module Runtime.TableInst (
     readEntries,
     FunctionDirectory,
     functionDirectory,
+    ownReference,
     CheckedCallee,
     enteredCallee,
     lookupChecked,
+    ElsewhereCallee (..),
+    lookupElsewhere,
     tableEntryUnchecked,
 ) where
 
@@ -45,9 +48,9 @@ import Data.Singletons (Sing)
 import Data.Singletons.Decide (decideEquality)
 import Data.Type.Equality ((:~:) (Refl))
 import Runtime.Trap (Trap (..))
-import Syntax.Immediates (Reference, isNullReference, nullReference, referent)
+import Syntax.Immediates (Reference, functionReferenceIn, functionReferent, isNullReference, nullReference, referent)
 import Syntax.Types (Limits (..))
-import Syntax.TypesIFC (FlowsInto, LabelledFuncType (..), LabelledValType, SLabelledFuncType (..), SecLevel, decideFlow)
+import Syntax.TypesIFC (AllPublic, FlowsInto, LabelledFuncType (..), LabelledValType, SLabelledFuncType (..), SSecLevel (..), SecLevel (..), decideAllPublic, decideFlow)
 import Validation.Shape (Elem, SomeFuncRef (..))
 
 data TableInst = TableInst
@@ -126,13 +129,26 @@ indicesFrom from count = if count == 0 then [] else [from .. from + (count - 1)]
   ('Validation.Ref.FunctionRef'); for any other number 'referencedFunction' has no answer.
 -}
 type FunctionDirectory :: [LabelledFuncType] -> Type
-newtype FunctionDirectory fts = FunctionDirectory (V.Vector (SomeFuncRef fts))
+data FunctionDirectory fts = FunctionDirectory
+    { self :: !Word32
+    -- ^ the number of this instance among those its embedder links (0 for a module on its own)
+    , functions :: !(V.Vector (SomeFuncRef fts))
+    }
 
-functionDirectory :: [SomeFuncRef fts] -> FunctionDirectory fts
-functionDirectory = FunctionDirectory . V.fromList
+functionDirectory :: Word32 -> [SomeFuncRef fts] -> FunctionDirectory fts
+functionDirectory self = FunctionDirectory self . V.fromList
 
+-- | A function of this instance, if that is what a reference names.
 referencedFunction :: FunctionDirectory fts -> Reference -> Maybe (SomeFuncRef fts)
-referencedFunction (FunctionDirectory functions) reference = referent reference >>= \index -> functions V.!? fromIntegral index
+referencedFunction directory reference = case functionReferent reference of
+    Just (inst, index) | inst == directory.self -> directory.functions V.!? fromIntegral index
+    _ -> Nothing
+
+{- | The reference to a function of this instance, from the one its index alone gives
+  ('Validation.Ref.functionReference'): it names the instance too.
+-}
+ownReference :: FunctionDirectory fts -> Reference -> Reference
+ownReference directory reference = maybe reference (functionReferenceIn directory.self) (referent reference)
 
 {- | A function found in the table whose labelled parameters and results are the ones an
   indirect call expects, and whose bound @lt@ the expected bound @lf@ flows into (SecWasm's
@@ -165,6 +181,30 @@ lookupChecked directory table index (SLabelledFuncType expectedBound expectedPar
                 Just flows -> Right (CheckedCallee flows ix)
                 Nothing -> Left IndirectCallBelowBound
             _ -> Left IndirectCallTypeMismatch
+
+{- | A table entry that names a function of another instance, for an indirect call that expects
+  a type whose parameters are public and whose bound is public: what a call out of the module
+  may be ('Runtime.Interpreter.ForeignFunc'). The call leaves the module, and the embedder
+  compares the function's value types with the expected ones before it enters it. The
+  constructor is exported for the reference and the witness it holds; 'lookupElsewhere' is
+  where it is built.
+-}
+type ElsewhereCallee :: SecLevel -> [LabelledValType] -> [LabelledValType] -> Type
+data ElsewhereCallee lf ps rs where
+    ElsewhereCallee :: Reference -> AllPublic ps -> ElsewhereCallee 'Low ps rs
+
+{- | The entry at @index@, if it names a function of another instance and the expected type is
+  one a call out of the module may have. A null entry, an entry that names nothing, a secret
+  parameter and a secret bound are traps.
+-}
+lookupElsewhere :: FunctionDirectory fts -> TableInst -> Word32 -> Sing ('LabelledFuncType lf ps rs) -> Either Trap (ElsewhereCallee lf ps rs)
+lookupElsewhere directory table index (SLabelledFuncType expectedBound expectedParams _) = case getEntry table index of
+    Nothing -> Left UndefinedElement
+    Just reference -> case functionReferent reference of
+        Just (inst, _) | inst /= directory.self -> case expectedBound of
+            SHigh -> Left IndirectCallBelowBound
+            SLow -> maybe (Left IndirectCallTypeMismatch) (Right . ElsewhereCallee reference) (decideAllPublic expectedParams)
+        _ -> Left UninitializedElement
 
 {- | The function an entry refers to, whatever its type. An index past the table is the spec's
   "undefined element" trap; a null entry is "uninitialized element". Not for the interpreter,

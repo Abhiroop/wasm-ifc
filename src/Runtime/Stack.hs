@@ -341,7 +341,7 @@ data TableInsts ts where
 
 -- | The table space of a module with no table and no element segment.
 noTables :: TableSpaceInst fts '[] '[] tags
-noTables = TableSpaceInst (functionDirectory []) TNil ENil IntMap.empty
+noTables = TableSpaceInst (functionDirectory 0 []) TNil ENil IntMap.empty
 
 getTable :: Elem t ts -> TableSpaceInst fts ts es tags -> TableInst
 getTable ix tables = go ix tables.instances
