@@ -12,7 +12,7 @@ are summarised here, not repeated.
 ## Where things stand (2026-10-08)
 
 - WebAssembly: the spec testsuite, at the WebAssembly 3.0 release (all 257 scripts), passes for
-  the supported subset (34,141 assertions, none failing, 31,061 skipped, counted by feature
+  the supported subset (36,367 assertions, none failing, 28,835 skipped, counted by feature
   below); the wasi-testsuite passes 72 of 72. Both also with SecWasm's restrictions on.
 - Information flow: SecWasm's static rules in the single instruction type, with the repairs of
   the paper's findings (`br_table` raises down to its deepest target); inference of stores,
@@ -56,15 +56,15 @@ are summarised here, not repeated.
 ## WebAssembly coverage
 
 The supported subset is WebAssembly 2.0 without vector instructions and with imports of
-functions only, plus several memories per module. What the 3.0 suite skips
+functions only, plus several memories per module and 64-bit memories and tables. What the 3.0
+suite skips
 (`WASM_IFC_SPEC_REPORT=f cabal test wasm-ifc-spec; ./scripts/spec-report.py f`), by the features
 a skipped module uses according to `wasm-tools`, in assertions:
 
 | Skipped | Features the module uses beyond the subset |
 |---:|---|
 | 25,355 | vector instructions |
-| 358 | none: imports of tables, memories and globals, and what depends on state shared between modules |
-| 2,280 | 64-bit memories and tables |
+| 547 | none: imports of tables, memories and globals, and what depends on state shared between modules |
 | 821 | garbage collection |
 | 424 | typed function references |
 | 88 | tail calls with typed function references (34 with tail calls alone) |
@@ -72,8 +72,7 @@ a skipped module uses according to `wasm-tools`, in assertions:
 | 61 | exceptions (98 more with another feature) |
 | 1,245 | none: malformed modules given as text, which the harness does not run |
 
-`return_call.wast` needs typed function references. (The table's order is by count before the
-358 fell from 3,107: functions imported from another module of a script are now linked.)
+`return_call.wast` needs typed function references.
 
 - [ ] **P2** Imports of globals, memories and tables; `global.get` of an imported global in
   initialisers. A function is imported by suspending on the call (`ForeignFunc`), which shares
@@ -95,7 +94,10 @@ a skipped module uses according to `wasm-tools`, in assertions:
   linking the word would have to name a function of the store.
 - [ ] **P3** A policy's regions are of memory 0 only; the other memories of a module have
   their byte labels but no declared regions.
-- [ ] **P3** Tail calls; extended constant expressions; 64-bit memories.
+- [ ] **P3** A 64-bit memory or table holds at most 2^32 - 1 pages or entries here (a memory of
+  256 TiB); a module that declares a larger minimum does not instantiate, and growing past it
+  fails as the spec allows.
+- [ ] **P3** Tail calls; extended constant expressions.
 - [ ] **P3** Vector instructions; exceptions; typed function references; garbage collection.
 
 ## Performance

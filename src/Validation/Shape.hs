@@ -275,8 +275,9 @@ data MemShape = MemShape
     deriving stock (Eq, Show)
 
 {- | The type-level counterpart of a table's type: the type of its entries (a reference type,
-  which the instructions on tables ask for as an 'Syntax.Types.IsRef'), its security level and
-  its size limits (as 'Natural's, like 'MemShape').
+  which the instructions on tables ask for as an 'Syntax.Types.IsRef'), its security level, the
+  type of its indices (an address type, like a memory's) and its size limits (as 'Natural's,
+  like 'MemShape').
 
   IFC note: unlike a memory, a table has one level for good, declared by the policy like a
   global's ("Validation.Policy"). SecWasm covers WebAssembly 1.0, where no instruction writes a
@@ -286,6 +287,7 @@ data MemShape = MemShape
 data TableShape = TableShape
     { entryType :: ValType
     , tableLevel :: SecLevel
+    , indexType :: AddrType
     , minEntries :: Natural
     , maxEntries :: Maybe Natural
     }

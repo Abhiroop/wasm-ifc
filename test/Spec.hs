@@ -274,7 +274,7 @@ spec = do
         it "the interface is not inferred: an export, a declared function, a table entry stay as declared" $ do
             elabRunWithPolicy "export f : H -> L" secretThroughLocal [5] `shouldSatisfy` errorContaining "IllegalFlow \"result\" High Low"
             elabRunWithPolicy "func 0 : L -> L\nexport f : H -> H" helper [5] `shouldSatisfy` errorContaining "IllegalFlow \"call\" High Low"
-            elabRunWithPolicy "export f : H -> H" (helper {tables = [RawTable FuncRef (Limits 1 Nothing)], elementSegments = [activeElements [Const SI32 0] [FunctionIdx 0]]}) [5]
+            elabRunWithPolicy "export f : H -> H" (helper {tables = [RawTable FuncRef AddrI32 (Limits 1 Nothing)], elementSegments = [activeElements [Const SI32 0] [FunctionIdx 0]]}) [5]
                 `shouldSatisfy` errorContaining "IllegalFlow \"call\" High Low"
 
     describe "br_table raises the pc down to its deepest target" $ do
@@ -394,7 +394,7 @@ spec = do
         -- function 0 (type 0, [] -> [i32]) sits in slot 0 of the table; function 1, exported, calls through it
         let throughTable mainType mainBody =
                 (moduleOf [] [RawFunction (FuncType [] [I32]) [] [Const SI32 42], RawFunction mainType [] mainBody] (FunctionIdx 1))
-                    { tables = [RawTable FuncRef (Limits 1 Nothing)]
+                    { tables = [RawTable FuncRef AddrI32 (Limits 1 Nothing)]
                     , elementSegments = [activeElements [Const SI32 0] [FunctionIdx 0]]
                     }
             underSecret = throughTable (FuncType [I32] [I32]) [LocalGet (LocalIdx 0), If (FuncType [] [I32]) [Const SI32 0, CallIndirect (TableIdx 0) (TypeIdx 0)] [Const SI32 1]]
@@ -429,7 +429,7 @@ spec = do
         -- function 0 (type 0, [] -> [i32]) sits in slot 0 of a table of two; function 1, exported, takes an i32
         let tabled results body =
                 (moduleOf [] [RawFunction (FuncType [] [I32]) [] [Const SI32 42], RawFunction (FuncType [I32] results) [] body] (FunctionIdx 1))
-                    { tables = [RawTable FuncRef (Limits 2 (Just 4))]
+                    { tables = [RawTable FuncRef AddrI32 (Limits 2 (Just 4))]
                     , elementSegments = [activeElements [Const SI32 0] [FunctionIdx 0]]
                     }
             setThenCall = tabled [I32] [Const SI32 1, RefFunc (FunctionIdx 0), TableSet (TableIdx 0), Const SI32 1, CallIndirect (TableIdx 0) (TypeIdx 0)]
@@ -572,6 +572,23 @@ spec = do
             twoMemories [Const SI32 0, Const SI32 9, Store SI32 inSecond, Const SI32 4, Const SI32 0, Const SI32 4, MemoryCopy (MemoryIdx 0) (MemoryIdx 1), Const SI32 4, Load SI32 (MemArg 0 0 0)] []
                 `shouldBe` Right ["9"]
             twoMemories [Const SI32 0, Load SI32 (MemArg 0 0 2)] [] `shouldSatisfy` errorContaining "IndexOutOfRange Memories 2"
+        it "addresses a 64-bit memory with i64, and reports its size as one" $ do
+            let wide = elabRunIn [RawMemory (MemType AddrI64 (Limits 1 (Just 2)))] [] [I64] []
+            wide [Const SI64 8, Const SI64 7, Store SI64 (MemArg 0 0 0), Const SI64 0, Load SI64 (MemArg 0 8 0)] [] `shouldBe` Right ["7"]
+            wide [Const SI64 1, MemoryGrow (MemoryIdx 0), Drop, MemorySize (MemoryIdx 0)] [] `shouldBe` Right ["2"]
+            wide [Const SI64 1, MemoryGrow (MemoryIdx 0), Drop, Const SI64 1, MemoryGrow (MemoryIdx 0)] [] `shouldBe` Right ["18446744073709551615"]
+            -- an address that no memory reaches, with an offset that wraps 64 bits
+            wide [Const SI64 0xFFFFFFFFFFFFFFF0, Load SI64 (MemArg 0 0x20 0)] [] `shouldSatisfy` trapContaining "OutOfBoundsMemoryAccess"
+            wide [Const SI32 0, Load SI64 (MemArg 0 0 0)] [] `shouldSatisfy` errorContaining "OperandMismatch \"load\" I64 I32"
+        it "indexes a table with 64-bit indices by i64" $ do
+            let wideTable body =
+                    (moduleOf [] [RawFunction (FuncType [] [I32]) [] [Const SI32 42], RawFunction (FuncType [] [I32]) [] body] (FunctionIdx 1))
+                        { tables = [RawTable FuncRef AddrI64 (Limits 2 Nothing)]
+                        , elementSegments = [RawElementSegment (ElemActive (TableIdx 0) [Const SI64 1]) FuncRef [[RefFunc (FunctionIdx 0)]]]
+                        }
+            elabRunModule (wideTable [Const SI64 1, CallIndirect (TableIdx 0) (TypeIdx 0)]) [] `shouldBe` Right ["42"]
+            elabRunModule (wideTable [Const SI64 0, TableGet (TableIdx 0), RefIsNull, TableSize (TableIdx 0), Convert I32WrapI64, Add SI32]) [] `shouldBe` Right ["3"]
+            elabRunModule (wideTable [Const SI64 0x100000000, TableGet (TableIdx 0), RefIsNull]) [] `shouldSatisfy` trapContaining "OutOfBoundsTableAccess"
         it "labels the bytes of each memory on their own" $ do
             -- the secret argument goes to memory 1; a load declared public then reads memory 0 or memory 1 at the same address
             let storing readFrom = singleFunctionModule [onePageMemory, onePageMemory] [I32] [I32] [] [Const SI32 0, LocalGet (LocalIdx 0), Store SI32 (MemArg 0 0 1), Const SI32 0, Load SI32 (MemArg 0 0 readFrom)]
@@ -998,7 +1015,7 @@ onePageMemory = RawMemory (MemType AddrI32 (Limits 1 Nothing))
 tableModule :: [RawInstr] -> RawModule
 tableModule body =
     (moduleOf [] [RawFunction (FuncType [] [I32]) [] [Const SI32 42], RawFunction (FuncType [I32] [I32]) [] [LocalGet (LocalIdx 0)], RawFunction (FuncType [] [I32]) [] body] (FunctionIdx 2))
-        { tables = [RawTable FuncRef (Limits 3 Nothing)]
+        { tables = [RawTable FuncRef AddrI32 (Limits 3 Nothing)]
         , elementSegments = [activeElements [Const SI32 0] [FunctionIdx 0], activeElements [Const SI32 2] [FunctionIdx 1]]
         }
 
@@ -1043,7 +1060,7 @@ withData :: [RawDataSegment] -> RawModule -> RawModule
 withData segments m = m {dataSegments = segments}
 
 memoryWithMax :: Word32 -> Word32 -> RawMemory
-memoryWithMax lo hi = RawMemory (MemType AddrI32 (Limits lo (Just hi)))
+memoryWithMax lo hi = RawMemory (MemType AddrI32 (Limits (fromIntegral lo) (Just (fromIntegral hi))))
 
 {- *** Hand-assembled binaries ***
 

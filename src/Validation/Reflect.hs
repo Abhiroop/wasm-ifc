@@ -77,7 +77,7 @@ import Syntax.Types
 import Syntax.TypesIFC
 
 -- Open import: the generated single-constructor 'SModuleShape' shares its name with its type.
-import Validation.Ref (MemoryRef (..))
+import Validation.Ref (MemoryRef (..), TableRef (..))
 import Validation.Shape
 
 {- *** Reflecting term-level shapes to singletons ***
@@ -273,15 +273,15 @@ data SomeModuleShape where
 memShapeOf :: MemType -> MemShape
 memShapeOf (MemType at (Limits lo hi)) = MemShape at (fromIntegral lo) (fmap fromIntegral hi)
 
--- | The type-level mirror of a table: the type of its entries, its level and its limits.
-tableShapeOf :: (ValType, SecLevel, Limits) -> TableShape
-tableShapeOf (entryType, level, Limits lo hi) = TableShape entryType level (fromIntegral lo) (fmap fromIntegral hi)
+-- | The type-level mirror of a table: the type of its entries, its level, its index type and its limits.
+tableShapeOf :: (ValType, SecLevel, AddrType, Limits) -> TableShape
+tableShapeOf (entryType, level, indexType, Limits lo hi) = TableShape entryType level indexType (fromIntegral lo) (fmap fromIntegral hi)
 
 {- | Reflect a module's signature (function types, global types, memory types, table limits)
   to a runtime witness with the type-level signature hidden existentially. The function types
   are given in declared order (as decoded) and stored in stack order.
 -}
-reflectCtx :: [LabelledFuncType] -> [LabelledGlobalType] -> [MemType] -> [(ValType, SecLevel, Limits)] -> Int -> [ValType] -> SomeModuleShape
+reflectCtx :: [LabelledFuncType] -> [LabelledGlobalType] -> [MemType] -> [(ValType, SecLevel, AddrType, Limits)] -> Int -> [ValType] -> SomeModuleShape
 reflectCtx funcTypes globalTypes memTypes tables dataCount elementTypes =
     withSomeSing
         ( ModuleShape
@@ -332,13 +332,13 @@ lookupMemoryRef (SCons (SMemShape at _ _) _) 0 = Just (SomeMemoryRef (MemoryRef 
 lookupMemoryRef (SCons _ rest) n = (\(SomeMemoryRef (MemoryRef at ix)) -> SomeMemoryRef (MemoryRef at (There ix))) <$> lookupMemoryRef rest (n - 1)
 lookupMemoryRef SNil _ = Nothing
 
--- | @∃t lt lo hi. (Sing t, Sing lt, Elem ('TableShape t lt lo hi) ts)@: a table found by its index.
+-- | @∃t lt at. (Sing t, Sing lt, TableRef t lt at ts)@: a table found by its index.
 data SomeTableRef (ts :: [TableShape]) where
-    SomeTableRef :: Sing (t :: ValType) -> Sing (lt :: SecLevel) -> Elem ('TableShape t lt lo hi) ts -> SomeTableRef ts
+    SomeTableRef :: Sing (t :: ValType) -> Sing (lt :: SecLevel) -> TableRef t lt at ts -> SomeTableRef ts
 
 lookupTableRef :: Sing (ts :: [TableShape]) -> Word32 -> Maybe (SomeTableRef ts)
-lookupTableRef (SCons (STableShape t lt _ _) _) 0 = Just (SomeTableRef t lt Here)
-lookupTableRef (SCons _ rest) n = (\(SomeTableRef t lt ix) -> SomeTableRef t lt (There ix)) <$> lookupTableRef rest (n - 1)
+lookupTableRef (SCons (STableShape t lt at _ _) _) 0 = Just (SomeTableRef t lt (TableRef at Here))
+lookupTableRef (SCons _ rest) n = (\(SomeTableRef t lt (TableRef at ix)) -> SomeTableRef t lt (TableRef at (There ix))) <$> lookupTableRef rest (n - 1)
 lookupTableRef SNil _ = Nothing
 
 -- | @∃t. (Sing t, Elem ('ElemShape t) es)@: an element segment found by its index.

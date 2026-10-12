@@ -349,7 +349,7 @@ runCommand dir state cmd = case cmd.kind of
   extensions. (@gc-types@ enables no instruction: it lets @wasm-tools@ accept @externref@.)
 -}
 supportedFeatures :: String
-supportedFeatures = "-all,mutable-global,saturating-float-to-int,sign-extension,multi-value,bulk-memory,reference-types,multi-memory,floats,gc-types"
+supportedFeatures = "-all,mutable-global,saturating-float-to-int,sign-extension,multi-value,bulk-memory,reference-types,multi-memory,memory64,floats,gc-types"
 
 {- | The features of WebAssembly 3.0 beyond 'supportedFeatures', each with the flags that
   enable it in @wasm-tools@ together with the features it builds on.

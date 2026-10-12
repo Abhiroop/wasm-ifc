@@ -139,7 +139,7 @@ import Syntax.Instructions (
  )
 import Syntax.Types
 import Syntax.TypesIFC
-import Validation.Ref (MemoryRef (..), functionReference)
+import Validation.Ref (MemoryRef (..), TableRef (..), functionReference)
 import Validation.Reflect (appendNil)
 import Validation.Shape (Append (..), BranchTarget (..), DataShape (..), Elem (..), ElemShape (..), FrameShape (..), ModuleData, ModuleElems, ModuleFuncs, ModuleGlobals, ModuleMems, ModuleShape, ModuleTables, PreservedOf, Restores (..), ReturnsWith (..), appendFromSing, appendIs, withinReach)
 
@@ -432,12 +432,12 @@ stepInstr funcs store locals stack instr rest control = case instr of
     IFloatUn nt op -> stepUn NothingToCheck store locals stack (floatUnT nt op) rest control
     IFloatBin nt op -> stepBin NothingToCheck store locals stack (floatBinT nt op) rest control
     {- Memory size / grow & narrow access -}
-    IMemSize (MemoryRef width ix) -> stepped NothingToCheck store locals (pagesAs width (memoryPages (memAt ix store)) :# stack) rest control
+    IMemSize (MemoryRef width ix) -> stepped NothingToCheck store locals (countAs width (memoryPages (memAt ix store)) :# stack) rest control
     IMemGrow _ (MemoryRef width ix) -> case stack of
         delta :# r ->
             let mem = memAt ix store
-             in case pagesFrom width delta >>= \pages -> growMemory pages mem of
-                    Just grown -> stepped NothingToCheck (storeMemAt ix grown store) locals (pagesAs width (memoryPages mem) :# r) rest control
+             in case countFrom width delta >>= \pages -> growMemory pages mem of
+                    Just grown -> stepped NothingToCheck (storeMemAt ix grown store) locals (countAs width (memoryPages mem) :# r) rest control
                     Nothing -> stepped NothingToCheck store locals (growFailed width :# r) rest control
     ILoadN level site nw sign memArg (MemoryRef width ix) -> case stack of
         addr :# r ->
@@ -478,37 +478,49 @@ stepInstr funcs store locals stack instr rest control = case instr of
     IRefFunc function -> stepped NothingToCheck store locals (functionReference function :# stack) rest control
     IRefIsNull isRef -> case stack of
         reference :# r -> stepped NothingToCheck store locals ((if withReference isRef (isNullReference reference) then 1 else 0) :# r) rest control
-    ITableGet isRef tableIx -> withReference isRef $ case stack of
-        index :# r -> case getEntry (getTable tableIx store.tables) index of
+    ITableGet isRef (TableRef width tableIx) -> withReference isRef $ case stack of
+        index :# r -> case countFrom width index >>= getEntry (getTable tableIx store.tables) of
             Just reference -> stepped NothingToCheck store locals (reference :# r) rest control
             Nothing -> Left OutOfBoundsTableAccess
-    ITableSet isRef _ tableIx -> withReference isRef $ case stack of
-        reference :# index :# r -> case setEntry index reference (getTable tableIx store.tables) of
+    ITableSet isRef _ (TableRef width tableIx) -> withReference isRef $ case stack of
+        reference :# index :# r -> case countFrom width index >>= \at -> setEntry at reference (getTable tableIx store.tables) of
             Just table -> stepped NothingToCheck (storeTable tableIx table store) locals r rest control
             Nothing -> Left OutOfBoundsTableAccess
-    ITableSize tableIx -> stepped NothingToCheck store locals (tableSize (getTable tableIx store.tables) :# stack) rest control
+    ITableSize (TableRef width tableIx) -> stepped NothingToCheck store locals (countAs width (tableSize (getTable tableIx store.tables)) :# stack) rest control
     -- (As for @memory.grow@, failing to grow is not a trap: the result is -1.)
-    ITableGrow isRef _ tableIx -> withReference isRef $ case stack of
+    ITableGrow isRef _ (TableRef width tableIx) -> withReference isRef $ case stack of
         count :# reference :# r ->
             let table = getTable tableIx store.tables
-             in case growTable count reference table of
-                    Just grown -> stepped NothingToCheck (storeTable tableIx grown store) locals (tableSize table :# r) rest control
-                    Nothing -> stepped NothingToCheck store locals (0xFFFFFFFF :# r) rest control
-    ITableFill isRef _ tableIx -> withReference isRef $ case stack of
-        count :# reference :# index :# r -> case fillEntries index count reference (getTable tableIx store.tables) of
-            Just table -> stepped NothingToCheck (storeTable tableIx table store) locals r rest control
-            Nothing -> Left OutOfBoundsTableAccess
+             in case countFrom width count >>= \entries -> growTable entries reference table of
+                    Just grown -> stepped NothingToCheck (storeTable tableIx grown store) locals (countAs width (tableSize table) :# r) rest control
+                    Nothing -> stepped NothingToCheck store locals (growFailed width :# r) rest control
+    ITableFill isRef _ (TableRef width tableIx) -> withReference isRef $ case stack of
+        count :# reference :# index :# r ->
+            let filled = do
+                    from <- countFrom width index
+                    entries <- countFrom width count
+                    fillEntries from entries reference (getTable tableIx store.tables)
+             in case filled of
+                    Just table -> stepped NothingToCheck (storeTable tableIx table store) locals r rest control
+                    Nothing -> Left OutOfBoundsTableAccess
     -- (The source is read whole before the destination is written, so the two may overlap.)
-    ITableCopy _ toIx fromIx -> case stack of
-        count :# src :# dst :# r -> case readEntries src count (getTable fromIx store.tables) >>= \references -> writeEntries dst references (getTable toIx store.tables) of
-            Just table -> stepped NothingToCheck (storeTable toIx table store) locals r rest control
-            Nothing -> Left OutOfBoundsTableAccess
-    ITableInit _ segmentIx tableIx -> case stack of
+    ITableCopy _ (TableRef toWidth toIx) (TableRef fromWidth fromIx) -> case stack of
+        count :# src :# dst :# r ->
+            let copied = do
+                    entries <- countFrom (minAddrSing toWidth fromWidth) count
+                    from <- countFrom fromWidth src
+                    to <- countFrom toWidth dst
+                    references <- readEntries from entries (getTable fromIx store.tables)
+                    writeEntries to references (getTable toIx store.tables)
+             in case copied of
+                    Just table -> stepped NothingToCheck (storeTable toIx table store) locals r rest control
+                    Nothing -> Left OutOfBoundsTableAccess
+    ITableInit _ segmentIx (TableRef width tableIx) -> case stack of
         count :# src :# dst :# r ->
             let segment = getElements segmentIx store.tables
                 inSegment = toInteger src + toInteger count <= toInteger (length segment)
                 references = take (fromIntegral count) (drop (fromIntegral src) segment)
-             in case (inSegment, writeEntries dst references (getTable tableIx store.tables)) of
+             in case (inSegment, countFrom width dst >>= \to -> writeEntries to references (getTable tableIx store.tables)) of
                     (True, Just table) -> stepped NothingToCheck (storeTable tableIx table store) locals r rest control
                     _ -> Left OutOfBoundsTableAccess
     IElemDrop segmentIx -> stepped NothingToCheck (storeDropElements segmentIx store) locals stack rest control
@@ -553,8 +565,9 @@ stepInstr funcs store locals stack instr rest control = case instr of
        (SecWasm's ℓf ⊑ ℓt), since the call's pc was checked against the expected bound only.
        The callee it enters is the one that lookup hands out, and so is its evidence. -}
     ICall _ flows _ witness ix -> enterCall NothingToCheck funcs store locals flows witness ix stack rest control
-    ICallIndirect tableIx _ flows _ witness expected -> case stack of
-        index :# below' -> case lookupChecked store.tables.directory (getTable tableIx store.tables) index expected of
+    ICallIndirect (TableRef width tableIx) _ flows _ witness expected -> case stack of
+        -- (An index past what a table holds is past the end of this one.)
+        index :# below' -> case maybe (Left UndefinedElement) (\at -> lookupChecked store.tables.directory (getTable tableIx store.tables) at expected) (countFrom width index) of
             Left trap -> Left trap
             Right checked -> enteredCallee checked $ \ix ->
                 enterCall (CalleeWasWithin checked) funcs store locals flows witness ix below' rest control
@@ -793,19 +806,22 @@ storeDropSegment :: Elem 'DataShape (ModuleData mod) -> Store mod -> Store mod
 storeDropSegment ix store =
     Store {globals = store.globals, memories = store.memories, tables = store.tables, dataSegments = dropSegment ix store.dataSegments}
 
--- | What @memory.grow@ pushes when it cannot grow: the spec's @-1@, at the memory's address type.
+-- | What @memory.grow@ and @table.grow@ push when they cannot grow: the spec's @-1@, at the address type.
 growFailed :: Sing (at :: AddrType) -> HostType (AddrVal at)
 growFailed SAddrI32 = 0xFFFFFFFF
 growFailed SAddrI64 = 0xFFFFFFFFFFFFFFFF
 
--- | A number of pages as a value of the memory's address type, and back ('Nothing' if too many).
-pagesAs :: Sing (at :: AddrType) -> Word32 -> HostType (AddrVal at)
-pagesAs SAddrI32 pages = pages
-pagesAs SAddrI64 pages = fromIntegral pages
+{- | A count (the pages of a memory, the entries or an index of a table) as a value of the
+  address type, and back: 'Nothing' if it is more than the 32 bits this machine counts them in,
+  which is then past the end of every memory and table.
+-}
+countAs :: Sing (at :: AddrType) -> Word32 -> HostType (AddrVal at)
+countAs SAddrI32 count = count
+countAs SAddrI64 count = fromIntegral count
 
-pagesFrom :: Sing (at :: AddrType) -> HostType (AddrVal at) -> Maybe Word32
-pagesFrom SAddrI32 pages = Just pages
-pagesFrom SAddrI64 pages = if pages > 0xFFFFFFFF then Nothing else Just (fromIntegral pages)
+countFrom :: Sing (at :: AddrType) -> HostType (AddrVal at) -> Maybe Word32
+countFrom SAddrI32 count = Just count
+countFrom SAddrI64 count = if count > 0xFFFFFFFF then Nothing else Just (fromIntegral count)
 
 {- | The effective byte address of a memory access: dynamic base + static @offset@, computed
   in 'Int' so it cannot wrap around 2^32. An over-large address then traps in

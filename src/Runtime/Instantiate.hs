@@ -49,7 +49,9 @@ data InstantiationError
       ImportNotPublic Text
     | -- | a WASI import requires the module to have a memory
       WasiNeedsMemory
-    | -- | a data segment does not fit in memory 0 (or there is no memory)
+    | -- | a memory or a table declares a minimum size beyond what this machine holds
+      MinimumTooLarge
+    | -- | a data segment does not fit in its memory
       DataSegmentOutOfBounds Int
     | -- | a secret region of the policy does not fit in memory 0 as instantiated
       RegionOutOfBounds Word32 Word32
@@ -78,9 +80,10 @@ instantiateWith :: ForeignFunctions -> SomeModule -> Either InstantiationError S
 instantiateWith provided (SomeModule shapeS m) = case shapeS of
     SModuleShape ftsS _ msS tsS dsS _ -> do
         funcs <- link provided (memsNonEmpty msS) ftsS m.functions
-        placed <- placeData m.dataSegments (allocateMemories msS)
+        placed <- placeData m.dataSegments =<< allocateMemories msS
         mems <- labelRegions m.secretRegions placed
-        tables <- placeElements 0 m.elementSegments (TableSpaceInst (functionDirectory (allFuncRefs ftsS)) (allocateTables tsS) (keptElements m.elementSegments))
+        emptyTables <- allocateTables tsS
+        tables <- placeElements 0 m.elementSegments (TableSpaceInst (functionDirectory (allFuncRefs ftsS)) emptyTables (keptElements m.elementSegments))
         let inst = ModuleInst {functions = funcs, globals = initialGlobals m.globals, memories = mems, tables, dataSegments = remainingData dsS m.dataSegments}
         started <- runStart inst m.start
         Right (SomeModuleInst shapeS started m.exports)
@@ -118,19 +121,19 @@ link provided mems (SCons (SLabelledFuncType boundS psS rsS) rest) (Imported mod
                     SHigh -> Left (ImportNotPublic fieldName)
             SLabelledFuncType SHigh _ _ -> Left (ImportTypeMismatch fieldName)
 
--- | Every memory at its declared minimum size, from the shape.
-allocateMemories :: Sing (ms :: [MemShape]) -> MemSpaceInst ms
-allocateMemories SNil = MNil
-allocateMemories (SCons shape rest) = MCons (allocMemory (limitsOf (fromSing shape))) (allocateMemories rest)
-  where
-    limitsOf (MemShape _ lo hi) = Limits (fromIntegral lo) (fmap fromIntegral hi)
+{- | Every memory at its declared minimum size, from the shape. A minimum beyond what this
+  machine holds is refused; only 64-bit memories and tables can declare one.
+-}
+allocateMemories :: Sing (ms :: [MemShape]) -> Either InstantiationError (MemSpaceInst ms)
+allocateMemories SNil = Right MNil
+allocateMemories (SCons shape rest) = case fromSing shape of
+    MemShape addresses lo hi -> MCons <$> note MinimumTooLarge (allocMemory addresses (Limits (fromIntegral lo) (fmap fromIntegral hi))) <*> allocateMemories rest
 
 -- | Every table at its declared minimum size, its entries null, from the shape.
-allocateTables :: Sing (ts :: [TableShape]) -> TableInsts ts
-allocateTables SNil = TNil
-allocateTables (SCons shape rest) = TCons (allocTable (limitsOf (fromSing shape))) (allocateTables rest)
-  where
-    limitsOf (TableShape _ _ lo hi) = Limits (fromIntegral lo) (fmap fromIntegral hi)
+allocateTables :: Sing (ts :: [TableShape]) -> Either InstantiationError (TableInsts ts)
+allocateTables SNil = Right TNil
+allocateTables (SCons shape rest) = case fromSing shape of
+    TableShape _ _ _ lo hi -> TCons <$> note MinimumTooLarge (allocTable (Limits (fromIntegral lo) (fmap fromIntegral hi))) <*> allocateTables rest
 
 -- | Copy the active data segments into memory 0, in order.
 placeData :: [DataSegment ms] -> MemSpaceInst ms -> Either InstantiationError (MemSpaceInst ms)
@@ -159,7 +162,8 @@ placeElements _ NoElements tables = Right tables
 placeElements index (Elements segment rest) tables = do
     written <- case segment.mode of
         WrittenTo tableIx offset -> do
-            table <- note (ElementSegmentOutOfBounds index) (writeEntries offset (map constReference segment.items) (getTable tableIx tables))
+            -- (An offset past what a table holds is past the end of this one.)
+            table <- note (ElementSegmentOutOfBounds index) (if offset > 0xFFFFFFFF then Nothing else writeEntries (fromIntegral offset) (map constReference segment.items) (getTable tableIx tables))
             Right (setTable tableIx table tables)
         KeptForInit -> Right tables
         DeclaredOnly -> Right tables

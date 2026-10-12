@@ -46,7 +46,7 @@ import Syntax.Immediates
 import Syntax.Indices
 import Syntax.Types
 import Syntax.TypesIFC
-import Validation.Ref (FunctionRef, LocalRef, MemoryRef)
+import Validation.Ref (FunctionRef, LocalRef, MemoryRef, TableRef)
 import Validation.Shape (
     Append (..),
     BranchTarget,
@@ -66,7 +66,6 @@ import Validation.Shape (
     RecordedGlobals,
     Restores (..),
     TableReach,
-    TableShape (..),
     appendFromSing,
  )
 
@@ -404,8 +403,8 @@ data
     IRefNull :: forall lv t m f l pc pcs s. IsRef t -> Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck s ((t ':~ Join pc lv) ': s)
     IRefFunc :: forall lv m f l pc pcs s. FunctionRef (ModuleFuncs m) -> Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck s (('FuncRef ':~ Join pc lv) ': s)
     IRefIsNull :: IsRef t -> Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck ((t ':~ lv) ': s) (('I32 ':~ Join pc lv) ': s)
-    {- Tables. A table is named by an 'Elem' into the module's table index space, whose shape
-       gives the type of its entries and its level @lt@. SecWasm covers WebAssembly 1.0, where
+    {- Tables. A table is named by a 'TableRef', its witness in the module's table index space,
+       whose shape gives the type of its entries, its level @lt@ and the type of its indices. SecWasm covers WebAssembly 1.0, where
        only @call_indirect@ uses a table, so these rules are ours, and they are those of a
        global that is indexed: a read is as secret as the table, the index and the pc; a write
        needs the pc, the index and the value to flow into the table's level. The size of a
@@ -416,36 +415,36 @@ data
        @data.drop@, a trap is not an output. -}
     ITableGet ::
         IsRef t ->
-        Elem ('TableShape t lt lo hi) (ModuleTables m) ->
-        Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck (('I32 ':~ li) ': s) ((t ':~ Join pc (Join li lt)) ': s)
+        TableRef t lt at (ModuleTables m) ->
+        Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck ((AddrVal at ':~ li) ': s) ((t ':~ Join pc (Join li lt)) ': s)
     ITableSet ::
         IsRef t ->
         FlowsInto (Join pc (Join li lv)) lt ->
-        Elem ('TableShape t lt lo hi) (ModuleTables m) ->
-        Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck ((t ':~ lv) ': ('I32 ':~ li) ': s) s
+        TableRef t lt at (ModuleTables m) ->
+        Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck ((t ':~ lv) ': (AddrVal at ':~ li) ': s) s
     ITableSize ::
-        Elem ('TableShape t lt lo hi) (ModuleTables m) ->
-        Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck s (('I32 ':~ Join pc lt) ': s)
+        TableRef t lt at (ModuleTables m) ->
+        Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck s ((AddrVal at ':~ Join pc lt) ': s)
     ITableGrow ::
         IsRef t ->
         FlowsInto (Join pc (Join ln lv)) lt ->
-        Elem ('TableShape t lt lo hi) (ModuleTables m) ->
-        Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck (('I32 ':~ ln) ': (t ':~ lv) ': s) (('I32 ':~ Join pc lt) ': s)
+        TableRef t lt at (ModuleTables m) ->
+        Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck ((AddrVal at ':~ ln) ': (t ':~ lv) ': s) ((AddrVal at ':~ Join pc lt) ': s)
     ITableFill ::
         IsRef t ->
         FlowsInto (Join pc (Join ln (Join lv li))) lt ->
-        Elem ('TableShape t lt lo hi) (ModuleTables m) ->
-        Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck (('I32 ':~ ln) ': (t ':~ lv) ': ('I32 ':~ li) ': s) s
+        TableRef t lt at (ModuleTables m) ->
+        Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck ((AddrVal at ':~ ln) ': (t ':~ lv) ': (AddrVal at ':~ li) ': s) s
     ITableCopy ::
         FlowsInto (Join pc (Join ln (Join lsrc (Join ldst lfrom)))) lt ->
-        Elem ('TableShape t lt lo hi) (ModuleTables m) ->
-        Elem ('TableShape t lfrom lo' hi') (ModuleTables m) ->
-        Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck (('I32 ':~ ln) ': ('I32 ':~ lsrc) ': ('I32 ':~ ldst) ': s) s
+        TableRef t lt to (ModuleTables m) ->
+        TableRef t lfrom from (ModuleTables m) ->
+        Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck ((AddrVal (MinAddr to from) ':~ ln) ': (AddrVal from ':~ lsrc) ': (AddrVal to ':~ ldst) ': s) s
     ITableInit ::
         FlowsInto (Join pc (Join ln (Join lsrc ldst))) lt ->
         Elem ('ElemShape t) (ModuleElems m) ->
-        Elem ('TableShape t lt lo hi) (ModuleTables m) ->
-        Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck (('I32 ':~ ln) ': ('I32 ':~ lsrc) ': ('I32 ':~ ldst) ': s) s
+        TableRef t lt at (ModuleTables m) ->
+        Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck (('I32 ':~ ln) ': ('I32 ':~ lsrc) ': (AddrVal at ':~ ldst) ': s) s
     IElemDrop :: Elem ('ElemShape t) (ModuleElems m) -> Instr m f l p p 'NoDynamicCheck s s
     {- Stack management. @drop@ and @select@ work on any value type (validation asks that an
        untyped @select@, 0x1B, has numeric operands); @select@
@@ -535,13 +534,13 @@ data
        check compares the levels too: the parameters and results must be the same, and the
        expected bound must flow into the callee's. -}
     ICallIndirect ::
-        Elem ('TableShape 'FuncRef lt lo hi) (ModuleTables m) ->
+        TableRef 'FuncRef lt at (ModuleTables m) ->
         FlowsInto (Join pc (Join lv lt)) bound ->
         SegmentFlows args ps ->
         ArgumentsAtCallPc pc ps ->
         Append args s full ->
         Sing ('LabelledFuncType bound ps rs) ->
-        Instr m f l (pc ': pcs) (pc ': pcs) ('CalleeWithin bound) (('I32 ':~ lv) ': full) (rs ++ s)
+        Instr m f l (pc ': pcs) (pc ': pcs) ('CalleeWithin bound) ((AddrVal at ':~ lv) ': full) (rs ++ s)
     {- Structured control. Bodies are typed in isolation (@ps -> rs@) within the same frame,
        framed over a polymorphic @s@. A block/if label carries its results; a loop its params.
        A body starts with one more pc entry than its surroundings: the current pc for a block,

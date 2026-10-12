@@ -66,7 +66,7 @@ import Data.Vector.Unboxed.Mutable qualified as MV
 import Data.Word (Word32, Word64, Word8)
 
 import Data.Singletons (Sing)
-import Syntax.Types (Limits (..))
+import Syntax.Types (AddrType (..), Limits (..))
 import Syntax.TypesIFC (SSecLevel (..), SecLevel (..))
 import Validation.Shape (MemShape)
 
@@ -85,7 +85,8 @@ import Validation.Shape (MemShape)
 -}
 type MemInst :: MemShape -> Type
 data MemInst m = MemInst
-    { limits :: !Limits
+    { maxPages :: !Word32
+    -- ^ how far the memory may grow: its declared maximum, or what its addresses reach if less
     , pageCount :: !Word32
     , chunks :: !(IntMap (UV.Vector Word8))
     -- ^ by chunk index; an absent chunk is all zeros, a present one is 'chunkSize' bytes long
@@ -114,20 +115,36 @@ chunkSize = 1024
 zeroChunk :: UV.Vector Word8
 zeroChunk = UV.replicate chunkSize 0
 
--- | The hard ceiling of a 32-bit memory, in pages (4 GiB).
-maxMemoryPages :: Word32
-maxMemoryPages = 65536
+{- | The most pages a memory may have (the spec's bound for validation): 4 GiB of them with
+  32-bit addresses, 2^48 pages with 64-bit ones.
+-}
+maxMemoryPages :: AddrType -> Word64
+maxMemoryPages AddrI32 = 65536
+maxMemoryPages AddrI64 = 2 ^ (48 :: Int)
 
--- | Allocate a memory at its declared minimum size, zero-initialised.
-allocMemory :: Limits -> MemInst m
-allocMemory declared = MemInst declared declared.min IntMap.empty IntMap.empty
+{- | The most pages a memory of this machine holds: the spec's bound with 32-bit addresses,
+  and with 64-bit ones as many as a 32-bit count of pages (256 TiB), far past what a host has.
+-}
+pagesHeld :: AddrType -> Word32
+pagesHeld AddrI32 = 65536
+pagesHeld AddrI64 = maxBound
+
+{- | Allocate a memory at its declared minimum size, zero-initialised; 'Nothing' if the minimum
+  is more than this machine holds, which only a 64-bit memory can declare.
+-}
+allocMemory :: AddrType -> Limits -> Maybe (MemInst m)
+allocMemory addresses declared
+    | declared.min > held = Nothing
+    | otherwise = Just (MemInst (fromIntegral (maybe held (min held) declared.max)) (fromIntegral declared.min) IntMap.empty IntMap.empty)
+  where
+    held = fromIntegral (pagesHeld addresses)
 
 -- | Size of a memory in whole pages.
 memoryPages :: MemInst m -> Word32
 memoryPages mem = mem.pageCount
 
 {- | Grow a memory by @delta@ pages (zero-filled), or refuse if the result would exceed the
-  declared maximum or the 4 GiB ceiling. Refusal is the spec's @memory.grow@ failure, which
+  declared maximum or what the memory's addresses reach. Refusal is the spec's @memory.grow@ failure, which
   the instruction reports as @-1@ rather than trapping.
 -}
 growMemory :: Word32 -> MemInst m -> Maybe (MemInst m)
@@ -136,7 +153,7 @@ growMemory delta mem
     | otherwise = Just mem {pageCount = fromInteger requested}
   where
     requested = toInteger mem.pageCount + toInteger delta
-    allowed = maybe maxMemoryPages (min maxMemoryPages) mem.limits.max
+    allowed = mem.maxPages
 
 {- | Whether @count@ bytes from @addr@ lie inside the memory. Computed in 'Int', which is 64 bits
   wide on the platforms GHC builds this for (the effective address already relies on it): the

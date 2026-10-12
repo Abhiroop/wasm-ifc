@@ -221,7 +221,7 @@ compileModule generated =
             ]
         , globals = [RawGlobal (GlobalType Mutable I32) [Const SI32 0], RawGlobal (GlobalType Mutable I32) [Const SI32 0], RawGlobal (GlobalType Mutable I32) [Const SI32 1000]]
         , memories = [RawMemory (MemType AddrI32 (Limits 1 (Just 1)))]
-        , tables = [RawTable FuncRef (Limits 4 (Just 6)), RawTable FuncRef (Limits 4 (Just 6))]
+        , tables = [RawTable FuncRef AddrI32 (Limits 4 (Just 6)), RawTable FuncRef AddrI32 (Limits 4 (Just 6))]
         , elementSegments = [RawElementSegment (ElemActive (TableIdx t) [Const SI32 0]) FuncRef [[RefFunc (FunctionIdx 2)]] | t <- [0, 1]]
         , dataSegments = []
         , exports = [Export "f" (ExportFunc (FunctionIdx 1)), Export "public" (ExportGlobal (GlobalIdx 0)), Export "preserved" (ExportGlobal (GlobalIdx 2))]

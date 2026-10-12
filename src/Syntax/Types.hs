@@ -22,7 +22,7 @@
 module Syntax.Types where
 
 import Data.Singletons.Base.TH
-import Data.Word (Word32)
+import Data.Word (Word64)
 
 {- | A WebAssembly value type, as one flat enumeration. The spec's nested grammar
   (@valtype ::= numtype | vectype | reftype@) is NOT encoded as constructors — that would
@@ -154,11 +154,13 @@ type FuncType = FuncTypeOf ValType
 
 type BlockType = FuncType
 
+-- | The size limits of a memory (in pages) or a table (in entries), as wide as the widest address.
 data Limits = Limits
-    { min :: Word32
-    , max :: Maybe Word32
+    { min :: Word64
+    , max :: Maybe Word64
     }
     deriving stock (Eq, Show)
+
 data AddrType = AddrI32 | AddrI64 deriving stock (Eq, Show)
 data MemType = MemType
     { addrType :: AddrType

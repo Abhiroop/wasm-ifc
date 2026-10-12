@@ -494,3 +494,19 @@ implemented since e87e76a.
 - **Cost:** the allocation tripwire improved on the workloads that use memory (2 to 3 % less
   than the reference): the word a load reads is no longer returned in an allocated `Just`.
   The saved binary of the timing sweep (505ee9c) is from before this change.
+
+## 64-bit memories and tables (item 13, 2026-10-12)
+
+- **What:** a memory or a table may have 64-bit addresses (the 3.0 feature the spec calls
+  memory64, which covers tables too). The operands that address it are then `i64`: the address
+  of a load or store, the index of a table instruction or of `call_indirect`, the counts of
+  the bulk instructions, the result of `memory.size`, `table.size` and the two `grow`s, and
+  the constant offset of a data or element segment. A copy between a 32-bit and a 64-bit
+  memory or table takes each address at its own type. In the typed AST the operand's type is
+  computed from the memory's or the table's shape (`AddrVal at`).
+- **Spec suite:** 36,367 passed, 0 failed, 28,835 skipped (34,141 and 31,061 before), the same
+  with SecWasm's restrictions on; 93 scripts run with nothing skipped.
+- **Information flow:** no new rule. An address is an operand like before, whatever its width.
+- **Limit of the implementation:** a 64-bit memory or table holds at most 2^32 - 1 pages or
+  entries; `TODO.md` says what happens beyond.
+- **Cost:** the allocation tripwire is unchanged by this step.

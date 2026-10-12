@@ -57,9 +57,16 @@ data TableInst = TableInst
     -- ^ by index, below the size; an absent entry is null
     }
 
--- | A table at its declared minimum size, with every entry null.
-allocTable :: Limits -> TableInst
-allocTable declared = TableInst declared.min declared.max IntMap.empty
+{- | A table at its declared minimum size, with every entry null; 'Nothing' if the minimum is
+  more than a table of this machine holds (2^32 - 1 entries), which only a table with 64-bit
+  indices can declare. The table then never grows past that many entries either.
+-}
+allocTable :: Limits -> Maybe TableInst
+allocTable declared
+    | declared.min > held = Nothing
+    | otherwise = Just (TableInst (fromIntegral declared.min) (Just (fromIntegral (maybe held (min held) declared.max))) IntMap.empty)
+  where
+    held = 0xFFFFFFFF
 
 tableSize :: TableInst -> Word32
 tableSize table = table.size
@@ -87,6 +94,8 @@ put index reference table
 growTable :: Word32 -> Reference -> TableInst -> Maybe TableInst
 growTable count reference table
     | grown > maybe 0xFFFFFFFF toInteger table.maxSize = Nothing
+    -- (A null entry is an absent one, so growing by nulls writes nothing.)
+    | isNullReference reference = Just table {size = fromInteger grown}
     | otherwise = Just (foldr (`put` reference) table {size = fromInteger grown} (indicesFrom table.size count))
   where
     grown = toInteger table.size + toInteger count

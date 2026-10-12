@@ -63,7 +63,7 @@ import Syntax.Types
 import Syntax.TypesIFC
 import Validation.LocalWebs (mergeModuleWebs, splitModuleLocals)
 import Validation.Policy (Assembled (..), LocalSplitting (..), Policy, PolicyError, Restrictions (..), assemble, emptyPolicy, modulePolicy)
-import Validation.Ref (MemoryRef (..), resolveFunction, resolveLocal)
+import Validation.Ref (MemoryRef (..), TableRef (..), resolveFunction, resolveLocal)
 import Validation.Reflect
 import Validation.Shape
 
@@ -566,70 +566,70 @@ elabInstr env pcsIn@(SCons pc _) stackIn instr = case instr of
         Nothing -> Left (IndexOutOfRange Functions f)
         Just (SomeFuncRef _ _ _ fix) -> Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (SFuncRef :%~ sJoin pc SLow) stackIn) (IRefFunc @'Low (resolveFunction fix)))
     TableGet (TableIdx t) -> do
-        SomeTableRef st lt tix <- tableAt env t
+        SomeTableRef st lt table@(TableRef at _) <- tableAt env t
         isRef <- referenceTable st
         case stackIn of
             SCons (si :%~ li) rest -> do
-                Refl <- note (OperandMismatch "table.get" I32 (valTypeOf si)) (decideEquality si SI32)
-                Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (st :%~ sJoin pc (sJoin li lt)) rest) (ITableGet isRef tix))
+                Refl <- operandIs "table.get" (addrValSing at) si
+                Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (st :%~ sJoin pc (sJoin li lt)) rest) (ITableGet isRef table))
             _ -> Left (StackUnderflow "table.get")
     TableSet (TableIdx t) -> do
-        SomeTableRef st lt tix <- tableAt env t
+        SomeTableRef st lt table@(TableRef at _) <- tableAt env t
         isRef <- referenceTable st
         case stackIn of
             SCons (sv :%~ lv) (SCons (si :%~ li) rest) -> do
                 Refl <- note (OperandMismatch "table.set" (valTypeOf st) (valTypeOf sv)) (decideEquality sv st)
-                Refl <- note (OperandMismatch "table.set" I32 (valTypeOf si)) (decideEquality si SI32)
+                Refl <- operandIs "table.set" (addrValSing at) si
                 flows <- requireFlow "table.set" (sJoin pc (sJoin li lv)) lt
-                Right (Produces (sameLengthAs pcsIn) pcsIn rest (ITableSet isRef flows tix))
+                Right (Produces (sameLengthAs pcsIn) pcsIn rest (ITableSet isRef flows table))
             _ -> Left (StackUnderflow "table.set")
     TableSize (TableIdx t) -> do
-        SomeTableRef _ lt tix <- tableAt env t
-        Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (SI32 :%~ sJoin pc lt) stackIn) (ITableSize tix))
+        SomeTableRef _ lt table@(TableRef at _) <- tableAt env t
+        Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (addrValSing at :%~ sJoin pc lt) stackIn) (ITableSize table))
     TableGrow (TableIdx t) -> do
-        SomeTableRef st lt tix <- tableAt env t
+        SomeTableRef st lt table@(TableRef at _) <- tableAt env t
         isRef <- referenceTable st
         case stackIn of
             SCons (sn :%~ ln) (SCons (sv :%~ lv) rest) -> do
-                Refl <- note (OperandMismatch "table.grow" I32 (valTypeOf sn)) (decideEquality sn SI32)
+                Refl <- operandIs "table.grow" (addrValSing at) sn
                 Refl <- note (OperandMismatch "table.grow" (valTypeOf st) (valTypeOf sv)) (decideEquality sv st)
                 flows <- requireFlow "table.grow" (sJoin pc (sJoin ln lv)) lt
-                Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (SI32 :%~ sJoin pc lt) rest) (ITableGrow isRef flows tix))
+                Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (addrValSing at :%~ sJoin pc lt) rest) (ITableGrow isRef flows table))
             _ -> Left (StackUnderflow "table.grow")
     TableFill (TableIdx t) -> do
-        SomeTableRef st lt tix <- tableAt env t
+        SomeTableRef st lt table@(TableRef at _) <- tableAt env t
         isRef <- referenceTable st
         case stackIn of
             SCons (sn :%~ ln) (SCons (sv :%~ lv) (SCons (si :%~ li) rest)) -> do
-                Refl <- note (OperandMismatch "table.fill" I32 (valTypeOf sn)) (decideEquality sn SI32)
+                Refl <- operandIs "table.fill" (addrValSing at) sn
                 Refl <- note (OperandMismatch "table.fill" (valTypeOf st) (valTypeOf sv)) (decideEquality sv st)
-                Refl <- note (OperandMismatch "table.fill" I32 (valTypeOf si)) (decideEquality si SI32)
+                Refl <- operandIs "table.fill" (addrValSing at) si
                 flows <- requireFlow "table.fill" (sJoin pc (sJoin ln (sJoin lv li))) lt
-                Right (Produces (sameLengthAs pcsIn) pcsIn rest (ITableFill isRef flows tix))
+                Right (Produces (sameLengthAs pcsIn) pcsIn rest (ITableFill isRef flows table))
             _ -> Left (StackUnderflow "table.fill")
     TableCopy (TableIdx to) (TableIdx from) -> do
-        SomeTableRef st lt toIx <- tableAt env to
-        SomeTableRef sfrom lfrom fromIx <- tableAt env from
+        SomeTableRef st lt toTable@(TableRef toAt _) <- tableAt env to
+        SomeTableRef sfrom lfrom fromTable@(TableRef fromAt _) <- tableAt env from
         Refl <- note (OperandMismatch "table.copy" (valTypeOf st) (valTypeOf sfrom)) (decideEquality sfrom st)
         case stackIn of
             SCons (a :%~ ln) (SCons (b :%~ lsrc) (SCons (c :%~ ldst) rest)) -> do
-                Refl <- note (OperandMismatch "table.copy" I32 (valTypeOf a)) (decideEquality a SI32)
-                Refl <- note (OperandMismatch "table.copy" I32 (valTypeOf b)) (decideEquality b SI32)
-                Refl <- note (OperandMismatch "table.copy" I32 (valTypeOf c)) (decideEquality c SI32)
+                Refl <- operandIs "table.copy" (addrValSing (minAddrSing toAt fromAt)) a
+                Refl <- operandIs "table.copy" (addrValSing fromAt) b
+                Refl <- operandIs "table.copy" (addrValSing toAt) c
                 flows <- requireFlow "table.copy" (sJoin pc (sJoin ln (sJoin lsrc (sJoin ldst lfrom)))) lt
-                Right (Produces (sameLengthAs pcsIn) pcsIn rest (ITableCopy flows toIx fromIx))
+                Right (Produces (sameLengthAs pcsIn) pcsIn rest (ITableCopy flows toTable fromTable))
             _ -> Left (StackUnderflow "table.copy")
     TableInit (ElemIdx e) (TableIdx t) -> do
-        SomeTableRef st lt tix <- tableAt env t
+        SomeTableRef st lt table@(TableRef at _) <- tableAt env t
         SomeElemRef se eix <- note (IndexOutOfRange ElementSegments e) (lookupElemRef (elemShapesSing (env.shape)) e)
         Refl <- note (OperandMismatch "table.init" (valTypeOf st) (valTypeOf se)) (decideEquality se st)
         case stackIn of
             SCons (a :%~ ln) (SCons (b :%~ lsrc) (SCons (c :%~ ldst) rest)) -> do
-                Refl <- note (OperandMismatch "table.init" I32 (valTypeOf a)) (decideEquality a SI32)
-                Refl <- note (OperandMismatch "table.init" I32 (valTypeOf b)) (decideEquality b SI32)
-                Refl <- note (OperandMismatch "table.init" I32 (valTypeOf c)) (decideEquality c SI32)
+                Refl <- operandIs "table.init" SI32 a
+                Refl <- operandIs "table.init" SI32 b
+                Refl <- operandIs "table.init" (addrValSing at) c
                 flows <- requireFlow "table.init" (sJoin pc (sJoin ln (sJoin lsrc ldst))) lt
-                Right (Produces (sameLengthAs pcsIn) pcsIn rest (ITableInit flows eix tix))
+                Right (Produces (sameLengthAs pcsIn) pcsIn rest (ITableInit flows eix table))
             _ -> Left (StackUnderflow "table.init")
     ElemDrop (ElemIdx e) -> do
         SomeElemRef _ eix <- note (IndexOutOfRange ElementSegments e) (lookupElemRef (elemShapesSing (env.shape)) e)
@@ -637,16 +637,16 @@ elabInstr env pcsIn@(SCons pc _) stackIn instr = case instr of
     {- Calls -}
     CallIndirect (TableIdx tb) (TypeIdx t) -> case stackIn of
         SCons (sc :%~ lidx) rest -> do
-            SomeTableRef st lt tix <- tableAt env tb
+            SomeTableRef st lt table@(TableRef at _) <- tableAt env tb
             Refl <- note (OperandMismatch "call_indirect" FuncRef (valTypeOf st)) (decideEquality st SFuncRef)
-            Refl <- note (OperandMismatch "call_indirect" I32 (valTypeOf sc)) (decideEquality sc SI32)
+            Refl <- operandIs "call_indirect" (addrValSing at) sc
             expected <- note (IndexOutOfRange Types t) (nth (env.types) t)
             case toSing (stackOrderLabelled expected) of
                 SomeSing (SLabelledFuncType boundS psS rsS) -> do
                     SomeCoercion sS flows witness <- prefixFlows "call_indirect" psS rest
                     calledFrom <- requireFlow "call_indirect" (sJoin pc (sJoin lidx lt)) boundS
                     atCallPc <- argumentsAtCallPc env "call_indirect" pc psS
-                    Right (Produces (sameLengthAs pcsIn) pcsIn (rsS %++ sS) (ICallIndirect tix calledFrom flows atCallPc witness (SLabelledFuncType boundS psS rsS)))
+                    Right (Produces (sameLengthAs pcsIn) pcsIn (rsS %++ sS) (ICallIndirect table calledFrom flows atCallPc witness (SLabelledFuncType boundS psS rsS)))
         _ -> Left (StackUnderflow "call_indirect")
     Call (FunctionIdx f) -> case lookupFuncRef (funcTypesSing (env.shape)) f of
         Nothing -> Left (IndexOutOfRange Functions f)
@@ -1275,26 +1275,26 @@ stepDead env pcsIn s instr = case instr of
     RefFunc (FunctionIdx f) -> case lookupFuncRef (funcTypesSing (env.shape)) f of
         Nothing -> Left (IndexOutOfRange Functions f)
         Just _ -> Right (pushKnown FuncRef s)
-    TableGet (TableIdx t) -> tableAt env t >>= \(SomeTableRef st _ _) -> pushKnown (valTypeOf st) <$> popKnown I32 s
-    TableSet (TableIdx t) -> tableAt env t >>= \(SomeTableRef st _ _) -> popTypes [valTypeOf st, I32] s
-    TableSize (TableIdx t) -> tableAt env t >> Right (pushKnown I32 s)
-    TableGrow (TableIdx t) -> tableAt env t >>= \(SomeTableRef st _ _) -> pushKnown I32 <$> popTypes [I32, valTypeOf st] s
-    TableFill (TableIdx t) -> tableAt env t >>= \(SomeTableRef st _ _) -> popTypes [I32, valTypeOf st, I32] s
+    TableGet (TableIdx t) -> tableAt env t >>= \(SomeTableRef st _ table) -> pushKnown (valTypeOf st) <$> popKnown (indexOf table) s
+    TableSet (TableIdx t) -> tableAt env t >>= \(SomeTableRef st _ table) -> popTypes [valTypeOf st, indexOf table] s
+    TableSize (TableIdx t) -> tableAt env t >>= \(SomeTableRef _ _ table) -> Right (pushKnown (indexOf table) s)
+    TableGrow (TableIdx t) -> tableAt env t >>= \(SomeTableRef st _ table) -> pushKnown (indexOf table) <$> popTypes [indexOf table, valTypeOf st] s
+    TableFill (TableIdx t) -> tableAt env t >>= \(SomeTableRef st _ table) -> popTypes [indexOf table, valTypeOf st, indexOf table] s
     TableCopy (TableIdx to) (TableIdx from) -> do
-        SomeTableRef st _ _ <- tableAt env to
-        SomeTableRef sfrom _ _ <- tableAt env from
+        SomeTableRef st _ (TableRef toAt _) <- tableAt env to
+        SomeTableRef sfrom _ (TableRef fromAt _) <- tableAt env from
         when (valTypeOf st /= valTypeOf sfrom) (Left (OperandMismatch "table.copy" (valTypeOf st) (valTypeOf sfrom)))
-        popTypes [I32, I32, I32] s
+        popTypes [valTypeOf (addrValSing (minAddrSing toAt fromAt)), valTypeOf (addrValSing fromAt), valTypeOf (addrValSing toAt)] s
     TableInit (ElemIdx e) (TableIdx t) -> do
-        SomeTableRef st _ _ <- tableAt env t
+        SomeTableRef st _ table <- tableAt env t
         SomeElemRef se _ <- note (IndexOutOfRange ElementSegments e) (lookupElemRef (elemShapesSing (env.shape)) e)
         when (valTypeOf st /= valTypeOf se) (Left (OperandMismatch "table.init" (valTypeOf st) (valTypeOf se)))
-        popTypes [I32, I32, I32] s
+        popTypes [I32, I32, indexOf table] s
     ElemDrop (ElemIdx e) -> note (IndexOutOfRange ElementSegments e) (lookupElemRef (elemShapesSing (env.shape)) e) >> Right s
     CallIndirect (TableIdx tb) (TypeIdx t) -> do
-        SomeTableRef st _ _ <- tableAt env tb
+        SomeTableRef st _ table <- tableAt env tb
         when (valTypeOf st /= FuncRef) (Left (OperandMismatch "call_indirect" FuncRef (valTypeOf st)))
-        s1 <- popKnown I32 s
+        s1 <- popKnown (indexOf table) s
         LabelledFuncType _ ps rs <- note (IndexOutOfRange Types t) (nth (env.types) t)
         afterFrame (map unlabelled (stackOrder ps)) (map unlabelled (stackOrder rs)) s1
     Nop -> Right s
@@ -1336,6 +1336,9 @@ stepDead env pcsIn s instr = case instr of
         _ <- popTypes ts s1
         Right ()
     arith :: Sing (t :: ValType) -> Either ElabError PolyStack
+    -- The type of an index into a table.
+    indexOf :: TableRef t lt at ts -> ValType
+    indexOf (TableRef at _) = valTypeOf (addrValSing at)
     -- The type of an address into the memory an instruction names.
     address name i = (\(SomeMemoryRef (MemoryRef at _)) -> valTypeOf (addrValSing at)) <$> memoryAt env name i
     arith t = pushKnown (valTypeOf t) <$> (popKnown (valTypeOf t) s >>= popKnown (valTypeOf t))
@@ -1617,7 +1620,7 @@ elaborateUnder assembled choices =
             choices.chosenFunctionTypes
             assembled.globalTypes
             memTypes
-            [(t.entryType, level, t.limits) | (t, level) <- zip m.tables assembled.tableLevels]
+            [(t.entryType, level, t.addrType, t.limits) | (t, level) <- zip m.tables assembled.tableLevels]
             (length m.dataSegments)
             [segment.entryType | segment <- m.elementSegments]
     -- A function body may take a reference only to a function the module names outside its
@@ -1633,16 +1636,17 @@ elaborateUnder assembled choices =
 -}
 validateStructure :: RawModule -> Either ElabError ()
 validateStructure m = do
-    mapM_ checkLimits [declared | RawMemory (MemType _ declared) <- m.memories]
-    mapM_ checkTableLimits [t.limits | t <- m.tables]
+    mapM_ checkLimits [(addresses, declared) | RawMemory (MemType addresses declared) <- m.memories]
+    mapM_ checkTableLimits [(t.addrType, t.limits) | t <- m.tables]
     checkDistinct [e.name | e <- m.exports]
     mapM_ checkExport m.exports
   where
-    checkLimits declared
-        | declared.min > maxMemoryPages = Left (InvalidMemoryLimits declared)
-        | Just hi <- declared.max, hi > maxMemoryPages || declared.min > hi = Left (InvalidMemoryLimits declared)
+    checkLimits (addresses, declared)
+        | declared.min > maxMemoryPages addresses = Left (InvalidMemoryLimits declared)
+        | Just hi <- declared.max, hi > maxMemoryPages addresses || declared.min > hi = Left (InvalidMemoryLimits declared)
         | otherwise = Right ()
-    checkTableLimits declared
+    -- (A table's limits are bounded by its index type only, which the decoder ensures.)
+    checkTableLimits (_ :: AddrType, declared)
         | Just hi <- declared.max, declared.min > hi = Left (InvalidTableLimits declared)
         | otherwise = Right ()
     checkDistinct names = case [n | (k, n) <- zip [0 :: Int ..] names, n `elem` take k names] of
@@ -1801,9 +1805,11 @@ elaborateElements ctxS = go
             ElemPassive -> Right KeptForInit
             ElemDeclarative -> Right DeclaredOnly
             ElemActive (TableIdx t) offsetExpr -> do
-                SomeTableRef tableType _ tix <- note (IndexOutOfRange Tables t) (lookupTableRef (tableShapesSing ctxS) t)
+                SomeTableRef tableType _ (TableRef at tix) <- note (IndexOutOfRange Tables t) (lookupTableRef (tableShapesSing ctxS) t)
                 Refl <- note (OperandMismatch "elem" (valTypeOf tableType) (valTypeOf st)) (decideEquality tableType st)
-                offset <- evalConstInit (funcTypesSing ctxS) (InvalidElementSegmentOffset index) SI32 offsetExpr
+                offset <- case at of
+                    SAddrI32 -> fromIntegral <$> evalConstInit (funcTypesSing ctxS) (InvalidElementSegmentOffset index) SI32 offsetExpr
+                    SAddrI64 -> evalConstInit (funcTypesSing ctxS) (InvalidElementSegmentOffset index) SI64 offsetExpr
                 Right (WrittenTo tix offset)
         Elements (ElementSegment placement references) <$> go es rest
     go _ _ = Left (Malformed "element segment/type count mismatch")

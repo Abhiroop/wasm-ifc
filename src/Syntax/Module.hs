@@ -45,7 +45,7 @@ import Syntax.Globals (GlobalSpace, RawGlobal (..))
 import Syntax.Immediates (Reference, nullReference)
 import Syntax.Indices (FunctionIdx, GlobalIdx, MemoryIdx, TableIdx)
 import Syntax.Instructions (RawExpr, RawInstr (RefFunc))
-import Syntax.Types (FuncType, Limits, MemType, ValType (..))
+import Syntax.Types (AddrType, FuncType, Limits, MemType, ValType (..))
 import Syntax.TypesIFC (LabelledFuncType (..), SecLevel (..))
 import Validation.Ref (FunctionRef, functionReference)
 import Validation.Shape (Elem, ElemShape (..), MemShape (..), ModuleElems, ModuleFuncs, ModuleGlobals, ModuleMems, ModuleShape, ModuleTables, TableShape (..))
@@ -88,9 +88,10 @@ newtype RawMemory = RawMemory
     }
     deriving stock (Eq, Show)
 
--- | A table: the reference type of its entries, and its size limits.
+-- | A table: the reference type of its entries, the type of its indices, and its size limits.
 data RawTable = RawTable
     { entryType :: ValType
+    , addrType :: AddrType
     , limits :: Limits
     }
     deriving stock (Eq, Show)
@@ -190,7 +191,7 @@ data ElementSegment (shape :: ModuleShape) (t :: ValType) = ElementSegment
   only use is to declare its functions for @ref.func@).
 -}
 data ElementMode (shape :: ModuleShape) (t :: ValType) where
-    WrittenTo :: Elem ('TableShape t lt lo hi) (ModuleTables shape) -> Word32 -> ElementMode shape t
+    WrittenTo :: Elem ('TableShape t lt at lo hi) (ModuleTables shape) -> Word64 -> ElementMode shape t
     KeptForInit :: ElementMode shape t
     DeclaredOnly :: ElementMode shape t
 

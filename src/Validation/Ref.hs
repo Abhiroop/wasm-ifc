@@ -24,6 +24,7 @@ module Validation.Ref (
     resolveFunction,
     functionReference,
     MemoryRef (..),
+    TableRef (..),
 ) where
 
 import Data.Kind (Type)
@@ -32,8 +33,8 @@ import Data.Word (Word32)
 
 import Syntax.Immediates (Reference, referenceTo)
 import Syntax.Types (AddrType, ValType)
-import Syntax.TypesIFC (LabelledFuncType, LabelledValType (..), SLabelledValType (..))
-import Validation.Shape (Elem (..), MemShape (..))
+import Syntax.TypesIFC (LabelledFuncType, LabelledValType (..), SLabelledValType (..), SecLevel)
+import Validation.Shape (Elem (..), MemShape (..), TableShape (..))
 
 type LocalRef :: LabelledValType -> [LabelledValType] -> Type
 data LocalRef t ls where
@@ -83,3 +84,10 @@ functionReference (FunctionRef reference) = reference
 type MemoryRef :: AddrType -> [MemShape] -> Type
 data MemoryRef at ms where
     MemoryRef :: !(Sing at) -> Elem ('MemShape at lo hi) ms -> MemoryRef at ms
+
+{- | A table of the module as an instruction names it: its witness, and the type of its
+  indices as a singleton, by which the machine reads an index off the stack.
+-}
+type TableRef :: ValType -> SecLevel -> AddrType -> [TableShape] -> Type
+data TableRef t lt at ts where
+    TableRef :: !(Sing at) -> Elem ('TableShape t lt at lo hi) ts -> TableRef t lt at ts

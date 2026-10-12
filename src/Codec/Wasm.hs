@@ -145,12 +145,18 @@ getFuncType = do
     when (form /= 0x60) (fail ("expected functype (0x60), got 0x" ++ showHex form ""))
     FuncType <$> getVec getValType <*> getVec getValType
 
-getLimits :: Get Limits
+{- | The limits of a memory or a table, with its address type: bit 0 of the flag says that a
+  maximum follows, bit 2 that the addresses and the limits are 64 bits wide. (Bit 1 is the
+  threads proposal's shared memory.)
+-}
+getLimits :: Get (AddrType, Limits)
 getLimits = do
     flag <- getWord8
     case flag of
-        0x00 -> Limits <$> getULEB128 <*> pure Nothing
-        0x01 -> Limits <$> getULEB128 <*> (Just <$> getULEB128)
+        0x00 -> (,) AddrI32 <$> (Limits . fromIntegral <$> getULEB128 <*> pure Nothing)
+        0x01 -> (,) AddrI32 <$> (Limits . fromIntegral <$> getULEB128 <*> (Just . fromIntegral <$> getULEB128))
+        0x04 -> (,) AddrI64 <$> (Limits <$> getUnsignedLeb 64 <*> pure Nothing)
+        0x05 -> (,) AddrI64 <$> (Limits <$> getUnsignedLeb 64 <*> (Just <$> getUnsignedLeb 64))
         _ -> fail ("unknown limits flag 0x" ++ showHex flag "")
 
 getGlobalType :: Get GlobalType
@@ -567,7 +573,7 @@ getImport types = do
 
 -- | A table type: the reference type of its entries, then its limits.
 getTable :: Get RawTable
-getTable = RawTable <$> getRefType <*> getLimits
+getTable = (\entryType (addrType, limits) -> RawTable entryType addrType limits) <$> getRefType <*> getLimits
 
 {- | An element segment. Bit 0 of its flags says that it is not active, bit 1 that an active
   one names its table (or that an inactive one is declarative), and bit 2 that its items are
@@ -599,7 +605,7 @@ getElem = do
         _ -> fail ("unknown element segment flags " ++ show flags)
 
 getMemory :: Get RawMemory
-getMemory = RawMemory . MemType AddrI32 <$> getLimits
+getMemory = RawMemory . uncurry MemType <$> getLimits
 
 getGlobal :: Get RawGlobal
 getGlobal = RawGlobal <$> getGlobalType <*> getExpr False []
