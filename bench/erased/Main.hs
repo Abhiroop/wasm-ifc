@@ -704,7 +704,7 @@ eraseInstr instr = case instr of
     IGlobalSet _ _ ix -> EGlobalSet (positionOf ix)
     IGlobalSetPreserved _ ix -> EGlobalSet (positionOf ix)
     IRequireRestored _ -> ENop
-    -- The twin predates references, vectors, exceptions and tail calls: it carries a reference as its word
+    -- The twin predates references, typed or not, vectors, exceptions and tail calls: it carries a reference as its word
     -- (and of a vector only the low one) and runs none of these instructions, which no
     -- workload of the benchmarks uses.
     IThrow {} -> ENotModelled
@@ -714,6 +714,10 @@ eraseInstr instr = case instr of
     IVector1 {} -> ENotModelled
     IVector2 {} -> ENotModelled
     IVector3 {} -> ENotModelled
+    ICallRef {} -> ENotModelled
+    IReturnCallRef {} -> ENotModelled
+    IRefAsNonNull {} -> ENotModelled
+    IDuplicate -> ENotModelled
     IVectorLoad {} -> ENotModelled
     IVectorLoadLane {} -> ENotModelled
     IVectorStore {} -> ENotModelled

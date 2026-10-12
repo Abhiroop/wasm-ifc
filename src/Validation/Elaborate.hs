@@ -67,6 +67,7 @@ import Syntax.Vector (SomeVectorOp (..), VectorBinary (VShuffle), VectorOp (..),
 import Validation.LocalWebs (mergeModuleWebs, splitModuleLocals)
 import Validation.Policy (Assembled (..), LocalSplitting (..), Policy, PolicyError, Restrictions (..), assemble, emptyPolicy, modulePolicy)
 import Validation.Ref (MemoryRef (..), TableRef (..), resolveFunction, resolveLocal)
+import Validation.References (checkReferences)
 import Validation.Reflect
 import Validation.Shape
 
@@ -75,7 +76,9 @@ import Validation.Shape
   tests can match on the facts. Stacks are listed top first, as everywhere in the shapes.
 -}
 data ElabError
-    = -- | the instruction needs more operands than the stack holds
+    = -- | the module's reference types as written do not check ("Validation.References")
+      WrittenTypes String
+    | -- | the instruction needs more operands than the stack holds
       StackUnderflow Text
     | -- | an operand of the instruction has the wrong type: expected, actual
       OperandMismatch Text ValType ValType
@@ -674,6 +677,59 @@ elabInstr env pcsIn@(SCons pc _) stackIn instr = case instr of
                     atCallPc <- argumentsAtCallPc env "call_indirect" pc psS
                     Right (Produces (sameLengthAs pcsIn) pcsIn (rsS %++ sS) (ICallIndirect table calledFrom flows atCallPc witness (SLabelledFuncType boundS psS rsS)))
         _ -> Left (StackUnderflow "call_indirect")
+    {- Typed function references. The types of the stack know a reference as a @funcref@, so
+       a call through one is an indirect call without a table, and the two branches on null
+       are what they abbreviate: a test and a conditional, whose rules then give their typing.
+       (So the values such a branch leaves on the stack are at least as secret as the reference
+       it tested, which the rule for @br_if@ does not ask of a condition.) -}
+    CallRef (TypeIdx t) -> case stackIn of
+        SCons (sr :%~ lref) rest -> do
+            Refl <- operandIs "call_ref" SFuncRef sr
+            expected <- note (IndexOutOfRange Types t) (nth (env.types) t)
+            case toSing (stackOrderLabelled expected) of
+                SomeSing (SLabelledFuncType boundS psS rsS) -> do
+                    SomeCoercion sS flows witness <- prefixFlows "call_ref" psS rest
+                    calledFrom <- requireFlow "call_ref" (sJoin pc lref) boundS
+                    atCallPc <- argumentsAtCallPc env "call_ref" pc psS
+                    Right (Produces (sameLengthAs pcsIn) pcsIn (rsS %++ sS) (ICallRef calledFrom flows atCallPc witness (SLabelledFuncType boundS psS rsS)))
+        _ -> Left (StackUnderflow "call_ref")
+    ReturnCallRef (TypeIdx t) -> case stackIn of
+        SCons (sr :%~ lref) rest -> do
+            Refl <- operandIs "return_call_ref" SFuncRef sr
+            expected <- note (IndexOutOfRange Types t) (nth (env.types) t)
+            case toSing (stackOrderLabelled expected) of
+                SomeSing (SLabelledFuncType boundS psS rsS) -> do
+                    SomeCoercion _ flows witness <- prefixFlows "return_call_ref" psS rest
+                    calledFrom <- requireFlow "return_call_ref" (sJoin pc lref) boundS
+                    atCallPc <- argumentsAtCallPc env "return_call_ref" pc psS
+                    carried <- blame (raisesToAtLeast (RaiseResult env.functionIndex) pc env.results) (requireCarried "return_call_ref" pc (env.results))
+                    results <- tailResults env "return_call_ref" rsS
+                    Right (Transfers (raiseAllSameLength pc pcsIn) (sRaiseAll pc pcsIn) (IReturnCallRef calledFrom flows atCallPc witness (SLabelledFuncType boundS psS rsS) carried results))
+        _ -> Left (StackUnderflow "return_call_ref")
+    RefAsNonNull -> case stackIn of
+        SCons (sa :%~ _) _ -> do
+            isRef <- note (OperandMismatch "ref.as_non_null" FuncRef (valTypeOf sa)) (decideRef sa)
+            Right (Produces (sameLengthAs pcsIn) pcsIn stackIn (IRefAsNonNull isRef))
+        _ -> Left (StackUnderflow "ref.as_non_null")
+    -- (The notes of what a module wrote are taken off before elaboration; one left is skipped.)
+    Precisely _ inner -> elabInstr env pcsIn stackIn inner
+    Duplicate -> case stackIn of
+        SCons top@(_ :%~ _) _ -> Right (Produces (sameLengthAs pcsIn) pcsIn (SCons top stackIn) IDuplicate)
+        _ -> Left (StackUnderflow "duplicate")
+    BrOnNull (LabelIdx l) -> do
+        carried <- declaredOrder <$> labelTypes env l
+        reference <- referenceOnTop "br_on_null" stackIn
+        let through = FuncType (carried ++ [reference]) (carried ++ [reference])
+        elabInstr env pcsIn stackIn (Block through [Duplicate, RefIsNull, If through [Drop, Br (LabelIdx (l + 2))] []])
+    BrOnNonNull (LabelIdx l) -> do
+        target <- labelTypes env l
+        reference <- referenceOnTop "br_on_non_null" stackIn
+        case target of
+            [] -> Left (Malformed "br_on_non_null to a label that takes no reference")
+            _ : below -> do
+                let carried = declaredOrder below
+                    through = FuncType (carried ++ [reference]) carried
+                elabInstr env pcsIn stackIn (Block through [Duplicate, RefIsNull, If through [Drop] [Br (LabelIdx (l + 2))]])
     Call (FunctionIdx f) -> case lookupFuncRef (funcTypesSing (env.shape)) f of
         Nothing -> Left (IndexOutOfRange Functions f)
         Just (SomeFuncRef boundS psS rsS fix) -> do
@@ -1207,6 +1263,14 @@ laneInRange op = case op of
   where
     outside = Left (Malformed "a lane index past the lanes of a vector")
 
+-- | The reference type on top of the stack, for an instruction that tests a reference.
+referenceOnTop :: Text -> Sing (s :: [LabelledValType]) -> Either ElabError ValType
+referenceOnTop name stack = case stack of
+    SCons (st :%~ _) _ -> case decideRef st of
+        Just _ -> Right (valTypeOf st)
+        Nothing -> Left (OperandMismatch name FuncRef (valTypeOf st))
+    SNil -> Left (StackUnderflow name)
+
 -- | The exception tag an instruction names.
 tagAt :: ElabEnv shape ret locals labels -> Word32 -> Either ElabError (SomeTagRef (ModuleTags shape))
 tagAt env x = note (IndexOutOfRange Tags x) (lookupTagRef (tagTypesSing (env.shape)) x)
@@ -1459,8 +1523,34 @@ stepDead env pcsIn s instr = case instr of
         tailTypes "return_call_indirect" (map unlabelled (stackOrder rs))
     RefNull t -> Right (pushKnown t s)
     RefIsNull -> case popAny s of
-        (Just t, _) | t `notElem` [FuncRef, ExternRef] -> Left (OperandMismatch "ref.is_null" FuncRef t)
+        (Just t, _) | t `notElem` [FuncRef, ExternRef, ExnRef] -> Left (OperandMismatch "ref.is_null" FuncRef t)
         (_, s1) -> Right (pushKnown I32 s1)
+    RefAsNonNull -> case popAny s of
+        (Just t, _) | t `notElem` [FuncRef, ExternRef, ExnRef] -> Left (OperandMismatch "ref.as_non_null" FuncRef t)
+        (t, s1) -> Right (PolyStack (t : unStack s1))
+    Precisely _ inner -> stepDead env pcsIn s inner
+    Duplicate -> case popAny s of
+        (t, s1) -> Right (PolyStack (t : t : unStack s1))
+    BrOnNull (LabelIdx l) -> do
+        ts <- labelTypes env l
+        case popAny s of
+            (Just t, _) | t `notElem` [FuncRef, ExternRef, ExnRef] -> Left (OperandMismatch "br_on_null" FuncRef t)
+            (t, s1) -> (\s2 -> PolyStack (t : unStack (pushTypes ts s2))) <$> popTypes ts s1
+    BrOnNonNull (LabelIdx l) -> do
+        ts <- labelTypes env l
+        case (ts, popAny s) of
+            ([], _) -> Left (Malformed "br_on_non_null to a label that takes no reference")
+            (_, (Just t, _)) | t `notElem` [FuncRef, ExternRef, ExnRef] -> Left (OperandMismatch "br_on_non_null" FuncRef t)
+            (_ : below, (_, s1)) -> pushTypes below <$> popTypes below s1
+    CallRef (TypeIdx t) -> do
+        s1 <- popKnown FuncRef s
+        LabelledFuncType _ ps rs <- note (IndexOutOfRange Types t) (nth (env.types) t)
+        afterFrame (map unlabelled (stackOrder ps)) (map unlabelled (stackOrder rs)) s1
+    ReturnCallRef (TypeIdx t) -> do
+        s1 <- popKnown FuncRef s
+        LabelledFuncType _ ps rs <- note (IndexOutOfRange Types t) (nth (env.types) t)
+        _ <- popTypes (map unlabelled (stackOrder ps)) s1
+        tailTypes "return_call_ref" (map unlabelled (stackOrder rs))
     RefFunc (FunctionIdx f) -> case lookupFuncRef (funcTypesSing (env.shape)) f of
         Nothing -> Left (IndexOutOfRange Functions f)
         Just _ -> Right (pushKnown FuncRef s)
@@ -1685,7 +1775,13 @@ elaborateModuleInferring given raw = case elaborateModuleTraced given raw of
   module is accepted in the end: what a user needs to see why it was not.
 -}
 elaborateModuleTraced :: Policy -> RawModule -> (Inferred, Either ElabError SomeModule)
-elaborateModuleTraced given raw = case validateStructure raw >> first BadPolicy (modulePolicy given raw >>= (`assemble` raw)) of
+elaborateModuleTraced given asDecoded = case first WrittenTypes (checkReferences asDecoded) of
+    Left err -> (Inferred [] [] 0 [], Left err)
+    Right raw -> elaborateChecked given raw
+
+-- | 'elaborateModuleTraced' for a module whose types as written have been checked and erased ("Validation.References").
+elaborateChecked :: Policy -> RawModule -> (Inferred, Either ElabError SomeModule)
+elaborateChecked given raw = case validateStructure raw >> first BadPolicy (modulePolicy given raw >>= (`assemble` raw)) of
     Left err -> (Inferred [] [] 0 [], Left err)
     Right assembledAsWritten ->
         -- Each web of a local gets a local of its own, and so a label of its own
@@ -1796,7 +1892,7 @@ elaborateUnder assembled choices =
             elementSegments <- elaborateElements constEnv ctxS esS (zip [0 ..] m.elementSegments)
             start <- traverse (resolveStart ftsS) (m.start)
             when (not (null assembled.secretRegions) && null m.memories) (Left (NoMemory "region"))
-            Right (SomeModule ctxS (Module {functions, globals, dataSegments, secretRegions = assembled.secretRegions, elementSegments, memoryImports = m.stateImports.memories, tableImports = m.stateImports.tables, exports = m.exports, start}))
+            Right (SomeModule ctxS (Module {functions, globals, dataSegments, secretRegions = assembled.secretRegions, elementSegments, interface = interfaceOf <$> m.written, memoryImports = m.stateImports.memories, tableImports = m.stateImports.tables, exports = m.exports, start}))
   where
     m = assembled.annotated
     entries = zip3 [0 ..] assembled.loadDefaults (map Left m.imports ++ map (\(i, f) -> Right (f, Map.findWithDefault [] i choices.localLevels)) (zip [importCount ..] m.functions))

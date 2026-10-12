@@ -10,6 +10,9 @@
 module Syntax.Module (
     -- * As decoded
     RawModule (..),
+    Written (..),
+    Interface (..),
+    interfaceOf,
     StateImports (..),
     importsNoState,
     referencedFunctions,
@@ -44,7 +47,7 @@ import Syntax.Functions (FunctionSpace, RawFunction)
 import Syntax.Globals (ConstExpr, GlobalSpace, RawGlobal (..))
 import Syntax.Indices (FunctionIdx, GlobalIdx, MemoryIdx, TableIdx, TagIdx)
 import Syntax.Instructions (RawExpr, RawInstr (RefFunc))
-import Syntax.Types (AddrType, AddrVal, FuncType, IsRef, Limits, MemType, ValType (..))
+import Syntax.Types (AddrType, AddrVal, ClosedType, FuncType, FuncTypeOf (..), IsRef, Limits, MemType, ValType (..), WrittenType, closed)
 import Syntax.TypesIFC (LabelledFuncType (..), SecLevel (..))
 import Validation.Shape (Elem, ElemShape (..), MemShape (..), ModuleElems, ModuleFuncs, ModuleGlobals, ModuleMems, ModuleShape, ModuleTables, TableShape (..))
 
@@ -71,6 +74,25 @@ data RawModule = RawModule
     -- ^ which globals, memories and tables are imported
     , tags :: [FuncType]
     -- ^ the exception tags, each with the type of what an exception of it carries (as parameters)
+    , written :: Maybe Written
+    {- ^ the module's types as it wrote them, if it was decoded from a binary; 'Nothing' for a
+    module built in Haskell, whose types are the ones above
+    -}
+    }
+
+{- | The types of a module as it wrote them, where the fields of 'RawModule' have the erased
+  ones ('Syntax.Types.WrittenType'): the function types, the type index of every function
+  (imports first), the locals of every defined function, the types of the globals and of the
+  tables' entries (imports first), and the type index of every tag.
+-}
+data Written = Written
+    { types :: [FuncTypeOf WrittenType]
+    , functions :: [Word32]
+    , locals :: [[WrittenType]]
+    , globals :: [WrittenType]
+    , tables :: [WrittenType]
+    , tags :: [Word32]
+    -- ^ the type index of every tag
     }
 
 {- | The imports that are not functions. An imported global, memory or table comes first in its
@@ -106,6 +128,26 @@ newtype RawMemory = RawMemory
     { memType :: MemType
     }
     deriving stock (Eq, Show)
+
+{- | What a module's functions, globals and tables are as it wrote their types, each list in the
+  order of its index space, with the function types written out ('ClosedType'): what an
+  import is compared with when modules are linked, where the erased types say too little.
+-}
+data Interface = Interface
+    { functions :: [FuncTypeOf ClosedType]
+    , globals :: [ClosedType]
+    , tables :: [ClosedType]
+    }
+
+interfaceOf :: Written -> Interface
+interfaceOf w =
+    Interface
+        { functions = [FuncType (map close params) (map close results) | index <- w.functions, FuncType params results <- take 1 (drop (fromIntegral index) w.types)]
+        , globals = map close w.globals
+        , tables = map close w.tables
+        }
+  where
+    close = closed w.types
 
 -- | A table: the reference type of its entries, the type of its indices, and its size limits.
 data RawTable = RawTable
@@ -182,6 +224,8 @@ data Module (shape :: ModuleShape) = Module
     -- ^ the names the first memories of the shape are imported under
     , tableImports :: [(Text, Text)]
     -- ^ likewise for its first tables
+    , interface :: Maybe Interface
+    -- ^ the types of its functions, globals and tables as written, if it was decoded from a binary
     , exports :: [Export]
     , start :: Maybe (Elem ('LabelledFuncType 'Low '[] '[]) (ModuleFuncs shape))
     -- ^ the start function, known to take and return nothing

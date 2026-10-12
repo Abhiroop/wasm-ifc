@@ -24,6 +24,10 @@ data Trap
       UncaughtException
     | -- | @throw_ref@ of a null reference
       NullExceptionReference
+    | -- | @ref.as_non_null@ of a null reference
+      NullReference
+    | -- | @call_ref@ of a null reference
+      NullFunctionReference
     | -- | @call_indirect@ with an index past the table
       UndefinedElement
     | -- | @call_indirect@ through an entry never initialised

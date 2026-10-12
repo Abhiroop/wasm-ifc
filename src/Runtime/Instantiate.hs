@@ -19,6 +19,7 @@ module Runtime.Instantiate (
     instantiateUntilStart,
     StateImports (..),
     stateImportsOf,
+    moduleInterface,
 ) where
 
 import Control.Applicative ((<|>))
@@ -41,7 +42,7 @@ import Runtime.Trap (Trap)
 import Syntax.Functions (FunctionSpace (..))
 import Syntax.Globals (ConstExpr (..), ConstOp (..), Global (..), GlobalSpace (..))
 import Syntax.Immediates (HostType, Reference, functionReferenceIn, withReference)
-import Syntax.Module (DataPlacement (..), DataSegment (..), ElementMode (..), ElementSegment (..), ElementSpace (..), Export, Module (..), SomeModule (..))
+import Syntax.Module (DataPlacement (..), DataSegment (..), ElementMode (..), ElementSegment (..), ElementSpace (..), Export, Interface, Module (..), SomeModule (..))
 import Syntax.Types
 import Syntax.TypesIFC (LabelledFuncType (..), SLabelledFuncType (..), SLabelledValType (..), SSecLevel (..), SecLevel (..), decideAllPublic, decideSameValueTypes, decideSegmentFlows, unlabelled)
 import Validation.Policy (ghostModuleName)
@@ -183,16 +184,25 @@ prepare embedder (SomeModule shapeS m) = case shapeS of
             inst = ModuleInst {functions = funcs, globals, memories = mems, tables, dataSegments = remainingData dsS m.dataSegments}
         Right (Prepared shapeS inst m.exports (elementsFailed <|> dataFailed <|> regionsFailed) m.start)
 
--- | The globals, memories and tables a module imports, each list in the order of its index space.
+-- | The types of a module's functions, globals and tables as it wrote them, if it was decoded from a binary.
+moduleInterface :: SomeModule -> Maybe Interface
+moduleInterface (SomeModule _ m) = m.interface
+
+-- | The globals, memories, tables and functions a module imports, each list in the order of its index space.
 data StateImports = StateImports
     { globals :: [(Text, Text)]
     , memories :: [(Text, Text)]
     , tables :: [(Text, Text)]
+    , functions :: [(Text, Text)]
     }
 
 stateImportsOf :: SomeModule -> StateImports
-stateImportsOf (SomeModule _ m) = StateImports (provided m.globals) m.memoryImports m.tableImports
+stateImportsOf (SomeModule _ m) = StateImports (provided m.globals) m.memoryImports m.tableImports (imported m.functions)
   where
+    imported :: FunctionSpace shape fts -> [(Text, Text)]
+    imported NoFunctions = []
+    imported (Defined _ rest) = imported rest
+    imported (Imported moduleName fieldName rest) = (moduleName, fieldName) : imported rest
     provided :: GlobalSpace gs -> [(Text, Text)]
     provided NoGlobals = []
     provided (Declared global rest) = case global of

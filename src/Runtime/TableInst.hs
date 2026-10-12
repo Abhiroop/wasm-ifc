@@ -33,8 +33,10 @@ module Runtime.TableInst (
     CheckedCallee,
     enteredCallee,
     lookupChecked,
+    lookupReferenced,
     ElsewhereCallee (..),
     lookupElsewhere,
+    referencedElsewhere,
     tableEntryUnchecked,
 ) where
 
@@ -173,14 +175,26 @@ enteredCallee (CheckedCallee _ ix) k = k ix
 -}
 {-# INLINE lookupChecked #-}
 lookupChecked :: FunctionDirectory fts -> TableInst -> Word32 -> Sing ('LabelledFuncType lf ps rs) -> Either Trap (CheckedCallee lf ps rs fts)
-lookupChecked directory table index (SLabelledFuncType expectedBound expectedParams expectedResults) = case tableEntryUnchecked directory table index of
+lookupChecked directory table index expected = case tableEntryUnchecked directory table index of
     Left trap -> Left trap
-    Right (SomeFuncRef boundS paramsS resultsS ix) ->
-        case (decideEquality paramsS expectedParams, decideEquality resultsS expectedResults) of
-            (Just Refl, Just Refl) -> case decideFlow expectedBound boundS of
-                Just flows -> Right (CheckedCallee flows ix)
-                Nothing -> Left IndirectCallBelowBound
-            _ -> Left IndirectCallTypeMismatch
+    Right function -> compared function expected
+
+{- | The same checks for a call through a reference (@call_ref@): the function the reference
+  names, compared with the expected type. A null reference is a trap of its own.
+-}
+lookupReferenced :: FunctionDirectory fts -> Reference -> Sing ('LabelledFuncType lf ps rs) -> Either Trap (CheckedCallee lf ps rs fts)
+lookupReferenced directory reference expected
+    | isNullReference reference = Left NullFunctionReference
+    | otherwise = maybe (Left UninitializedElement) (`compared` expected) (referencedFunction directory reference)
+
+-- | A function of the module against the type a call expects: the comparison both lookups make.
+compared :: SomeFuncRef fts -> Sing ('LabelledFuncType lf ps rs) -> Either Trap (CheckedCallee lf ps rs fts)
+compared (SomeFuncRef boundS paramsS resultsS ix) (SLabelledFuncType expectedBound expectedParams expectedResults) =
+    case (decideEquality paramsS expectedParams, decideEquality resultsS expectedResults) of
+        (Just Refl, Just Refl) -> case decideFlow expectedBound boundS of
+            Just flows -> Right (CheckedCallee flows ix)
+            Nothing -> Left IndirectCallBelowBound
+        _ -> Left IndirectCallTypeMismatch
 
 {- | A table entry that names a function of another instance, for an indirect call that expects
   a type whose parameters are public and whose bound is public: what a call out of the module
@@ -198,13 +212,17 @@ data ElsewhereCallee lf ps rs where
   parameter and a secret bound are traps.
 -}
 lookupElsewhere :: FunctionDirectory fts -> TableInst -> Word32 -> Sing ('LabelledFuncType lf ps rs) -> Either Trap (ElsewhereCallee lf ps rs)
-lookupElsewhere directory table index (SLabelledFuncType expectedBound expectedParams _) = case getEntry table index of
+lookupElsewhere directory table index expected = case getEntry table index of
     Nothing -> Left UndefinedElement
-    Just reference -> case functionReferent reference of
-        Just (inst, _) | inst /= directory.self -> case expectedBound of
-            SHigh -> Left IndirectCallBelowBound
-            SLow -> maybe (Left IndirectCallTypeMismatch) (Right . ElsewhereCallee reference) (decideAllPublic expectedParams)
-        _ -> Left UninitializedElement
+    Just reference -> referencedElsewhere directory reference expected
+
+-- | The same for a reference that is not from a table (@call_ref@).
+referencedElsewhere :: FunctionDirectory fts -> Reference -> Sing ('LabelledFuncType lf ps rs) -> Either Trap (ElsewhereCallee lf ps rs)
+referencedElsewhere directory reference (SLabelledFuncType expectedBound expectedParams _) = case functionReferent reference of
+    Just (inst, _) | inst /= directory.self -> case expectedBound of
+        SHigh -> Left IndirectCallBelowBound
+        SLow -> maybe (Left IndirectCallTypeMismatch) (Right . ElsewhereCallee reference) (decideAllPublic expectedParams)
+    _ -> Left UninitializedElement
 
 {- | The function an entry refers to, whatever its type. An index past the table is the spec's
   "undefined element" trap; a null entry is "uninitialized element". Not for the interpreter,

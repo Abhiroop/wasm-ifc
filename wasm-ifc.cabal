@@ -87,6 +87,7 @@ library
       , Validation.Reflect
       , Validation.Ref
       , Validation.Elaborate
+      , Validation.References
       , Validation.LocalWebs
       , Validation.Policy
       , Runtime.MemInst

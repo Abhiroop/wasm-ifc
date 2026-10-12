@@ -123,31 +123,53 @@ getName = do
 
 -- *** Types ***
 
-getValType :: Get ValType
-getValType = do
+-- | A value type as the module writes it.
+getWrittenType :: Get WrittenType
+getWrittenType = do
     byte <- getWord8
     case byte of
-        0x7F -> pure I32
-        0x7E -> pure I64
-        0x7D -> pure F32
-        0x7C -> pure F64
-        0x7B -> pure V128
-        0x70 -> pure FuncRef
-        0x6F -> pure ExternRef
-        0x69 -> pure ExnRef
-        _ -> fail ("unknown valtype byte 0x" ++ showHex byte "")
+        0x7F -> pure (Plain I32)
+        0x7E -> pure (Plain I64)
+        0x7D -> pure (Plain F32)
+        0x7C -> pure (Plain F64)
+        0x7B -> pure (Plain V128)
+        -- A reference to a heap type, not null or possibly null (the typed function references of 3.0).
+        0x64 -> RefTo False <$> getHeapType
+        0x63 -> RefTo True <$> getHeapType
+        -- (An abstract heap type alone is the reference to it that may be null.)
+        _ -> maybe (fail ("unknown valtype byte 0x" ++ showHex byte "")) (fmap (RefTo True) . abstractHeapType) (lookup (fromIntegral byte - 0x80) abstractHeapTypes)
 
--- | A reference type: a value type that is one.
-getRefType :: Get ValType
-getRefType = do
-    valType <- getValType
-    if valType `elem` [FuncRef, ExternRef, ExnRef] then pure valType else fail "malformed reference type"
+-- | A heap type: one of the module's function types, by its index, or an abstract one.
+getHeapType :: Get HeapType
+getHeapType = do
+    code <- getS33
+    if code >= 0 then pure (OfType (fromIntegral code)) else maybe (fail ("unknown heap type " ++ show code)) abstractHeapType (lookup code abstractHeapTypes)
 
-getFuncType :: Get FuncType
+-- | The abstract heap types, by their code as a signed number; none for those of garbage collection.
+abstractHeapTypes :: [(Int64, Maybe HeapType)]
+abstractHeapTypes =
+    [ (-16, Just AnyFunction)
+    , (-13, Just NoFunction)
+    , (-17, Just AnyExtern)
+    , (-14, Just NoExtern)
+    , (-23, Just AnyException)
+    , (-12, Just NoException)
+    , (-15, Nothing)
+    , (-18, Nothing)
+    , (-19, Nothing)
+    , (-20, Nothing)
+    , (-21, Nothing)
+    , (-22, Nothing)
+    ]
+
+abstractHeapType :: Maybe HeapType -> Get HeapType
+abstractHeapType = maybe (fail "unsupported: a heap type of garbage collection") pure
+
+getFuncType :: Get (FuncTypeOf WrittenType)
 getFuncType = do
     form <- getWord8
     when (form /= 0x60) (fail ("expected functype (0x60), got 0x" ++ showHex form ""))
-    FuncType <$> getVec getValType <*> getVec getValType
+    FuncType <$> getVec getWrittenType <*> getVec getWrittenType
 
 {- | The limits of a memory or a table, with its address type: bit 0 of the flag says that a
   maximum follows, bit 2 that the addresses and the limits are 64 bits wide. (Bit 1 is the
@@ -163,34 +185,41 @@ getLimits = do
         0x05 -> (,) AddrI64 <$> (Limits <$> getUnsignedLeb 64 <*> (Just <$> getUnsignedLeb 64))
         _ -> fail ("unknown limits flag 0x" ++ showHex flag "")
 
-getGlobalType :: Get GlobalType
-getGlobalType = do
-    valType <- getValType
+-- | A global's type, and the type of its value as the module writes it.
+getWrittenGlobalType :: Get (GlobalType, WrittenType)
+getWrittenGlobalType = do
+    valType <- getWrittenType
     mutability <- getWord8
     case mutability of
-        0x00 -> pure (GlobalType Immutable valType)
-        0x01 -> pure (GlobalType Mutable valType)
+        0x00 -> pure (GlobalType Immutable (erasedType valType), valType)
+        0x01 -> pure (GlobalType Mutable (erasedType valType), valType)
         _ -> fail ("unknown mutability 0x" ++ showHex mutability "")
 
 {- | A block type is either empty, a single result type, or a reference to a function
   type in the type section. The three cases are distinguished by a signed encoding.
 -}
-getBlockType :: [FuncType] -> Get BlockType
+getBlockType :: [FuncType] -> Get (BlockType, Maybe WrittenNote)
 getBlockType types = do
     code <- getS33
     case code of
-        -64 -> pure (FuncType [] [])
-        -1 -> pure (FuncType [] [I32])
-        -2 -> pure (FuncType [] [I64])
-        -3 -> pure (FuncType [] [F32])
-        -4 -> pure (FuncType [] [F64])
-        -5 -> pure (FuncType [] [V128])
-        -16 -> pure (FuncType [] [FuncRef])
-        -17 -> pure (FuncType [] [ExternRef])
-        -23 -> pure (FuncType [] [ExnRef])
+        -64 -> pure (FuncType [] [], Nothing)
+        -1 -> pure (FuncType [] [I32], Nothing)
+        -2 -> pure (FuncType [] [I64], Nothing)
+        -3 -> pure (FuncType [] [F32], Nothing)
+        -4 -> pure (FuncType [] [F64], Nothing)
+        -5 -> pure (FuncType [] [V128], Nothing)
+        -28 -> oneResult . RefTo False <$> getHeapType
+        -29 -> oneResult . RefTo True <$> getHeapType
+        n | Just known <- lookup n abstractHeapTypes -> oneResult . RefTo True <$> abstractHeapType known
         n -> case nth types (fromIntegral n) of
-            Just ft -> pure ft
+            Just ft -> pure (ft, Just (BlockOfType (fromIntegral n)))
             Nothing -> fail ("block type index out of range: " ++ show n)
+  where
+    oneResult result = (FuncType [] [erasedType result], Just (BlockResult result))
+
+-- | An instruction with the note of what the module wrote, if it wrote more than the instruction keeps.
+noted :: Maybe WrittenNote -> RawInstr -> RawInstr
+noted = maybe id Precisely
 
 {- | Total list indexing (@Nothing@ if out of range), so a malformed index in the binary
   becomes a decode error rather than a crash.
@@ -238,16 +267,16 @@ getInstr hasDataCount types opcode = case opcode of
     {- Control -}
     0x00 -> pure Unreachable
     0x01 -> pure Nop
-    0x02 -> Block <$> getBlockType types <*> getExpr hasDataCount types
-    0x03 -> Loop <$> getBlockType types <*> getExpr hasDataCount types
+    0x02 -> (\(blockType, note) body -> noted note (Block blockType body)) <$> getBlockType types <*> getExpr hasDataCount types
+    0x03 -> (\(blockType, note) body -> noted note (Loop blockType body)) <$> getBlockType types <*> getExpr hasDataCount types
     0x04 -> do
-        blockType <- getBlockType types
+        (blockType, note) <- getBlockType types
         (thenArm, term) <- getBlockBody hasDataCount types
         elseArm <- if term == 0x05 then getExpr hasDataCount types else pure []
-        pure (If blockType thenArm elseArm)
+        pure (noted note (If blockType thenArm elseArm))
     0x08 -> Throw . TagIdx <$> getULEB128
     0x0A -> pure ThrowRef
-    0x1F -> TryTable <$> getBlockType types <*> getVec getCatch <*> getExpr hasDataCount types
+    0x1F -> (\(blockType, note) clauses body -> noted note (TryTable blockType clauses body)) <$> getBlockType types <*> getVec getCatch <*> getExpr hasDataCount types
     0x0C -> Br . LabelIdx <$> getULEB128
     0x0D -> BrIf . LabelIdx <$> getULEB128
     0x0E -> BrTable <$> getVec (LabelIdx <$> getULEB128) <*> (LabelIdx <$> getULEB128)
@@ -258,6 +287,8 @@ getInstr hasDataCount types opcode = case opcode of
         tableIdx <- getULEB128
         pure (CallIndirect (TableIdx tableIdx) (TypeIdx typeIdx))
     0x12 -> ReturnCall . FunctionIdx <$> getULEB128
+    0x14 -> CallRef . TypeIdx <$> getULEB128
+    0x15 -> ReturnCallRef . TypeIdx <$> getULEB128
     0x13 -> do
         typeIdx <- getULEB128
         tableIdx <- getULEB128
@@ -438,11 +469,14 @@ getInstr hasDataCount types opcode = case opcode of
     {- Stack management -}
     0x1A -> pure Drop
     0x1B -> pure Select
-    0x1C -> SelectTyped <$> getVec getValType
+    0x1C -> (\types' -> Precisely (SelectOf types') (SelectTyped (map erasedType types'))) <$> getVec getWrittenType
     {- References and tables -}
-    0xD0 -> RefNull <$> getRefType
+    0xD0 -> (\heap -> Precisely (NullOf heap) (RefNull (erasedType (RefTo True heap)))) <$> getHeapType
     0xD1 -> pure RefIsNull
     0xD2 -> RefFunc . FunctionIdx <$> getULEB128
+    0xD4 -> pure RefAsNonNull
+    0xD5 -> BrOnNull . LabelIdx <$> getULEB128
+    0xD6 -> BrOnNonNull . LabelIdx <$> getULEB128
     0x25 -> TableGet . TableIdx <$> getULEB128
     0x26 -> TableSet . TableIdx <$> getULEB128
     {- The 0xFC prefix: saturating truncations (0–7); the rest is bulk memory -}
@@ -729,11 +763,11 @@ data Sections = Sections
     , importSection :: [Import]
     , functionSection :: [Word32]
     -- ^ function section: type index per function
-    , codeSection :: [([ValType], [RawInstr])]
+    , codeSection :: [([WrittenType], [RawInstr])]
     -- ^ code section: locals and body per function
-    , globalSection :: [RawGlobal]
+    , globalSection :: [(RawGlobal, WrittenType)]
     , memorySection :: [RawMemory]
-    , tableSection :: [RawTable]
+    , tableSection :: [(RawTable, WrittenType)]
     , elementSection :: [RawElementSegment]
     , exportSection :: [Export]
     , startSection :: Maybe FunctionIdx
@@ -741,11 +775,14 @@ data Sections = Sections
     , dataCountSection :: Maybe Word32
     -- ^ the data count section, which must agree with the data section
     , customs :: [(Text, BL.ByteString)]
-    , tagSection :: [FuncType]
+    , tagSection :: [(FuncType, Word32)]
+    -- ^ each tag's type, and its index
+    , writtenTypes :: [FuncTypeOf WrittenType]
+    -- ^ the type section as written; 'typeSection' is its erasure
     }
 
 emptySections :: Sections
-emptySections = Sections [] [] [] [] [] [] [] [] [] Nothing [] Nothing [] []
+emptySections = Sections [] [] [] [] [] [] [] [] [] Nothing [] Nothing [] [] []
 
 getModule :: Get RawModule
 getModule = do
@@ -785,15 +822,15 @@ sectionRank sectionId = (+ 1) <$> elemIndex sectionId [1, 2, 3, 4, 5, 13, 6, 7, 
 parseSection :: Word8 -> Sections -> Get Sections
 parseSection sectionId acc = case sectionId of
     0 -> (\name bytes -> acc {customs = acc.customs ++ [(name, bytes)]}) <$> getName <*> getRemainingLazyByteString
-    1 -> (\ts -> acc {typeSection = ts}) <$> getVec getFuncType
+    1 -> (\ts -> acc {typeSection = map erasedFuncType ts, writtenTypes = ts}) <$> getVec getFuncType
     2 -> (\is -> acc {importSection = is}) <$> getVec (getImport (acc.typeSection))
     3 -> (\is -> acc {functionSection = is}) <$> getVec getULEB128
-    4 -> (\ts -> acc {tableSection = ts}) <$> getVec getTable
+    4 -> (\ts -> acc {tableSection = ts}) <$> getVec getWrittenTable
     5 -> (\ms -> acc {memorySection = ms}) <$> getVec getMemory
     6 -> (\gs -> acc {globalSection = gs}) <$> getVec getGlobal
     7 -> (\es -> acc {exportSection = es}) <$> getVec getExport
     8 -> (\i -> acc {startSection = Just (FunctionIdx i)}) <$> getULEB128
-    9 -> (\es -> acc {elementSection = es}) <$> getVec getElem
+    9 -> (\es -> acc {elementSection = es}) <$> getVec (getElem (length acc.typeSection))
     10 -> (\cs -> acc {codeSection = cs}) <$> getVec (getCode (isJust acc.dataCountSection) (acc.typeSection))
     11 -> (\ds -> acc {dataSection = ds}) <$> getVec getData
     12 -> (\n -> acc {dataCountSection = Just n}) <$> getULEB128
@@ -814,12 +851,14 @@ getData = do
   where
     payload = getULEB128 >>= getByteString . fromIntegral
 
--- | An import as the binary lists it: its two names, and the type of what is imported.
+{- | An import as the binary lists it: its two names, and the type of what is imported.
+(A function with its type's index, and a table and a global with the type as written.)
+-}
 data Import
-    = FunctionImport RawImport
-    | TableImport Text Text RawTable
+    = FunctionImport Word32 RawImport
+    | TableImport Text Text WrittenType RawTable
     | MemoryImport Text Text RawMemory
-    | GlobalImport Text Text GlobalType
+    | GlobalImport Text Text WrittenType GlobalType
 
 getImport :: [FuncType] -> Get Import
 getImport types = do
@@ -830,33 +869,39 @@ getImport types = do
         0x00 -> do
             typeIdx <- getULEB128
             case nth types (fromIntegral typeIdx) of
-                Just ft -> pure (FunctionImport (RawImport moduleName fieldName (ImportFunc ft)))
+                Just ft -> pure (FunctionImport typeIdx (RawImport moduleName fieldName (ImportFunc ft)))
                 Nothing -> fail ("import type index out of range: " ++ show typeIdx)
-        0x01 -> TableImport moduleName fieldName <$> getTable
+        0x01 -> (\(table, entries) -> TableImport moduleName fieldName entries table) <$> getWrittenTable
         0x02 -> MemoryImport moduleName fieldName <$> getMemory
-        0x03 -> GlobalImport moduleName fieldName <$> getGlobalType
+        0x03 -> (\(globalType, valType) -> GlobalImport moduleName fieldName valType globalType) <$> getWrittenGlobalType
         0x04 -> fail "unsupported: tag import"
         _ -> fail ("unknown import kind 0x" ++ showHex kind "")
 
 -- | A tag: an attribute byte, which is zero (an exception), and the type of what it carries.
-getTag :: [FuncType] -> Get FuncType
+getTag :: [FuncType] -> Get (FuncType, Word32)
 getTag types = do
     attribute <- getWord8
     when (attribute /= 0) (fail "malformed tag attribute")
     typeIdx <- getULEB128
-    maybe (fail ("tag type index out of range: " ++ show typeIdx)) pure (nth types (fromIntegral typeIdx))
+    maybe (fail ("tag type index out of range: " ++ show typeIdx)) (\ft -> pure (ft, typeIdx)) (nth types (fromIntegral typeIdx))
 
--- | A table type: the reference type of its entries, then its limits.
-getTable :: Get RawTable
-getTable = (\entryType (addrType, limits) -> RawTable entryType addrType limits) <$> getRefType <*> getLimits
+{- | A table type: the reference type of its entries, then its limits.
+| A table type, and the type of its entries as the module writes it.
+-}
+getWrittenTable :: Get (RawTable, WrittenType)
+getWrittenTable = do
+    entries <- getWrittenType
+    unless (erasedType entries `elem` [FuncRef, ExternRef, ExnRef]) (fail "malformed reference type")
+    (addrType, limits) <- getLimits
+    pure (RawTable (erasedType entries) addrType limits, entries)
 
 {- | An element segment. Bit 0 of its flags says that it is not active, bit 1 that an active
   one names its table (or that an inactive one is declarative), and bit 2 that its items are
   expressions and not function indices. A function index is kept as the expression it
   abbreviates, @ref.func@ of it.
 -}
-getElem :: Get RawElementSegment
-getElem = do
+getElem :: Int -> Get RawElementSegment
+getElem typeCount = do
     flags <- getULEB128 :: Get Word32
     let indices = map (\f -> [RefFunc f]) <$> getVec (FunctionIdx <$> getULEB128)
         expressions = getVec (getExpr False [])
@@ -864,7 +909,14 @@ getElem = do
             elemKind <- getWord8
             when (elemKind /= 0) (fail ("unknown element kind " ++ show elemKind))
             RawElementSegment ElemPassive FuncRef <$> indices
-        typeThenExpressions = RawElementSegment ElemPassive <$> getRefType <*> expressions
+        typeThenExpressions = RawElementSegment ElemPassive <$> entriesType <*> expressions
+        -- (The type as written may name a function type, which must be one of the module's.)
+        entriesType = do
+            entries <- getWrittenType
+            case entries of
+                RefTo _ (OfType i) | fromIntegral i >= typeCount -> fail "unknown type"
+                RefTo _ _ -> pure (erasedType entries)
+                Plain _ -> fail "malformed reference type"
         activeIn table segment = (\offset (RawElementSegment _ entryType items) -> RawElementSegment (ElemActive table offset) entryType items) <$> getExpr False [] <*> segment
         named segment = getULEB128 >>= \table -> activeIn (TableIdx table) segment
         declarative segment = (\(RawElementSegment _ entryType items) -> RawElementSegment ElemDeclarative entryType items) <$> segment
@@ -882,8 +934,8 @@ getElem = do
 getMemory :: Get RawMemory
 getMemory = RawMemory . uncurry MemType <$> getLimits
 
-getGlobal :: Get RawGlobal
-getGlobal = RawGlobal <$> getGlobalType <*> getExpr False []
+getGlobal :: Get (RawGlobal, WrittenType)
+getGlobal = (\(globalType, valType) initialiser -> (RawGlobal globalType initialiser, valType)) <$> getWrittenGlobalType <*> getExpr False []
 
 getExport :: Get Export
 getExport = do
@@ -902,7 +954,7 @@ getExport = do
 {- | A code-section entry: a redundant byte size, the (run-length encoded) locals, and
   the body expression.
 -}
-getCode :: Bool -> [FuncType] -> Get ([ValType], [RawInstr])
+getCode :: Bool -> [FuncType] -> Get ([WrittenType], [RawInstr])
 getCode hasDataCount types = do
     entrySize <- getULEB128
     isolate (fromIntegral entrySize) $ do
@@ -920,8 +972,8 @@ getCode hasDataCount types = do
 maxLocals :: Int
 maxLocals = 50000
 
-getLocalGroup :: Get (Word32, ValType)
-getLocalGroup = (,) <$> getULEB128 <*> getValType
+getLocalGroup :: Get (Word32, WrittenType)
+getLocalGroup = (,) <$> getULEB128 <*> getWrittenType
 
 assemble :: Sections -> Either String RawModule
 assemble secs = do
@@ -935,25 +987,35 @@ assemble secs = do
     pure
         RawModule
             { types = secs.typeSection
-            , imports = [imported | FunctionImport imported <- secs.importSection]
+            , imports = [imported | FunctionImport _ imported <- secs.importSection]
             , functions = funcs
-            , globals = [RawGlobal globalType [] | (_, _, globalType) <- importedGlobals] ++ secs.globalSection
+            , globals = [RawGlobal globalType [] | (_, _, globalType) <- importedGlobals] ++ map fst secs.globalSection
             , memories = [memory | (_, _, memory) <- importedMemories] ++ secs.memorySection
-            , tables = [table | (_, _, table) <- importedTables] ++ secs.tableSection
+            , tables = [table | (_, _, table) <- importedTables] ++ map fst secs.tableSection
             , elementSegments = secs.elementSection
             , dataSegments = secs.dataSection
             , exports = secs.exportSection
             , start = secs.startSection
             , customSections = secs.customs
             , stateImports = StateImports (map names importedGlobals) (map names importedMemories) (map names importedTables)
-            , tags = secs.tagSection
+            , tags = map fst secs.tagSection
+            , written =
+                Just
+                    Written
+                        { types = secs.writtenTypes
+                        , functions = [typeIdx | FunctionImport typeIdx _ <- secs.importSection] ++ secs.functionSection
+                        , locals = map fst secs.codeSection
+                        , globals = [valType | GlobalImport _ _ valType _ <- secs.importSection] ++ map snd secs.globalSection
+                        , tables = [entries | TableImport _ _ entries _ <- secs.importSection] ++ map snd secs.tableSection
+                        , tags = map snd secs.tagSection
+                        }
             }
   where
-    importedGlobals = [(moduleName, fieldName, globalType) | GlobalImport moduleName fieldName globalType <- secs.importSection]
+    importedGlobals = [(moduleName, fieldName, globalType) | GlobalImport moduleName fieldName _ globalType <- secs.importSection]
     importedMemories = [(moduleName, fieldName, memory) | MemoryImport moduleName fieldName memory <- secs.importSection]
-    importedTables = [(moduleName, fieldName, table) | TableImport moduleName fieldName table <- secs.importSection]
+    importedTables = [(moduleName, fieldName, table) | TableImport moduleName fieldName _ table <- secs.importSection]
     names (moduleName, fieldName, _) = (moduleName, fieldName)
     toFunction (typeIdx, (locals, body)) =
         case nth secs.typeSection (fromIntegral typeIdx) of
-            Just sig -> Right (RawFunction sig locals body)
+            Just sig -> Right (RawFunction sig (map erasedType locals) body)
             Nothing -> Left ("function type index out of range: " ++ show typeIdx)

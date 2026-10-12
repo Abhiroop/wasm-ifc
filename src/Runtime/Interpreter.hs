@@ -127,7 +127,7 @@ import Runtime.MemInst (LoadFailure (..), MemInst, checkedWord, copyBetweenAt, f
 import Runtime.Numeric (copysign32, copysign64, fromSigned32, fromSigned64, intDiv32, intDiv64, intRem32, intRem64, toSigned32, toSigned64, wasmMax, wasmMin)
 import Runtime.Obligation (CheckPassed (..))
 import Runtime.Stack
-import Runtime.TableInst (ElsewhereCallee (..), TableInst, enteredCallee, fillEntries, getEntry, growTable, lookupChecked, lookupElsewhere, ownReference, readEntries, setEntry, tableSize, writeEntries)
+import Runtime.TableInst (ElsewhereCallee (..), TableInst, enteredCallee, fillEntries, getEntry, growTable, lookupChecked, lookupElsewhere, lookupReferenced, ownReference, readEntries, referencedElsewhere, setEntry, tableSize, writeEntries)
 import Runtime.Trap (Trap (..))
 import Runtime.Vector (laneBitsAt, loadedVector, replaceLaneBits, vector1, vector2, vector3)
 import Syntax.Functions (Function (..))
@@ -634,6 +634,20 @@ stepInstr funcs store locals stack instr rest control = case instr of
                     enterCallee (CalleeWasElsewhere callee) funcs store locals flows witness (Elsewhere reference params results allPublic) below' rest control
             Right checked -> enteredCallee checked $ \ix ->
                 enterCall (CalleeWasWithin checked) funcs store locals flows witness ix below' rest control
+    ICallRef _ flows _ witness expected -> case stack of
+        reference :# below' -> case lookupReferenced store.tables.directory reference expected of
+            Left trap -> case (elsewhereByReference trap store reference expected, expected) of
+                (Left stays, _) -> Left stays
+                (Right callee@(ElsewhereCallee named allPublic), SLabelledFuncType _ params results) ->
+                    enterCallee (CalleeWasElsewhere callee) funcs store locals flows witness (Elsewhere named params results allPublic) below' rest control
+            Right checked -> enteredCallee checked $ \ix ->
+                enterCall (CalleeWasWithin checked) funcs store locals flows witness ix below' rest control
+    IRefAsNonNull isRef -> case stack of
+        reference :# _
+            | withReference isRef (isNullReference reference) -> Left NullReference
+            | otherwise -> stepped NothingToCheck store locals stack rest control
+    IDuplicate -> case stack of
+        top :# _ -> stepped NothingToCheck store locals (top :# stack) rest control
     {- Structured control: push the matching frame and run the body -}
     -- (What follows the construct is forced before the label holds it: left lazy, every block
     -- entered would allocate the suspended choice of 'restoring'.)
@@ -697,6 +711,16 @@ stepInstr funcs store locals stack instr rest control = case instr of
                 (Right callee@(ElsewhereCallee reference allPublic), SLabelledFuncType _ params results') ->
                     let (args, _) = splitStack witness below'
                      in tailCall (CalleeWasElsewhere callee) funcs store flows witness (Elsewhere reference params results' allPublic) args results control
+            Right checked -> enteredCallee checked $ \ix ->
+                let (args, _) = splitStack witness below'
+                 in tailCall (CalleeWasWithin checked) funcs store flows witness (Within ix) args results control
+    IReturnCallRef _ flows _ witness expected _ results -> case stack of
+        reference :# below' -> case lookupReferenced store.tables.directory reference expected of
+            Left trap -> case (elsewhereByReference trap store reference expected, expected) of
+                (Left stays, _) -> Left stays
+                (Right callee@(ElsewhereCallee named allPublic), SLabelledFuncType _ params results') ->
+                    let (args, _) = splitStack witness below'
+                     in tailCall (CalleeWasElsewhere callee) funcs store flows witness (Elsewhere named params results' allPublic) args results control
             Right checked -> enteredCallee checked $ \ix ->
                 let (args, _) = splitStack witness below'
                  in tailCall (CalleeWasWithin checked) funcs store flows witness (Within ix) args results control
@@ -778,6 +802,12 @@ enterCallee evidence funcs store locals flows witness callee stack rest control 
 calleeElsewhere :: Trap -> Store mod -> TableInst -> Maybe Word32 -> Sing ('LabelledFuncType lf ps rs) -> Either Trap (ElsewhereCallee lf ps rs)
 calleeElsewhere trap store table at expected = case (trap, at) of
     (UninitializedElement, Just index) -> lookupElsewhere store.tables.directory table index expected
+    _ -> Left trap
+
+-- | The same for a reference that a call through it found no function of this module behind.
+elsewhereByReference :: Trap -> Store mod -> Reference -> Sing ('LabelledFuncType lf ps rs) -> Either Trap (ElsewhereCallee lf ps rs)
+elsewhereByReference trap store reference expected = case trap of
+    UninitializedElement -> referencedElsewhere store.tables.directory reference expected
     _ -> Left trap
 
 -- | The 'Append' witness for a result segment whose shape a 'SameValueTypes' witness gives.

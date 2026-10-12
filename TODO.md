@@ -55,23 +55,20 @@ are summarised here, not repeated.
 
 ## WebAssembly coverage
 
-The supported subset is WebAssembly 2.0, plus several memories per module, 64-bit memories and
-tables, tail calls, extended constant expressions, the relaxed vector instructions and
-exceptions. What the 3.0 suite skips
+The supported subset is WebAssembly 3.0 without garbage collection: 2.0, plus several memories
+per module, 64-bit memories and tables, tail calls, extended constant expressions, the relaxed
+vector instructions, typed function references and exceptions. What the 3.0 suite skips
 (`WASM_IFC_SPEC_REPORT=f cabal test wasm-ifc-spec; ./scripts/spec-report.py f`), by the features
 a skipped module uses according to `wasm-tools`, in assertions:
 
 | Skipped | Features the module uses beyond the subset |
 |---:|---|
 | 877 | garbage collection |
-| 514 | typed function references (88 of them in the scripts for tail calls) |
 | 68 | none: an imported exception tag (67), and an exception that crosses modules (1) |
+| 24 | none: a table declared with an initial value for its entries |
 | 12 | none: the script instantiates one module definition several times (`module definition`, `module instance`), which the harness does not do |
 | 10 | none: a module that imports the same memory twice |
 | 1,245 | none: malformed modules given as text, which the harness does not run |
-
-`return_call.wast` and `return_call_indirect.wast` have one function each with a typed function
-reference in its type, so their main modules are skipped whole.
 
 - [ ] **P2** A module that imports the same memory, table or writable global under two of its
   indices is not linked (`ImportedTwice`). Sharing is by handing an object over when control
@@ -104,7 +101,17 @@ reference in its type, so their main modules are skipped whole.
   `try_table.wast` imports a tag and is skipped (42 assertions).
 - [ ] **P3** The store keeps every exception that a clause caught by reference, for the
   `exnref` that names it, and never frees one.
-- [ ] **P3** Typed function references; garbage collection.
+- [ ] **P2** A table declared with an initial value for its entries (the form that a table of
+  references that cannot be null needs) is not decoded; 24 assertions. A table of such
+  references without one is rejected, as the specification asks.
+- [ ] **P3** The typed program does not know whether a reference may be null, nor the function
+  type behind one: `Validation.References` checks both on the module as written, and the typed
+  instructions check again at run time. To have them in the types, a value type would carry a
+  nullability and a function type, with subtyping in every rule that compares two types.
+- [ ] **P3** `br_on_null` and `br_on_non_null` are elaborated as a null test and a conditional,
+  so what they leave on the stack is at least as secret as the reference they tested. A rule
+  of their own, like the one for `br_if`, would leave the other values at their own labels.
+- [ ] **P3** Garbage collection.
 - [ ] **P3** The vector instructions work on lists of lanes (`Runtime/Vector.hs`), which is
   simple and slow; nothing measures them. A vector is two words on the stack and in a frame.
 

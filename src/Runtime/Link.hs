@@ -53,13 +53,13 @@ import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Word (Word32)
 
-import Runtime.Instantiate (Embedder (..), InstantiationError (..), StateImports (..), instantiateUntilStart, stateImportsOf)
+import Runtime.Instantiate (Embedder (..), InstantiationError (..), StateImports (..), instantiateUntilStart, moduleInterface, stateImportsOf)
 import Runtime.Module
 import Runtime.Trap (Trap (..))
 import Syntax.Immediates (functionReferent)
 import Syntax.Indices (FunctionIdx (..), GlobalIdx (..), MemoryIdx (..), TableIdx (..))
-import Syntax.Module (ExportDesc (..), SomeModule)
-import Syntax.Types (FuncType, Mutability (..))
+import Syntax.Module (ExportDesc (..), Interface (..), SomeModule)
+import Syntax.Types (FuncType, Mutability (..), closedBelow)
 import Syntax.TypesIFC (SecLevel (..))
 
 -- | Where a shared object lives: the instance that defines it, and its index there.
@@ -77,6 +77,8 @@ data Bound = Bound
 
 data World = World
     { instances :: IntMap Instance
+    , interfaces :: IntMap Interface
+    -- ^ the types of each instance's functions, globals and tables as its module wrote them, where it did
     , bound :: IntMap Bound
     , registered :: Map Text Int
     -- ^ the instances modules can import from, by the module name they import
@@ -84,7 +86,7 @@ data World = World
     }
 
 emptyWorld :: World
-emptyWorld = World IntMap.empty IntMap.empty Map.empty 0
+emptyWorld = World IntMap.empty IntMap.empty IntMap.empty Map.empty 0
 
 -- | Make an instance importable under a module name.
 register :: Text -> Int -> World -> World
@@ -147,7 +149,7 @@ embedderIn world x =
   the error is written, and its functions stay reachable through the tables it wrote them to.
 -}
 instantiateIn :: World -> SomeModule -> (World, Either InstantiationError Int, Maybe Int)
-instantiateIn world m = case maybe (instantiateUntilStart (embedderIn world x) m) (Left . uncurry ImportedTwice) twice of
+instantiateIn world m = case maybe (instantiateUntilStart (embedderIn world x) m) Left (fmap (uncurry ImportedTwice) twice <|> fmap (ImportTypeMismatch . snd) mismatched) of
     Left failure -> (world, Left failure, Nothing)
     Right (inst, failed, start) ->
         let homes kind imported names = [(slot, home) | (slot, (moduleName, fieldName)) <- zip [0 ..] names, Just home <- [homeOf kind imported world world.registered moduleName fieldName]]
@@ -159,7 +161,7 @@ instantiateIn world m = case maybe (instantiateUntilStart (embedderIn world x) m
                     , names = world.registered
                     }
             -- (The active segments may have written to what the module imports.)
-            added = push x world {instances = IntMap.insert x (instanceOf inst) world.instances, bound = IntMap.insert x binding world.bound, next = x + 1}
+            added = push x world {instances = IntMap.insert x (instanceOf inst) world.instances, interfaces = maybe id (IntMap.insert x) (moduleInterface m) world.interfaces, bound = IntMap.insert x binding world.bound, next = x + 1}
          in case (failed, start) of
                 (Just failure, _) -> (added, Left failure, Just x)
                 (Nothing, Nothing) -> (added, Right x, Just x)
@@ -176,6 +178,29 @@ instantiateIn world m = case maybe (instantiateUntilStart (embedderIn world x) m
         firstRepeated [(homeOf memoryExport (.memories) world world.registered moduleName fieldName, name) | name@(moduleName, fieldName) <- imports.memories]
             <|> firstRepeated [(homeOf tableExport (.tables) world world.registered moduleName fieldName, name) | name@(moduleName, fieldName) <- imports.tables]
             <|> firstRepeated [(home, name) | name@(moduleName, fieldName) <- imports.globals, let home = homeOf globalExport (.globals) world world.registered moduleName fieldName, writable home]
+    {- The first import whose type as written does not fit what it names, where both modules
+       wrote types: the erased types, which instantiation compares, say nothing of whether a
+       reference may be null or of which function type it is. A function must have the very
+       type, a global that can be written and a table the very type of value, and a global
+       that cannot be written a type of value that may go where the import's is expected. -}
+    mismatched = do
+        mine <- moduleInterface m
+        let function name@(moduleName, fieldName) declared = do
+                (y, index) <- exported functionExport world world.registered moduleName fieldName
+                theirs <- IntMap.lookup y world.interfaces >>= \other -> nth other.functions index
+                if theirs == declared then Nothing else Just name
+            global name@(moduleName, fieldName) declared = do
+                home@(y, index) <- homeOf globalExport (.globals) world world.registered moduleName fieldName
+                theirs <- IntMap.lookup y world.interfaces >>= \other -> nth other.globals index
+                if (if writable (Just home) then theirs == declared else closedBelow theirs declared) then Nothing else Just name
+            table name@(moduleName, fieldName) declared = do
+                (y, index) <- homeOf tableExport (.tables) world world.registered moduleName fieldName
+                theirs <- IntMap.lookup y world.interfaces >>= \other -> nth other.tables index
+                if theirs == declared then Nothing else Just name
+        foldr (<|>) Nothing (zipWith function imports.functions mine.functions ++ zipWith global imports.globals mine.globals ++ zipWith table imports.tables mine.tables)
+    nth xs i = case drop i xs of
+        found : _ -> Just found
+        [] -> Nothing
     writable home = case home >>= \(y, index) -> IntMap.lookup y world.instances >>= (`globalAt` index) of
         Just (mutability, _, _) -> mutability /= Immutable
         Nothing -> False

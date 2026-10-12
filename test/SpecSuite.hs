@@ -267,6 +267,7 @@ withSpectest = case elaborateModuleWith emptyPolicy spectest of
             , customSections = []
             , stateImports = importsNoState
             , tags = []
+            , written = Nothing
             }
 
 runCommand :: FilePath -> State -> Command -> IO (State, Outcome)
@@ -375,7 +376,7 @@ runCommand dir state cmd = case cmd.kind of
   extensions. (@gc-types@ enables no instruction: it lets @wasm-tools@ accept @externref@.)
 -}
 supportedFeatures :: String
-supportedFeatures = "-all,mutable-global,saturating-float-to-int,sign-extension,multi-value,bulk-memory,reference-types,simd,relaxed-simd,multi-memory,memory64,tail-call,extended-const,exceptions,floats,gc-types"
+supportedFeatures = "-all,mutable-global,saturating-float-to-int,sign-extension,multi-value,bulk-memory,reference-types,function-references,simd,relaxed-simd,multi-memory,memory64,tail-call,extended-const,exceptions,floats,gc-types"
 
 {- | The features of WebAssembly 3.0 beyond 'supportedFeatures', each with the flags that
   enable it in @wasm-tools@ together with the features it builds on.
@@ -388,8 +389,7 @@ furtherFeatures =
     , ("multiple memories", "multi-memory")
     , ("tail calls", "tail-call")
     , ("extended constant expressions", "extended-const")
-    , ("typed function references", "reference-types,function-references")
-    , ("garbage collection", "reference-types,function-references,gc")
+    , ("garbage collection", "gc")
     , ("exceptions", "reference-types,exceptions")
     ]
 
@@ -490,6 +490,8 @@ trapText UnreachableExecuted = "unreachable"
 trapText OutOfBoundsTableAccess = "out of bounds table access"
 trapText UncaughtException = "uncaught exception"
 trapText NullExceptionReference = "null exception reference"
+trapText NullReference = "null reference"
+trapText NullFunctionReference = "null function reference"
 trapText UndefinedElement = "undefined element"
 trapText UninitializedElement = "uninitialized element"
 trapText IndirectCallTypeMismatch = "indirect call type mismatch"

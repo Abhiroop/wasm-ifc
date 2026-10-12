@@ -21,6 +21,7 @@ module Syntax.Instructions (
     RawInstr (..),
     RawExpr,
     Catch (..),
+    WrittenNote (..),
     ConvertOp (..),
     convertEnds,
     BitwiseOp (..),
@@ -44,7 +45,7 @@ module Syntax.Instructions (
 
 import Data.List.Singletons (type (++))
 import Data.Singletons.TH (Sing, SingI (sing))
-import Data.Word (Word8)
+import Data.Word (Word32, Word8)
 import Syntax.Immediates
 import Syntax.Indices
 import Syntax.Types
@@ -147,6 +148,21 @@ data RawInstr where
     RefNull :: ValType -> RawInstr
     RefIsNull :: RawInstr
     RefFunc :: FunctionIdx -> RawInstr
+    {- Typed function references (WebAssembly 3.0). A reference to a function type is a
+       @funcref@ here: whether it is null, and the type of its function, are found out when it
+       is called ("Validation.Elaborate" on what that leaves to check). -}
+    CallRef :: TypeIdx -> RawInstr
+    ReturnCallRef :: TypeIdx -> RawInstr
+    RefAsNonNull :: RawInstr
+    BrOnNull :: LabelIdx -> RawInstr
+    BrOnNonNull :: LabelIdx -> RawInstr
+    -- | Not an instruction of WebAssembly: the top of the stack twice, for the expansion of the two branches above.
+    Duplicate :: RawInstr
+    {- | An instruction with what the module wrote where the instruction itself has only the
+    erased type. The decoder adds it where the two differ, "Validation.References" reads it,
+    and it is taken off before anything else sees the program.
+    -}
+    Precisely :: WrittenNote -> RawInstr -> RawInstr
     TableGet :: TableIdx -> RawInstr
     TableSet :: TableIdx -> RawInstr
     TableSize :: TableIdx -> RawInstr
@@ -201,6 +217,17 @@ data RawInstr where
     Select :: RawInstr
     -- | @select t*@ as encoded: the annotation is a vector, which validation requires to hold one type
     SelectTyped :: [ValType] -> RawInstr
+
+-- | What a module wrote where an instruction keeps the erased type ('Precisely').
+data WrittenNote
+    = -- | a block type given by a type's index
+      BlockOfType Word32
+    | -- | a block type given by its one result
+      BlockResult WrittenType
+    | -- | the heap type of a @ref.null@
+      NullOf HeapType
+    | -- | the types of a typed @select@
+      SelectOf [WrittenType]
 
 {- | A clause of a @try_table@: catch the exceptions of one tag, or all of them, by branching
   to a label of the context around the block with what the exception carries; the @Ref@ forms
@@ -626,6 +653,19 @@ data
         Append args s full ->
         Sing ('LabelledFuncType bound ps rs) ->
         Instr m f l (pc ': pcs) (pc ': pcs) ('CalleeWithin bound) ((AddrVal at ':~ lv) ': full) (rs ++ s)
+    {- A call through a reference: 'ICallIndirect' without the table. The reference decides the
+       callee as a table index does, so its level is in the premise on the bound, and the
+       machine checks the callee it finds against the expected type in the same way. -}
+    ICallRef ::
+        FlowsInto (Join pc lv) bound ->
+        SegmentFlows args ps ->
+        ArgumentsAtCallPc pc ps ->
+        Append args s full ->
+        Sing ('LabelledFuncType bound ps rs) ->
+        Instr m f l (pc ': pcs) (pc ': pcs) ('CalleeWithin bound) (('FuncRef ':~ lv) ': full) (rs ++ s)
+    -- | A null reference traps; another stays as it is.
+    IRefAsNonNull :: IsRef t -> Instr m f l p p 'NoDynamicCheck ((t ':~ lv) ': s) ((t ':~ lv) ': s)
+    IDuplicate :: Instr m f l p p 'NoDynamicCheck ((t ':~ lv) ': s) ((t ':~ lv) ': (t ':~ lv) ': s)
     {- Structured control. Bodies are typed in isolation (@ps -> rs@) within the same frame,
        framed over a polymorphic @s@. A block/if label carries its results; a loop its params.
        A body starts with one more pc entry than its surroundings: the current pc for a block,
@@ -764,6 +804,15 @@ data
         AllAtLeast pc (FrameReturn f) ->
         TailResults rs (FrameReturn f) ->
         Instr m f l (pc ': pcs) (RaiseAll pc (pc ': pcs)) ('CalleeWithin bound) ((AddrVal at ':~ lv) ': full) anyOut
+    IReturnCallRef ::
+        FlowsInto (Join pc lv) bound ->
+        SegmentFlows args ps ->
+        ArgumentsAtCallPc pc ps ->
+        Append args s full ->
+        Sing ('LabelledFuncType bound ps rs) ->
+        AllAtLeast pc (FrameReturn f) ->
+        TailResults rs (FrameReturn f) ->
+        Instr m f l (pc ': pcs) (RaiseAll pc (pc ': pcs)) ('CalleeWithin bound) (('FuncRef ':~ lv) ': full) anyOut
     {- What the machine inserts where a tail call's callee returns, when the callee's results
        are at lower levels than the caller's: the top of the stack relabelled, the rest as it
        is. Validation never produces it. -}

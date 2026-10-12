@@ -22,7 +22,7 @@
 module Syntax.Types where
 
 import Data.Singletons.Base.TH
-import Data.Word (Word64)
+import Data.Word (Word32, Word64)
 
 {- | A WebAssembly value type, as one flat enumeration. The spec's nested grammar
   (@valtype ::= numtype | vectype | reftype@) is NOT encoded as constructors — that would
@@ -162,6 +162,81 @@ data FuncTypeOf v = FuncType [v] [v] deriving stock (Eq, Show)
 
 -- | A function type as decoded: over unlabelled value types.
 type FuncType = FuncTypeOf ValType
+
+{- | What a reference refers to, as a module writes it: any function, any external value or any
+  exception; none of each (the type of a reference that can only be null); or a function of
+  one of the module's function types, by the type's index. Garbage collection's heap types are
+  not here.
+-}
+data HeapType = AnyFunction | NoFunction | AnyExtern | NoExtern | AnyException | NoException | OfType Word32
+    deriving stock (Eq, Show)
+
+{- | A value type as a module writes it. A 'ValType' is what the typed program knows of it: of a
+  reference, which of the three kinds it is. The module also says whether the reference may be
+  null and, for a function, of which type it is (the typed function references of WebAssembly
+  3.0). Those are checked on the module as written ("Validation.References") and are not in
+  the types of the typed program, which finds them out when it uses the reference.
+-}
+data WrittenType = Plain ValType | RefTo Bool HeapType
+    deriving stock (Eq, Show)
+
+-- | What the typed program knows of a written type.
+erasedType :: WrittenType -> ValType
+erasedType (Plain t) = t
+erasedType (RefTo _ heap) = case heap of
+    AnyFunction -> FuncRef
+    NoFunction -> FuncRef
+    OfType _ -> FuncRef
+    AnyExtern -> ExternRef
+    NoExtern -> ExternRef
+    AnyException -> ExnRef
+    NoException -> ExnRef
+
+-- | A type of the typed program as a module that says no more would write it: a reference that may be null, to anything of its kind.
+lifted :: ValType -> WrittenType
+lifted t = case t of
+    FuncRef -> RefTo True AnyFunction
+    ExternRef -> RefTo True AnyExtern
+    ExnRef -> RefTo True AnyException
+    _ -> Plain t
+
+{- | A written type with the function types it names written out, so that it means the same
+  outside its module: what the types of an import and of what another module exports are
+  compared as. (Without recursive types a function type names earlier ones only, so writing
+  them out ends.)
+-}
+data ClosedType = ClosedPlain ValType | ClosedRef Bool ClosedHeap
+    deriving stock (Eq, Show)
+
+data ClosedHeap = Abstract HeapType | FunctionOf [ClosedType] [ClosedType]
+    deriving stock (Eq, Show)
+
+-- | A written type, closed over its module's function types.
+closed :: [FuncTypeOf WrittenType] -> WrittenType -> ClosedType
+closed types t = case t of
+    Plain plain -> ClosedPlain plain
+    RefTo nullable (OfType i) -> ClosedRef nullable $ case drop (fromIntegral i) types of
+        FuncType params results : _ -> FunctionOf (map (closed (take (fromIntegral i) types)) params) (map (closed (take (fromIntegral i) types)) results)
+        [] -> Abstract NoFunction
+    RefTo nullable heap -> ClosedRef nullable (Abstract heap)
+
+-- | @closedBelow a b@: a value of type @a@ may go where one of type @b@ is expected.
+closedBelow :: ClosedType -> ClosedType -> Bool
+closedBelow a b = case (a, b) of
+    (ClosedPlain x, ClosedPlain y) -> x == y
+    (ClosedRef nullable heap, ClosedRef nullable' heap') -> (not nullable || nullable') && heapBelow heap heap'
+    _ -> False
+  where
+    heapBelow heap heap' = case (heap, heap') of
+        (FunctionOf _ _, Abstract AnyFunction) -> True
+        (Abstract NoFunction, Abstract AnyFunction) -> True
+        (Abstract NoFunction, FunctionOf _ _) -> True
+        (Abstract NoExtern, Abstract AnyExtern) -> True
+        (Abstract NoException, Abstract AnyException) -> True
+        _ -> heap == heap'
+
+erasedFuncType :: FuncTypeOf WrittenType -> FuncType
+erasedFuncType (FuncType params results) = FuncType (map erasedType params) (map erasedType results)
 
 type BlockType = FuncType
 

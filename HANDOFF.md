@@ -746,12 +746,57 @@ implemented since e87e76a.
   and so are the three for a start function that calls an import. Seven unit examples
   (`test/Spec.hs`, "modules linked in a world").
 
+## Typed function references (2026-10-12)
+
+- **What:** the reference types `(ref null? ht)` for the heap types `func`, `extern`, `exn`,
+  their bottoms and the module's function types; `call_ref`, `return_call_ref`,
+  `ref.as_non_null`, `br_on_null`, `br_on_non_null`; a `ref.func` at its function's type; the
+  rule that a local without a default value is written before it is read; the matching of
+  imports by these types.
+- **How, and what it means for the paper's claim about types.** Two layers:
+  1. **The typed program knows a reference by its kind alone**, as before: `funcref`,
+     `externref`, `exnref`. A reference to a function type is a `funcref` there. The typed
+     instruction set gains a call and a tail call through a reference (`ICallRef`,
+     `IReturnCallRef`: the indirect calls without the table, with the same run-time check of
+     the callee against the expected type, and a trap on null), `IRefAsNonNull` (a trap on
+     null) and `IDuplicate`. The two branches on null are elaborated as what they abbreviate,
+     a null test and a conditional with a branch.
+  2. **What a module writes beyond the kind is checked by `Validation.References`**, a
+     conventional validator (a stack of types, a stack of frames) over the types as written,
+     with subtyping, the equivalence of function types and the initialisation of locals. It
+     runs before elaboration and decides nothing about security.
+  So nullability and the function type behind a reference are **not in the types of the typed
+  program**; they are run-time checks there, as for `call_indirect`. A module the validator
+  wrongly accepted would trap where the specification promises it cannot; no illegal state is
+  representable. The paper's claim "intrinsically typed" should carry this one qualification.
+- **The information-flow rule:** `call_ref` is `call_indirect` without the table: the level of
+  the reference joins the pc in the premise on the callee's bound, the expected labelled type
+  is the policy's for the type index, and the machine compares the callee's bound with it.
+  `ref.as_non_null` is typed like a division: it may trap on a secret, and the rule does not
+  restrict that. `br_on_null` and `br_on_non_null` get the rules of the test and the
+  conditional they are elaborated as, which is sound and slightly coarser than a rule of their
+  own would be: the values they leave are at least as secret as the reference tested.
+  **For the paper track:** none of this is in section 6.6.
+- **Not done:** a table declared with an initial value for its entries, which a table of
+  references that cannot be null needs (24 assertions; such a table without one is rejected).
+- **Spec suite:** 62,966 passed, 0 failed, 2,236 skipped (62,476 and 2,726 before): every skip
+  for typed function references is gone but those 24. Five unit examples (`test/Spec.hs`,
+  "typed function references").
+
 ## Where coverage stands (2026-10-12, for the paper's claim)
 
-Supported, with the 3.0 suite passing on all of it: **every instruction and type of
-WebAssembly 2.0, linking between modules included**, and of what 3.0 adds, **several memories,
-64-bit memories and tables, tail calls, extended constant expressions, the relaxed vector
-instructions and exceptions** (thrown under a public pc only, and within one module).
+Supported, with the 3.0 suite passing on all of it: **WebAssembly 3.0 without garbage
+collection**, that is every instruction and type of WebAssembly 2.0, linking between modules
+included, and of what 3.0 adds, several memories, 64-bit memories and tables, tail calls,
+extended constant expressions, the relaxed vector instructions, typed function references and
+exceptions. Four qualifications, each small and each refused by name where it applies:
+
+- exceptions are thrown and caught under a public pc only, do not cross from a function to
+  the module that called it, and a tag is not imported (68 assertions of the suite);
+- a table declared with an initial value for its entries is not decoded (24);
+- a module that imports the same memory, table or writable global twice is not linked (10);
+- nullability and the function type behind a reference are checked by a validator beside the
+  typed program, not by its types (see "Typed function references").
 
 The relaxed vector instructions (2026-10-12) let an implementation choose among a few results.
 Ours are those of the 2.0 instruction each one relaxes (`relaxed_swizzle` is `swizzle`,
@@ -759,12 +804,10 @@ Ours are those of the 2.0 instruction each one relaxes (`relaxed_swizzle` is `sw
 `relaxed_madd`, and saturating sums for the two dot products. Their rule is the rule of every
 vector operation. All seven scripts of the suite pass in full (77 assertions).
 
-Not supported: typed function references and garbage collection (both 3.0). So the paper's
-"3.0 without garbage collection" is short of typed function references, which change the
-value types (references to a function type, nullable or not, with subtyping).
+Not supported: garbage collection, as decided.
 
 Every feature that clang 23 (wasi-sdk 34) and rustc 1.99 enable by default for
-`wasm32-wasip1` is supported. The suite's 2,726 skipped assertions are: 1,245 malformed modules
-given as text, which the harness does not run; 1,391 on modules that use the two unsupported
-features; 68 for a tag or an exception across modules; 12 for a script command the harness
-lacks; 10 for an object imported twice. Counts by feature are in `TODO.md`.
+`wasm32-wasip1` is supported. The suite's 2,236 skipped assertions are: 1,245 malformed modules
+given as text, which the harness does not run; 877 on modules that use garbage collection; 68
+for a tag or an exception across modules; 24 for a table with an initial value; 12 for a
+script command the harness lacks; 10 for an object imported twice. Counts are in `TODO.md`.

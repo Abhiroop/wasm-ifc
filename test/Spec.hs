@@ -480,6 +480,37 @@ spec = do
             elabRunWithPolicy "export f : H -> H" (catching [LocalGet (LocalIdx 0), If (FuncType [] []) [TryTable (FuncType [] []) [CatchAll (LabelIdx 0)] []] [], Const SI32 0]) [1]
                 `shouldSatisfy` errorContaining "IllegalFlow \"try_table\" High Low"
 
+    describe "typed function references" $ do
+        -- Function 0 returns 7, function 1 returns 8 (both of type 0); function 2 is the export f.
+        let seven = RawFunction (FuncType [] [I32]) [] [Const SI32 7]
+            eight = RawFunction (FuncType [] [I32]) [] [Const SI32 8]
+            calling params body =
+                (moduleOf [] [seven, eight, RawFunction (FuncType params [I32]) [] body] (FunctionIdx 2))
+                    { elementSegments = [RawElementSegment ElemDeclarative FuncRef [[RefFunc (FunctionIdx 0)], [RefFunc (FunctionIdx 1)]]]
+                    }
+        it "a call through a reference enters the function it names, and traps on a null one" $ do
+            elabRunModule (calling [] [RefFunc (FunctionIdx 1), CallRef (TypeIdx 0)]) [] `shouldBe` Right ["8"]
+            elabRunModule (calling [] [RefNull FuncRef, CallRef (TypeIdx 0)]) [] `shouldSatisfy` trapContaining "NullFunctionReference"
+            elabRunModule (calling [] [RefFunc (FunctionIdx 0), ReturnCallRef (TypeIdx 0)]) [] `shouldBe` Right ["7"]
+        it "a reference to a function of another type traps the call" $
+            -- (The written types are checked on a decoded module; one built here has none, and
+            -- the call finds out. Function 2 takes an i32 here, and the call expects type 0.)
+            elabRunModule (calling [I32] [RefFunc (FunctionIdx 2), CallRef (TypeIdx 0)]) [0] `shouldSatisfy` trapContaining "IndirectCallTypeMismatch"
+        it "ref.as_non_null traps on null and passes another reference" $ do
+            elabRunModule (calling [] [RefNull FuncRef, RefAsNonNull, Drop, Const SI32 1]) [] `shouldSatisfy` trapContaining "NullReference"
+            elabRunModule (calling [] [RefFunc (FunctionIdx 0), RefAsNonNull, CallRef (TypeIdx 0)]) [] `shouldBe` Right ["7"]
+        it "br_on_null branches without the reference, and br_on_non_null with it" $ do
+            let onNull reference = calling [] [Block (FuncType [] [I32]) [Const SI32 5, reference, BrOnNull (LabelIdx 0), Drop, Drop, Const SI32 9]]
+            elabRunModule (onNull (RefNull FuncRef)) [] `shouldBe` Right ["5"]
+            elabRunModule (onNull (RefFunc (FunctionIdx 0))) [] `shouldBe` Right ["9"]
+            let onNonNull reference = calling [] [Block (FuncType [] [FuncRef]) [reference, BrOnNonNull (LabelIdx 0), RefNull FuncRef], RefIsNull]
+            elabRunModule (onNonNull (RefFunc (FunctionIdx 0))) [] `shouldBe` Right ["0"]
+            elabRunModule (onNonNull (RefNull FuncRef)) [] `shouldBe` Right ["1"]
+        it "a secret reference decides the callee, so the callee's bound must be secret" $ do
+            let chosen = calling [I32] [RefFunc (FunctionIdx 0), RefFunc (FunctionIdx 1), LocalGet (LocalIdx 0), SelectTyped [FuncRef], CallRef (TypeIdx 0)]
+            elabRunWithPolicy "export f : L -> L" chosen [0] `shouldBe` Right ["8"]
+            elabRunWithPolicy "export f : H -> H" chosen [0] `shouldSatisfy` errorContaining "IllegalFlow \"call_ref\" High Low"
+
     describe "tail calls" $ do
         -- function 0 sums the numbers up to its first argument into its second, calling itself in tail position
         let summing = RawFunction (FuncType [I32, I32] [I32]) [] [LocalGet (LocalIdx 0), Eqz SI32, If (FuncType [] [I32]) [LocalGet (LocalIdx 1)] [LocalGet (LocalIdx 0), Const SI32 1, Sub SI32, LocalGet (LocalIdx 1), LocalGet (LocalIdx 0), Add SI32, ReturnCall (FunctionIdx 0)]]
@@ -1210,6 +1241,7 @@ moduleOf memories funcs exported =
         , customSections = []
         , stateImports = importsNoState
         , tags = []
+        , written = Nothing
         }
 
 {- | Validate and instantiate a module and run its export @f@ on integer arguments.
@@ -1414,6 +1446,7 @@ startModule startBody =
         , customSections = []
         , stateImports = importsNoState
         , tags = []
+        , written = Nothing
         }
 
 withData :: [RawDataSegment] -> RawModule -> RawModule
