@@ -36,7 +36,8 @@ import Codec.Wasm (decodeModule)
 import Runtime.Instantiate (Embedder (..), InstantiationError (..), instantiateWith)
 import Runtime.Module (ForeignCall (..), Invocation (..), RunError (..), SomeModuleInst, Value (..), answerForeign, exportSignature, exportedGlobal, foreignCall, invokeExport, readGlobalExport, valueType)
 import Runtime.Trap (Trap (..))
-import Syntax.Immediates (Reference (..), isNullReference, nullReference, referenceTo)
+import Runtime.Vector (fromLanes, lanes)
+import Syntax.Immediates (Reference (..), Vector128 (..), isNullReference, nullReference, referenceTo)
 import Syntax.Types (AddrType (..), FuncTypeOf (..), Limits (..), MemType (..), Mutability (..), ValType (..))
 import Validation.Elaborate (elaborateModuleWith)
 import Validation.Policy (Policy (..), Restrictions (..), emptyPolicy)
@@ -71,7 +72,9 @@ main :: IO ()
 main = hspec $ do
     converter <- runIO findConverter
     checkedOut <- runIO (doesFileExist (suiteDir </> "i32.wast"))
-    scripts <- runIO (if checkedOut then sort . map dropExtension . filter ((== ".wast") . takeExtension) <$> listDirectory suiteDir else pure [])
+    -- (WASM_IFC_SPEC_ONLY, a prefix, restricts a run to the scripts whose names start with it.)
+    only <- runIO (lookupEnv "WASM_IFC_SPEC_ONLY")
+    scripts <- runIO (if checkedOut then filter (maybe (const True) isPrefixOf only) . sort . map dropExtension . filter ((== ".wast") . takeExtension) <$> listDirectory suiteDir else pure [])
     describe "WebAssembly spec testsuite" $
         if checkedOut
             then mapM_ (scriptSpec converter) scripts
@@ -140,15 +143,26 @@ instance FromJSON Action where
         Action <$> o .: "type" <*> o .:? "module" <*> o .: "field" <*> (fromMaybe [] <$> o .:? "args")
 
 -- | A typed literal: the value is the bit pattern as a decimal string, or a NaN class.
-data Literal = Literal {litType :: Text, litValue :: Maybe Text}
+data Literal = Literal
+    { litType :: Text
+    , litValue :: Maybe Text
+    , laneType :: Maybe Text
+    -- ^ of a vector: how its lanes are written (@i8@ … @f64@)
+    , laneValues :: [Text]
+    -- ^ of a vector: its lanes, lane 0 first, each written like a scalar of the lane type
+    }
 
--- (A vector literal's value is a list of lanes and an alternative has none: neither is read.)
+-- (An alternative between several expected values has no value of its own, and is not read.)
 instance FromJSON Literal where
     parseJSON = withObject "literal" $ \o -> do
         value <- o .:? "value"
-        pure . Literal (fromMaybe "?" (parseMaybe (.: "type") o)) $ case value of
-            Just (Aeson.String text) -> Just text
-            _ -> Nothing
+        written <- o .:? "lane_type"
+        pure $ case value of
+            Just (Aeson.String text) -> Literal (kind o) (Just text) written []
+            Just (Aeson.Array texts) -> Literal (kind o) Nothing written [text | Aeson.String text <- foldr (:) [] texts]
+            _ -> Literal (kind o) Nothing written []
+      where
+        kind o = fromMaybe "?" (parseMaybe (.: "type") o)
 
 -- *** Running ***
 
@@ -378,7 +392,7 @@ runCommand dir state cmd = case cmd.kind of
   extensions. (@gc-types@ enables no instruction: it lets @wasm-tools@ accept @externref@.)
 -}
 supportedFeatures :: String
-supportedFeatures = "-all,mutable-global,saturating-float-to-int,sign-extension,multi-value,bulk-memory,reference-types,multi-memory,memory64,tail-call,extended-const,floats,gc-types"
+supportedFeatures = "-all,mutable-global,saturating-float-to-int,sign-extension,multi-value,bulk-memory,reference-types,simd,multi-memory,memory64,tail-call,extended-const,floats,gc-types"
 
 {- | The features of WebAssembly 3.0 beyond 'supportedFeatures', each with the flags that
   enable it in @wasm-tools@ together with the features it builds on.
@@ -498,7 +512,7 @@ trapText (SecretRead _) = "secret read"
 trapText GlobalNotRestored = "global not restored"
 
 numericTypes :: [Text]
-numericTypes = ["i32", "i64", "f32", "f64", "funcref", "externref"]
+numericTypes = ["i32", "i64", "f32", "f64", "v128", "funcref", "externref"]
 
 -- | A literal's value from its bit pattern.
 literalValue :: Literal -> Maybe Value
@@ -506,7 +520,15 @@ literalValue lit = case (lit.litType, lit.litValue) of
     ("funcref", Just "null") -> Just (FuncRefValue nullReference)
     ("externref", Just "null") -> Just (ExternRefValue nullReference)
     ("externref", Just number) -> ExternRefValue . referenceTo <$> readMaybe (T.unpack number)
+    ("v128", _) -> do
+        bits <- laneWidth =<< lit.laneType
+        numbers <- traverse (readMaybe . T.unpack) lit.laneValues :: Maybe [Integer]
+        Just (V128Value (fromLanes bits (map (fromInteger . (`mod` 2 ^ bits)) numbers)))
     _ -> numericLiteral lit
+
+-- | The width in bits of a vector literal's lanes.
+laneWidth :: Text -> Maybe Int
+laneWidth written = lookup written [("i8", 8), ("i16", 16), ("i32", 32), ("i64", 64), ("f32", 32), ("f64", 64)]
 
 numericLiteral :: Literal -> Maybe Value
 numericLiteral lit = do
@@ -525,6 +547,15 @@ numericLiteral lit = do
 -}
 matches :: Literal -> Value -> Bool
 matches lit actual
+    -- A vector is compared lane by lane, each lane like a scalar of the lane type.
+    | V128Value vector <- actual = case (lit.litType, lit.laneType >>= laneWidth) of
+        ("v128", Just bits) ->
+            let actualLanes = lanes bits vector
+                laneMatches expected lane
+                    | expected `elem` ["nan:canonical", "nan:arithmetic"] = if bits == 32 then isNaN (castWord32ToFloat (fromIntegral lane)) else isNaN (castWord64ToDouble lane)
+                    | otherwise = fmap (`mod` 2 ^ bits) (readMaybe (T.unpack expected)) == Just (toInteger lane)
+             in length lit.laneValues == length actualLanes && and (zipWith laneMatches lit.laneValues actualLanes)
+        _ -> False
     | Just reference <- referenceOf actual = case (lit.litType, lit.litValue) of
         ("refnull", _) -> isNullReference reference
         (expected, _) | expected /= typeName (valueType actual) -> False
@@ -542,6 +573,7 @@ matches lit actual
     typeName I64 = "i64"
     typeName F32 = "f32"
     typeName F64 = "f64"
+    typeName V128 = "v128"
     typeName FuncRef = "funcref"
     typeName ExternRef = "externref"
     referenceOf value = case value of
@@ -563,6 +595,7 @@ valueBits (I32Value w) = fromIntegral w
 valueBits (I64Value w) = fromIntegral w
 valueBits (F32Value f) = fromIntegral (castFloatToWord32 f)
 valueBits (F64Value d) = fromIntegral (castDoubleToWord64 d :: Word64)
+valueBits (V128Value (Vector128 low _)) = fromIntegral low
 valueBits (FuncRefValue (Reference word)) = fromIntegral word
 valueBits (ExternRefValue (Reference word)) = fromIntegral word
 

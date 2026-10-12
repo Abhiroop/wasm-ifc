@@ -5,6 +5,7 @@
 -}
 module Runtime.Convert (
     convertVal,
+    truncSatToI32,
 ) where
 
 import Data.Int (Int16, Int32, Int8)

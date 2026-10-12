@@ -10,6 +10,7 @@
 -}
 module Syntax.Immediates (
     HostType,
+    Vector128 (..),
     Reference (..),
     withReference,
     nullReference,
@@ -41,8 +42,14 @@ type family HostType (t :: ValType) :: Type where
     HostType 'I64 = Word64
     HostType 'F32 = Float
     HostType 'F64 = Double
+    HostType 'V128 = Vector128
     HostType 'FuncRef = Reference
     HostType 'ExternRef = Reference
+
+{- | A 128-bit vector: its low and its high 64 bits. Lanes are numbered from the low end, and
+  bytes in memory are little-endian, so lane 0 is in the low bits of the first word.
+-}
+data Vector128 = Vector128 !Word64 !Word64 deriving stock (Eq, Show)
 
 {- | A reference as a machine holds it: null, or the index of what it refers to. For a
   @funcref@ that is a function of the module, by its place in the function index space; for an

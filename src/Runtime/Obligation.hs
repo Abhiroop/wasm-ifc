@@ -38,6 +38,8 @@ data CheckPassed check where
     NothingToCheck :: CheckPassed 'NoDynamicCheck
     -- | The bytes the load read are labelled at most the level it declares.
     BytesWereBelow :: !(CheckedRead level) -> CheckPassed ('BytesBelow level)
+    -- | The same of the two halves of a 128-bit vector, each read and checked on its own.
+    BothWereBelow :: !(CheckedRead level) -> !(CheckedRead level) -> CheckPassed ('BytesBelow level)
     {- | The function the indirect call found has the expected labelled parameters and results,
     and the expected bound flows into its bound.
     -}

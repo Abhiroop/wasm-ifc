@@ -126,6 +126,7 @@ import Runtime.Obligation (CheckPassed (..))
 import Runtime.Stack
 import Runtime.TableInst (TableInst, enteredCallee, fillEntries, getEntry, growTable, lookupChecked, readEntries, setEntry, tableSize, writeEntries)
 import Runtime.Trap (Trap (..))
+import Runtime.Vector (laneBitsAt, loadedVector, replaceLaneBits, vector1, vector2, vector3)
 import Syntax.Functions (Function (..))
 import Syntax.Immediates
 import Syntax.Instructions (
@@ -139,6 +140,7 @@ import Syntax.Instructions (
  )
 import Syntax.Types
 import Syntax.TypesIFC
+import Syntax.Vector (VectorLoadKind (..), VectorOp (..), laneBytes, loadedBytes)
 import Validation.Ref (MemoryRef (..), TableRef (..), functionReference)
 import Validation.Reflect (appendNil)
 import Validation.Shape (Append (..), BranchTarget (..), DataShape (..), Elem (..), ElemShape (..), FrameShape (..), ModuleData, ModuleElems, ModuleFuncs, ModuleGlobals, ModuleMems, ModuleShape, ModuleTables, PreservedOf, Restores (..), ReturnsWith (..), appendFromSing, appendIs, withinReach)
@@ -471,6 +473,42 @@ stepInstr funcs store locals stack instr rest control = case instr of
                     (True, Just mem') -> stepped NothingToCheck (storeMemAt ix mem' store) locals r rest control
                     _ -> Left OutOfBoundsMemoryAccess
     IDataDrop segmentIx -> stepped NothingToCheck (storeDropSegment segmentIx store) locals stack rest control
+    {- Vectors: the operations are "Runtime.Vector"'s; a load reads its bytes through the same
+       check as every load (two words of a whole vector, each checked), and a store writes at
+       the level it declares. -}
+    IVector0 (VConst vector) -> stepped NothingToCheck store locals (vector :# stack) rest control
+    IVector1 op -> case stack of
+        operand :# r -> stepped NothingToCheck store locals (vector1 op operand :# r) rest control
+    IVector2 op -> case stack of
+        top :# below' :# r -> stepped NothingToCheck store locals (vector2 op top below' :# r) rest control
+    IVector3 op -> case stack of
+        top :# middle :# below' :# r -> stepped NothingToCheck store locals (vector3 op top middle below' :# r) rest control
+    IVectorLoad level site kind memArg (MemoryRef width ix) -> case stack of
+        addr :# r ->
+            let address = effectiveAddr width addr memArg
+                mem = memAt ix store
+             in case kind of
+                    LoadWhole -> case (,) <$> loadChecked mem level address 8 <*> loadChecked mem level (address + 8) 8 of
+                        Right (low, high) -> stepped (BothWereBelow low high) store locals (Vector128 (checkedWord low) (checkedWord high) :# r) rest control
+                        Left failure -> Left (loadTrap site failure)
+                    _ -> case loadChecked mem level address (loadedBytes kind) of
+                        Right checked -> stepped (BytesWereBelow checked) store locals (loadedVector kind (checkedWord checked) 0 :# r) rest control
+                        Left failure -> Left (loadTrap site failure)
+    IVectorLoadLane level site laneWidth lane memArg (MemoryRef width ix) -> case stack of
+        vector :# addr :# r -> case loadChecked (memAt ix store) level (effectiveAddr width addr memArg) (laneBytes laneWidth) of
+            Right checked -> stepped (BytesWereBelow checked) store locals (replaceLaneBits (8 * laneBytes laneWidth) lane vector (checkedWord checked) :# r) rest control
+            Left failure -> Left (loadTrap site failure)
+    IVectorStore level _ memArg (MemoryRef width ix) -> case stack of
+        Vector128 low high :# addr :# r ->
+            let address = effectiveAddr width addr memArg
+             in case storeWordAt (fromSing level) (memAt ix store) address 8 low >>= \half -> storeWordAt (fromSing level) half (address + 8) 8 high of
+                    Just mem' -> stepped NothingToCheck (storeMemAt ix mem' store) locals r rest control
+                    Nothing -> Left OutOfBoundsMemoryAccess
+    IVectorStoreLane level _ laneWidth lane memArg (MemoryRef width ix) -> case stack of
+        vector :# addr :# r ->
+            case storeWordAt (fromSing level) (memAt ix store) (effectiveAddr width addr memArg) (laneBytes laneWidth) (laneBitsAt (8 * laneBytes laneWidth) lane vector) of
+                Just mem' -> stepped NothingToCheck (storeMemAt ix mem' store) locals r rest control
+                Nothing -> Left OutOfBoundsMemoryAccess
     {- References and tables. A reference is a word like any other value; the table
        instructions trap on an index past the table (or past the segment), and otherwise move
        references between a table, the stack and an element segment unchanged. -}

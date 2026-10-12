@@ -78,6 +78,7 @@ library
       , Syntax.TypesIFC
       , Syntax.Indices
       , Syntax.Immediates
+      , Syntax.Vector
       , Syntax.Instructions
       , Syntax.Globals
       , Syntax.Functions
@@ -95,6 +96,7 @@ library
       , Runtime.Bytes
       , Runtime.Numeric
       , Runtime.Convert
+      , Runtime.Vector
       , Runtime.Stack
       , Runtime.Interpreter
       , Runtime.Module

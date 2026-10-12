@@ -88,7 +88,7 @@ import Runtime.Stack (DataSpaceInst (..), GlobalSpaceInst (..), MemSpaceInst (..
 import Runtime.TableInst (tableEntryUnchecked, tableSize)
 import Runtime.Trap (Trap (..))
 import Syntax.Functions (Function (..))
-import Syntax.Immediates (HostType, MemArg, NarrowWidth, NumWithSign (..), Reference (..), Signedness (..), narrowBytes, narrowInt)
+import Syntax.Immediates (HostType, MemArg, NarrowWidth, NumWithSign (..), Reference (..), Signedness (..), Vector128 (..), narrowBytes, narrowInt)
 import Syntax.Indices (FunctionIdx (..))
 import Syntax.Instructions (BitwiseOp, ConvertOp, CountOp, Expr (..), FloatBinOp, FloatUnOp, Instr (..), convertEnds)
 import Syntax.Module (Export (..), ExportDesc (..))
@@ -495,13 +495,14 @@ taggedInt I32IsInt = VI32
 taggedInt I64IsInt = VI64
 
 byteWidth :: ValType -> Int
-byteWidth ty = case ty of I32 -> 4; I64 -> 8; F32 -> 4; F64 -> 8; FuncRef -> 8; ExternRef -> 8
+byteWidth ty = case ty of I32 -> 4; I64 -> 8; F32 -> 4; F64 -> 8; V128 -> 16; FuncRef -> 8; ExternRef -> 8
 
 loaded :: ValType -> Word64 -> Value
 loaded I32 word = VI32 (loadValue I32IsNum word)
 loaded I64 word = VI64 (loadValue I64IsNum word)
 loaded F32 word = VF32 (loadValue F32IsNum word)
 loaded F64 word = VF64 (loadValue F64IsNum word)
+loaded V128 word = VI64 word
 loaded FuncRef word = VI64 word
 loaded ExternRef word = VI64 word
 
@@ -597,6 +598,7 @@ unpackAs ty w = case ty of
     I64 -> VI64 w
     F32 -> VF32 (castWord32ToFloat (fromIntegral w))
     F64 -> VF64 (castWord64ToDouble w)
+    V128 -> VI64 w
     FuncRef -> VI64 w
     ExternRef -> VI64 w
 
@@ -700,8 +702,17 @@ eraseInstr instr = case instr of
     IGlobalSet _ _ ix -> EGlobalSet (positionOf ix)
     IGlobalSetPreserved _ ix -> EGlobalSet (positionOf ix)
     IRequireRestored _ -> ENop
-    -- The twin predates references and tail calls: it carries a reference as its word and
-    -- runs none of these instructions, which no workload of the benchmarks uses.
+    -- The twin predates references, vectors and tail calls: it carries a reference as its word
+    -- (and of a vector only the low one) and runs none of these instructions, which no
+    -- workload of the benchmarks uses.
+    IVector0 {} -> ENotModelled
+    IVector1 {} -> ENotModelled
+    IVector2 {} -> ENotModelled
+    IVector3 {} -> ENotModelled
+    IVectorLoad {} -> ENotModelled
+    IVectorLoadLane {} -> ENotModelled
+    IVectorStore {} -> ENotModelled
+    IVectorStoreLane {} -> ENotModelled
     IReturnCall {} -> ENotModelled
     IReturnCallIndirect {} -> ENotModelled
     IRelabelTop {} -> ENotModelled
@@ -781,6 +792,7 @@ eraseGlobals (SCons (SGlobalType _ (valTypeS :%~ _)) rest) (GCons v vs) = valueO
     valueOf SI64 = VI64
     valueOf SF32 = VF32
     valueOf SF64 = VF64
+    valueOf SV128 = \(Vector128 low _) -> VI64 low
     valueOf SFuncRef = \(Reference word) -> VI64 word
     valueOf SExternRef = \(Reference word) -> VI64 word
 

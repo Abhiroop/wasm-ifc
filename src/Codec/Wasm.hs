@@ -30,6 +30,7 @@ import Data.ByteString.Lazy qualified as BL
 import Data.Int (Int32, Int64)
 import Data.List (elemIndex)
 import Data.Maybe (isJust)
+import Data.Singletons.Base.TH (SList (SCons, SNil), Sing)
 import Data.Text (Text)
 import Data.Text.Encoding (decodeUtf8')
 import Data.Word (Word32, Word64, Word8)
@@ -43,6 +44,7 @@ import Syntax.Indices
 import Syntax.Instructions
 import Syntax.Module
 import Syntax.Types
+import Syntax.Vector
 
 -- | Decode a complete module from its binary representation.
 decodeModule :: BL.ByteString -> Either String RawModule
@@ -129,6 +131,7 @@ getValType = do
         0x7E -> pure I64
         0x7D -> pure F32
         0x7C -> pure F64
+        0x7B -> pure V128
         0x70 -> pure FuncRef
         0x6F -> pure ExternRef
         _ -> fail ("unknown valtype byte 0x" ++ showHex byte "")
@@ -180,6 +183,7 @@ getBlockType types = do
         -2 -> pure (FuncType [] [I64])
         -3 -> pure (FuncType [] [F32])
         -4 -> pure (FuncType [] [F64])
+        -5 -> pure (FuncType [] [V128])
         -16 -> pure (FuncType [] [FuncRef])
         -17 -> pure (FuncType [] [ExternRef])
         n -> case nth types (fromIntegral n) of
@@ -463,7 +467,221 @@ getInstr hasDataCount types opcode = case opcode of
             16 -> TableSize . TableIdx <$> getULEB128
             17 -> TableFill . TableIdx <$> getULEB128
             _ -> fail ("unsupported: 0xFC opcode " ++ show sub)
+    0xFD -> getVectorInstr
     _ -> fail ("unsupported opcode 0x" ++ showHex opcode "")
+
+{- | A vector instruction: the prefix @0xFD@ has been read, its own opcode follows as a @u32@.
+  The table is the binary format's, in its order; the gaps are opcodes it reserves.
+-}
+getVectorInstr :: Get RawInstr
+getVectorInstr = do
+    opcode <- getULEB128
+    case opcode of
+        0x00 -> VectorLoad LoadWhole <$> getMemArg
+        0x01 -> VectorLoad (LoadExtend I16x8 Signed) <$> getMemArg
+        0x02 -> VectorLoad (LoadExtend I16x8 Unsigned) <$> getMemArg
+        0x03 -> VectorLoad (LoadExtend I32x4 Signed) <$> getMemArg
+        0x04 -> VectorLoad (LoadExtend I32x4 Unsigned) <$> getMemArg
+        0x05 -> VectorLoad (LoadExtend I64x2 Signed) <$> getMemArg
+        0x06 -> VectorLoad (LoadExtend I64x2 Unsigned) <$> getMemArg
+        0x07 -> VectorLoad (LoadSplat Lane8) <$> getMemArg
+        0x08 -> VectorLoad (LoadSplat Lane16) <$> getMemArg
+        0x09 -> VectorLoad (LoadSplat Lane32) <$> getMemArg
+        0x0A -> VectorLoad (LoadSplat Lane64) <$> getMemArg
+        0x0B -> VectorStore <$> getMemArg
+        0x0C -> (\low high -> operation SNil SV128 (VConst (Vector128 low high))) <$> getWord64le <*> getWord64le
+        0x0D -> binary . VShuffle <$> replicateM 16 getWord8
+        0x0E -> pure (binary VSwizzle)
+        0x0F -> pure (splat LaneI8)
+        0x10 -> pure (splat LaneI16)
+        0x11 -> pure (splat LaneI32)
+        0x12 -> pure (splat LaneI64)
+        0x13 -> pure (splat LaneF32)
+        0x14 -> pure (splat LaneF64)
+        0x15 -> extract LaneI8 Signed
+        0x16 -> extract LaneI8 Unsigned
+        0x17 -> replace LaneI8
+        0x18 -> extract LaneI16 Signed
+        0x19 -> extract LaneI16 Unsigned
+        0x1A -> replace LaneI16
+        0x1B -> extract LaneI32 Unsigned
+        0x1C -> replace LaneI32
+        0x1D -> extract LaneI64 Unsigned
+        0x1E -> replace LaneI64
+        0x1F -> extract LaneF32 Unsigned
+        0x20 -> replace LaneF32
+        0x21 -> extract LaneF64 Unsigned
+        0x22 -> replace LaneF64
+        _ | opcode >= 0x23 && opcode <= 0x2C -> pure (binary (VIntCompare I8x16 (comparison (opcode - 0x23))))
+        _ | opcode >= 0x2D && opcode <= 0x36 -> pure (binary (VIntCompare I16x8 (comparison (opcode - 0x2D))))
+        _ | opcode >= 0x37 && opcode <= 0x40 -> pure (binary (VIntCompare I32x4 (comparison (opcode - 0x37))))
+        _ | opcode >= 0x41 && opcode <= 0x46 -> pure (binary (VFloatCompare F32x4 (floatComparison (opcode - 0x41))))
+        _ | opcode >= 0x47 && opcode <= 0x4C -> pure (binary (VFloatCompare F64x2 (floatComparison (opcode - 0x47))))
+        0x4D -> pure (unary VNot)
+        0x4E -> pure (binary VAnd)
+        0x4F -> pure (binary VAndNot)
+        0x50 -> pure (binary VOr)
+        0x51 -> pure (binary VXor)
+        0x52 -> pure (operation (SCons SV128 (SCons SV128 (SCons SV128 SNil))) SV128 VBitselect)
+        0x53 -> pure (test VAnyTrue)
+        0x54 -> laneAccess VectorLoadLane Lane8
+        0x55 -> laneAccess VectorLoadLane Lane16
+        0x56 -> laneAccess VectorLoadLane Lane32
+        0x57 -> laneAccess VectorLoadLane Lane64
+        0x58 -> laneAccess VectorStoreLane Lane8
+        0x59 -> laneAccess VectorStoreLane Lane16
+        0x5A -> laneAccess VectorStoreLane Lane32
+        0x5B -> laneAccess VectorStoreLane Lane64
+        0x5C -> VectorLoad (LoadZero Lane32) <$> getMemArg
+        0x5D -> VectorLoad (LoadZero Lane64) <$> getMemArg
+        0x5E -> pure (unary VDemoteF64x2Zero)
+        0x5F -> pure (unary VPromoteLowF32x4)
+        0x60 -> pure (unary (VIntUnary I8x16 IAbs))
+        0x61 -> pure (unary (VIntUnary I8x16 INeg))
+        0x62 -> pure (unary (VIntUnary I8x16 IPopcnt))
+        0x63 -> pure (test (VAllTrue I8x16))
+        0x64 -> pure (test (VBitmask I8x16))
+        0x65 -> pure (binary (VNarrow I8x16 Signed))
+        0x66 -> pure (binary (VNarrow I8x16 Unsigned))
+        0x67 -> pure (unary (VFloatUnary F32x4 FCeilLanes))
+        0x68 -> pure (unary (VFloatUnary F32x4 FFloorLanes))
+        0x69 -> pure (unary (VFloatUnary F32x4 FTruncLanes))
+        0x6A -> pure (unary (VFloatUnary F32x4 FNearestLanes))
+        0x6B -> pure (shift (VShl I8x16))
+        0x6C -> pure (shift (VShr I8x16 Signed))
+        0x6D -> pure (shift (VShr I8x16 Unsigned))
+        0x6E -> pure (intBinary I8x16 IAddLanes)
+        0x6F -> pure (intBinary I8x16 (IAddSat Signed))
+        0x70 -> pure (intBinary I8x16 (IAddSat Unsigned))
+        0x71 -> pure (intBinary I8x16 ISubLanes)
+        0x72 -> pure (intBinary I8x16 (ISubSat Signed))
+        0x73 -> pure (intBinary I8x16 (ISubSat Unsigned))
+        0x74 -> pure (unary (VFloatUnary F64x2 FCeilLanes))
+        0x75 -> pure (unary (VFloatUnary F64x2 FFloorLanes))
+        0x76 -> pure (intBinary I8x16 (IMinLanes Signed))
+        0x77 -> pure (intBinary I8x16 (IMinLanes Unsigned))
+        0x78 -> pure (intBinary I8x16 (IMaxLanes Signed))
+        0x79 -> pure (intBinary I8x16 (IMaxLanes Unsigned))
+        0x7A -> pure (unary (VFloatUnary F64x2 FTruncLanes))
+        0x7B -> pure (intBinary I8x16 IAvgr)
+        0x7C -> pure (unary (VExtAddPairwise I16x8 Signed))
+        0x7D -> pure (unary (VExtAddPairwise I16x8 Unsigned))
+        0x7E -> pure (unary (VExtAddPairwise I32x4 Signed))
+        0x7F -> pure (unary (VExtAddPairwise I32x4 Unsigned))
+        0x80 -> pure (unary (VIntUnary I16x8 IAbs))
+        0x81 -> pure (unary (VIntUnary I16x8 INeg))
+        0x82 -> pure (binary VQ15MulrSat)
+        0x83 -> pure (test (VAllTrue I16x8))
+        0x84 -> pure (test (VBitmask I16x8))
+        0x85 -> pure (binary (VNarrow I16x8 Signed))
+        0x86 -> pure (binary (VNarrow I16x8 Unsigned))
+        0x87 -> pure (unary (VExtend I16x8 LowHalf Signed))
+        0x88 -> pure (unary (VExtend I16x8 HighHalf Signed))
+        0x89 -> pure (unary (VExtend I16x8 LowHalf Unsigned))
+        0x8A -> pure (unary (VExtend I16x8 HighHalf Unsigned))
+        0x8B -> pure (shift (VShl I16x8))
+        0x8C -> pure (shift (VShr I16x8 Signed))
+        0x8D -> pure (shift (VShr I16x8 Unsigned))
+        0x8E -> pure (intBinary I16x8 IAddLanes)
+        0x8F -> pure (intBinary I16x8 (IAddSat Signed))
+        0x90 -> pure (intBinary I16x8 (IAddSat Unsigned))
+        0x91 -> pure (intBinary I16x8 ISubLanes)
+        0x92 -> pure (intBinary I16x8 (ISubSat Signed))
+        0x93 -> pure (intBinary I16x8 (ISubSat Unsigned))
+        0x94 -> pure (unary (VFloatUnary F64x2 FNearestLanes))
+        0x95 -> pure (intBinary I16x8 IMulLanes)
+        0x96 -> pure (intBinary I16x8 (IMinLanes Signed))
+        0x97 -> pure (intBinary I16x8 (IMinLanes Unsigned))
+        0x98 -> pure (intBinary I16x8 (IMaxLanes Signed))
+        0x99 -> pure (intBinary I16x8 (IMaxLanes Unsigned))
+        0x9B -> pure (intBinary I16x8 IAvgr)
+        0x9C -> pure (binary (VExtMul I16x8 LowHalf Signed))
+        0x9D -> pure (binary (VExtMul I16x8 HighHalf Signed))
+        0x9E -> pure (binary (VExtMul I16x8 LowHalf Unsigned))
+        0x9F -> pure (binary (VExtMul I16x8 HighHalf Unsigned))
+        0xA0 -> pure (unary (VIntUnary I32x4 IAbs))
+        0xA1 -> pure (unary (VIntUnary I32x4 INeg))
+        0xA3 -> pure (test (VAllTrue I32x4))
+        0xA4 -> pure (test (VBitmask I32x4))
+        0xA7 -> pure (unary (VExtend I32x4 LowHalf Signed))
+        0xA8 -> pure (unary (VExtend I32x4 HighHalf Signed))
+        0xA9 -> pure (unary (VExtend I32x4 LowHalf Unsigned))
+        0xAA -> pure (unary (VExtend I32x4 HighHalf Unsigned))
+        0xAB -> pure (shift (VShl I32x4))
+        0xAC -> pure (shift (VShr I32x4 Signed))
+        0xAD -> pure (shift (VShr I32x4 Unsigned))
+        0xAE -> pure (intBinary I32x4 IAddLanes)
+        0xB1 -> pure (intBinary I32x4 ISubLanes)
+        0xB5 -> pure (intBinary I32x4 IMulLanes)
+        0xB6 -> pure (intBinary I32x4 (IMinLanes Signed))
+        0xB7 -> pure (intBinary I32x4 (IMinLanes Unsigned))
+        0xB8 -> pure (intBinary I32x4 (IMaxLanes Signed))
+        0xB9 -> pure (intBinary I32x4 (IMaxLanes Unsigned))
+        0xBA -> pure (binary VDot)
+        0xBC -> pure (binary (VExtMul I32x4 LowHalf Signed))
+        0xBD -> pure (binary (VExtMul I32x4 HighHalf Signed))
+        0xBE -> pure (binary (VExtMul I32x4 LowHalf Unsigned))
+        0xBF -> pure (binary (VExtMul I32x4 HighHalf Unsigned))
+        0xC0 -> pure (unary (VIntUnary I64x2 IAbs))
+        0xC1 -> pure (unary (VIntUnary I64x2 INeg))
+        0xC3 -> pure (test (VAllTrue I64x2))
+        0xC4 -> pure (test (VBitmask I64x2))
+        0xC7 -> pure (unary (VExtend I64x2 LowHalf Signed))
+        0xC8 -> pure (unary (VExtend I64x2 HighHalf Signed))
+        0xC9 -> pure (unary (VExtend I64x2 LowHalf Unsigned))
+        0xCA -> pure (unary (VExtend I64x2 HighHalf Unsigned))
+        0xCB -> pure (shift (VShl I64x2))
+        0xCC -> pure (shift (VShr I64x2 Signed))
+        0xCD -> pure (shift (VShr I64x2 Unsigned))
+        0xCE -> pure (intBinary I64x2 IAddLanes)
+        0xD1 -> pure (intBinary I64x2 ISubLanes)
+        0xD5 -> pure (intBinary I64x2 IMulLanes)
+        0xD6 -> pure (binary (VIntCompare I64x2 IEqLanes))
+        0xD7 -> pure (binary (VIntCompare I64x2 INeLanes))
+        0xD8 -> pure (binary (VIntCompare I64x2 (ILtLanes Signed)))
+        0xD9 -> pure (binary (VIntCompare I64x2 (IGtLanes Signed)))
+        0xDA -> pure (binary (VIntCompare I64x2 (ILeLanes Signed)))
+        0xDB -> pure (binary (VIntCompare I64x2 (IGeLanes Signed)))
+        0xDC -> pure (binary (VExtMul I64x2 LowHalf Signed))
+        0xDD -> pure (binary (VExtMul I64x2 HighHalf Signed))
+        0xDE -> pure (binary (VExtMul I64x2 LowHalf Unsigned))
+        0xDF -> pure (binary (VExtMul I64x2 HighHalf Unsigned))
+        0xE0 -> pure (unary (VFloatUnary F32x4 FAbsLanes))
+        0xE1 -> pure (unary (VFloatUnary F32x4 FNegLanes))
+        0xE3 -> pure (unary (VFloatUnary F32x4 FSqrtLanes))
+        _ | opcode >= 0xE4 && opcode <= 0xEB -> pure (binary (VFloatBinary F32x4 (floatArithmetic (opcode - 0xE4))))
+        0xEC -> pure (unary (VFloatUnary F64x2 FAbsLanes))
+        0xED -> pure (unary (VFloatUnary F64x2 FNegLanes))
+        0xEF -> pure (unary (VFloatUnary F64x2 FSqrtLanes))
+        _ | opcode >= 0xF0 && opcode <= 0xF7 -> pure (binary (VFloatBinary F64x2 (floatArithmetic (opcode - 0xF0))))
+        0xF8 -> pure (unary (VTruncSatF32x4 Signed))
+        0xF9 -> pure (unary (VTruncSatF32x4 Unsigned))
+        0xFA -> pure (unary (VConvertI32x4 Signed))
+        0xFB -> pure (unary (VConvertI32x4 Unsigned))
+        0xFC -> pure (unary (VTruncSatF64x2Zero Signed))
+        0xFD -> pure (unary (VTruncSatF64x2Zero Unsigned))
+        0xFE -> pure (unary (VConvertLowI32x4 Signed))
+        0xFF -> pure (unary (VConvertLowI32x4 Unsigned))
+        _ -> fail ("unsupported: vector opcode " ++ show opcode)
+  where
+    operation :: Sing operands -> Sing result -> VectorOp operands result -> RawInstr
+    operation operands result op = Vector (SomeVectorOp operands result op)
+    unary = operation (SCons SV128 SNil) SV128 . VUnary
+    binary = operation (SCons SV128 (SCons SV128 SNil)) SV128 . VBinary
+    intBinary shape = binary . VIntBinary shape
+    test = operation (SCons SV128 SNil) SI32 . VTest
+    shift = operation (SCons SI32 (SCons SV128 SNil)) SV128 . VShift
+    splat :: LaneType t -> RawInstr
+    splat lane = operation (SCons (laneSing lane) SNil) SV128 (VSplat lane)
+    extract :: LaneType t -> Signedness -> Get RawInstr
+    extract lane sign = (\index -> operation (SCons SV128 SNil) (laneSing lane) (VExtract lane index sign)) <$> getWord8
+    replace :: LaneType t -> Get RawInstr
+    replace lane = operation (SCons (laneSing lane) (SCons SV128 SNil)) SV128 . VReplace lane <$> getWord8
+    laneAccess access width = flip (access width) <$> getMemArg <*> getWord8
+    -- The order of the comparisons within a shape's block of opcodes.
+    comparison offset = [IEqLanes, INeLanes, ILtLanes Signed, ILtLanes Unsigned, IGtLanes Signed, IGtLanes Unsigned, ILeLanes Signed, ILeLanes Unsigned, IGeLanes Signed, IGeLanes Unsigned] !! fromIntegral offset
+    floatComparison offset = [FEqLanes, FNeLanes, FLtLanes, FGtLanes, FLeLanes, FGeLanes] !! fromIntegral offset
+    floatArithmetic offset = [FAddLanes, FSubLanes, FMulLanes, FDivLanes, FMinLanes, FMaxLanes, FPMin, FPMax] !! fromIntegral offset
 
 -- *** Sections ***
 

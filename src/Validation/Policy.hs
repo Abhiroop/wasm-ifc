@@ -119,6 +119,7 @@ import Syntax.Instructions (RawInstr (..))
 import Syntax.Module
 import Syntax.Types (FuncType, FuncTypeOf (..), GlobalTypeOf (..), Mutability (..), SValType (..), ValType (..))
 import Syntax.TypesIFC (LabelledFuncType (..), LabelledGlobalType, LabelledValType (..), SecLevel (..), join)
+import Syntax.Vector (laneBytes, loadedBytes)
 
 -- | The levels of a function's parameters and results, in declared order, and its bound.
 data FunctionLevels = FunctionLevels
@@ -634,26 +635,27 @@ assemble policy m = do
     isLoad instr = case instr of
         Load {} -> True
         LoadN {} -> True
+        VectorLoad {} -> True
+        VectorLoadLane {} -> True
         Annotated _ inner -> isLoad inner
         _ -> False
     isStore instr = case instr of
         Store {} -> True
         StoreN {} -> True
+        VectorStore {} -> True
+        VectorStoreLane {} -> True
         Annotated _ inner -> isStore inner
         _ -> False
     isMemoryAccess instr = isLoad instr || isStore instr
-    siteMap instr = case instr of
-        Load {} -> policy.loads
-        LoadN {} -> policy.loads
-        _ -> policy.stores
-    memoryOf instr = case instr of
-        Load _ memArg -> memArg.memory
-        LoadN _ _ _ memArg -> memArg.memory
-        _ -> 0
-    offsetOf instr = case instr of
-        Load _ memArg -> fromIntegral memArg.offset
-        LoadN _ _ _ memArg -> fromIntegral memArg.offset
-        _ -> 0 :: Integer
+    siteMap instr = if isLoad instr then policy.loads else policy.stores
+    memoryOf instr = maybe 0 (.memory) (memArgOf instr)
+    offsetOf instr = maybe 0 (\memArg -> toInteger memArg.offset) (memArgOf instr)
+    memArgOf instr = case instr of
+        Load _ memArg -> Just memArg
+        LoadN _ _ _ memArg -> Just memArg
+        VectorLoad _ memArg -> Just memArg
+        VectorLoadLane _ _ memArg -> Just memArg
+        _ -> Nothing
     widthOf instr = case instr of
         Load st _ -> case fromSing st of
             I32 -> 4
@@ -662,6 +664,8 @@ assemble policy m = do
             F64 -> 8
             _ -> 0 -- (a load of a reference type is rejected by validation)
         LoadN _ width _ _ -> toInteger width
+        VectorLoad kind _ -> toInteger (loadedBytes kind)
+        VectorLoadLane width _ _ -> toInteger (laneBytes width)
         _ -> 0 :: Integer
     -- The level of the regions the bytes [from, from + width) fall in: secret if any is.
     regionLevel :: Integer -> Integer -> Maybe SecLevel

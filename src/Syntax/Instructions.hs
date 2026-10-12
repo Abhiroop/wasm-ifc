@@ -42,10 +42,12 @@ module Syntax.Instructions (
 
 import Data.List.Singletons (type (++))
 import Data.Singletons.TH (Sing, SingI (sing))
+import Data.Word (Word8)
 import Syntax.Immediates
 import Syntax.Indices
 import Syntax.Types
 import Syntax.TypesIFC
+import Syntax.Vector (LaneWidth, SomeVectorOp, VectorLoadKind, VectorOp)
 import Validation.Ref (FunctionRef, LocalRef, MemoryRef, TableRef)
 import Validation.Shape (
     Append (..),
@@ -123,6 +125,13 @@ data RawInstr where
     MemoryFill :: MemoryIdx -> RawInstr
     MemoryInit :: DataIdx -> MemoryIdx -> RawInstr
     DataDrop :: DataIdx -> RawInstr
+    -- \*** Vectors ("Syntax.Vector") ***
+    Vector :: SomeVectorOp -> RawInstr
+    VectorLoad :: VectorLoadKind -> MemArg -> RawInstr
+    VectorStore :: MemArg -> RawInstr
+    -- | load one lane, of a width and at an index, into the vector on the stack; or store one
+    VectorLoadLane :: LaneWidth -> Word8 -> MemArg -> RawInstr
+    VectorStoreLane :: LaneWidth -> Word8 -> MemArg -> RawInstr
     -- \*** References and tables ***
     RefNull :: ValType -> RawInstr
     RefIsNull :: RawInstr
@@ -400,6 +409,47 @@ data
         MemoryRef at (ModuleMems m) ->
         Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck (('I32 ':~ ln) ': ('I32 ':~ lsrc) ': (AddrVal at ':~ ldst) ': s) s
     IDataDrop :: Elem 'DataShape (ModuleData m) -> Instr m f l p p 'NoDynamicCheck s s
+    {- Vectors. An operation that does not touch memory is one of "Syntax.Vector"'s, by its
+       number of operands, and is typed like a numeric one: its result is as secret as its
+       operands and the pc. A vector load or store is typed like a load or store: the load
+       declares a level and is checked at run time, the store's level bounds the pc, the
+       address and the vector. A load or store of one lane has the vector as a further
+       operand; a loaded lane's vector is as secret as the old vector too. -}
+    IVector0 :: forall lv result m f l pc pcs s. VectorOp '[] result -> Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck s ((result ':~ Join pc lv) ': s)
+    IVector1 :: VectorOp '[a] result -> Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck ((a ':~ la) ': s) ((result ':~ Join pc la) ': s)
+    IVector2 :: VectorOp '[a, b] result -> Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck ((a ':~ la) ': (b ':~ lb) ': s) ((result ':~ Join pc (Join la lb)) ': s)
+    IVector3 ::
+        VectorOp '[a, b, c] result ->
+        Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck ((a ':~ la) ': (b ':~ lb) ': (c ':~ lc) ': s) ((result ':~ Join pc (Join la (Join lb lc))) ': s)
+    IVectorLoad ::
+        Sing (level :: SecLevel) ->
+        AccessSite ->
+        VectorLoadKind ->
+        MemArg ->
+        MemoryRef at (ModuleMems m) ->
+        Instr m f l (pc ': pcs) (pc ': pcs) ('BytesBelow level) ((AddrVal at ':~ la) ': s) (('V128 ':~ Join pc (Join la level)) ': s)
+    IVectorLoadLane ::
+        Sing (level :: SecLevel) ->
+        AccessSite ->
+        LaneWidth ->
+        Word8 ->
+        MemArg ->
+        MemoryRef at (ModuleMems m) ->
+        Instr m f l (pc ': pcs) (pc ': pcs) ('BytesBelow level) (('V128 ':~ lv) ': (AddrVal at ':~ la) ': s) (('V128 ':~ Join pc (Join la (Join level lv))) ': s)
+    IVectorStore ::
+        Sing (level :: SecLevel) ->
+        FlowsInto (Join pc (Join la lv)) level ->
+        MemArg ->
+        MemoryRef at (ModuleMems m) ->
+        Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck (('V128 ':~ lv) ': (AddrVal at ':~ la) ': s) s
+    IVectorStoreLane ::
+        Sing (level :: SecLevel) ->
+        FlowsInto (Join pc (Join la lv)) level ->
+        LaneWidth ->
+        Word8 ->
+        MemArg ->
+        MemoryRef at (ModuleMems m) ->
+        Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck (('V128 ':~ lv) ': (AddrVal at ':~ la) ': s) s
     {- References. @ref.null@ and @ref.func@ are constants, typed like 'IConst'; a function
        is named by a reference that validation resolved from its witness ('FunctionRef').
        @ref.is_null@ is a test, as secret as its operand. -}

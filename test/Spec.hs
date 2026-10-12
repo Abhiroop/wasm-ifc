@@ -24,6 +24,7 @@ import Test.Hspec.Hedgehog (annotate, classify, failure, forAll, hedgehog, label
 
 import Codec.Wasm (decodeModule)
 import Data.Map.Strict qualified as Map
+import Data.Singletons.Base.TH (SList (SCons, SNil))
 import Examples (labelledSumLength, leakLength, runFactorial, runIncrement, runSpinFor, runSquare, secretStoreLength)
 import Noninterference (Observation (..), compileModule, genModule, holdsValueAcrossBranch, observe, observeUnder, withPublicLoads)
 import Runtime.Bytes (bytesOfWord32, bytesOfWord64, word32OfBytes, word64OfBytes)
@@ -44,6 +45,7 @@ import Syntax.Instructions
 import Syntax.Module (DataMode (..), ElemMode (..), Export (..), ExportDesc (..), ImportDesc (..), RawDataSegment (..), RawElementSegment (..), RawImport (..), RawMemory (..), RawModule (..), RawTable (..), StateImports (StateImports), importsNoState)
 import Syntax.Types
 import Syntax.TypesIFC (LabelledFuncType (..), LabelledValType (..), SecLevel (..))
+import Syntax.Vector (IntBinary (..), LaneType (..), Shape (..), SomeVectorOp (..), VectorBinary (..), VectorOp (..))
 import Validation.Elaborate (ElabError (..), IndexSpace (..), Inferred (..), elaborateModule, elaborateModuleInferring, elaborateModuleWith)
 import Validation.LocalWebs (mergeModuleWebs, splitModuleLocals)
 import Validation.Policy (FunctionLevels (..), Policy (..), PolicyError (..), mergePolicies, parsePolicy)
@@ -424,6 +426,29 @@ spec = do
         it "reject an element segment in a module without a table at validation" $
             void (elaborateModule ((singleFunctionModule [] [] [] [] []) {elementSegments = [activeElements [Const SI32 0] [FunctionIdx 0]]}))
                 `shouldBe` Left (IndexOutOfRange Tables 0)
+
+    describe "vectors" $ do
+        let splat32 = Vector (SomeVectorOp (SCons SI32 SNil) SV128 (VSplat LaneI32))
+            extract32 lane = Vector (SomeVectorOp (SCons SV128 SNil) SI32 (VExtract LaneI32 lane Unsigned))
+            add32 = Vector (SomeVectorOp (SCons SV128 (SCons SV128 SNil)) SV128 (VBinary (VIntBinary I32x4 IAddLanes)))
+        it "a vector local or parameter takes two words of the frame, and its neighbours keep theirs" $ do
+            -- a parameter (local 0), then a vector (1) and an i32 (2) declared
+            elabRunModule (singleFunctionModule [] [I32] [I32] [V128, I32] [Const SI32 7, LocalSet (LocalIdx 2), Const SI32 5, splat32, LocalSet (LocalIdx 1), LocalGet (LocalIdx 0), LocalGet (LocalIdx 2), Add SI32, LocalGet (LocalIdx 1), extract32 3, Add SI32]) [3]
+                `shouldBe` Right ["15"]
+            -- a vector between two i32 parameters, given as its low word
+            elabRunModule (singleFunctionModule [] [I32, V128, I32] [I32] [] [LocalGet (LocalIdx 0), LocalGet (LocalIdx 2), Add SI32, LocalGet (LocalIdx 1), extract32 0, Add SI32]) [1, 10, 100]
+                `shouldBe` Right ["111"]
+        it "operate lane by lane" $
+            elabRunModule (singleFunctionModule [] [] [I32] [] [Const SI32 0xFFFFFFFF, splat32, Const SI32 3, splat32, add32, extract32 2]) [] `shouldBe` Right ["2"]
+        it "are as secret as what they are made of, lane by lane and in memory" $ do
+            let lane = singleFunctionModule [] [I32] [I32] [] [LocalGet (LocalIdx 0), splat32, extract32 1]
+                stored = singleFunctionModule [onePageMemory] [I32] [I32] [] [Const SI32 0, LocalGet (LocalIdx 0), splat32, VectorStore (MemArg 0 0 0), Const SI32 12, Load SI32 (MemArg 0 0 0)]
+            elabRunWithPolicy "export f : H -> L" lane [9] `shouldSatisfy` errorContaining "IllegalFlow"
+            elabRunWithPolicy "export f : H -> H" lane [9] `shouldBe` Right ["9"]
+            elabRunWithPolicy "export f : H -> L" stored [9] `shouldSatisfy` trapContaining "SecretRead"
+            elabRunWithPolicy "export f : L -> L" stored [9] `shouldBe` Right ["9"]
+        it "a lane index is within the vector" $
+            elabRunModule (singleFunctionModule [] [] [I32] [] [Const SI32 1, splat32, extract32 4]) [] `shouldSatisfy` errorContaining "a lane index past the lanes of a vector"
 
     describe "tail calls" $ do
         -- function 0 sums the numbers up to its first argument into its second, calling itself in tail position
@@ -1062,6 +1087,7 @@ invokeWithIntegers sm args = do
     integerValue I64 n = I64Value (fromInteger n)
     integerValue F32 n = F32Value (fromInteger n)
     integerValue F64 n = F64Value (fromInteger n)
+    integerValue V128 n = V128Value (Vector128 (fromInteger n) 0)
     integerValue FuncRef _ = FuncRefValue nullReference
     integerValue ExternRef n = ExternRefValue (referenceTo (fromInteger n))
 

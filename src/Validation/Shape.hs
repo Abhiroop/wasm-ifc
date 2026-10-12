@@ -158,7 +158,7 @@ data PreservedGlobals payload gs where
 type PreservedOf = PreservedGlobals SValType
 
 -- | The value a preserved global had when it was recorded, as its machine word.
-data Recorded (t :: ValType) = Recorded !(SValType t) !Word64
+data Recorded (t :: ValType) = Recorded !(SValType t) !Word64 !Word64
 
 -- | The values the preserved globals of a global space had at some point.
 type RecordedGlobals = PreservedGlobals Recorded

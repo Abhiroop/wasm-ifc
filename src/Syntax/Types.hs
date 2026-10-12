@@ -34,10 +34,10 @@ import Data.Word (Word64)
   Crucially, an instruction the spec restricts to a sub-category takes the corresponding
   witness, /not/ a bare @Sing (t :: ValType)@: @i32.add@ is @'IsNum' t@, @i32.eqz@ is
   @'IsInt' t@. The restriction is then enforced by construction and does not depend on which
-  constructors 'ValType' currently happens to have — adding @FuncRef@/@V128@ cannot silently
-  make @funcref.add@ representable.
+  constructors 'ValType' currently happens to have: @FuncRef@ and @V128@ came later, and
+  @funcref.add@ did not become representable.
 -}
-data ValType = I32 | I64 | F32 | F64 | FuncRef | ExternRef -- later: | V128
+data ValType = I32 | I64 | F32 | F64 | V128 | FuncRef | ExternRef
     deriving stock (Eq, Show)
 
 -- Singletons for the value type: the intrinsically-typed layer reflects these between the
@@ -82,6 +82,7 @@ decideNum SI32 = Just I32IsNum
 decideNum SI64 = Just I64IsNum
 decideNum SF32 = Just F32IsNum
 decideNum SF64 = Just F64IsNum
+decideNum SV128 = Nothing
 decideNum SFuncRef = Nothing
 decideNum SExternRef = Nothing
 
@@ -104,6 +105,7 @@ decideInt SI32 = Just I32IsInt
 decideInt SI64 = Just I64IsInt
 decideInt SF32 = Nothing
 decideInt SF64 = Nothing
+decideInt SV128 = Nothing
 decideInt SFuncRef = Nothing
 decideInt SExternRef = Nothing
 
@@ -112,6 +114,7 @@ decideFloat SF32 = Just F32IsFloat
 decideFloat SF64 = Just F64IsFloat
 decideFloat SI32 = Nothing
 decideFloat SI64 = Nothing
+decideFloat SV128 = Nothing
 decideFloat SFuncRef = Nothing
 decideFloat SExternRef = Nothing
 
@@ -130,6 +133,7 @@ decideRef SI32 = Nothing
 decideRef SI64 = Nothing
 decideRef SF32 = Nothing
 decideRef SF64 = Nothing
+decideRef SV128 = Nothing
 
 -- | Recover the value-type singleton from a reference witness.
 refSing :: IsRef t -> Sing t

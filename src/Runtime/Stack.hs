@@ -68,10 +68,10 @@ import Data.List.Singletons (type (++))
 import Data.Singletons.Base.TH (SList (SCons, SNil), Sing)
 import Runtime.MemInst (MemInst)
 import Runtime.TableInst (FunctionDirectory, TableInst, functionDirectory)
-import Syntax.Immediates (HostType, Reference (..))
+import Syntax.Immediates (HostType, Reference (..), Vector128 (..))
 import Syntax.Types
 import Syntax.TypesIFC
-import Validation.Ref (LocalRef, localPosition, localType)
+import Validation.Ref (LocalRef, localPosition, localType, wordsOf)
 import Validation.Shape (Append (..), DataShape (..), Elem (..), ElemShape (..), MemShape, PreservedGlobals (..), PreservedOf, Recorded (..), RecordedGlobals, ReverseOnto, TableShape)
 
 {- | The operand stack (head = top of stack), indexed by the types it holds.
@@ -95,17 +95,20 @@ infixr 5 :#
 {- | The instance of a function activation's local index space: its locals' current values,
   indexed by their types.
 
-  Stored flat, one machine word per local in an unboxed vector, and reached through a
-  'Validation.Ref.LocalRef' that elaboration resolved from the local's witness: its position,
-  and its type, which says how to read the word back. Every WebAssembly value fits in 64 bits,
-  so the word /is/ the value, bit for bit (a float's NaN payload survives the round trip). A
-  cons list indexed by the witness itself, the obvious typed encoding, makes every access walk
-  to its local and every @local.set@ rebuild the cells in front of it (TODO.md §I, E2, E2b).
+  Stored flat in an unboxed vector of machine words, one per local and two for a 128-bit
+  vector, and reached through a 'Validation.Ref.LocalRef' that elaboration resolved from the
+  local's witness: its place, and its type, which says how to read the words back. Every other
+  WebAssembly value fits in 64 bits, so the word /is/ the value, bit for bit (a float's NaN
+  payload survives the round trip). A cons list indexed by the witness itself, the obvious
+  typed encoding, makes every access walk to its local and every @local.set@ rebuild the cells
+  in front of it (TODO.md §I, E2, E2b).
 
-  The type is abstract, with one invariant: the vector holds exactly as many words as @ls@ has
-  types. 'defaultLocals' and 'seedLocals' establish it and 'setLocal' preserves it, being the
-  only ways to make or change a frame; and a reference's position is below that length because
-  its witness proves the local exists. The two together license the unchecked read and write.
+  The type is abstract, with one invariant: the vector holds exactly the words the types of
+  @ls@ take ('wordsIn'). 'defaultLocals' and 'seedLocals' establish it and 'setLocal' preserves
+  it, being the only ways to make or change a frame; and a reference's place, with the words
+  of its type, is below that length because its witness proves the local exists and
+  'Validation.Ref.resolveLocal' counts the words before it the same way. The two together
+  license the unchecked read and write.
 -}
 type LocalSpaceInst :: [LabelledValType] -> Type
 newtype LocalSpaceInst ls = LocalSpaceInst (UV.Vector Word64)
@@ -153,63 +156,90 @@ seedLocals :: SegmentFlows args ps -> Sing ps -> Sing declared -> ValueStack arg
 seedLocals flows paramTypes declaredTypes args =
     LocalSpaceInst (UV.create frame)
   where
-    arity = lengthOf paramTypes
+    arity = wordsIn paramTypes
     frame :: ST s (MV.MVector s Word64)
     frame = do
-        slots <- MV.replicate (arity + lengthOf declaredTypes) 0
-        writeArguments slots (arity - 1) flows paramTypes args
+        slots <- MV.replicate (arity + wordsIn declaredTypes) 0
+        writeArguments slots arity flows paramTypes args
         pure slots
 
-{- | Write a stack's values into consecutive slots, the top one at @slot@ and each deeper one
-  just below it. The arguments arrive at the levels the caller had ('SegmentFlows' says they
-  may flow into the parameters'); a level is nothing at run time, so the words go in as they are.
+{- | Write a stack's values into consecutive slots, the top one ending just below @end@ and
+  each deeper one just below it; a vector takes two slots, its low word first. The arguments
+  arrive at the levels the caller had ('SegmentFlows' says they may flow into the
+  parameters'); a level is nothing at run time, so the words go in as they are.
 -}
 writeArguments :: MV.MVector s Word64 -> Int -> SegmentFlows args ps -> Sing (ps :: [LabelledValType]) -> ValueStack args -> ST s ()
 writeArguments _ _ NoValuesFlow SNil VNil = pure ()
-writeArguments slots slot (ValueFlows _ flows) (SCons (st :%~ _) rest) (x :# xs) = do
-    MV.unsafeWrite slots slot (packValue st x)
-    writeArguments slots (slot - 1) flows rest xs
+writeArguments slots end (ValueFlows _ flows) (SCons (st :%~ _) rest) (x :# xs) = case st of
+    SV128 -> case x of
+        Vector128 low high -> do
+            MV.unsafeWrite slots (end - 2) low
+            MV.unsafeWrite slots (end - 1) high
+            writeArguments slots (end - 2) flows rest xs
+    _ -> do
+        MV.unsafeWrite slots (end - 1) (packValue st x)
+        writeArguments slots (end - 1) flows rest xs
 
 {- | A locals frame of the given shape, every slot zero (how declared locals start a call).
   Zero is the all-zero word at every value type, the floats' @+0.0@ included.
 -}
 defaultLocals :: Sing (ls :: [LabelledValType]) -> LocalSpaceInst ls
-defaultLocals types = LocalSpaceInst (UV.replicate (lengthOf types) 0)
+defaultLocals types = LocalSpaceInst (UV.replicate (wordsIn types) 0)
 
 -- | The frame of a function with neither parameters nor declared locals.
 noLocals :: LocalSpaceInst '[]
 noLocals = defaultLocals SNil
 
--- | Read a local: its reference says where it is and how to read the word found there.
+-- | Read a local: its reference says where it is and how to read the word (or two) found there.
 getLocal :: LocalRef (t ':~ l) ls -> LocalSpaceInst ls -> HostType t
-getLocal ref (LocalSpaceInst values) = unpackValue (localType ref) (UV.unsafeIndex values (localPosition ref))
+getLocal ref (LocalSpaceInst values) = case localType ref of
+    SV128 -> Vector128 (UV.unsafeIndex values at) (UV.unsafeIndex values (at + 1))
+    ty -> unpackValue ty (UV.unsafeIndex values at)
+  where
+    at = localPosition ref
 
--- | Write a local: a copy of the frame with one word replaced, so of the same length.
+-- | Write a local: a copy of the frame with its word (or two) replaced, so of the same length.
 setLocal :: LocalRef (t ':~ l) ls -> HostType t -> LocalSpaceInst ls -> LocalSpaceInst ls
-setLocal ref v (LocalSpaceInst values) =
-    LocalSpaceInst (UV.modify (\slots -> MV.unsafeWrite slots (localPosition ref) (packValue (localType ref) v)) values)
+setLocal ref v (LocalSpaceInst values) = case localType ref of
+    SV128 -> case v of
+        Vector128 low high -> LocalSpaceInst (UV.modify (\slots -> MV.unsafeWrite slots at low >> MV.unsafeWrite slots (at + 1) high) values)
+    ty -> LocalSpaceInst (UV.modify (\slots -> MV.unsafeWrite slots at (packValue ty v)) values)
+  where
+    at = localPosition ref
 
--- | Pack a value into the one machine word every WebAssembly value fits in, bit for bit.
+{- | Pack a value into a machine word, bit for bit. Every WebAssembly value but a vector fits in
+  one; of a vector this is the low word, and 'highWord' the other.
+-}
 packValue :: Sing (t :: ValType) -> HostType t -> Word64
 packValue SI32 v = fromIntegral v
 packValue SI64 v = v
 packValue SF32 v = fromIntegral (castFloatToWord32 v)
 packValue SF64 v = castDoubleToWord64 v
+packValue SV128 (Vector128 low _) = low
 packValue SFuncRef (Reference w) = w
 packValue SExternRef (Reference w) = w
 
--- | Read a packed word back at its type: the inverse of 'packValue'.
+-- | The second word of a value: a vector's high word, and zero for every other type.
+highWord :: Sing (t :: ValType) -> HostType t -> Word64
+highWord SV128 (Vector128 _ high) = high
+highWord _ _ = 0
+
+{- | Read a packed word back at its type: the inverse of 'packValue'. (Of a vector it gives the
+  low word alone; the frame reads both words itself.)
+-}
 unpackValue :: Sing (t :: ValType) -> Word64 -> HostType t
 unpackValue SI32 w = fromIntegral w
 unpackValue SI64 w = w
 unpackValue SF32 w = castWord32ToFloat (fromIntegral w)
 unpackValue SF64 w = castWord64ToDouble w
+unpackValue SV128 w = Vector128 w 0
 unpackValue SFuncRef w = Reference w
 unpackValue SExternRef w = Reference w
 
-lengthOf :: Sing (ls :: [LabelledValType]) -> Int
-lengthOf SNil = 0
-lengthOf (SCons _ rest) = 1 + lengthOf rest
+-- | The words a frame of these locals takes: one each, two for a vector.
+wordsIn :: Sing (ls :: [LabelledValType]) -> Int
+wordsIn SNil = 0
+wordsIn (SCons (ty :%~ _) rest) = wordsOf ty + wordsIn rest
 
 getGlobal :: Elem ('GlobalType mut (t ':~ l)) gs -> GlobalSpaceInst gs -> HostType t
 getGlobal Here (GCons x _) = x
@@ -234,13 +264,13 @@ recordPreserved which globals
     record :: PreservedOf gs' -> GlobalSpaceInst gs' -> RecordedGlobals gs'
     record NoGlobalsLeft GNil = NoGlobalsLeft
     record (NotPreserved why rest) (GCons _ values) = NotPreserved why (record rest values)
-    record (PreservedHere t rest) (GCons value values) = PreservedHere (Recorded t (packValue t value)) (record rest values)
+    record (PreservedHere t rest) (GCons value values) = PreservedHere (Recorded t (packValue t value) (highWord t value)) (record rest values)
 
 -- | Whether every preserved global holds the value recorded for it, bit for bit.
 stillRestored :: RecordedGlobals gs -> GlobalSpaceInst gs -> Bool
 stillRestored NoGlobalsLeft GNil = True
 stillRestored (NotPreserved _ rest) (GCons _ values) = stillRestored rest values
-stillRestored (PreservedHere (Recorded t word) rest) (GCons value values) = packValue t value == word && stillRestored rest values
+stillRestored (PreservedHere (Recorded t word high) rest) (GCons value values) = packValue t value == word && highWord t value == high && stillRestored rest values
 
 {- | A module's linear memories, indexed by their declared shapes. Being a non-empty 'MemSpaceInst'
   (@m ': ms@) is the runtime counterpart of the @ModuleMems shape ~ (m ': ms)@ constraint the

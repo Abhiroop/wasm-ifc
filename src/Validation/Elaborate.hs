@@ -61,6 +61,7 @@ import Syntax.Instructions (
 import Syntax.Module
 import Syntax.Types
 import Syntax.TypesIFC
+import Syntax.Vector (SomeVectorOp (..), VectorBinary (VShuffle), VectorOp (..), laneBytes, laneCount, loadedBytes)
 import Validation.LocalWebs (mergeModuleWebs, splitModuleLocals)
 import Validation.Policy (Assembled (..), LocalSplitting (..), Policy, PolicyError, Restrictions (..), assemble, emptyPolicy, modulePolicy)
 import Validation.Ref (MemoryRef (..), TableRef (..), functionReference, resolveFunction, resolveLocal)
@@ -446,24 +447,24 @@ elabInstr env pcsIn@(SCons pc _) stackIn instr = case instr of
     SelectTyped ts -> Left (InvalidSelectArity (length ts))
     {- Locals -}
     LocalGet (LocalIdx i) -> case mkLocalElem (env.locals) i of
-        Just (SomeElem sv@(svt :%~ lvar) ix) -> Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (svt :%~ sJoin pc lvar) stackIn) (ILocalGet (resolveLocal sv ix)))
+        Just (SomeElem (svt :%~ lvar) ix) -> Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (svt :%~ sJoin pc lvar) stackIn) (ILocalGet (resolveLocal (env.locals) ix)))
         Nothing -> Left (IndexOutOfRange Locals i)
     LocalSet (LocalIdx i) -> case mkLocalElem (env.locals) i of
-        Just (SomeElem sv@(svt :%~ lvar) ix) -> case stackIn of
+        Just (SomeElem (svt :%~ lvar) ix) -> case stackIn of
             SCons (stop :%~ lv) rest -> do
                 Refl <- note (OperandMismatch "local.set" (valTypeOf svt) (valTypeOf stop)) (decideEquality stop svt)
                 pcFlows <- blame [RaiseLocal env.functionIndex i] (requireFlow "local.set" pc lvar)
                 valueFlows <- blame [RaiseLocal env.functionIndex i] (requireFlow "local.set" lv lvar)
-                Right (Produces (sameLengthAs pcsIn) pcsIn rest (ILocalSet pcFlows valueFlows (resolveLocal sv ix)))
+                Right (Produces (sameLengthAs pcsIn) pcsIn rest (ILocalSet pcFlows valueFlows (resolveLocal (env.locals) ix)))
             _ -> Left (StackUnderflow "local.set")
         Nothing -> Left (IndexOutOfRange Locals i)
     LocalTee (LocalIdx i) -> case mkLocalElem (env.locals) i of
-        Just (SomeElem sv@(svt :%~ lvar) ix) -> case stackIn of
+        Just (SomeElem (svt :%~ lvar) ix) -> case stackIn of
             SCons (stop :%~ lv) _ -> do
                 Refl <- note (OperandMismatch "local.tee" (valTypeOf svt) (valTypeOf stop)) (decideEquality stop svt)
                 pcFlows <- blame [RaiseLocal env.functionIndex i] (requireFlow "local.tee" pc lvar)
                 valueFlows <- blame [RaiseLocal env.functionIndex i] (requireFlow "local.tee" lv lvar)
-                Right (Produces (sameLengthAs pcsIn) pcsIn stackIn (ILocalTee pcFlows valueFlows (resolveLocal sv ix)))
+                Right (Produces (sameLengthAs pcsIn) pcsIn stackIn (ILocalTee pcFlows valueFlows (resolveLocal (env.locals) ix)))
             _ -> Left (StackUnderflow "local.tee")
         Nothing -> Left (IndexOutOfRange Locals i)
     {- Globals -}
@@ -553,6 +554,29 @@ elabInstr env pcsIn@(SCons pc _) stackIn instr = case instr of
                 publicContext <- requireFlow "memory.grow" (sJoin pc lc) SLow
                 Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (addrValSing at :%~ pc) rest) (IMemGrow publicContext memory))
             _ -> Left (StackUnderflow "memory.grow")
+    {- Vectors: an operation is typed by the operand and result types it carries -}
+    Vector (SomeVectorOp operands result op) -> do
+        laneInRange op
+        case (operands, stackIn) of
+            (SNil, _) -> Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (result :%~ sJoin pc SLow) stackIn) (IVector0 @'Low op))
+            (SCons a SNil, SCons (sa :%~ la) rest) -> do
+                Refl <- operandIs "vector" a sa
+                Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (result :%~ sJoin pc la) rest) (IVector1 op))
+            (SCons a (SCons b SNil), SCons (sa :%~ la) (SCons (sb :%~ lb) rest)) -> do
+                Refl <- operandIs "vector" a sa
+                Refl <- operandIs "vector" b sb
+                Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (result :%~ sJoin pc (sJoin la lb)) rest) (IVector2 op))
+            (SCons a (SCons b (SCons c SNil)), SCons (sa :%~ la) (SCons (sb :%~ lb) (SCons (sc :%~ lc) rest))) -> do
+                Refl <- operandIs "vector" a sa
+                Refl <- operandIs "vector" b sb
+                Refl <- operandIs "vector" c sc
+                Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (result :%~ sJoin pc (sJoin la (sJoin lb lc))) rest) (IVector3 op))
+            (SCons _ (SCons _ (SCons _ (SCons _ _))), _) -> Left (Malformed "a vector operation of more than three operands")
+            _ -> Left (StackUnderflow "vector")
+    VectorLoad kind memArg -> elabMemory env pcsIn stackIn Nothing Nothing (VectorLoad kind memArg)
+    VectorLoadLane width lane memArg -> elabMemory env pcsIn stackIn Nothing Nothing (VectorLoadLane width lane memArg)
+    VectorStore memArg -> elabMemory env pcsIn stackIn Nothing Nothing (VectorStore memArg)
+    VectorStoreLane width lane memArg -> elabMemory env pcsIn stackIn Nothing Nothing (VectorStoreLane width lane memArg)
     {- References and tables -}
     RefNull t -> withSomeSing t $ \st -> do
         isRef <- note (Malformed "ref.null of a type that is not a reference type") (decideRef st)
@@ -859,8 +883,9 @@ elabSelect annotation pcsIn@(SCons pc _) stackIn = case stackIn of
         Refl <- note (OperandMismatch "select" I32 (valTypeOf sc)) (decideEquality sc SI32)
         Refl <- note (OperandMismatch "select" (valTypeOf va) (valTypeOf vb)) (decideEquality va vb)
         mapM_ (\t -> if t == valTypeOf va then Right () else Left (OperandMismatch "select" t (valTypeOf va))) annotation
-        -- (Only the typed form selects between references.)
-        when (isNothing annotation) (void (requireNum va))
+        -- (Only the typed form selects between references: untyped, the operands are numbers
+        -- or vectors.)
+        when (isNothing annotation && valTypeOf va /= V128) (void (requireNum va))
         Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (va :%~ sJoin pc (sJoin lc (sJoin l1 l2))) rest) ISelect)
     _ -> Left (StackUnderflow "select")
 
@@ -1082,6 +1107,47 @@ elabMemory env pcsIn@(SCons pc _) stackIn annotation site access = case access o
             storeAt (sJoin pc (sJoin la lv)) $ \level flows ->
                 Right (Produces (sameLengthAs pcsIn) pcsIn rest (IStoreN level flows nw memArg memory))
         _ -> Left (StackUnderflow "store")
+    VectorLoad kind memArg -> case stackIn of
+        SCons (sc :%~ la) rest -> do
+            SomeMemoryRef memory@(MemoryRef at _) <- memoryAt env "load" memArg.memory
+            Refl <- operandIs "load" (addrValSing at) sc
+            checkAccess at memArg (loadedBytes kind)
+            loadSite <- note AnnotationMisplaced site
+            withSomeSing loadLevel $ \level ->
+                Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (SV128 :%~ sJoin pc (sJoin la level)) rest) (IVectorLoad level loadSite kind memArg memory))
+        _ -> Left (StackUnderflow "load")
+    VectorLoadLane width lane memArg -> case stackIn of
+        SCons (sv :%~ lv) (SCons (sc :%~ la) rest) -> do
+            SomeMemoryRef memory@(MemoryRef at _) <- memoryAt env "load" memArg.memory
+            Refl <- operandIs "load" SV128 sv
+            Refl <- operandIs "load" (addrValSing at) sc
+            checkAccess at memArg (laneBytes width)
+            when (fromIntegral lane >= 16 `div` laneBytes width) (Left (Malformed "a lane index past the lanes of a vector"))
+            loadSite <- note AnnotationMisplaced site
+            withSomeSing loadLevel $ \level ->
+                Right (Produces (sameLengthAs pcsIn) pcsIn (SCons (SV128 :%~ sJoin pc (sJoin la (sJoin level lv))) rest) (IVectorLoadLane level loadSite width lane memArg memory))
+        _ -> Left (StackUnderflow "load")
+    VectorStore memArg -> case stackIn of
+        SCons (sv :%~ lv) (SCons (sc :%~ la) rest) -> do
+            SomeMemoryRef memory@(MemoryRef at _) <- memoryAt env "store" memArg.memory
+            mapM_ (const (Left AnnotationMisplaced)) site
+            Refl <- operandIs "store" SV128 sv
+            Refl <- operandIs "store" (addrValSing at) sc
+            checkAccess at memArg 16
+            storeAt (sJoin pc (sJoin la lv)) $ \level flows ->
+                Right (Produces (sameLengthAs pcsIn) pcsIn rest (IVectorStore level flows memArg memory))
+        _ -> Left (StackUnderflow "store")
+    VectorStoreLane width lane memArg -> case stackIn of
+        SCons (sv :%~ lv) (SCons (sc :%~ la) rest) -> do
+            SomeMemoryRef memory@(MemoryRef at _) <- memoryAt env "store" memArg.memory
+            mapM_ (const (Left AnnotationMisplaced)) site
+            Refl <- operandIs "store" SV128 sv
+            Refl <- operandIs "store" (addrValSing at) sc
+            checkAccess at memArg (laneBytes width)
+            when (fromIntegral lane >= 16 `div` laneBytes width) (Left (Malformed "a lane index past the lanes of a vector"))
+            storeAt (sJoin pc (sJoin la lv)) $ \level flows ->
+                Right (Produces (sameLengthAs pcsIn) pcsIn rest (IVectorStoreLane level flows width lane memArg memory))
+        _ -> Left (StackUnderflow "store")
     _ -> Left AnnotationMisplaced
   where
     loadLevel = fromMaybe env.loadDefault annotation
@@ -1102,6 +1168,16 @@ tailResults env name rsS = case decideEquality rsS (env.results) of
     Nothing
         | stackToList rsS /= stackToList (env.results) -> Left (StackMismatch name (stackToList (env.results)) (stackToList rsS))
         | otherwise -> blame (raisesWhereBelow (RaiseResult env.functionIndex) env.results rsS) (RaisedResults (env.results) <$> note (IllegalFlow name High Low) (decideSegmentFlows rsS (env.results)))
+
+-- | A vector operation names lanes that its vectors have.
+laneInRange :: VectorOp operands result -> Either ElabError ()
+laneInRange op = case op of
+    VExtract lane index _ | index >= laneCount lane -> outside
+    VReplace lane index | index >= laneCount lane -> outside
+    VBinary (VShuffle indices) | any (>= 32) indices -> outside
+    _ -> Right ()
+  where
+    outside = Left (Malformed "a lane index past the lanes of a vector")
 
 -- | An operand has the type an instruction asks for.
 operandIs :: Text -> Sing (expected :: ValType) -> Sing (actual :: ValType) -> Either ElabError (actual :~: expected)
@@ -1145,7 +1221,7 @@ checkAccess at memArg accessBytes = do
 -}
 checkAlign :: MemArg -> Int -> Either ElabError ()
 checkAlign memArg accessBytes
-    | align <= 3 && (2 ^ align :: Int) <= accessBytes = Right ()
+    | align <= 4 && (2 ^ align :: Int) <= accessBytes = Right ()
     | otherwise = Left (Misaligned memArg.alignment accessBytes)
   where
     align = fromIntegral memArg.alignment :: Int
@@ -1263,6 +1339,11 @@ stepDead env pcsIn s instr = case instr of
     GlobalSet (GlobalIdx g) -> case lookupGlobalRef (globalTypesSing (env.shape)) g of
         Nothing -> Left (IndexOutOfRange Globals g)
         Just (SomeGlobalRef _ st _) -> popKnown (unlabelledTypeOf st) s
+    Vector (SomeVectorOp operands result op) -> laneInRange op >> (pushKnown (fromSing result) <$> popTypes (fromSing operands) s)
+    VectorLoad _ memArg -> address "load" memArg.memory >>= \at -> pushKnown V128 <$> popKnown at s
+    VectorLoadLane _ _ memArg -> address "load" memArg.memory >>= \at -> pushKnown V128 <$> popTypes [V128, at] s
+    VectorStore memArg -> address "store" memArg.memory >>= \at -> popTypes [V128, at] s
+    VectorStoreLane _ _ memArg -> address "store" memArg.memory >>= \at -> popTypes [V128, at] s
     Load t memArg -> address "load" memArg.memory >>= \at -> pushKnown (valTypeOf t) <$> popKnown at s
     Store t memArg -> address "store" memArg.memory >>= \at -> popKnown (valTypeOf t) s >>= popKnown at
     LoadN t _ _ memArg -> address "load" memArg.memory >>= \at -> pushKnown (valTypeOf t) <$> popKnown at s
@@ -1839,6 +1920,7 @@ constExpr env invalid expected instrs = do
     step :: [SomeConst] -> RawInstr -> Either ElabError [SomeConst]
     step stack instr = case (instr, stack) of
         (Const st literal, _) -> Right (SomeConst st (ConstValue literal) Low : stack)
+        (Vector (SomeVectorOp SNil result (VConst vector)), _) -> Right (SomeConst result (ConstValue vector) Low : stack)
         (RefNull t, _) -> withSomeSing t $ \st -> case decideRef st of
             Just isRef -> Right (SomeConst st (withReference isRef (ConstValue nullReference)) Low : stack)
             Nothing -> Left invalid

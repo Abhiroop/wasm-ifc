@@ -556,16 +556,38 @@ implemented since e87e76a.
 - **Spec suite:** 36,726 passed, 0 failed, 28,476 skipped (36,401 and 28,801 before); 98
   scripts run with nothing skipped.
 
+## Vector instructions (item 13, 2026-10-12)
+
+- **What:** the `v128` value type and all the vector instructions of WebAssembly 2.0
+  (fixed-width SIMD): constants, lane operations, the integer and floating-point operations of
+  every shape, comparisons, shifts, conversions, and the loads and stores of whole vectors and
+  of single lanes. With them every instruction of WebAssembly 2.0 is implemented.
+- **Rules:** none new. An operation is typed like a numeric one (the result is as secret as
+  the operands and the pc); a vector load or store is typed like a load or store, declares a
+  level, counts as a memory access for the policy's `load F N`, and is checked at run time like
+  every load, each half of a whole vector on its own (`BothWereBelow`).
+- **How:** the operations that do not touch memory are one family indexed by operand and
+  result types (`Syntax.Vector.VectorOp`), so the typed instruction has one constructor per
+  number of operands (`IVector0` to `IVector3`); their meaning is given lane by lane in
+  `Runtime/Vector.hs`. A vector local takes two words of a frame.
+- **Spec suite:** 62,081 passed, 0 failed, 3,121 skipped (36,726 and 28,476 before), the same
+  with SecWasm's restrictions on; all 59 scripts for vectors pass, and 130 of the 257 scripts
+  run with nothing skipped. Four unit examples (`test/Spec.hs`, "vectors").
+- **Cost:** the allocation tripwire is unchanged; no workload of the benchmarks uses vectors.
+
 ## Where coverage stands (2026-10-12, for the paper's claim)
 
-Supported, with the 3.0 suite passing on all of it: **WebAssembly 2.0 except vector
-instructions**, and of what 3.0 adds, **several memories, 64-bit memories and tables, tail
+Supported, with the 3.0 suite passing on all of it: **every instruction and type of
+WebAssembly 2.0**, and of what 3.0 adds, **several memories, 64-bit memories and tables, tail
 calls and extended constant expressions**. With one restriction that cuts across versions:
 **a module does not share a memory, a table or a mutable global with another module**; what it
-imports of these it gets by value.
+imports of these it gets by value. A program that is one module, as every WASI program is, is
+not affected.
 
-Not supported: vector instructions (2.0); exceptions, typed function references and garbage
-collection (3.0).
+Not supported: exceptions, typed function references and garbage collection (all 3.0).
 
 Every feature that clang 23 (wasi-sdk 34) and rustc 1.99 enable by default for
-`wasm32-wasip1` is supported. Counts by feature are in `TODO.md`.
+`wasm32-wasip1` is supported. The suite's 3,121 skipped assertions are: 1,245 malformed modules
+given as text, which the harness does not run; 1,571 on modules that use the three unsupported
+features; 302 that need state shared between modules; 3 whose start function calls an import.
+Counts by feature are in `TODO.md`.

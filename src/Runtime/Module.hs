@@ -36,12 +36,13 @@ import Data.Singletons.Base.TH (SList (SCons, SNil))
 import Data.Text (Text)
 import Data.Word (Word32, Word64, Word8)
 
+import Numeric (showHex)
 import Runtime.Interpreter (Config, FuncSpaceInst, Halt (..), HostRequest (..), ModuleInst (..), Outcome (..), getFunc, resumeWith, run, runFunction, storeToModule)
 import Runtime.MemInst (levelOfRange, readBytes)
 import Runtime.Stack (MemSpaceInst (..), TableInsts (..), TableSpaceInst (..), ValueStack (..), getGlobal)
 import Runtime.TableInst (readEntries, tableSize)
 import Runtime.Trap (Trap)
-import Syntax.Immediates (HostType, Reference, isNullReference, referent)
+import Syntax.Immediates (HostType, Reference, Vector128 (..), isNullReference, referent)
 import Syntax.Indices (FunctionIdx (..), GlobalIdx (..))
 import Syntax.Module (Export (..), ExportDesc (..))
 import Syntax.Types
@@ -61,6 +62,7 @@ data Value
     | I64Value Word64
     | F32Value Float
     | F64Value Double
+    | V128Value Vector128
     | FuncRefValue Reference
     | ExternRefValue Reference
     deriving stock (Eq, Show)
@@ -70,6 +72,7 @@ valueType (I32Value _) = I32
 valueType (I64Value _) = I64
 valueType (F32Value _) = F32
 valueType (F64Value _) = F64
+valueType (V128Value _) = V128
 valueType (FuncRefValue _) = FuncRef
 valueType (ExternRefValue _) = ExternRef
 
@@ -79,6 +82,7 @@ renderValue (I32Value w) = show w
 renderValue (I64Value w) = show w
 renderValue (F32Value f) = show f
 renderValue (F64Value d) = show d
+renderValue (V128Value (Vector128 low high)) = "0x" ++ concatMap (\word -> let digits = showHex word "" in replicate (16 - length digits) '0' ++ digits) [high, low]
 renderValue (FuncRefValue r) = maybe "null" (\index -> "func " ++ show index) (referent r)
 renderValue (ExternRefValue r) = maybe "null" (\index -> "extern " ++ show index) (referent r)
 
@@ -270,6 +274,7 @@ fromValue SI32 (I32Value w) = Just w
 fromValue SI64 (I64Value w) = Just w
 fromValue SF32 (F32Value f) = Just f
 fromValue SF64 (F64Value d) = Just d
+fromValue SV128 (V128Value v) = Just v
 -- (From outside, the only reference to a function is null: one that names a function comes
 -- from the module's own code, 'Validation.Ref.FunctionRef'.)
 fromValue SFuncRef (FuncRefValue r) | isNullReference r = Just r
@@ -285,6 +290,7 @@ toValue SI32 = I32Value
 toValue SI64 = I64Value
 toValue SF32 = F32Value
 toValue SF64 = F64Value
+toValue SV128 = V128Value
 toValue SFuncRef = FuncRefValue
 toValue SExternRef = ExternRefValue
 

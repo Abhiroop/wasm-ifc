@@ -12,7 +12,7 @@ are summarised here, not repeated.
 ## Where things stand (2026-10-08)
 
 - WebAssembly: the spec testsuite, at the WebAssembly 3.0 release (all 257 scripts), passes for
-  the supported subset (36,726 assertions, none failing, 28,476 skipped, counted by feature
+  the supported subset (62,081 assertions, none failing, 3,121 skipped, counted by feature
   below); the wasi-testsuite passes 72 of 72. Both also with SecWasm's restrictions on.
 - Information flow: SecWasm's static rules in the single instruction type, with the repairs of
   the paper's findings (`br_table` raises down to its deepest target); inference of stores,
@@ -55,18 +55,16 @@ are summarised here, not repeated.
 
 ## WebAssembly coverage
 
-The supported subset is WebAssembly 2.0 without vector instructions and without state shared
-between modules, plus several memories per module, 64-bit memories and tables, tail calls and
-extended constant expressions. What the 3.0 suite skips
+The supported subset is WebAssembly 2.0 without state shared between modules, plus several
+memories per module, 64-bit memories and tables, tail calls and extended constant expressions. What the 3.0 suite skips
 (`WASM_IFC_SPEC_REPORT=f cabal test wasm-ifc-spec; ./scripts/spec-report.py f`), by the features
 a skipped module uses according to `wasm-tools`, in assertions:
 
 | Skipped | Features the module uses beyond the subset |
 |---:|---|
-| 25,356 | vector instructions |
 | 823 | garbage collection |
 | 512 | typed function references (88 of them in the scripts for tail calls) |
-| 301 | none: a memory, a table or a mutable global of another module of the script, and what depends on state shared with one |
+| 302 | none: a memory, a table or a mutable global of another module of the script, and what depends on state shared with one |
 | 114 | exceptions (45 more with another feature) |
 | 1,245 | none: malformed modules given as text, which the harness does not run |
 
@@ -99,7 +97,9 @@ reference in its type, so their main modules are skipped whole.
   instruction (`IRelabelTop`) before what the caller returns to; a long chain of such calls
   between functions of different result levels grows that continuation. A function that calls
   itself in tail position, or one of the same result levels, does not.
-- [ ] **P3** Vector instructions; exceptions; typed function references; garbage collection.
+- [ ] **P3** Exceptions; typed function references; garbage collection.
+- [ ] **P3** The vector instructions work on lists of lanes (`Runtime/Vector.hs`), which is
+  simple and slow; nothing measures them. A vector is two words on the stack and in a frame.
 
 ## Performance
 

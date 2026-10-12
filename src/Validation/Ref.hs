@@ -1,3 +1,4 @@
+{-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE RoleAnnotations #-}
 
 {- | Local variables resolved for the machine (TODO.md §I, E2b).
@@ -18,6 +19,7 @@
 module Validation.Ref (
     LocalRef,
     resolveLocal,
+    wordsOf,
     localPosition,
     localType,
     FunctionRef,
@@ -28,11 +30,11 @@ module Validation.Ref (
 ) where
 
 import Data.Kind (Type)
-import Data.Singletons.Base.TH (Sing)
+import Data.Singletons.Base.TH (SList (SCons, SNil), Sing)
 import Data.Word (Word32)
 
 import Syntax.Immediates (Reference, referenceTo)
-import Syntax.Types (AddrType, ValType)
+import Syntax.Types (AddrType, SValType (..), ValType)
 import Syntax.TypesIFC (LabelledFuncType, LabelledValType (..), SLabelledValType (..), SecLevel)
 import Validation.Shape (Elem (..), MemShape (..), TableShape (..))
 
@@ -40,13 +42,23 @@ type LocalRef :: LabelledValType -> [LabelledValType] -> Type
 data LocalRef t ls where
     LocalRef :: !Int -> !(Sing (vt :: ValType)) -> LocalRef (vt ':~ l) ls
 
--- | Resolve a local's witness into its position, counted from zero, and its value type.
-resolveLocal :: Sing (t :: LabelledValType) -> Elem t ls -> LocalRef t ls
-resolveLocal (ty :%~ _) ix = LocalRef (positionOf 0 ix) ty
+{- | Resolve a local's witness into its place in the frame and its value type. A local takes
+  one word of the frame, or two if it is a vector, so its place is the number of words the
+  locals before it take: the frame's types say that.
+-}
+resolveLocal :: Sing (ls :: [LabelledValType]) -> Elem t ls -> LocalRef t ls
+resolveLocal = go 0
   where
-    positionOf :: Int -> Elem x xs -> Int
-    positionOf !n Here = n
-    positionOf !n (There rest) = positionOf (n + 1) rest
+    go :: Int -> Sing (ls' :: [LabelledValType]) -> Elem t ls' -> LocalRef t ls'
+    go !at (SCons (ty :%~ _) _) Here = LocalRef at ty
+    go !at (SCons (ty :%~ _) rest) (There ix) = case go (at + wordsOf ty) rest ix of LocalRef found foundType -> LocalRef found foundType
+    go _ SNil ix = case ix of {}
+
+-- | The words of a frame that a local of a type takes.
+wordsOf :: Sing (t :: ValType) -> Int
+wordsOf ty = case ty of
+    SV128 -> 2
+    _ -> 1
 
 -- | Where the local sits in its frame: below the frame's length, since the witness proves it.
 localPosition :: LocalRef t ls -> Int

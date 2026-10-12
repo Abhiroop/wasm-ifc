@@ -109,8 +109,9 @@ factorial =
         )
   where
     n, acc :: LocalRef PublicI32 '[PublicI32, PublicI32]
-    n = resolveLocal publicI32 Here
-    acc = resolveLocal publicI32 (There Here)
+    n = resolveLocal twoPublic Here
+    acc = resolveLocal twoPublic (There Here)
+    twoPublic = SCons publicI32 (SCons publicI32 SNil)
     -- Inside the loop the labels are: 0 = loop, 1 = block, 2 = function; the pc stack has one
     -- public entry for each. A branch at a public pc raises nothing, so the stack is unchanged.
     toContinue :: BranchTarget 'Low '[] '[ '[], '[], '[PublicI32]] '[ 'Low, 'Low, 'Low] '[ 'Low, 'Low, 'Low]
@@ -152,10 +153,10 @@ runFactorial input =
 type CallCtx = 'ModuleShape '[ 'LabelledFuncType 'Low '[PublicI32, PublicI32] '[PublicI32]] '[] '[] '[] '[] '[]
 
 multiply :: FuncInst CallCtx ('LabelledFuncType 'Low '[PublicI32, PublicI32] '[PublicI32])
-multiply = WasmFunc . Function (SCons publicI32 (SCons publicI32 SNil)) SNil ReturnsUnderPublicPc $ (ILocalGet (resolveLocal publicI32 Here) :. ILocalGet (resolveLocal publicI32 (There Here)) :. IMul I32IsNum :. INil)
+multiply = WasmFunc . Function (SCons publicI32 (SCons publicI32 SNil)) SNil ReturnsUnderPublicPc $ (ILocalGet (resolveLocal (SCons publicI32 (SCons publicI32 SNil)) Here) :. ILocalGet (resolveLocal (SCons publicI32 (SCons publicI32 SNil)) (There Here)) :. IMul I32IsNum :. INil)
 
 square :: FuncInst CallCtx ('LabelledFuncType 'Low '[PublicI32] '[PublicI32])
-square = WasmFunc . Function (SCons publicI32 SNil) SNil ReturnsUnderPublicPc $ (ILocalGet (resolveLocal publicI32 Here) :. ILocalGet (resolveLocal publicI32 Here) :. call toMultiply :. INil)
+square = WasmFunc . Function (SCons publicI32 SNil) SNil ReturnsUnderPublicPc $ (ILocalGet (resolveLocal (SCons publicI32 SNil) Here) :. ILocalGet (resolveLocal (SCons publicI32 SNil) Here) :. call toMultiply :. INil)
   where
     -- function index 0 in the module signature
     toMultiply :: Elem ('LabelledFuncType 'Low '[PublicI32, PublicI32] '[PublicI32]) '[ 'LabelledFuncType 'Low '[PublicI32, PublicI32] '[PublicI32]]
@@ -204,7 +205,7 @@ runIncrement initial = either (Left . show) completedI32 (runFunction (SCons pub
          In the first argument of ‘(:.)’, namely ‘IAdd I32IsNum’
 
    broken :: FuncInst shape ('FuncType '[ 'I32 ] '[ 'I32 ])
-   broken = WasmFunc . Function (SCons publicI32 SNil) SNil ReturnsUnderPublicPc $ (ILocalGet (resolveLocal publicI32 Here) :. IAdd I32IsNum :. INil)
+   broken = WasmFunc . Function (SCons publicI32 SNil) SNil ReturnsUnderPublicPc $ (ILocalGet (resolveLocal (SCons publicI32 SNil) Here) :. IAdd I32IsNum :. INil)
 -}
 
 {- | A secret plus a public value. The type is the assertion: the sum is 'High, because a
@@ -230,7 +231,7 @@ leakThroughControl :: Expr ('ModuleShape '[] '[] '[] '[] '[] '[]) ('FrameShape '
 leakThroughControl =
     -- The pc drops at the end of this conditional, so it must leave the preserved globals as
     -- it found them; the module has no globals, hence none to compare.
-    IIf NothingCarried ResultsAtAnyLevel (PreservedRestored NoGlobalsLeft) NoValuesFlow ANil (IConst @'Low I32IsNum 1 :. ILocalSet noSuchProof noSuchProof (resolveLocal publicI32 Here) :. INil) INil :. INil
+    IIf NothingCarried ResultsAtAnyLevel (PreservedRestored NoGlobalsLeft) NoValuesFlow ANil (IConst @'Low I32IsNum 1 :. ILocalSet noSuchProof noSuchProof (resolveLocal (SCons publicI32 SNil) Here) :. INil) INil :. INil
   where
     -- There is no closed term of this type; the program compiles only because this one is left
     -- undefined. Replace it with a constructor of 'FlowsInto' and GHC refuses. (Even the public
