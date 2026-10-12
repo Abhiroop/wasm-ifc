@@ -524,6 +524,7 @@ assemble policy m = do
             , customSections = m.customSections
             , stateImports = m.stateImports
             , tags = m.tags
+            , tagImports = m.tagImports
             , tableInitialisers = m.tableInitialisers
             , written = m.written
             }

@@ -267,6 +267,7 @@ withSpectest = case elaborateModuleWith emptyPolicy spectest of
             , customSections = []
             , stateImports = importsNoState
             , tags = []
+            , tagImports = []
             , tableInitialisers = []
             , written = Nothing
             }
@@ -460,7 +461,6 @@ assertReturn state i act expectations
     | not (knownAction act) = (state, Skipped ("action " ++ T.unpack act.actionKind))
     | any (\a -> a.litType `notElem` numericTypes) act.args = (state, Skipped "non-numeric argument")
     | otherwise = case invoke state i act of
-        (later, Left ExceptionAcrossModules) -> (later, Skipped "an exception across modules")
         (later, Left err) -> (later, Failed ("invoke " ++ T.unpack act.field ++ ": " ++ show err))
         (later, Right results)
             | length results /= length expectations -> (later, Failed ("expected " ++ show (length expectations) ++ " result(s), got " ++ show results))
@@ -477,7 +477,6 @@ assertTrap state i act expectedText
             -- (The suite's text may say more than ours, as in "uninitialized element 2".)
             | maybe False (trapText trap `T.isPrefixOf`) expectedText -> (later, Passed)
             | otherwise -> (later, Failed ("trapped with " ++ show trap ++ ", expected " ++ maybe "?" T.unpack expectedText))
-        (later, Left ExceptionAcrossModules) -> (later, Skipped "an exception across modules")
         (later, Left err) -> (later, Failed ("invoke " ++ T.unpack act.field ++ ": " ++ show err))
         (later, Right results) -> (later, Failed ("expected a trap (" ++ maybe "?" T.unpack expectedText ++ "), got " ++ show results))
 

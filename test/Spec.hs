@@ -605,7 +605,7 @@ spec = do
                     }
             giving :: Integer -> Embedder
             giving base = providingGlobals (\moduleName name -> if (moduleName, name) == ("env", "base") then Just (Immutable, Low, I32Value (fromInteger base)) else Nothing)
-            providingGlobals given = Embedder 0 nothing given nothing nothing
+            providingGlobals given = Embedder 0 nothing given nothing nothing nothing
             nothing _ _ = Nothing
             runWith embedder policyText m = do
                 policy <- first show (parsePolicy policyText)
@@ -628,7 +628,7 @@ spec = do
             runWith (giving 8) "global 0 : H" placed `shouldSatisfy` errorContaining "IllegalFlow \"data\" High Low"
         it "an imported memory is the one provided, which must fit the import" $ do
             let importing declared = (singleFunctionModule [RawMemory (MemType AddrI32 declared)] [] [I32] [] [MemorySize (MemoryIdx 0)]) {stateImports = StateImports [] [("env", "memory")] []}
-                twoPages = Embedder 0 nothing nothing (\_ _ -> newMemory (MemType AddrI32 (Limits 2 (Just 3)))) nothing
+                twoPages = Embedder 0 nothing nothing (\_ _ -> newMemory (MemType AddrI32 (Limits 2 (Just 3)))) nothing nothing
             runWith twoPages "" (importing (Limits 1 Nothing)) `shouldBe` Right ["2"]
             runWith twoPages "" (importing (Limits 1 (Just 2))) `shouldSatisfy` errorContaining "ImportTypeMismatch"
             runWith providesNothing "" (importing (Limits 1 Nothing)) `shouldSatisfy` errorContaining "UnsupportedImport"
@@ -725,6 +725,28 @@ spec = do
                 importsFunction = (moduleOf [] [nothing] (FunctionIdx 1)) {imports = [RawImport "owner" "f" (ImportFunc (FuncType [] [I32]))], types = [FuncType [] [I32], FuncType [] []]}
             snd (worldOf [("owner", "export f : -> H", secretResult), ("sharer", "", importsFunction)]) `shouldBe` [Right 0, Left "UnsupportedImport \"owner\" \"f\""]
             snd (worldOf [("owner", "", secretResult), ("sharer", "", importsFunction)]) `shouldBe` [Right 0, Right 1]
+        it "an exception crosses to the module that called, where a clause for its tag catches it" $ do
+            -- thrower: tag 0 carries an i32; its function throws its argument. The others call it in a
+            -- try_table: one imports the tag and catches by it, one catches everything, one catches nothing.
+            let thrower =
+                    (moduleOf [] [RawFunction (FuncType [I32] []) [] [LocalGet (LocalIdx 0), Throw (TagIdx 0)]] (FunctionIdx 0))
+                        { tags = [FuncType [I32] []]
+                        , exports = [Export "tag" (ExportTag (TagIdx 0)), Export "throw" (ExportFunc (FunctionIdx 0))]
+                        }
+                calling clauses caught =
+                    (moduleOf [] [RawFunction (FuncType [] [I32]) [] [Block (FuncType [] [I32]) [TryTable (FuncType [] []) clauses [Const SI32 7, Call (FunctionIdx 0)], Const SI32 0, Return], caught]] (FunctionIdx 1))
+                        { imports = [RawImport "thrower" "throw" (ImportFunc (FuncType [I32] []))]
+                        , types = [FuncType [I32] [], FuncType [] [I32]]
+                        }
+                byTag = (calling [CatchTag (TagIdx 0) (LabelIdx 0)] Nop) {tags = [FuncType [I32] []], tagImports = [("thrower", "tag")]}
+                -- (A clause for all exceptions carries nothing: the block's result is made after it.)
+                all' = (moduleOf [] [RawFunction (FuncType [] [I32]) [] [Block (FuncType [] []) [TryTable (FuncType [] []) [CatchAll (LabelIdx 0)] [Const SI32 7, Call (FunctionIdx 0)], Const SI32 0, Return], Const SI32 1]] (FunctionIdx 1)) {imports = [RawImport "thrower" "throw" (ImportFunc (FuncType [I32] []))], types = [FuncType [I32] [], FuncType [] [I32]]}
+                none = calling [] Nop
+                (world, linked) = worldOf [("thrower", "", thrower), ("byTag", "", byTag), ("all", "", all'), ("none", "", none)]
+            linked `shouldBe` [Right 0, Right 1, Right 2, Right 3]
+            snd (invoked world 1 "f" []) `shouldBe` Right [I32Value 7]
+            snd (invoked world 2 "f" []) `shouldBe` Right [I32Value 1]
+            snd (invoked world 3 "f" []) `shouldBe` Left (Trapped UncaughtException)
         it "a module that imports one memory twice is not linked" $ do
             let twice = (moduleOf [onePageMemory, onePageMemory] [poke] (FunctionIdx 0)) {stateImports = StateImports [] [("owner", "mem"), ("owner", "mem")] []}
             snd (worldOf [("owner", "", memoryOwner), ("twice", "", twice)]) `shouldBe` [Right 0, Left "ImportedTwice \"owner\" \"mem\""]
@@ -1241,6 +1263,7 @@ moduleOf memories funcs exported =
         , customSections = []
         , stateImports = importsNoState
         , tags = []
+        , tagImports = []
         , tableInitialisers = []
         , written = Nothing
         }
@@ -1447,6 +1470,7 @@ startModule startBody =
         , customSections = []
         , stateImports = importsNoState
         , tags = []
+        , tagImports = []
         , tableInitialisers = []
         , written = Nothing
         }

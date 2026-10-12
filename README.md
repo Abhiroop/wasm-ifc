@@ -102,8 +102,7 @@ cabal test          # unit tests, the spec testsuite (needs wasm-tools), the was
 
 WebAssembly 2.0, and of 3.0 everything but garbage collection: several memories per module,
 64-bit memories and tables, tail calls, extended constant expressions, the relaxed vector
-instructions, typed function references, and exceptions (thrown under a public pc only, and
-not across modules).
+instructions, typed function references, and exceptions (thrown under a public pc only).
 That is the numeric, comparison and conversion instructions, the vector instructions, memory
 including bulk memory, structured control, calls, reference types (`funcref`, `externref`),
 several tables with the table instructions and every kind of element segment, `call_indirect`,
@@ -140,9 +139,10 @@ holds functions of several modules and an indirect call can cross to another one
 what was written before it. Calls between modules carry public values, a global and a table
 are imported at the level they have where they are defined, and the bytes of a shared memory
 keep their levels. A module on its own imports from an embedder (`instantiateWith`), which
-answers its calls. Not yet: a module that imports the same memory, table or writable global
-twice; an exception that crosses from a function to the module that called it, and an
-imported tag; and garbage collection. The Lean proof of noninterference (`lean/`) covers a core, not the whole.
+answers its calls. An exception that leaves a function another module called is thrown again
+in that module, and a tag has one name among all instances, so a clause for it catches the
+exception whichever module threw it. Not yet: a module that imports the same memory, table or
+writable global twice; and garbage collection. The Lean proof of noninterference (`lean/`) covers a core, not the whole.
 
 A reference to a function type (WebAssembly 3.0) is a `funcref` in the typed program. What a
 module writes beyond that, whether a reference may be null and of which function type it is,

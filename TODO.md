@@ -64,8 +64,7 @@ a skipped module uses according to `wasm-tools`, in assertions:
 | Skipped | Features the module uses beyond the subset |
 |---:|---|
 | 877 | garbage collection |
-| 68 | none: an imported exception tag (67), and an exception that crosses modules (1) |
-| 12 | none: the script instantiates one module definition several times (`module definition`, `module instance`), which the harness does not do |
+| 27 | none: the script instantiates one module definition several times (`module definition`, `module instance`), which the harness does not do, and what depends on those instances |
 | 10 | none: a module that imports the same memory twice |
 | 1,245 | none: malformed modules given as text, which the harness does not run |
 
@@ -95,9 +94,9 @@ a skipped module uses according to `wasm-tools`, in assertions:
   instruction (`IRelabelTop`) before what the caller returns to; a long chain of such calls
   between functions of different result levels grows that continuation. A function that calls
   itself in tail position, or one of the same result levels, does not.
-- [ ] **P3** Exceptions do not cross modules: a tag is not imported, and an exception that
-  leaves a function called from another module ends the run there. The main module of
-  `try_table.wast` imports a tag and is skipped (42 assertions).
+- [ ] **P3** The spec runner does not perform `module definition` and `module instance`, which
+  instantiate one module several times; `instance.wast` is skipped for it (27 assertions with
+  what depends on them). The linker has what they need: `instantiateIn` on the same module twice.
 - [ ] **P3** The store keeps every exception that a clause caught by reference, for the
   `exnref` that names it, and never frees one.
 - [ ] **P3** The typed program does not know whether a reference may be null, nor the function

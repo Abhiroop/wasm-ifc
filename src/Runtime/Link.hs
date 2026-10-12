@@ -15,12 +15,16 @@
   back). 'Runtime.Module.Instance' keeps one state for all its activations, so the waiting
   one resumes from what the nested one, and whoever wrote to its memory meanwhile, left.
 
-  Two limits follow from this design, and instantiation and the call refuse both by name
-  rather than get them wrong. Inside one instance two indices cannot be one object, so a
-  module that imports the same memory, the same table or the same writable global twice is not
-  linked ('Runtime.Instantiate.ImportedTwice'). And an exception does not cross from a
-  function to the module that called it ('Runtime.Module.ExceptionAcrossModules'): tags are
-  not shared between modules, so only a clause for all exceptions could catch it there.
+  One limit follows from this design, and instantiation refuses it by name rather than get it
+  wrong. Inside one instance two indices cannot be one object, so a module that imports the
+  same memory, the same table or the same writable global twice is not linked
+  ('Runtime.Instantiate.ImportedTwice'). (A tag is a name and holds nothing, so it may be
+  imported any number of times.)
+
+  An exception that leaves a function another module called is thrown again in that module,
+  where the call was ('Runtime.Module.throwInto'). A tag has one name among all instances, and
+  a module that imports a tag knows it by the name of the tag it imports, so a clause for the
+  tag catches the exception whichever of the modules threw it.
 
   A reference to a function names its instance ('Syntax.Immediates.functionReferenceIn'), so
   a table that two modules share holds functions of both, and an indirect call through an
@@ -51,15 +55,15 @@ import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
-import Data.Word (Word32)
+import Data.Word (Word32, Word64)
 
 import Runtime.Instantiate (Embedder (..), InstantiationError (..), StateImports (..), instantiateUntilStart, moduleInterface, stateImportsOf)
 import Runtime.Module
 import Runtime.Trap (Trap (..))
 import Syntax.Immediates (functionReferent)
-import Syntax.Indices (FunctionIdx (..), GlobalIdx (..), MemoryIdx (..), TableIdx (..))
+import Syntax.Indices (FunctionIdx (..), GlobalIdx (..), MemoryIdx (..), TableIdx (..), TagIdx (..))
 import Syntax.Module (ExportDesc (..), Interface (..), SomeModule)
-import Syntax.Types (FuncType, Mutability (..), closedBelow)
+import Syntax.Types (FuncType, Mutability (..), ValType, closedBelow)
 import Syntax.TypesIFC (SecLevel (..))
 
 -- | Where a shared object lives: the instance that defines it, and its index there.
@@ -106,7 +110,8 @@ exported kind world names moduleName fieldName = do
     index <- exportOf inst fieldName >>= kind
     pure (x, index)
 
-functionExport, globalExport, memoryExport, tableExport :: ExportDesc -> Maybe Int
+functionExport, globalExport, memoryExport, tableExport, tagExport :: ExportDesc -> Maybe Int
+tagExport desc = case desc of ExportTag (TagIdx i) -> Just (fromIntegral i); _ -> Nothing
 functionExport desc = case desc of ExportFunc (FunctionIdx i) -> Just (fromIntegral i); _ -> Nothing
 globalExport desc = case desc of ExportGlobal (GlobalIdx i) -> Just (fromIntegral i); _ -> Nothing
 memoryExport desc = case desc of ExportMem (MemoryIdx i) -> Just (fromIntegral i); _ -> Nothing
@@ -142,7 +147,14 @@ embedderIn world x =
         , tables = \moduleName fieldName -> do
             (home, index) <- homeOf tableExport (.tables) world world.registered moduleName fieldName
             IntMap.lookup home world.instances >>= (`tableAt` index)
+        , tags = tagNamed world
         }
+
+-- | The tag an instance exports under a name: its name among all instances, and what it carries.
+tagNamed :: World -> Text -> Text -> Maybe (Word64, [ValType])
+tagNamed world moduleName fieldName = do
+    (y, index) <- exported tagExport world world.registered moduleName fieldName
+    IntMap.lookup y world.instances >>= (`tagAt` index)
 
 {- | Instantiate a module in the world: its number there, or why not. An error with a number is
   one of an active segment or of the start function: the instance exists, what it wrote before
@@ -178,6 +190,7 @@ instantiateIn world m = case maybe (instantiateUntilStart (embedderIn world x) m
         firstRepeated [(homeOf memoryExport (.memories) world world.registered moduleName fieldName, name) | name@(moduleName, fieldName) <- imports.memories]
             <|> firstRepeated [(homeOf tableExport (.tables) world world.registered moduleName fieldName, name) | name@(moduleName, fieldName) <- imports.tables]
             <|> firstRepeated [(home, name) | name@(moduleName, fieldName) <- imports.globals, let home = homeOf globalExport (.globals) world world.registered moduleName fieldName, writable home]
+
     {- The first import whose type as written does not fit what it names, where both modules
        wrote types: the erased types, which instantiation compares, say nothing of whether a
        reference may be null or of which function type it is. A function must have the very
@@ -240,37 +253,50 @@ callExport world x name args = case IntMap.lookup x world.instances >>= (`export
 {- | Call a function of an instance, by its index, and answer the calls it makes out of its
   module by calling the functions they name, in their instances. The world comes back as the
   call left it, also when it trapped: a trap ends every activation on the way, and undoes
-  nothing.
+  nothing. An exception that nothing caught, in any of the modules it passed through, ends the
+  call like a trap.
 -}
 callFunction :: World -> Int -> Word32 -> [Value] -> (World, Either RunError [Value])
-callFunction world x index args = case IntMap.lookup x pulled.instances of
-    Nothing -> (world, Left (NoSuchExport "an instance by its number"))
+callFunction world x index args = case enter world x index args of
+    (after, Gave results) -> (after, Right results)
+    (after, Raised _) -> (after, Left (Trapped UncaughtException))
+    (after, Failed failure) -> (after, Left failure)
+
+-- | How a call of a function of an instance ended: with results, with an exception nothing in it caught, or not at all.
+data Ended = Gave [Value] | Raised Escaping | Failed RunError
+
+enter :: World -> Int -> Word32 -> [Value] -> (World, Ended)
+enter world x index args = case IntMap.lookup x pulled.instances of
+    Nothing -> (world, Failed (NoSuchExport "an instance by its number"))
     Just inst -> case enterFunction inst index args of
         (entered, progress) -> settle x pulled {instances = IntMap.insert x entered pulled.instances} progress
   where
     pulled = pull x world
 
--- | Go on from where instance @x@ stopped: it returned, trapped, or calls out.
-settle :: Int -> World -> Either RunError Progress -> (World, Either RunError [Value])
+{- | Go on from where instance @x@ stopped: it returned, trapped, threw, or calls out. A call
+  out is answered by the function it names; if that one ends with an exception, the exception
+  is thrown in @x@ where the call was, and a clause of @x@ may catch it.
+-}
+settle :: Int -> World -> Either RunError Progress -> (World, Ended)
 settle x world progress = case progress of
-    Left failure -> (given, Left failure)
-    Right (Returns results) -> (given, Right results)
+    Left failure -> (given, Failed failure)
+    Right (Returns results) -> (given, Gave results)
+    Right (Throws exception) -> (given, Raised exception)
     Right (Calls call) -> case resolve x call given of
-        Left failure -> (abandoned given, Left failure)
-        Right (y, index) -> case callFunction given y index call.arguments of
-            -- (An exception that leaves the function called would have to be thrown here, in
-            -- the caller, where only a clause for all exceptions could catch it: not carried over.)
-            (after, Left (Trapped UncaughtException)) -> (abandoned after, Left ExceptionAcrossModules)
-            (after, Left failure) -> (abandoned after, Left failure)
-            (after, Right results) ->
-                let taken = pull x after
-                 in case IntMap.lookup x taken.instances of
-                        Nothing -> (after, Left (NoSuchExport "an instance by its number"))
-                        Just inst -> case resumeInstance inst results of
-                            (resumed, further) -> settle x taken {instances = IntMap.insert x resumed taken.instances} further
+        Left failure -> (abandoned given, Failed failure)
+        Right (y, index) -> case enter given y index call.arguments of
+            (after, Failed failure) -> (abandoned after, Failed failure)
+            (after, Gave results) -> continuing after (`resumeInstance` results)
+            (after, Raised exception) -> continuing after (`throwInto` exception)
   where
     given = push x world
     abandoned current = current {instances = IntMap.adjust abandonCall x current.instances}
+    continuing after continue =
+        let taken = pull x after
+         in case IntMap.lookup x taken.instances of
+                Nothing -> (after, Failed (NoSuchExport "an instance by its number"))
+                Just inst -> case continue inst of
+                    (resumed, further) -> settle x taken {instances = IntMap.insert x resumed taken.instances} further
 
 {- | The function a call out of instance @x@ goes to. One named by a reference must have the
   value types the call expects, which is the check of an indirect call that the caller could

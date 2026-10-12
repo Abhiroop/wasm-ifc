@@ -603,9 +603,9 @@ implemented since e87e76a.
   goes through the same code as a `br`, so the construct it lands behind compares as usual.
   This is my argument, not a proof; the paper track should check it against section 6.6.
 - **Spec suite:** 62,137 passed, 0 failed, 3,065 skipped (62,081 and 3,121 before);
-  `throw.wast` and `throw_ref.wast` pass in full. The main module of `try_table.wast` imports a
-  tag from another module, which is not supported (42 assertions skipped). Four unit examples
-  (`test/Spec.hs`, "exceptions").
+  `throw.wast` and `throw_ref.wast` pass in full. (The main module of `try_table.wast` imports
+  a tag; it passes since tags are imported, see "State shared between modules".) Four unit
+  examples (`test/Spec.hs`, "exceptions").
 
 ## Lean: noninterference on a core with control flow, calls and memory (item 12, 2026-10-12)
 
@@ -735,11 +735,17 @@ implemented since e87e76a.
     a public load in another.
   **For the paper track:** none of this is in section 5 or 6. The rule is short ("an import
   has the level of what is imported; calls between modules are public").
-- **Two limits, each refused by name:**
-  - A module that imports the same memory, table or writable global twice is not linked
-    (`ImportedTwice`): inside one instance two indices are two objects. 10 assertions.
-  - An exception does not cross from a function to the module that called it
-    (`ExceptionAcrossModules`), and a tag is not imported. 68 assertions.
+- **One limit, refused by name:** a module that imports the same memory, table or writable
+  global twice is not linked (`ImportedTwice`): inside one instance two indices are two
+  objects. 10 assertions.
+- **Exceptions across modules (added 2026-10-12, later the same day):** a tag is imported and
+  exported, and has one name among all the instances (`tagNames`); a module's own tag is named
+  after its instance, and an imported one has the name of the tag it imports. An exception is
+  its tag's name with the values it carries at their types. One that leaves a function another
+  module called is thrown again in the caller, where the call was (`throwInto`), so a clause
+  for the tag, or for all exceptions, catches it there. Nothing changes in the rule: a throw
+  and a catch are under a public pc with public values, and a call between modules is under a
+  public pc. `try_table.wast` now passes in full (65 assertions).
 - **Spec suite:** 62,399 passed, 0 failed, 2,803 skipped (62,137 and 3,065 before; 62,476 and
   2,726 once the relaxed vector instructions were in). Every skip
   for an unsupported import and for state that may depend on an unlinked module is gone (292),
@@ -793,11 +799,11 @@ Supported, with the 3.0 suite passing on all of it: **WebAssembly 3.0 without ga
 collection**, that is every instruction and type of WebAssembly 2.0, linking between modules
 included, and of what 3.0 adds, several memories, 64-bit memories and tables, tail calls,
 extended constant expressions, the relaxed vector instructions, typed function references and
-exceptions. Three qualifications, each small and each refused by name where it applies:
+exceptions. Three qualifications:
 
-- exceptions are thrown and caught under a public pc only, do not cross from a function to
-  the module that called it, and a tag is not imported (68 assertions of the suite);
-- a module that imports the same memory, table or writable global twice is not linked (10);
+- exceptions are thrown and caught under a public pc only (a rule, not a gap in coverage);
+- a module that imports the same memory, table or writable global twice is not linked (10
+  assertions of the suite), refused by name;
 - nullability and the function type behind a reference are checked by a validator beside the
   typed program, not by its types (see "Typed function references").
 
@@ -810,7 +816,7 @@ vector operation. All seven scripts of the suite pass in full (77 assertions).
 Not supported: garbage collection, as decided.
 
 Every feature that clang 23 (wasi-sdk 34) and rustc 1.99 enable by default for
-`wasm32-wasip1` is supported. The suite's 2,212 skipped assertions are: 1,245 malformed modules
-given as text, which the harness does not run; 877 on modules that use garbage collection; 68
-for a tag or an exception across modules; 12 for a script command the harness lacks; 10 for
-an object imported twice. Counts are in `TODO.md`.
+`wasm32-wasip1` is supported. The suite's 2,159 skipped assertions are: 1,245 malformed modules
+given as text, which the harness does not run; 877 on modules that use garbage collection; 27
+for a script command the harness lacks; 10 for an object imported twice. Counts are in
+`TODO.md`.

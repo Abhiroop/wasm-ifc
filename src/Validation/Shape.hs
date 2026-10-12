@@ -97,12 +97,6 @@ data Elem x xs where
     Here :: Elem x (x ': xs)
     There :: Elem x xs -> Elem x (y ': xs)
 
--- | Whether two indices into one list are the same position, and so name the same element.
-sameElem :: Elem a xs -> Elem b xs -> Maybe (a :~: b)
-sameElem Here Here = Just Refl
-sameElem (There a) (There b) = sameElem a b
-sameElem _ _ = Nothing
-
 {- | A branch target: like an 'Elem' into the label context, it names the label at a position
   and proves its result type is @rs@. It also says what the branch does to the pc stack
   ("Syntax.TypesIFC"): the entries of the blocks the branch may leave, the target's included,

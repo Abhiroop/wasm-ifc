@@ -68,6 +68,7 @@ module Runtime.Interpreter (
     stepInstr,
     run,
     runKeeping,
+    runThrowing,
     runFunction,
     startFunction,
     callDepthBound,
@@ -120,6 +121,7 @@ import Data.ByteString qualified as BS
 import Data.List.Singletons (type (++))
 import Data.Maybe (fromMaybe)
 import Data.Singletons (Sing, fromSing)
+import Data.Singletons.Decide (decideEquality)
 import Data.Type.Equality ((:~:) (Refl))
 import Runtime.Convert (convertVal)
 import Runtime.Host (WasiFunc)
@@ -147,7 +149,7 @@ import Syntax.TypesIFC
 import Syntax.Vector (VectorLoadKind (..), VectorOp (..), laneBytes, loadedBytes)
 import Validation.Ref (MemoryRef (..), TableRef (..), functionReference)
 import Validation.Reflect (appendNil)
-import Validation.Shape (Append (..), BranchTarget (..), DataShape (..), Elem (..), ElemShape (..), FrameShape (..), ModuleData, ModuleElems, ModuleFuncs, ModuleGlobals, ModuleMems, ModuleShape, ModuleTables, ModuleTags, PreservedOf, Restores (..), ReturnsWith (..), appendFromSing, appendIs, sameElem, withinReach)
+import Validation.Shape (Append (..), BranchTarget (..), DataShape (..), Elem (..), ElemShape (..), FrameShape (..), ModuleData, ModuleElems, ModuleFuncs, ModuleGlobals, ModuleMems, ModuleShape, ModuleTables, ModuleTags, PreservedOf, Restores (..), ReturnsWith (..), appendFromSing, appendIs, withinReach)
 
 -- *** Module and runtime state ***
 
@@ -377,6 +379,8 @@ data StepResult (check :: DynamicCheck) (mod :: ModuleShape) (res :: LabelledRes
     Stepped :: !(CheckPassed check) -> !(Config mod res) -> StepResult check mod res
     Done :: !(Store mod) -> !(ValueStack res) -> StepResult 'NoDynamicCheck mod res
     HostCall :: !(CheckPassed check) -> HostRequest mod res -> StepResult check mod res
+    -- | An exception that no clause of the invocation caught leaves it.
+    Escaped :: !(Store mod) -> ExceptionInst (ModuleTags mod) -> StepResult 'NoDynamicCheck mod res
 
 -- | The result of a step whatever the instruction was: what 'step' returns.
 data SomeStepResult (mod :: ModuleShape) (res :: LabelledResultType) where
@@ -661,9 +665,9 @@ stepInstr funcs store locals stack instr rest control = case instr of
          in Right (Stepped NothingToCheck (Config store locals (relabelStack flows params) body (HandlerLabel handlers below after control)))
     {- Exceptions: a throw unwinds the control stack to the nearest clause that catches it
        ('throwException'); a reference is thrown again with the exception it refers to. -}
-    IThrow _ flows witness tag ->
+    IThrow carried _ flows witness tag ->
         let (args, _) = splitStack witness stack
-         in throwException store (ExceptionInst tag (relabelStack flows args)) Nothing locals control
+         in throwException store (ExceptionInst (tagName tag store.tables) carried (relabelStack flows args)) Nothing locals control
     IThrowRef -> case stack of
         reference :# _ -> case keptException reference store.tables of
             Just exception -> throwException store exception (Just reference) locals control
@@ -1135,7 +1139,8 @@ segmentAppends below (ValueFlows _ rest) = case segmentAppends below rest of (fr
   @try_table@ with a clause for it, and branch to that clause's label with what the clause
   catches. The clause's label is in the context around its block, so the branch is an
   'unwindTo' from below the block's entry, with the locals of the function the block is in.
-  An exception that no clause catches ends the run. A clause that catches by reference gets
+  An exception that no clause catches leaves the invocation ('Escaped'): the run ends with it,
+  or, if another module called the function, it is thrown again there. A clause that catches by reference gets
   the reference the exception was thrown again from, or a new one, for which the store keeps
   the exception.
 -}
@@ -1146,20 +1151,26 @@ throwException ::
     LocalSpaceInst locals ->
     Control mod res ret locals labels cur ->
     Either Trap (StepResult 'NoDynamicCheck mod res)
-throwException store exception@(ExceptionInst tag values) known locals control = case control of
-    EntryBoundary -> Left UncaughtException
+throwException store exception known locals control = case control of
+    EntryBoundary -> Right (Escaped store exception)
     CallBoundary _ _ callerLocals _ callerControl -> throwException store exception known callerLocals callerControl
     BlockLabel _ _ rest -> throwException store exception known locals rest
     LoopLabel _ _ _ rest -> throwException store exception known locals rest
     HandlerLabel handlers _ _ rest -> offer handlers
       where
         offer [] = throwException store exception known locals rest
-        offer (handler : others) = case handler of
-            HandlesTag caught flows target | Just Refl <- sameElem tag caught -> Right (unwindTo store locals target (relabelStack flows values) rest)
-            HandlesTagRef caught flows target | Just Refl <- sameElem tag caught -> case referenced of
-                (reference, kept) -> Right (unwindTo kept locals target (relabelStack flows (reference :# values)) rest)
-            HandlesAll flows target -> Right (unwindTo store locals target (relabelStack flows VNil) rest)
-            HandlesAllRef flows target -> case referenced of
+        -- (A clause for a tag catches an exception of the tag's name that carries the tag's types.)
+        offer (handler : others) = case (handler, exception) of
+            (HandlesTag expected caught flows target, ExceptionInst name carried values)
+                | name == tagName caught store.tables
+                , Just Refl <- decideEquality carried expected ->
+                    Right (unwindTo store locals target (relabelStack flows values) rest)
+            (HandlesTagRef expected caught flows target, ExceptionInst name carried values)
+                | name == tagName caught store.tables
+                , Just Refl <- decideEquality carried expected -> case referenced of
+                    (reference, kept) -> Right (unwindTo kept locals target (relabelStack flows (reference :# values)) rest)
+            (HandlesAll flows target, _) -> Right (unwindTo store locals target (relabelStack flows VNil) rest)
+            (HandlesAllRef flows target, _) -> case referenced of
                 (reference, kept) -> Right (unwindTo kept locals target (relabelStack flows (reference :# VNil)) rest)
             _ -> offer others
         referenced = case known of
@@ -1192,6 +1203,8 @@ storeToModule funcs store =
 data Halt (mod :: ModuleShape) (res :: LabelledResultType) where
     Finished :: Store mod -> ValueStack res -> Halt mod res
     AwaitingHost :: HostRequest mod res -> Halt mod res
+    -- | The invocation ended with an exception that nothing in it caught.
+    Threw :: Store mod -> ExceptionInst (ModuleTags mod) -> Halt mod res
 
 {- | Iterate 'step' until the computation finishes or needs the host. (This is the only partial
   function here — it loops, which is termination, a property orthogonal to the progress and
@@ -1212,11 +1225,30 @@ runKeeping funcs (Config store locals stack code control) = case code of
         Done store' vs -> Right (Finished store' vs)
         HostCall _ request -> Right (AwaitingHost request)
         Stepped _ next -> runKeeping funcs next
+        Escaped store' exception -> Right (Threw store' exception)
     instr :. rest -> case stepInstr funcs store locals stack instr rest control of
         Left t -> Left (t, store)
         Right (Done store' vs) -> Right (Finished store' vs)
         Right (HostCall _ request) -> Right (AwaitingHost request)
         Right (Stepped _ next) -> runKeeping funcs next
+        Right (Escaped store' exception) -> Right (Threw store' exception)
+
+{- | Resume an activation that waits for a call by throwing an exception where the call was:
+  the function it called ended with one. The nearest clause that catches it gets it, as if an
+  instruction of this module had thrown it.
+-}
+runThrowing ::
+    FuncSpaceInst mod (ModuleFuncs mod) ->
+    Store mod ->
+    ExceptionInst (ModuleTags mod) ->
+    Suspended mod res rs ->
+    Either (Trap, Store mod) (Halt mod res)
+runThrowing funcs store exception (Suspended _ locals _ _ control) = case throwException store exception Nothing locals control of
+    Left trap -> Left (trap, store)
+    Right (Stepped _ next) -> runKeeping funcs next
+    Right (Done store' vs) -> Right (Finished store' vs)
+    Right (HostCall _ request) -> Right (AwaitingHost request)
+    Right (Escaped store' still) -> Right (Threw store' still)
 
 -- | How a fuel-bounded run ends: halted like 'run', or stopped with the budget spent.
 data Fuelled (mod :: ModuleShape) (res :: LabelledResultType) where
@@ -1234,11 +1266,13 @@ runFor fuel funcs config@(Config store locals stack code control)
             Done store' vs -> Right (Halted (Finished store' vs))
             HostCall _ request -> Right (Halted (AwaitingHost request))
             Stepped _ next -> runFor (fuel - 1) funcs next
+            Escaped store' exception -> Right (Halted (Threw store' exception))
         instr :. rest -> case stepInstr funcs store locals stack instr rest control of
             Left t -> Left t
             Right (Done store' vs) -> Right (Halted (Finished store' vs))
             Right (HostCall _ request) -> Right (Halted (AwaitingHost request))
             Right (Stepped _ next) -> runFor (fuel - 1) funcs next
+            Right (Escaped store' exception) -> Right (Halted (Threw store' exception))
 
 -- | How a function invocation ends: with the module as the call left it, or needing the host.
 data Outcome (mod :: ModuleShape) (rs :: LabelledResultType) where
@@ -1261,9 +1295,10 @@ runFunction resultTypes tm function args = case startFunction resultTypes (modul
     Right (Left request) -> Right (NeedsHost request)
     Right (Right config) -> do
         halt <- run (tm.functions) config
-        Right $ case halt of
-            Finished store' results -> Completed (storeToModule tm.functions store') results
-            AwaitingHost request -> NeedsHost request
+        case halt of
+            Finished store' results -> Right (Completed (storeToModule tm.functions store') results)
+            AwaitingHost request -> Right (NeedsHost request)
+            Threw _ _ -> Left UncaughtException
 
 {- | Where a call of a function from outside begins: the configuration to run for a function of
   the module, or the request that a function of the host or of the embedder is at once.

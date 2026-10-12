@@ -861,6 +861,7 @@ data Import
     | TableImport Text Text WrittenType RawTable
     | MemoryImport Text Text RawMemory
     | GlobalImport Text Text WrittenType GlobalType
+    | TagImport Text Text FuncType Word32
 
 getImport :: [FuncType] -> Get Import
 getImport types = do
@@ -876,7 +877,7 @@ getImport types = do
         0x01 -> (\(table, entries) -> TableImport moduleName fieldName entries table) <$> getWrittenTable
         0x02 -> MemoryImport moduleName fieldName <$> getMemory
         0x03 -> (\(globalType, valType) -> GlobalImport moduleName fieldName valType globalType) <$> getWrittenGlobalType
-        0x04 -> fail "unsupported: tag import"
+        0x04 -> uncurry (TagImport moduleName fieldName) <$> getTag types
         _ -> fail ("unknown import kind 0x" ++ showHex kind "")
 
 -- | A tag: an attribute byte, which is zero (an exception), and the type of what it carries.
@@ -1022,7 +1023,8 @@ assemble secs = do
             , start = secs.startSection
             , customSections = secs.customs
             , stateImports = StateImports (map names importedGlobals) (map names importedMemories) (map names importedTables)
-            , tags = map fst secs.tagSection
+            , tags = [tagType | TagImport _ _ tagType _ <- secs.importSection] ++ map fst secs.tagSection
+            , tagImports = [(moduleName, fieldName) | TagImport moduleName fieldName _ _ <- secs.importSection]
             , written =
                 Just
                     Written
@@ -1031,7 +1033,7 @@ assemble secs = do
                         , locals = map fst secs.codeSection
                         , globals = [valType | GlobalImport _ _ valType _ <- secs.importSection] ++ map snd secs.globalSection
                         , tables = [entries | TableImport _ _ entries _ <- secs.importSection] ++ [entries | (_, entries, _) <- secs.tableSection]
-                        , tags = map snd secs.tagSection
+                        , tags = [typeIdx | TagImport _ _ _ typeIdx <- secs.importSection] ++ map snd secs.tagSection
                         , elements = map snd secs.elementSection
                         }
             }

@@ -36,9 +36,12 @@ module Runtime.Module (
     instanceOf,
     instanceModule,
     Progress (..),
+    Escaping,
     enterFunction,
     resumeInstance,
+    throwInto,
     abandonCall,
+    tagAt,
     exportOf,
     functionType,
     GivenMemory (..),
@@ -59,17 +62,17 @@ import Data.Text (Text)
 import Data.Word (Word32, Word64, Word8)
 
 import Numeric (showHex)
-import Runtime.Interpreter (Config, ForeignTarget (..), FuncSpaceInst, Halt (..), HostRequest (..), ModuleInst (..), Outcome (..), Store (..), Suspended, getFunc, moduleToStore, resumeWith, run, runFunction, runKeeping, startFunction, storeToModule)
+import Runtime.Interpreter (Config, ForeignTarget (..), FuncSpaceInst, Halt (..), HostRequest (..), ModuleInst (..), Outcome (..), Store (..), Suspended, getFunc, moduleToStore, resumeWith, run, runFunction, runKeeping, runThrowing, startFunction, storeToModule)
 import Runtime.MemInst (MemInst, levelOfRange, memoryPages, readBytes, retypeMemory)
-import Runtime.Stack (GlobalSpaceInst (..), MemSpaceInst (..), TableInsts (..), TableSpaceInst (..), ValueStack (..), getGlobal)
+import Runtime.Stack (ExceptionInst (..), GlobalSpaceInst (..), MemSpaceInst (..), TableInsts (..), TableSpaceInst (..), ValueStack (..), getGlobal)
 import Runtime.TableInst (TableInst, readEntries, tableSize)
-import Runtime.Trap (Trap)
+import Runtime.Trap (Trap (..))
 import Syntax.Immediates (HostType, Reference, Vector128 (..), isNullReference, referent)
 import Syntax.Indices (FunctionIdx (..), GlobalIdx (..))
 import Syntax.Module (Export (..), ExportDesc (..))
 import Syntax.Types
 import Syntax.TypesIFC
-import Validation.Reflect (SomeGlobalRef (..), declaredOrder, funcTypesSing, globalTypesSing, lookupFuncRef, lookupGlobalRef, stackOrder)
+import Validation.Reflect (SomeGlobalRef (..), SomeTagRef (..), declaredOrder, funcTypesSing, globalTypesSing, lookupFuncRef, lookupGlobalRef, lookupTagRef, stackOrder, tagTypesSing)
 import Validation.Shape
 
 {- | An instantiated module with its shape hidden: the shape's singleton, the instance, and
@@ -157,11 +160,6 @@ data RunError
     | Trapped Trap
     | -- | the function called into the host, and the caller had no host to offer
       HostCallNotServed
-    | {- | an exception left a function that another module had called. A tag belongs to one
-      module here, so the caller could catch it only by a clause for all exceptions, and the
-      linker does not carry it over ("Runtime.Link").
-      -}
-      ExceptionAcrossModules
     deriving stock (Eq, Show)
 
 {- | How an invocation ends, short of a trap: with its results and the module as the call left
@@ -218,10 +216,12 @@ continueWith ::
     Either RunError Invocation
 continueWith shapeS funcs exports rsS config = do
     halt <- first Trapped (run funcs config)
-    pure $ case halt of
+    case halt of
         Finished store results ->
-            Returned (SomeModuleInst shapeS (storeToModule funcs store) exports) (declaredOrder (toValues rsS results))
-        AwaitingHost request -> CalledHost (SomeHostRequest shapeS funcs exports rsS request)
+            Right (Returned (SomeModuleInst shapeS (storeToModule funcs store) exports) (declaredOrder (toValues rsS results)))
+        AwaitingHost request -> Right (CalledHost (SomeHostRequest shapeS funcs exports rsS request))
+        -- (An exception that nothing caught ends the run.)
+        Threw _ _ -> Left (Trapped UncaughtException)
 
 {- | The levels of an exported function's results, in declared order. Whoever invokes the
   export observes them, so a driver that enforces the policy delivers only public ones.
@@ -366,8 +366,16 @@ instanceOf (SomeModuleInst shapeS inst exports) = Instance shapeS inst.functions
 instanceModule :: Instance -> SomeModuleInst
 instanceModule (Instance shapeS funcs exports store _) = SomeModuleInst shapeS (storeToModule funcs store) exports
 
--- | How far a call got: it returned, or it calls out and waits ('resumeInstance').
-data Progress = Returns [Value] | Calls ForeignCall
+{- | How far a call got: it returned; it calls out and waits ('resumeInstance'); or it ended
+  with an exception that nothing in it caught, which whoever called it gets ('throwInto').
+-}
+data Progress = Returns [Value] | Calls ForeignCall | Throws Escaping
+
+{- | An exception on its way from one instance to another: the name of its tag among all the
+  instances ('Runtime.Stack.tagNames') and the values it carries, at their types.
+-}
+data Escaping where
+    Escaping :: Word64 -> Sing (ps :: [LabelledValType]) -> ValueStack ps -> Escaping
 
 {- | Call a function of the instance, by its index, with arguments in declared order. The
   instance comes back as the call left it, also when the call trapped.
@@ -394,6 +402,17 @@ resumeInstance inst@(Instance shapeS funcs exports store pending) results = case
             Nothing -> (Instance shapeS funcs exports store outer, Left (ForeignResultMismatch "" "a call out of the module"))
             Just answered -> advance shapeS funcs exports outer resS (runKeeping funcs (resumeWith store answered suspended))
 
+{- | Give the innermost waiting activation the exception its call ended with: it is thrown where
+  the call was. A clause of this module for a tag of the exception's name catches it, or one
+  for all exceptions.
+-}
+throwInto :: Instance -> Escaping -> (Instance, Either RunError Progress)
+throwInto inst@(Instance shapeS funcs exports store pending) (Escaping name psS values) = case pending of
+    [] -> (inst, Left HostCallNotServed)
+    Pending resS _ suspended : outer -> advance shapeS funcs exports outer resS (runThrowing funcs store exception suspended)
+  where
+    exception = ExceptionInst name psS values
+
 -- | Drop the innermost waiting activation: its call trapped, and so does it.
 abandonCall :: Instance -> Instance
 abandonCall (Instance shapeS funcs exports store pending) = Instance shapeS funcs exports store (drop 1 pending)
@@ -410,6 +429,7 @@ advance shapeS funcs exports pending resS outcome = case outcome of
     Left (trap, store) -> (Instance shapeS funcs exports store pending, Left (Trapped trap))
     Right (Finished store results) -> (Instance shapeS funcs exports store pending, Right (Returns (declaredOrder (toValues resS results))))
     Right (AwaitingHost request) -> suspendOn shapeS funcs exports pending resS request
+    Right (Threw store (ExceptionInst name psS values)) -> (Instance shapeS funcs exports store pending, Right (Throws (Escaping name psS values)))
 
 suspendOn ::
     Sing (shape :: ModuleShape) ->
@@ -496,12 +516,21 @@ putTableAt :: Int -> TableInst -> Instance -> Instance
 putTableAt index given (Instance shapeS funcs exports store pending) =
     Instance shapeS funcs exports Store {globals = store.globals, memories = store.memories, tables = replaced, dataSegments = store.dataSegments} pending
   where
-    replaced = TableSpaceInst store.tables.directory (go store.tables.instances index) store.tables.segments store.tables.caught
+    replaced = TableSpaceInst store.tables.directory (go store.tables.instances index) store.tables.segments store.tables.caught store.tables.tagNames
     go :: TableInsts ts -> Int -> TableInsts ts
     go (TCons held more) n
         | n == 0 = TCons given more
         | otherwise = TCons held (go more (n - 1))
     go TNil _ = TNil
+
+-- | A tag of the instance, by its index: its name among all instances, and the types of what an exception of it carries.
+tagAt :: Instance -> Int -> Maybe (Word64, [ValType])
+tagAt (Instance shapeS _ _ store _) index = do
+    name <- case drop index store.tables.tagNames of
+        found : _ | index >= 0 -> Just found
+        _ -> Nothing
+    SomeTagRef psS _ <- lookupTagRef (tagTypesSing shapeS) (fromIntegral index)
+    pure (name, declaredOrder (unlabelledTypes psS))
 
 -- | A global of the instance, by its index: whether it may be written, its level, its value now.
 globalAt :: Instance -> Int -> Maybe (Mutability, SecLevel, Value)

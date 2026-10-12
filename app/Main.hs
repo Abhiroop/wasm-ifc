@@ -227,7 +227,6 @@ describeRunError err = case err of
     Trapped (SecretRead site) -> "trap: a load read a secret byte where the policy declares none; " ++ declareAt site
     Trapped trap -> "trap: " ++ show trap
     HostCallNotServed -> "the function called into the host, which this path cannot serve"
-    ExceptionAcrossModules -> "an exception left a function that another module had called"
 
 -- | How to declare a load secret, for the message of its trap.
 declareAt :: AccessSite -> String

@@ -23,8 +23,9 @@ module Runtime.Instantiate (
 ) where
 
 import Control.Applicative ((<|>))
-import Control.Monad (foldM, when)
+import Control.Monad (foldM, forM, when)
 import Data.Bifunctor (first)
+import Data.Bits (shiftL, (.|.))
 import Data.ByteString qualified as BS
 import Data.IntMap.Strict qualified as IntMap
 import Data.Maybe (fromMaybe)
@@ -110,16 +111,18 @@ data Embedder = Embedder
     , globals :: Text -> Text -> Maybe (Mutability, SecLevel, Value)
     , memories :: Text -> Text -> Maybe GivenMemory
     , tables :: Text -> Text -> Maybe GivenTable
+    , tags :: Text -> Text -> Maybe (Word64, [ValType])
+    -- ^ an exception tag: its name among the instances, and the types of what an exception of it carries
     }
 
 providesNothing :: Embedder
-providesNothing = Embedder 0 none none none none
+providesNothing = Embedder 0 none none none none none
   where
     none _ _ = Nothing
 
 -- | An embedder that provides functions only.
 providesFunctions :: (Text -> Text -> Maybe FuncType) -> Embedder
-providesFunctions answered = Embedder 0 answered none none none
+providesFunctions answered = Embedder 0 answered none none none none
   where
     none _ _ = Nothing
 
@@ -167,8 +170,14 @@ data Prepared where
 
 prepare :: Embedder -> SomeModule -> Either InstantiationError Prepared
 prepare embedder (SomeModule shapeS m) = case shapeS of
-    SModuleShape ftsS gsS msS tsS dsS _ _ -> do
+    SModuleShape ftsS gsS msS tsS dsS _ tagsS -> do
         funcs <- link embedder.functions (memsNonEmpty msS) ftsS m.functions
+        -- A tag the module imports has the name of the tag it imports, which must carry the same types; its own tags are named after the instance.
+        importedTags <- forM (zip m.tagImports (fromSing tagsS)) $ \((moduleName, fieldName), declared) -> do
+            (name, carried) <- note (UnsupportedImport moduleName fieldName) (embedder.tags moduleName fieldName)
+            when (carried /= reverse (map unlabelled declared)) (Left (ImportTypeMismatch fieldName))
+            Right name
+        let tagNames = importedTags ++ [(fromIntegral embedder.instanceNumber `shiftL` 33) .|. (index + 1) | index <- [fromIntegral (length importedTags) .. fromIntegral (length (fromSing tagsS)) - 1]]
         globals <- instantiateGlobals embedder gsS m.globals
         allocated <- allocateMemories embedder (map Just m.memoryImports ++ repeat Nothing) msS
         allocatedTables <- allocateTables embedder (map Just m.tableImports ++ repeat Nothing) tsS
@@ -176,7 +185,7 @@ prepare embedder (SomeModule shapeS m) = case shapeS of
         kept <- keptElements embedder m.elementSegments
         -- The active segments are placed in the specification's order, the element segments
         -- first, and placing stops at the first that does not fit.
-        let (tables, elementsFailed) = placeElements embedder 0 m.elementSegments (TableSpaceInst (functionDirectory embedder.instanceNumber (allFuncRefs ftsS)) emptyTables kept IntMap.empty)
+        let (tables, elementsFailed) = placeElements embedder 0 m.elementSegments (TableSpaceInst (functionDirectory embedder.instanceNumber (allFuncRefs ftsS)) emptyTables kept IntMap.empty tagNames)
             (placed, dataFailed) = maybe (placeData embedder m.dataSegments allocated) (const (allocated, Nothing)) elementsFailed
             (mems, regionsFailed) = case elementsFailed <|> dataFailed of
                 Just _ -> (placed, Nothing)
@@ -196,10 +205,11 @@ data StateImports = StateImports
     , memories :: [(Text, Text)]
     , tables :: [(Text, Text)]
     , functions :: [(Text, Text)]
+    , tags :: [(Text, Text)]
     }
 
 stateImportsOf :: SomeModule -> StateImports
-stateImportsOf (SomeModule _ m) = StateImports (provided m.globals) m.memoryImports m.tableImports (imported m.functions)
+stateImportsOf (SomeModule _ m) = StateImports (provided m.globals) m.memoryImports m.tableImports (imported m.functions) m.tagImports
   where
     imported :: FunctionSpace shape fts -> [(Text, Text)]
     imported NoFunctions = []

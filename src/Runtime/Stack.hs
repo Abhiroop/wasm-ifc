@@ -34,6 +34,7 @@ module Runtime.Stack (
     setTable,
     getElements,
     ExceptionInst (..),
+    tagName,
     keepException,
     keptException,
     dropElements,
@@ -317,12 +318,30 @@ data TableSpaceInst fts ts es tags = TableSpaceInst
     , segments :: !(ElemSpaceInst es)
     , caught :: !(IntMap (ExceptionInst tags))
     -- ^ the exceptions an @exnref@ refers to, by its index: those that a clause caught by reference
+    , tagNames :: ![Word64]
+    {- ^ for each tag of the module, in order, the name it has among all the instances its
+    embedder links: a tag the module imports has the name of the tag it imports, so an
+    exception that crosses from one module to another is of the same tag in both
+    -}
     }
 
--- | An exception: its tag, by its witness in the module's tags, and the values it carries.
+{- | An exception: its tag, by the name the tag has among all instances ('tagNames'), and the
+  values it carries, at their types. A clause for a tag catches an exception of that name whose
+  values have the tag's types, whichever module threw it; two tags of a module that import the
+  same tag have one name, and are one tag.
+-}
 type ExceptionInst :: [[LabelledValType]] -> Type
 data ExceptionInst tags where
-    ExceptionInst :: Elem ps tags -> ValueStack ps -> ExceptionInst tags
+    ExceptionInst :: !Word64 -> Sing ps -> ValueStack ps -> ExceptionInst tags
+
+-- | The name of a tag of the module, by its witness (which is its position).
+tagName :: Elem ps tags -> TableSpaceInst fts ts es tags -> Word64
+tagName tag tables = at tag tables.tagNames
+  where
+    at :: Elem a as -> [Word64] -> Word64
+    at Here (name : _) = name
+    at (There rest) (_ : names) = at rest names
+    at _ [] = 0
 
 -- | Keep an exception for a reference to it, which is returned.
 keepException :: ExceptionInst tags -> TableSpaceInst fts ts es tags -> (Reference, TableSpaceInst fts ts es tags)
@@ -341,7 +360,7 @@ data TableInsts ts where
 
 -- | The table space of a module with no table and no element segment.
 noTables :: TableSpaceInst fts '[] '[] tags
-noTables = TableSpaceInst (functionDirectory 0 []) TNil ENil IntMap.empty
+noTables = TableSpaceInst (functionDirectory 0 []) TNil ENil IntMap.empty []
 
 getTable :: Elem t ts -> TableSpaceInst fts ts es tags -> TableInst
 getTable ix tables = go ix tables.instances

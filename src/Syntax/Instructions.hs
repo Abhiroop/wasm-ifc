@@ -329,8 +329,8 @@ data FloatBinOp = FMin | FMax | FCopysign deriving stock (Eq, Show)
   that reference for the clauses that catch every exception.
 -}
 data Handler (m :: ModuleShape) (labels :: [LabelledResultType]) where
-    HandlesTag :: Elem ps (ModuleTags m) -> SegmentFlows ps target -> Elem target labels -> Handler m labels
-    HandlesTagRef :: Elem ps (ModuleTags m) -> SegmentFlows (('ExnRef ':~ 'Low) ': ps) target -> Elem target labels -> Handler m labels
+    HandlesTag :: Sing ps -> Elem ps (ModuleTags m) -> SegmentFlows ps target -> Elem target labels -> Handler m labels
+    HandlesTagRef :: Sing ps -> Elem ps (ModuleTags m) -> SegmentFlows (('ExnRef ':~ 'Low) ': ps) target -> Elem target labels -> Handler m labels
     HandlesAll :: SegmentFlows '[] target -> Elem target labels -> Handler m labels
     HandlesAllRef :: SegmentFlows (('ExnRef ':~ 'Low) ': '[]) target -> Elem target labels -> Handler m labels
 
@@ -764,6 +764,7 @@ data
        its clauses is a branch to a label of the context around it, taken under that pc, with
        the public values the exception carries ('Handler'). -}
     IThrow ::
+        Sing ps ->
         AllPublic ps ->
         SegmentFlows args ps ->
         Append args s full ->

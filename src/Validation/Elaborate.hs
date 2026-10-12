@@ -744,7 +744,7 @@ elabInstr env pcsIn@(SCons pc _) stackIn instr = case instr of
             SomeTagRef psS tix <- tagAt env x
             allPublic <- note (Malformed "a tag whose values are not public") (decideAllPublic psS)
             SomeCoercion _ flows witness <- prefixFlows "throw" psS stackIn
-            Right (Transfers (sameLengthAs pcsIn) pcsIn (IThrow allPublic flows witness tix))
+            Right (Transfers (sameLengthAs pcsIn) pcsIn (IThrow psS allPublic flows witness tix))
     ThrowRef -> case (pc, stackIn) of
         (SHigh, _) -> Left (IllegalFlow "throw_ref" High Low)
         (SLow, SCons (se :%~ le) _) -> do
@@ -1283,11 +1283,11 @@ handlerOf env clause = case clause of
     CatchTag (TagIdx x) (LabelIdx l) -> do
         SomeTagRef psS tix <- tagAt env x
         SomeLabel targetS lix <- labelAt l
-        HandlesTag tix <$> caught psS targetS <*> pure lix
+        HandlesTag psS tix <$> caught psS targetS <*> pure lix
     CatchTagRef (TagIdx x) (LabelIdx l) -> do
         SomeTagRef psS tix <- tagAt env x
         SomeLabel targetS lix <- labelAt l
-        HandlesTagRef tix <$> caught (SCons (SExnRef :%~ SLow) psS) targetS <*> pure lix
+        HandlesTagRef psS tix <$> caught (SCons (SExnRef :%~ SLow) psS) targetS <*> pure lix
     CatchAll (LabelIdx l) -> do
         SomeLabel targetS lix <- labelAt l
         HandlesAll <$> caught SNil targetS <*> pure lix
@@ -1900,7 +1900,7 @@ elaborateUnder assembled choices =
                     Right (TableInitialiser (fromIntegral i) isRef value)
             start <- traverse (resolveStart ftsS) (m.start)
             when (not (null assembled.secretRegions) && null m.memories) (Left (NoMemory "region"))
-            Right (SomeModule ctxS (Module {functions, globals, dataSegments, secretRegions = assembled.secretRegions, elementSegments, interface = interfaceOf <$> m.written, tableInitialisers, memoryImports = m.stateImports.memories, tableImports = m.stateImports.tables, exports = m.exports, start}))
+            Right (SomeModule ctxS (Module {functions, globals, dataSegments, secretRegions = assembled.secretRegions, elementSegments, interface = interfaceOf <$> m.written, tableInitialisers, tagImports = m.tagImports, memoryImports = m.stateImports.memories, tableImports = m.stateImports.tables, exports = m.exports, start}))
   where
     m = assembled.annotated
     entries = zip3 [0 ..] assembled.loadDefaults (map Left m.imports ++ map (\(i, f) -> Right (f, Map.findWithDefault [] i choices.localLevels)) (zip [importCount ..] m.functions))
