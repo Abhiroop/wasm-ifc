@@ -1,0 +1,311 @@
+/-
+Relations between two runs, and the facts about levels, type stacks and pc stacks that the
+proofs use.
+-/
+import WasmIfc.Defs
+
+namespace WasmIfc
+
+namespace Lab
+
+theorem le_refl (a : Lab) : le a a := fun h => h
+
+theorem le_trans {a b c : Lab} (h1 : le a b) (h2 : le b c) : le a c := fun h => h2 (h1 h)
+
+theorem le_join_left (a b : Lab) : le a (a.join b) := by
+  cases a <;> cases b <;> simp [le, join]
+
+theorem le_join_right (a b : Lab) : le b (a.join b) := by
+  cases a <;> cases b <;> simp [le, join]
+
+theorem H_join (b : Lab) : H.join b = H := by cases b <;> rfl
+
+theorem join_H (a : Lab) : a.join H = H := by cases a <;> rfl
+
+theorem join_eq_L {a b : Lab} (h : a.join b = L) : a = L ∧ b = L := by
+  cases a <;> cases b <;> simp_all [join]
+
+theorem eq_L_of_ne_H {a : Lab} (h : a ≠ H) : a = L := by
+  cases a <;> simp_all
+
+/-- A level that something public flows from need not be public; one that flows to public is. -/
+theorem eq_L_of_le {a b : Lab} (h : le a b) (hb : b = L) : a = L := by
+  cases a <;> cases b <;> simp_all [le]
+
+end Lab
+
+/-! ### Pointwise order -/
+
+theorem SFlows.refl : ∀ s : List Lab, SFlows s s
+  | [] => .nil
+  | a :: s => .cons (Lab.le_refl a) (SFlows.refl s)
+
+theorem SFlows.trans {s t u : List Lab} (h1 : SFlows s t) (h2 : SFlows t u) : SFlows s u := by
+  induction h1 generalizing u with
+  | nil => cases h2; exact .nil
+  | cons hab _ ih =>
+    cases h2 with
+    | cons hbc h2' => exact .cons (Lab.le_trans hab hbc) (ih h2')
+
+theorem SFlows.length_eq {s t : List Lab} (h : SFlows s t) : s.length = t.length := by
+  induction h with
+  | nil => rfl
+  | cons _ _ ih => simp [ih]
+
+theorem SFlows.tail {a b : Lab} {s t : List Lab} (h : SFlows (a :: s) (b :: t)) : SFlows s t := by
+  cases h with
+  | cons _ h' => exact h'
+
+theorem SFlows.head {a b : Lab} {s t : List Lab} (h : SFlows (a :: s) (b :: t)) : Lab.le a b := by
+  cases h with
+  | cons h' _ => exact h'
+
+theorem sflows_raise (a : Lab) : ∀ (P : Pcs) (i : Nat), SFlows P (raise a P i)
+  | [], _ => .nil
+  | p :: ps, 0 => .cons (Lab.le_join_right a p) (SFlows.refl ps)
+  | p :: ps, i + 1 => .cons (Lab.le_join_right a p) (sflows_raise a ps i)
+
+/-- Two pc stacks above a common one are below their entrywise join, and so is the common one. -/
+theorem sflows_joinEach {a b c : List Lab} (h1 : SFlows a b) (h2 : SFlows a c) :
+    SFlows b (joinEach b c) ∧ SFlows c (joinEach b c) ∧ SFlows a (joinEach b c) := by
+  induction h1 generalizing c with
+  | nil => cases h2; exact ⟨.nil, .nil, .nil⟩
+  | cons hab _ ih =>
+    cases h2 with
+    | cons hac h2' =>
+      obtain ⟨i1, i2, i3⟩ := ih h2'
+      exact ⟨.cons (Lab.le_join_left _ _) i1, .cons (Lab.le_join_right _ _) i2,
+        .cons (Lab.le_trans hab (Lab.le_join_left _ _)) i3⟩
+
+/-! ### Secret pcs -/
+
+/-- The entries `0` to `i` of a pc stack, as far as it has them, are secret. -/
+def HiUpTo (i : Nat) (P : Pcs) : Prop := ∀ k p, k ≤ i → P[k]? = some p → p = Lab.H
+
+theorem HiUpTo.mono {i j : Nat} {P : Pcs} (hji : j ≤ i) (h : HiUpTo i P) : HiUpTo j P :=
+  fun k p hk hp => h k p (Nat.le_trans hk hji) hp
+
+theorem HiUpTo.head {i : Nat} {p : Lab} {P : Pcs} (h : HiUpTo i (p :: P)) : p = Lab.H :=
+  h 0 p (Nat.zero_le _) (by simp)
+
+theorem HiUpTo.tail {i : Nat} {p : Lab} {P : Pcs} (h : HiUpTo (i + 1) (p :: P)) : HiUpTo i P :=
+  fun k q hk hq => h (k + 1) q (by omega) (by simpa using hq)
+
+theorem HiUpTo.cons {i : Nat} {P : Pcs} (h : HiUpTo i P) : HiUpTo (i + 1) (Lab.H :: P) := by
+  intro k p hk hp
+  cases k with
+  | zero => simpa using hp.symm
+  | succ k => exact h k p (by omega) (by simpa using hp)
+
+theorem HiUpTo.sflows {P P' : Pcs} (hf : SFlows P P') : ∀ {i : Nat}, HiUpTo i P → HiUpTo i P' := by
+  induction hf with
+  | nil => intro i h; exact h
+  | cons hab _ ih =>
+    intro i h k p hk hp
+    cases k with
+    | zero =>
+      rename_i a b s t _
+      have hb : b = p := by simpa using hp
+      subst hb
+      exact hab (h 0 a (Nat.zero_le _) (by simp))
+    | succ k =>
+      cases i with
+      | zero => omega
+      | succ i => exact ih (HiUpTo.tail h) k p (by omega) (by simpa using hp)
+
+theorem hiUpTo_raise : ∀ (P : Pcs) (i j : Nat), i ≤ j → HiUpTo i (raise Lab.H P j)
+  | [], _, j, _ => by intro k p _ hp; cases j <;> simp [raise] at hp
+  | q :: P, i, 0, hij => by
+      intro k p hk hp
+      have hk0 : k = 0 := by omega
+      subst hk0
+      simpa [raise, Lab.H_join] using hp.symm
+  | q :: P, i, j + 1, hij => by
+      intro k p hk hp
+      cases k with
+      | zero => simpa [raise, Lab.H_join] using hp.symm
+      | succ k =>
+        have hp' : (raise Lab.H P j)[k]? = some p := by simpa [raise] using hp
+        exact hiUpTo_raise P (i - 1) j (by omega) k p (by omega) hp'
+
+theorem raise_cons (a p : Lab) (P : Pcs) (i : Nat) : ∃ P', raise a (p :: P) i = a.join p :: P' := by
+  cases i <;> exact ⟨_, rfl⟩
+
+/-! ### Two stacks that agree where the type is public -/
+
+/-- `StkRel st σ0 σ1`: the stacks have the shape of `st` and hold equal values at its public positions. -/
+inductive StkRel : STy → List Nat → List Nat → Prop where
+  | nil : StkRel [] [] []
+  | cons {l : Lab} {v0 v1 : Nat} {st : STy} {σ0 σ1 : List Nat} :
+      (l = Lab.L → v0 = v1) → StkRel st σ0 σ1 → StkRel (l :: st) (v0 :: σ0) (v1 :: σ1)
+
+theorem StkRel.length_left {st : STy} {a b : List Nat} (h : StkRel st a b) : a.length = st.length := by
+  induction h with
+  | nil => rfl
+  | cons _ _ ih => simp [ih]
+
+theorem StkRel.length_right {st : STy} {a b : List Nat} (h : StkRel st a b) : b.length = st.length := by
+  induction h with
+  | nil => rfl
+  | cons _ _ ih => simp [ih]
+
+theorem StkRel.symm {st : STy} {a b : List Nat} (h : StkRel st a b) : StkRel st b a := by
+  induction h with
+  | nil => exact .nil
+  | cons hv _ ih => exact .cons (fun hl => (hv hl).symm) ih
+
+theorem StkRel.mono {st st' : STy} {a b : List Nat} (hf : SFlows st st') (h : StkRel st a b) :
+    StkRel st' a b := by
+  induction hf generalizing a b with
+  | nil => exact h
+  | cons hab _ ih =>
+    cases h with
+    | cons hv h' => exact .cons (fun hl => hv (Lab.eq_L_of_le hab hl)) (ih h')
+
+theorem StkRel.append {s t : STy} {a b c d : List Nat} (h1 : StkRel s a b) (h2 : StkRel t c d) :
+    StkRel (s ++ t) (a ++ c) (b ++ d) := by
+  induction h1 with
+  | nil => exact h2
+  | cons hv _ ih => exact .cons hv ih
+
+theorem StkRel.split : ∀ {s t : STy} {a b c d : List Nat}, StkRel (s ++ t) (a ++ c) (b ++ d) →
+    a.length = s.length → b.length = s.length → StkRel s a b ∧ StkRel t c d
+  | [], _, [], [], _, _, h, _, _ => ⟨.nil, h⟩
+  | l :: s, _, x :: a, y :: b, _, _, h, ha, hb => by
+      cases h with
+      | cons hv h' =>
+        obtain ⟨h1, h2⟩ := StkRel.split h' (by simpa using ha) (by simpa using hb)
+        exact ⟨.cons hv h1, h2⟩
+  | [], _, _ :: _, _, _, _, _, ha, _ => by simp at ha
+  | [], _, [], _ :: _, _, _, _, _, hb => by simp at hb
+  | _ :: _, _, [], _, _, _, _, ha, _ => by simp at ha
+  | _ :: _, _, _ :: _, [], _, _, _, _, hb => by simp at hb
+
+theorem StkRel.take : ∀ {s t : STy} {a b : List Nat}, StkRel (s ++ t) a b →
+    StkRel s (a.take s.length) (b.take s.length)
+  | [], _, _, _, _ => by simpa using StkRel.nil
+  | l :: s, _, _, _, h => by
+      cases h with
+      | cons hv h' => simpa using StkRel.cons hv (StkRel.take h')
+
+theorem StkRel.of_allH : ∀ {st : STy} {a b : List Nat}, AllGe Lab.H st →
+    a.length = st.length → b.length = st.length → StkRel st a b
+  | [], [], [], _, _, _ => .nil
+  | l :: st, x :: a, y :: b, h, ha, hb => by
+      refine .cons (fun hl => ?_) (StkRel.of_allH (fun l' hl' => h l' (List.mem_cons_of_mem _ hl'))
+        (by simpa using ha) (by simpa using hb))
+      have : l = Lab.H := h l (List.mem_cons_self) rfl
+      simp_all
+  | [], _ :: _, _, _, ha, _ => by simp at ha
+  | [], [], _ :: _, _, _, hb => by simp at hb
+  | _ :: _, [], _, _, ha, _ => by simp at ha
+  | _ :: _, _ :: _, [], _, _, hb => by simp at hb
+
+/-! ### Two states that agree on the public variables -/
+
+def StRel (C : Ctx) (s t : State) : Prop :=
+  (∀ i, C.locals i = Lab.L → s.loc i = t.loc i) ∧ (∀ i, C.globals i = Lab.L → s.glob i = t.glob i)
+
+theorem StRel.refl (C : Ctx) (s : State) : StRel C s s := ⟨fun _ _ => rfl, fun _ _ => rfl⟩
+
+theorem StRel.symm {C : Ctx} {s t : State} (h : StRel C s t) : StRel C t s :=
+  ⟨fun i hi => (h.1 i hi).symm, fun i hi => (h.2 i hi).symm⟩
+
+theorem StRel.trans {C : Ctx} {s t u : State} (h1 : StRel C s t) (h2 : StRel C t u) : StRel C s u :=
+  ⟨fun i hi => (h1.1 i hi).trans (h2.1 i hi), fun i hi => (h1.2 i hi).trans (h2.2 i hi)⟩
+
+theorem StRel.setLoc {C : Ctx} {s t : State} {i v0 v1 : Nat} (hv : C.locals i = Lab.L → v0 = v1)
+    (h : StRel C s t) : StRel C (s.setLoc i v0) (t.setLoc i v1) := by
+  refine ⟨fun j hj => ?_, h.2⟩
+  by_cases hji : j = i
+  · subst hji; simp [State.setLoc, hv hj]
+  · simp [State.setLoc, hji, h.1 j hj]
+
+theorem StRel.setGlob {C : Ctx} {s t : State} {i v0 v1 : Nat} (hv : C.globals i = Lab.L → v0 = v1)
+    (h : StRel C s t) : StRel C (s.setGlob i v0) (t.setGlob i v1) := by
+  refine ⟨h.1, fun j hj => ?_⟩
+  by_cases hji : j = i
+  · subst hji; simp [State.setGlob, hv hj]
+  · simp [State.setGlob, hji, h.2 j hj]
+
+/-- A write to a secret local variable leaves the state as the attacker sees it. -/
+theorem StRel.setLoc_high {C : Ctx} (s : State) {i : Nat} (v : Nat) (hi : C.locals i = Lab.H) :
+    StRel C s (s.setLoc i v) := by
+  refine ⟨fun j hj => ?_, fun _ _ => rfl⟩
+  by_cases hji : j = i
+  · subst hji; rw [hi] at hj; cases hj
+  · simp [State.setLoc, hji]
+
+theorem StRel.setGlob_high {C : Ctx} (s : State) {i : Nat} (v : Nat) (hi : C.globals i = Lab.H) :
+    StRel C s (s.setGlob i v) := by
+  refine ⟨fun _ _ => rfl, fun j hj => ?_⟩
+  by_cases hji : j = i
+  · subst hji; rw [hi] at hj; cases hj
+  · simp [State.setGlob, hji]
+
+/-! ### What is known of one run's outcome, and how two outcomes relate -/
+
+/--
+What a run under a secret pc guarantees of its outcome. At the end of the sequence, the segment
+has the shape of its type. A branch goes to a label whose type is all secret, carries as many
+values as that type has, and the pcs of the blocks it leaves are secret.
+-/
+def Info (Ls : List STy) (P : Pcs) (st : STy) : Out → Prop
+  | .normal σ _ => σ.length = st.length
+  | .br i w _ => ∃ rs, Ls[i]? = some rs ∧ AllGe Lab.H rs ∧ w.length = rs.length ∧ HiUpTo i P
+
+theorem Info.mono {Ls : List STy} {P P' : Pcs} {st : STy} {o : Out} (hf : SFlows P P')
+    (h : Info Ls P st o) : Info Ls P' st o := by
+  cases o with
+  | normal σ s => exact h
+  | br i w s =>
+    obtain ⟨rs, h1, h2, h3, h4⟩ := h
+    exact ⟨rs, h1, h2, h3, HiUpTo.sflows hf h4⟩
+
+/-- The two runs ended the same way, with segments or carried values that agree where public. -/
+inductive Sync (C : Ctx) (Ls : List STy) (st : STy) : Out → Out → Prop where
+  | normal {σ0 σ1 : List Nat} {s0 s1 : State} :
+      StkRel st σ0 σ1 → StRel C s0 s1 → Sync C Ls st (.normal σ0 s0) (.normal σ1 s1)
+  | br {i : Nat} {rs : STy} {w0 w1 : List Nat} {s0 s1 : State} :
+      Ls[i]? = some rs → StkRel rs w0 w1 → StRel C s0 s1 → Sync C Ls st (.br i w0 s0) (.br i w1 s1)
+
+/-- The two runs took different paths under a secret pc: their states agree, and each is as `Info` says. -/
+def Loose (C : Ctx) (Ls : List STy) (P : Pcs) (st : STy) (o0 o1 : Out) : Prop :=
+  StRel C o0.state o1.state ∧ Info Ls P st o0 ∧ Info Ls P st o1
+
+/--
+The relation between the outcomes of two runs of a typed sequence from related inputs: in step,
+or apart with at least one of them on its way out of a block.
+-/
+def OutRel (C : Ctx) (Ls : List STy) (P : Pcs) (st : STy) (o0 o1 : Out) : Prop :=
+  Sync C Ls st o0 o1 ∨ (Loose C Ls P st o0 o1 ∧ (o0.isBr ∨ o1.isBr))
+
+theorem Loose.mono {C : Ctx} {Ls : List STy} {P P' : Pcs} {st : STy} {o0 o1 : Out}
+    (hf : SFlows P P') (h : Loose C Ls P st o0 o1) : Loose C Ls P' st o0 o1 :=
+  ⟨h.1, h.2.1.mono hf, h.2.2.mono hf⟩
+
+/-! ### Pc stacks only rise (the paper's `lem:rise`) -/
+
+theorem rise {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : Pcs} {st st' : STy}
+    (h : Typed C Ls e P st P' st') : SFlows P P' := by
+  induction h with
+  | nil => exact SFlows.refl _
+  | const _ _ ih => exact ih
+  | binop _ _ ih => exact ih
+  | select _ ih => exact ih
+  | drop _ ih => exact ih
+  | nop _ ih => exact ih
+  | relabel _ _ ih => exact ih
+  | localGet _ _ ih => exact ih
+  | localSet _ _ _ _ ih => exact ih
+  | globalGet _ _ ih => exact ih
+  | globalSet _ _ _ _ ih => exact ih
+  | block _ _ _ _ ihb ihr => exact SFlows.trans ihb.tail ihr
+  | loop _ _ _ _ _ _ ihb ihr => exact SFlows.trans ihb.tail ihr
+  | ite _ _ _ _ _ ih1 ih2 ihr => exact SFlows.trans (sflows_joinEach ih1.tail ih2.tail).2.2 ihr
+  | br _ _ _ => exact sflows_raise _ _ _
+  | brIf _ _ _ _ ih => exact SFlows.trans (sflows_raise _ _ _) ih
+  | brTable _ _ _ => exact sflows_raise _ _ _
+  | unreachable => exact SFlows.refl _
+
+end WasmIfc

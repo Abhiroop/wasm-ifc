@@ -1,0 +1,5 @@
+name = "WasmIfc"
+defaultTargets = ["WasmIfc"]
+
+[[lean_lib]]
+name = "WasmIfc"

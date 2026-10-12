@@ -73,6 +73,7 @@ are public.
 | `src/Runtime/`    | instantiation, the small-step interpreter, memory with byte levels, the WASI host |
 | `app/Main.hs`     | the command-line interface |
 | `test/`           | unit tests and typed examples; runners for the spec testsuite and the wasi-testsuite |
+| `lean/`           | a Lean 4 proof of noninterference for the lift-free rules on a control-flow core (`lean/README.md`) |
 | `samples/`        | example programs checked by `samples/check.sh` |
 | `bench/`          | benchmarks and the allocation tripwire; results in `BENCHMARKS.md` |
 | `paper/`          | the paper draft (a submodule on Overleaf) |

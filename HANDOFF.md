@@ -337,7 +337,7 @@ on the same inputs and requires the same result, public global and memory (2,000
 
 - Item 9, remainder: the timing sweeps again on a quiet machine, with wasm3 and, if a
   runnable build is found, WAMR (`PRE=… ./bench/sweep-labels.sh`).
-- Items 12–14: Lean (not started); the rest of WebAssembly 3.0 (done but for typed function
+- Items 12–14: Lean (a first step, see "Lean" below); the rest of WebAssembly 3.0 (done but for typed function
   references and garbage collection, see "Where coverage stands"); WASI sockets (done).
 
 ## The 3.0 suite (item 13, first step, 2026-10-08)
@@ -606,6 +606,33 @@ implemented since e87e76a.
   `throw.wast` and `throw_ref.wast` pass in full. The main module of `try_table.wast` imports a
   tag from another module, which is not supported (42 assertions skipped). Four unit examples
   (`test/Spec.hs`, "exceptions").
+
+## Lean: noninterference on the control-flow core (item 12, first step, 2026-10-12)
+
+- **Where:** `lean/` (Lean 4.35.0, no dependencies; `cd lean && lake build`). 1,605 lines in
+  five files; `lean/README.md` states what is proved and what differs from the paper.
+- **What is proved** (`WasmIfc.tini`, from `WasmIfc.ni`): termination-insensitive
+  noninterference for the lift-free rules on a core with blocks, loops and conditionals (with
+  parameters and results), `br`, `br_if`, the repaired `br_table`, local and global variables
+  and arithmetic. Also `WasmIfc.rise`, the paper's `lem:rise`. **No `sorry`; the theorems
+  depend on `propext`, `Classical.choice` and `Quot.sound` only** (`#print axioms`).
+- **Against the plan's steps (a) to (f):** (a) in part. The rules are the W-rules themselves,
+  so for this core there is no erasure and no inclusion to prove, and the theorem is the main
+  theorem's statement for the typed program. Not covered: memory, calls, `return` (it is a
+  branch to the function's label), `local.tee`, bulk memory, WASI, the features of 3.0, and
+  the correspondence with SecWasm's flat-stack semantics (the Lean semantics evaluates a
+  block's body on the block's parameters alone). (b) to (f): not done.
+- **The lift-free invariant holds on this core**, which is what step (a) was to find out.
+  Two observations for appendix B.4:
+  1. With a block-local semantics the relation "up to abandoned entries" is not needed. After
+     two runs diverge, the proof relates their states and says nothing of their stacks, until
+     they meet at the end of a block whose result type is all secret.
+  2. **The proof uses Property (E) in two places:** where two runs took different arms of a
+     conditional on a secret and both reach its end, and where one run iterates a loop longer
+     than the other. Without (E) a block with parameters under a secret pc may pass a public
+     parameter through as a public result, and the proof would have to track which values
+     were moved and which computed (the `tk` box of step 7). With (E) it does not.
+- **Toolchain:** elan and Lean are installed under `~/.elan` (3 GB, user space).
 
 ## WASI sockets (item 14, 2026-10-12)
 
