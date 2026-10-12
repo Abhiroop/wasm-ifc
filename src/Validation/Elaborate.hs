@@ -248,7 +248,7 @@ data ElaboratedInstr (shape :: ModuleShape) (ret :: LabelledResultType) (locals 
     Transfers ::
         SameLength pcIn pcOut ->
         Sing pcOut ->
-        (forall stackOut. Instr shape ('FrameShape locals ret) labels pcIn pcOut 'NoDynamicCheck stackIn stackOut) ->
+        (forall stackOut. Instr shape ('FrameShape locals ret) labels pcIn pcOut check stackIn stackOut) ->
         ElaboratedInstr shape ret locals labels pcIn stackIn
 
 note :: ElabError -> Maybe a -> Either ElabError a
@@ -655,6 +655,31 @@ elabInstr env pcsIn@(SCons pc _) stackIn instr = case instr of
             calledFrom <- blame [RaiseBound f] (requireFlow "call" pc boundS)
             atCallPc <- blame (raisesToAtLeast (RaiseParam f) pc psS) (argumentsAtCallPc env "call" pc psS)
             Right (Produces (sameLengthAs pcsIn) pcsIn (rsS %++ sS) (ICall calledFrom flows atCallPc witness fix))
+    {- Tail calls: the call's premises, then the return's on what the callee returns -}
+    ReturnCall (FunctionIdx f) -> case lookupFuncRef (funcTypesSing (env.shape)) f of
+        Nothing -> Left (IndexOutOfRange Functions f)
+        Just (SomeFuncRef boundS psS rsS fix) -> do
+            SomeCoercion _ flows witness <- blame (raisesWhereBelow (RaiseParam f) psS stackIn) (prefixFlows "return_call" psS stackIn)
+            calledFrom <- blame [RaiseBound f] (requireFlow "return_call" pc boundS)
+            atCallPc <- blame (raisesToAtLeast (RaiseParam f) pc psS) (argumentsAtCallPc env "return_call" pc psS)
+            carried <- blame (raisesToAtLeast (RaiseResult env.functionIndex) pc env.results) (requireCarried "return_call" pc (env.results))
+            results <- tailResults env "return_call" rsS
+            Right (Transfers (raiseAllSameLength pc pcsIn) (sRaiseAll pc pcsIn) (IReturnCall calledFrom flows atCallPc witness fix carried results))
+    ReturnCallIndirect (TableIdx tb) (TypeIdx t) -> case stackIn of
+        SCons (sc :%~ lidx) rest -> do
+            SomeTableRef st lt table@(TableRef at _) <- tableAt env tb
+            Refl <- note (OperandMismatch "return_call_indirect" FuncRef (valTypeOf st)) (decideEquality st SFuncRef)
+            Refl <- operandIs "return_call_indirect" (addrValSing at) sc
+            expected <- note (IndexOutOfRange Types t) (nth (env.types) t)
+            case toSing (stackOrderLabelled expected) of
+                SomeSing (SLabelledFuncType boundS psS rsS) -> do
+                    SomeCoercion _ flows witness <- prefixFlows "return_call_indirect" psS rest
+                    calledFrom <- requireFlow "return_call_indirect" (sJoin pc (sJoin lidx lt)) boundS
+                    atCallPc <- argumentsAtCallPc env "return_call_indirect" pc psS
+                    carried <- blame (raisesToAtLeast (RaiseResult env.functionIndex) pc env.results) (requireCarried "return_call_indirect" pc (env.results))
+                    results <- tailResults env "return_call_indirect" rsS
+                    Right (Transfers (raiseAllSameLength pc pcsIn) (sRaiseAll pc pcsIn) (IReturnCallIndirect table calledFrom flows atCallPc witness (SLabelledFuncType boundS psS rsS) carried results))
+        _ -> Left (StackUnderflow "return_call_indirect")
     {- Integer bitwise / shift / count (integer types only) -}
     And st -> do
         isInt <- requireInt st
@@ -1067,6 +1092,17 @@ elabMemory env pcsIn@(SCons pc _) stackIn annotation site access = case access o
         Nothing -> k inferred (flowsSelf inferred)
         Just declared -> withSomeSing declared $ \level -> requireFlow "store" inferred level >>= k level
 
+{- | The results of a tail call's callee as results of the function: the same value types, at
+  levels that flow into the function's. Where they do not, raising the function's results
+  repairs it.
+-}
+tailResults :: ElabEnv shape ret locals labels -> Text -> Sing (rs :: [LabelledValType]) -> Either ElabError (TailResults rs ret)
+tailResults env name rsS = case decideEquality rsS (env.results) of
+    Just Refl -> Right (SameResults (env.results))
+    Nothing
+        | stackToList rsS /= stackToList (env.results) -> Left (StackMismatch name (stackToList (env.results)) (stackToList rsS))
+        | otherwise -> blame (raisesWhereBelow (RaiseResult env.functionIndex) env.results rsS) (RaisedResults (env.results) <$> note (IllegalFlow name High Low) (decideSegmentFlows rsS (env.results)))
+
 -- | An operand has the type an instruction asks for.
 operandIs :: Text -> Sing (expected :: ValType) -> Sing (actual :: ValType) -> Either ElabError (actual :~: expected)
 operandIs name expected actual = note (OperandMismatch name (valTypeOf expected) (valTypeOf actual)) (decideEquality actual expected)
@@ -1268,6 +1304,18 @@ stepDead env pcsIn s instr = case instr of
     Call (FunctionIdx f) -> case lookupFuncRef (funcTypesSing (env.shape)) f of
         Nothing -> Left (IndexOutOfRange Functions f)
         Just (SomeFuncRef _ psS rsS _) -> afterFrame (stackToList psS) (stackToList rsS) s
+    ReturnCall (FunctionIdx f) -> case lookupFuncRef (funcTypesSing (env.shape)) f of
+        Nothing -> Left (IndexOutOfRange Functions f)
+        Just (SomeFuncRef _ psS rsS _) -> do
+            _ <- popTypes (stackToList psS) s
+            tailTypes "return_call" (stackToList rsS)
+    ReturnCallIndirect (TableIdx tb) (TypeIdx t) -> do
+        SomeTableRef st _ table <- tableAt env tb
+        when (valTypeOf st /= FuncRef) (Left (OperandMismatch "return_call_indirect" FuncRef (valTypeOf st)))
+        s1 <- popKnown (indexOf table) s
+        LabelledFuncType _ ps rs <- note (IndexOutOfRange Types t) (nth (env.types) t)
+        _ <- popTypes (map unlabelled (stackOrder ps)) s1
+        tailTypes "return_call_indirect" (map unlabelled (stackOrder rs))
     RefNull t -> Right (pushKnown t s)
     RefIsNull -> case popAny s of
         (Just t, _) | t `notElem` [FuncRef, ExternRef] -> Left (OperandMismatch "ref.is_null" FuncRef t)
@@ -1336,6 +1384,10 @@ stepDead env pcsIn s instr = case instr of
         _ <- popTypes ts s1
         Right ()
     arith :: Sing (t :: ValType) -> Either ElabError PolyStack
+    -- A tail call's callee returns what the function does; what follows is unreachable.
+    tailTypes name results
+        | results == stackToList (env.results) = Right (PolyStack [])
+        | otherwise = Left (StackMismatch name (stackToList (env.results)) results)
     -- The type of an index into a table.
     indexOf :: TableRef t lt at ts -> ValType
     indexOf (TableRef at _) = valTypeOf (addrValSing at)

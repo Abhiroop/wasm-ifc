@@ -425,6 +425,28 @@ spec = do
             void (elaborateModule ((singleFunctionModule [] [] [] [] []) {elementSegments = [activeElements [Const SI32 0] [FunctionIdx 0]]}))
                 `shouldBe` Left (IndexOutOfRange Tables 0)
 
+    describe "tail calls" $ do
+        -- function 0 sums the numbers up to its first argument into its second, calling itself in tail position
+        let summing = RawFunction (FuncType [I32, I32] [I32]) [] [LocalGet (LocalIdx 0), Eqz SI32, If (FuncType [] [I32]) [LocalGet (LocalIdx 1)] [LocalGet (LocalIdx 0), Const SI32 1, Sub SI32, LocalGet (LocalIdx 1), LocalGet (LocalIdx 0), Add SI32, ReturnCall (FunctionIdx 0)]]
+            constant = RawFunction (FuncType [] [I32]) [] [Const SI32 42]
+            -- function 0 is the constant; function 1, exported, takes an i32 and ends in the given tail call
+            ending body = moduleOf [] [constant, RawFunction (FuncType [I32] [I32]) [] body] (FunctionIdx 1)
+        it "run in constant depth: ten times the bound on nested calls" $
+            elabRunModule (moduleOf [] [summing] (FunctionIdx 0)) [toInteger (10 * callDepthBound), 0] `shouldBe` Right ["705082704"]
+        it "return what the callee returns, also through a table and from the entry function" $ do
+            elabRunModule (ending [ReturnCall (FunctionIdx 0)]) [0] `shouldBe` Right ["42"]
+            elabRunModule ((ending [Const SI32 0, ReturnCallIndirect (TableIdx 0) (TypeIdx 0)]) {tables = [RawTable FuncRef AddrI32 (Limits 1 Nothing)], elementSegments = [activeElements [Const SI32 0] [FunctionIdx 0]]}) [0]
+                `shouldBe` Right ["42"]
+        it "need the callee's results to be the function's" $
+            elabRunModule (moduleOf [] [RawFunction (FuncType [] [I64]) [] [Const SI64 1], RawFunction (FuncType [] [I32]) [] [ReturnCall (FunctionIdx 0)]] (FunctionIdx 1)) []
+                `shouldSatisfy` errorContaining "StackMismatch \"return_call\""
+        it "are a call followed by a return: under a secret pc the results must be secret" $ do
+            let underSecret = ending [LocalGet (LocalIdx 0), If (FuncType [] []) [ReturnCall (FunctionIdx 0)] [], Const SI32 1]
+            elabRunWithPolicy "export f : H -> L" underSecret [1] `shouldSatisfy` errorContaining "IllegalFlow"
+            elabRunWithPolicy "func 0 : -{H}-> H\nexport f : H -> H" underSecret [1] `shouldBe` Right ["42"]
+        it "relabel a callee's public results as the function's secret ones" $
+            elabRunWithPolicy "func 0 : -> L\nexport f : L -> H" (ending [ReturnCall (FunctionIdx 0)]) [0] `shouldBe` Right ["42"]
+
     describe "references and tables" $ do
         -- function 0 (type 0, [] -> [i32]) sits in slot 0 of a table of two; function 1, exported, takes an i32
         let tabled results body =

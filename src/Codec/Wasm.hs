@@ -248,6 +248,11 @@ getInstr hasDataCount types opcode = case opcode of
         typeIdx <- getULEB128
         tableIdx <- getULEB128
         pure (CallIndirect (TableIdx tableIdx) (TypeIdx typeIdx))
+    0x12 -> ReturnCall . FunctionIdx <$> getULEB128
+    0x13 -> do
+        typeIdx <- getULEB128
+        tableIdx <- getULEB128
+        pure (ReturnCallIndirect (TableIdx tableIdx) (TypeIdx typeIdx))
     {- Locals & globals -}
     0x20 -> LocalGet . LocalIdx <$> getULEB128
     0x21 -> LocalSet . LocalIdx <$> getULEB128

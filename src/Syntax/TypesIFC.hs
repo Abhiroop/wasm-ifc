@@ -236,6 +236,15 @@ segmentSelf (SCons (_ :%~ l) rest) = ValueFlows (flowsSelf l) (segmentSelf rest)
   ones on the host's; nothing about them changes.
 -}
 
+{- | How the results of a tail call's callee become the results of the function that makes the
+  call: they are the same, levels included, which is the usual case and lets the machine reuse
+  the caller's return as it is; or they flow into them, and the machine relabels them when the
+  callee returns. The singleton is of the function's results.
+-}
+data TailResults (rs :: [LabelledValType]) (ret :: [LabelledValType]) where
+    SameResults :: Sing ret -> TailResults ret ret
+    RaisedResults :: Sing ret -> SegmentFlows rs ret -> TailResults rs ret
+
 -- | Every value of a segment is public: what may be handed to a function outside the module.
 data AllPublic (ps :: [LabelledValType]) where
     NoneToHand :: AllPublic '[]

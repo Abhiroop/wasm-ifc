@@ -86,6 +86,9 @@ data RawInstr where
     Return :: RawInstr
     Call :: FunctionIdx -> RawInstr
     CallIndirect :: TableIdx -> TypeIdx -> RawInstr
+    -- | tail calls: the call's results are the function's, and its frame replaces the caller's
+    ReturnCall :: FunctionIdx -> RawInstr
+    ReturnCallIndirect :: TableIdx -> TypeIdx -> RawInstr
     -- \*** Locals & globals ***
     LocalGet :: LocalIdx -> RawInstr
     LocalSet :: LocalIdx -> RawInstr
@@ -630,6 +633,35 @@ data
         SegmentFlows carried (FrameReturn f) ->
         Append carried s full ->
         Instr m f l (pc ': pcs) (RaiseAll pc (pc ': pcs)) 'NoDynamicCheck full anyOut
+    {- Tail calls, typed as the call followed by a @return@ that they stand for: the premises of
+       'ICall' (or 'ICallIndirect', with its run-time check) on the callee and the arguments,
+       then those of 'IReturn' on what the callee returns. Its results are the function's, at
+       the levels the function declares or below ('TailResults'), and the pc must flow into
+       those levels, as for any return. The machine replaces the caller's frame by the
+       callee's, so a chain of tail calls runs in constant space. -}
+    IReturnCall ::
+        FlowsInto pc bound ->
+        SegmentFlows args ps ->
+        ArgumentsAtCallPc pc ps ->
+        Append args s full ->
+        Elem ('LabelledFuncType bound ps rs) (ModuleFuncs m) ->
+        AllAtLeast pc (FrameReturn f) ->
+        TailResults rs (FrameReturn f) ->
+        Instr m f l (pc ': pcs) (RaiseAll pc (pc ': pcs)) 'NoDynamicCheck full anyOut
+    IReturnCallIndirect ::
+        TableRef 'FuncRef lt at (ModuleTables m) ->
+        FlowsInto (Join pc (Join lv lt)) bound ->
+        SegmentFlows args ps ->
+        ArgumentsAtCallPc pc ps ->
+        Append args s full ->
+        Sing ('LabelledFuncType bound ps rs) ->
+        AllAtLeast pc (FrameReturn f) ->
+        TailResults rs (FrameReturn f) ->
+        Instr m f l (pc ': pcs) (RaiseAll pc (pc ': pcs)) ('CalleeWithin bound) ((AddrVal at ':~ lv) ': full) anyOut
+    {- What the machine inserts where a tail call's callee returns, when the callee's results
+       are at lower levels than the caller's: the top of the stack relabelled, the rest as it
+       is. Validation never produces it. -}
+    IRelabelTop :: SegmentFlows from to -> Append from s full -> Append to s full' -> Instr m f l p p 'NoDynamicCheck full full'
     {- Inert. A trap ends the run, which an observer can see, so @unreachable@ under a secret pc
        reveals something. SecWasm accepts this (its guarantee only covers runs that finish), and
        so do we: no check here. -}

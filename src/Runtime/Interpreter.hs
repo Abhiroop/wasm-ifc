@@ -609,6 +609,19 @@ stepInstr funcs store locals stack instr rest control = case instr of
              in Right (unwindTo store locals target (relabelStack flows vs) control)
     IReturn _ flows witness ->
         let (vs, _) = splitStack witness stack in Right (returnUnwind store locals (relabelStack flows vs) control)
+    {- Tail calls: the call is made from where the function was called, with what the function
+       returns to (see 'tailCall'); the function's own frame and labels are dropped. -}
+    IReturnCall _ flows _ witness ix _ results ->
+        let (args, _) = splitStack witness stack
+         in tailCall NothingToCheck funcs store flows witness ix args results control
+    IReturnCallIndirect (TableRef width tableIx) _ flows _ witness expected _ results -> case stack of
+        index :# below' -> case maybe (Left UndefinedElement) (\at -> lookupChecked store.tables.directory (getTable tableIx store.tables) at expected) (countFrom width index) of
+            Left trap -> Left trap
+            Right checked -> enteredCallee checked $ \ix ->
+                let (args, _) = splitStack witness below'
+                 in tailCall (CalleeWasWithin checked) funcs store flows witness ix args results control
+    IRelabelTop flows from to -> case splitStack from stack of
+        (top, below') -> stepped NothingToCheck store locals (appendWith to (relabelStack flows top) below') rest control
     {- Inert -}
     INop -> stepped NothingToCheck store locals stack rest control
     IUnreachable -> Left UnreachableExecuted
@@ -920,6 +933,52 @@ unwindTo store locals (There ix') vs (BlockLabel _ _ rest) = unwindTo store loca
 unwindTo store locals (There ix') vs (LoopLabel _ _ _ rest) = unwindTo store locals ix' vs rest
 unwindTo _ _ (There ix') _ (CallBoundary {}) = case ix' of {}
 unwindTo _ _ (There ix') _ EntryBoundary = case ix' of {}
+
+{- | A tail call: enter the callee from where the running function was called. The control
+  stack is unwound to the function's call boundary, as for @return@, and the call is then made
+  as 'enterCall' makes any call, in the caller's place: with the caller's locals, the stack it
+  saved, and what it does next, before which the callee's results are relabelled if they are at
+  lower levels than the function's. The boundary is replaced, not stacked on, so the depth of
+  activations does not grow; from the entry function the call is made at the bottom.
+-}
+tailCall ::
+    CheckPassed check ->
+    FuncSpaceInst mod (ModuleFuncs mod) ->
+    Store mod ->
+    SegmentFlows args ps ->
+    Append args s full ->
+    Elem ('LabelledFuncType bound ps rs) (ModuleFuncs mod) ->
+    ValueStack args ->
+    TailResults rs ret ->
+    Control mod res ret locals labels cur ->
+    Either Trap (StepResult check mod res)
+tailCall evidence funcs store flows witness ix args results control = case control of
+    BlockLabel _ _ rest -> tailCall evidence funcs store flows witness ix args results rest
+    LoopLabel _ _ _ rest -> tailCall evidence funcs store flows witness ix args results rest
+    CallBoundary _ below callerLocals cont callerControl ->
+        let onStack = appendOnto witness
+         in case results of
+                SameResults _ -> enterCall evidence funcs store callerLocals flows onStack ix (appendWith onStack args below) cont callerControl
+                RaisedResults _ raised -> case segmentAppends below raised of
+                    (from, to) -> enterCall evidence funcs store callerLocals flows onStack ix (appendWith onStack args below) (IRelabelTop raised from to :. cont) callerControl
+    EntryBoundary ->
+        let onStack = appendOnto witness
+            atBottom = appendWith onStack args VNil
+         in case results of
+                SameResults resultTypes -> case appendIs (appendNil resultTypes) of
+                    Refl -> enterCall evidence funcs store noLocals flows onStack ix atBottom INil EntryBoundary
+                RaisedResults resultTypes raised -> case (segmentAppends VNil raised, appendIs (appendNil resultTypes)) of
+                    ((from, to), Refl) -> enterCall evidence funcs store noLocals flows onStack ix atBottom (IRelabelTop raised from to :. INil) EntryBoundary
+
+-- | A segment on top of another stack than the one a witness was made for.
+appendOnto :: Append args s full -> Append args below (args ++ below)
+appendOnto ANil = ANil
+appendOnto (ACons rest) = ACons (appendOnto rest)
+
+-- | Where the two ends of a relabelling sit on a stack (which is given for its type only).
+segmentAppends :: ValueStack s -> SegmentFlows from to -> (Append from s (from ++ s), Append to s (to ++ s))
+segmentAppends _ NoValuesFlow = (ANil, ANil)
+segmentAppends below (ValueFlows _ rest) = case segmentAppends below rest of (from, to) -> (ACons from, ACons to)
 
 -- | @return@: unwind past every label frame in the current activation to the call boundary.
 returnUnwind ::

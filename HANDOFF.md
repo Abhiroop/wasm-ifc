@@ -510,3 +510,20 @@ implemented since e87e76a.
 - **Limit of the implementation:** a 64-bit memory or table holds at most 2^32 - 1 pages or
   entries; `TODO.md` says what happens beyond.
 - **Cost:** the allocation tripwire is unchanged by this step.
+
+## Tail calls (item 13, 2026-10-12)
+
+- **What:** `return_call` and `return_call_indirect`. The machine replaces the caller's frame
+  by the callee's, so a chain of tail calls runs at constant depth (a unit example runs
+  100,000 of them, ten times the bound on nested calls).
+- **Rule, as the paper has it:** a tail call is typed as the call followed by a `return`. The
+  typed constructors (`IReturnCall`, `IReturnCallIndirect`) carry the premises of the call
+  (pc ⊑ the callee's bound, the arguments flow into its parameters; for the indirect one, the
+  index and the table join the pc, and the run-time check on the callee is the usual one) and
+  those of the return (pc ⊑ the levels of the function's results, and the callee's results
+  flow into them). After it the pc is raised as after a `return`.
+- **Spec suite:** 36,401 passed, 0 failed, 28,801 skipped. The gain is small (34 assertions):
+  the main modules of `return_call.wast` and `return_call_indirect.wast` each contain one
+  function whose type has a typed function reference, which is not supported, so they are
+  skipped whole. Five unit examples cover the rule and the constant depth (`test/Spec.hs`,
+  "tail calls").

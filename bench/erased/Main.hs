@@ -700,8 +700,11 @@ eraseInstr instr = case instr of
     IGlobalSet _ _ ix -> EGlobalSet (positionOf ix)
     IGlobalSetPreserved _ ix -> EGlobalSet (positionOf ix)
     IRequireRestored _ -> ENop
-    -- The twin predates references: it carries one as its word and runs none of their
-    -- instructions, which no workload of the benchmarks uses.
+    -- The twin predates references and tail calls: it carries a reference as its word and
+    -- runs none of these instructions, which no workload of the benchmarks uses.
+    IReturnCall {} -> ENotModelled
+    IReturnCallIndirect {} -> ENotModelled
+    IRelabelTop {} -> ENotModelled
     IRefNull {} -> ENotModelled
     IRefFunc {} -> ENotModelled
     IRefIsNull {} -> ENotModelled

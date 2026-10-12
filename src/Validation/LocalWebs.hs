@@ -229,6 +229,8 @@ number = mapM one
         BrIf (LabelIdx l) -> pure (BranchIf (fromIntegral l))
         BrTable targets (LabelIdx l) -> pure (BranchTable (fromIntegral l : [fromIntegral t | LabelIdx t <- targets]))
         Return -> pure Leave
+        ReturnCall _ -> pure Leave
+        ReturnCallIndirect _ _ -> pure Leave
         Unreachable -> pure Leave
         _ -> pure Other
     define i = do

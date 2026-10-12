@@ -12,7 +12,7 @@ are summarised here, not repeated.
 ## Where things stand (2026-10-08)
 
 - WebAssembly: the spec testsuite, at the WebAssembly 3.0 release (all 257 scripts), passes for
-  the supported subset (36,367 assertions, none failing, 28,835 skipped, counted by feature
+  the supported subset (36,401 assertions, none failing, 28,801 skipped, counted by feature
   below); the wasi-testsuite passes 72 of 72. Both also with SecWasm's restrictions on.
 - Information flow: SecWasm's static rules in the single instruction type, with the repairs of
   the paper's findings (`br_table` raises down to its deepest target); inference of stores,
@@ -56,8 +56,8 @@ are summarised here, not repeated.
 ## WebAssembly coverage
 
 The supported subset is WebAssembly 2.0 without vector instructions and with imports of
-functions only, plus several memories per module and 64-bit memories and tables. What the 3.0
-suite skips
+functions only, plus several memories per module, 64-bit memories and tables, and tail calls.
+What the 3.0 suite skips
 (`WASM_IFC_SPEC_REPORT=f cabal test wasm-ifc-spec; ./scripts/spec-report.py f`), by the features
 a skipped module uses according to `wasm-tools`, in assertions:
 
@@ -66,13 +66,13 @@ a skipped module uses according to `wasm-tools`, in assertions:
 | 25,355 | vector instructions |
 | 547 | none: imports of tables, memories and globals, and what depends on state shared between modules |
 | 821 | garbage collection |
-| 424 | typed function references |
-| 88 | tail calls with typed function references (34 with tail calls alone) |
+| 512 | typed function references (88 of them in the scripts for tail calls) |
+| 114 | exceptions (45 more with another feature) |
 | 79 | extended constant expressions |
-| 61 | exceptions (98 more with another feature) |
 | 1,245 | none: malformed modules given as text, which the harness does not run |
 
-`return_call.wast` needs typed function references.
+`return_call.wast` and `return_call_indirect.wast` have one function each with a typed function
+reference in its type, so their main modules are skipped whole.
 
 - [ ] **P2** Imports of globals, memories and tables; `global.get` of an imported global in
   initialisers. A function is imported by suspending on the call (`ForeignFunc`), which shares
@@ -97,7 +97,11 @@ a skipped module uses according to `wasm-tools`, in assertions:
 - [ ] **P3** A 64-bit memory or table holds at most 2^32 - 1 pages or entries here (a memory of
   256 TiB); a module that declares a larger minimum does not instantiate, and growing past it
   fails as the spec allows.
-- [ ] **P3** Tail calls; extended constant expressions.
+- [ ] **P3** A tail call whose callee returns at lower levels than its caller declares leaves an
+  instruction (`IRelabelTop`) before what the caller returns to; a long chain of such calls
+  between functions of different result levels grows that continuation. A function that calls
+  itself in tail position, or one of the same result levels, does not.
+- [ ] **P3** Extended constant expressions.
 - [ ] **P3** Vector instructions; exceptions; typed function references; garbage collection.
 
 ## Performance
