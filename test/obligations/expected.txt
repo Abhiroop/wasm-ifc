@@ -2,3 +2,4 @@ WrongOmitsCheck BytesBelow
 WrongOtherLevel High
 WrongForgedEvidence CheckedRead
 WrongIndirectCallUnchecked CalleeWithin
+WrongBrTablePrintedRule sixth argument of

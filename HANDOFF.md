@@ -429,3 +429,51 @@ segments, segments given as expressions, and `call_indirect` through any table.
   "WebAssembly 2.0 without vector instructions and without imports of tables, memories and
   globals"; 358 assertions of the suite still need them or depend on state shared between
   modules.
+
+## GHC's error for SecWasm's printed `br_table` rule (plan, new item of 2026-10-03)
+
+`test/obligations/WrongBrTablePrintedRule.hs` writes the table of the first finding
+(`br_table 0 3` on a secret index, inside four blocks without results) the way the printed
+rule types it: the raise covers as many labels as the table has targets, two, and the target
+at depth 3 lies outside it. `GoodBrTable.hs` is the same table with the raise down to its
+deepest target. `test/obligations-must-not-compile.sh` (in the gate) checks that the first is
+rejected and the second accepted.
+
+```haskell
+table :: Instr m f '[ '[], '[], '[], '[]] ('Low ': 'Low ': 'Low ': 'Low ': pcs)
+                   ('High ': 'High ': 'Low ': 'Low ': pcs) 'NoDynamicCheck (('I32 ':~ 'High) ': s) anyOut
+table = IBrTable NothingCarried NoValuesFlow ANil (ReachesThere ReachesHere) [Here] (There (There (There Here)))
+```
+
+GHC 9.12.2 answers:
+
+```
+WrongBrTablePrintedRule.hs:13:100: error: [GHC-83865]
+    • Couldn't match type: y0 : '[] : xs10
+                     with: '[]
+      Expected: Elem '[] '[]
+        Actual: Elem '[] (y0 : '[] : xs10)
+    • In the first argument of ‘There’, namely ‘(There Here)’
+      In the first argument of ‘There’, namely ‘(There (There Here))’
+      In the sixth argument of ‘IBrTable’, namely
+        ‘(There (There (There Here)))’
+```
+
+That is: the default target is a position in the list of labels the table raises (`reach`,
+here two labels), and position 3 walks past its end.
+
+- **How the finding was found: not through this error.** The repository's history has no
+  transcription of the printed rule for GHC to reject. The first typed `IBrTable` (e705545,
+  20 September) tracked no pc at all; the next raised every entry; `TableReach`, which makes
+  the mismatch a type error, came with ea6e058 on 30 September, after the paper's corrected
+  example (25 September). So the text can say that the printed rule cannot be written with
+  the witness, and show the error, but not that GHC caught the bug.
+
+## What the toolchains emit by default (item 13a, 2026-10-12)
+
+For `wasm32-wasip1`, clang 23.1.0 of wasi-sdk 34 (`clang -dM -E`) and rustc 1.99.0
+(`rustc --print cfg`) enable the same features by default: mutable globals, sign extension,
+saturating conversions, multiple values, bulk memory and reference types. Neither enables
+vector instructions, tail calls, exceptions, multiple or 64-bit memories, extended constant
+expressions or garbage collection. Every feature the two toolchains use by default is
+implemented since e87e76a.
