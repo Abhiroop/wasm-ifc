@@ -54,6 +54,7 @@
   > stdin : H                  ; the standard streams' levels, for the WASI host
   > stdout : L
   > preopen /data : H          ; a preopened directory (by guest name) and all it contains
+  > listen 127.0.0.1:8080 : H  ; a socket the host listens on (by its address) and every connection it accepts
   > allow-declassify
   > secwasm-restrictions       ; impose the restrictions SecWasm's lift needs (see 'Restrictions')
   > no-local-splitting         ; type the locals as written, without splitting them into webs
@@ -153,6 +154,8 @@ data Policy = Policy
     , streamLevels :: Map Text SecLevel
     -- ^ by @stdin@, @stdout@, @stderr@
     , preopenLevels :: Map Text SecLevel
+    , listenerLevels :: Map Text SecLevel
+    -- ^ by the address the host listens on, as the run is given it
     , preservedGlobals :: [Word32]
     {- ^ the globals, by index, that code may write where the pc is secret, provided it restores
     them ('Syntax.Types.Preserved'): the stack pointer of compiled C, global 0 of what wasi-sdk
@@ -166,7 +169,7 @@ data Policy = Policy
     deriving stock (Eq, Show)
 
 emptyPolicy :: Policy
-emptyPolicy = Policy Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty [] Nothing Map.empty Map.empty Map.empty False LiftFree SplitIntoWebs Map.empty Map.empty [] Map.empty
+emptyPolicy = Policy Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty [] Nothing Map.empty Map.empty Map.empty False LiftFree SplitIntoWebs Map.empty Map.empty Map.empty [] Map.empty
 
 {- | Whether the validator splits every local into its webs before typing
   ("Validation.LocalWebs"), which it does unless the policy says otherwise. Typing the locals
@@ -300,6 +303,9 @@ parsePolicy source = foldM statement emptyPolicy (zip [1 ..] (T.lines source))
         ["preopen", guest] -> do
             l <- oneLevel lineNo body
             Right policy {preopenLevels = Map.insert guest l policy.preopenLevels}
+        ["listen", address] -> do
+            l <- oneLevel lineNo body
+            Right policy {listenerLevels = Map.insert address l policy.listenerLevels}
         _ -> Left (PolicySyntax lineNo (T.unwords headWords))
     functionLevels lineNo body = case break isArrow body of
         (ps, arrow : rs) -> do
@@ -339,6 +345,7 @@ mergePolicies a b = do
     loadDefaultsByExport <- agreeing "load-default export" a.loadDefaultsByExport b.loadDefaultsByExport
     streamLevels <- agreeing "stream" a.streamLevels b.streamLevels
     preopenLevels <- agreeing "preopen" a.preopenLevels b.preopenLevels
+    listenerLevels <- agreeing "listen" a.listenerLevels b.listenerLevels
     loadDefault <- case (a.loadDefault, b.loadDefault) of
         (Just x, Just y) | x /= y -> Left (PolicyConflict "load-default")
         (x, y) -> Right (x <|> y)
@@ -362,6 +369,7 @@ mergePolicies a b = do
             , localSplitting = if LocalsAsWritten `elem` [a.localSplitting, b.localSplitting] then LocalsAsWritten else SplitIntoWebs
             , streamLevels
             , preopenLevels
+            , listenerLevels
             , preservedGlobals = a.preservedGlobals ++ [i | i <- b.preservedGlobals, i `notElem` a.preservedGlobals]
             , tablesByIndex
             }

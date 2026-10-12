@@ -7,17 +7,24 @@
 -}
 module Main (main) where
 
+import Control.Concurrent (forkIO, threadDelay)
+import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
+import Control.Exception (IOException, try)
 import Control.Monad (forM_, void)
 import Data.Bifunctor (first)
 import Data.Bits (xor, (.&.), (.|.))
+import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as BL
 import Data.Either (isLeft, isRight)
 import Data.List (isInfixOf)
 import Data.Text (Text)
+import Data.Text qualified as T
 import Data.Word (Word32, Word8)
 import Hedgehog (Gen)
 import Hedgehog.Gen qualified as Gen
 import Hedgehog.Range qualified as Range
+import Network.Socket qualified as Net
+import Network.Socket.ByteString qualified as NetBS
 import System.Environment (lookupEnv)
 import Test.Hspec
 import Test.Hspec.Hedgehog (annotate, classify, failure, forAll, hedgehog, label, modifyMaxSuccess, (===))
@@ -240,10 +247,11 @@ spec = do
             elabRunWithPolicy "load-default : H" (withMemory [] [I32] [] [Const SI32 0, Load SI32 (MemArg 0 0 0)]) [] `shouldSatisfy` errorContaining "IllegalFlow \"result\""
         it "a module without functions assembles (the index space is empty, not wrapped around)" $
             void (elaborateModule (singleFunctionModule [] [] [] [] []) {functions = [], exports = []}) `shouldSatisfy` isRight
-        it "declares the levels of the standard streams and preopens for the host" $ do
-            let parsed = policy "stdout : H\npreopen /data : H"
+        it "declares the levels of the standard streams, preopens and listening sockets for the host" $ do
+            let parsed = policy "stdout : H\npreopen /data : H\nlisten 127.0.0.1:8080 : H"
             Map.lookup "stdout" parsed.streamLevels `shouldBe` Just High
             Map.lookup "/data" parsed.preopenLevels `shouldBe` Just High
+            Map.lookup "127.0.0.1:8080" parsed.listenerLevels `shouldBe` Just High
         it "the module's own ifc section carries a policy" $ do
             let declassifying = (singleFunctionModule [] [] [I32] [] [Const SI32 1, Relabel High, Declassify Low]) {customSections = [("ifc", "allow-declassify")]}
             elabRunModule declassifying [] `shouldBe` Right ["1"]
@@ -633,19 +641,65 @@ spec = do
             fmap describeCompletion secret `shouldBe` Left (Trapped (SecretRead (AccessAt 1 2)))
             public <- runWithWasi noHost program "f" []
             fmap describeCompletion public `shouldBe` Right "returned [I32Value 0]"
+        it "serves a connection on a socket the host listens on" $ do
+            (address, port) <- freeAddress
+            served <- serving (noHost {listeners = [address]}) echoesFourBytes
+            reply <- exchange port "ping" 4
+            reply `shouldBe` "ping"
+            served `shouldReturn` Right "returned [I32Value 0]"
+        it "a connection inherits the level of the socket it was accepted from" $ do
+            -- What arrives on a secret socket goes back to its connection, and not to stdout.
+            let secretSocket address = noHost {listeners = [address], descriptorLevels = DescriptorLevels Low Low Low Map.empty (Map.singleton address High)}
+            (address, port) <- freeAddress
+            served <- serving (secretSocket address) echoesFourBytes
+            reply <- exchange port "ping" 4
+            reply `shouldBe` "ping"
+            served `shouldReturn` Right "returned [I32Value 0]"
+            (address', port') <- freeAddress
+            leaked <- serving (secretSocket address') printsFourBytes
+            _ <- exchange port' "ping" 0
+            leaked `shouldReturn` Left (Trapped InformationFlowViolation)
+        it "the byte count of a read from a secret connection is secret" $ do
+            (address, port) <- freeAddress
+            let cfg = noHost {listeners = [address], descriptorLevels = DescriptorLevels Low Low Low Map.empty (Map.singleton address High)}
+            -- accept and receive as before, then a public load of the count stored at 16
+            counted <- serving cfg (socketModule (acceptAndReceive ++ [Drop, Const SI32 16, Load SI32 (MemArg 0 0 0)]))
+            _ <- exchange port "ping" 0
+            counted `shouldReturn` Left (Trapped (SecretRead (AccessAt 6 3)))
+        it "a socket call on what is not a connection fails, and a non-blocking accept does not wait" $ do
+            (address, _) <- freeAddress
+            let cfg = noHost {listeners = [address]}
+                run body = fmap describeCompletion <$> runWithWasi cfg (either (error . show) id (load (socketModule body))) "f" []
+            -- sock_recv on stdin: ENOTSOCK (57); on the listening socket: ENOTCONN (53)
+            run [Const SI32 0, Const SI32 8, Const SI32 1, Const SI32 0, Const SI32 16, Const SI32 20, Call (FunctionIdx 1)] `shouldReturn` Right "returned [I32Value 57]"
+            run [Const SI32 3, Const SI32 8, Const SI32 1, Const SI32 0, Const SI32 16, Const SI32 20, Call (FunctionIdx 1)] `shouldReturn` Right "returned [I32Value 53]"
+            -- fd_fdstat_set_flags(3, NONBLOCK), then sock_accept with nobody connecting: EAGAIN (6)
+            run [Const SI32 3, Const SI32 4, Call (FunctionIdx 3), Drop, Const SI32 3, Const SI32 0, Const SI32 0, Call (FunctionIdx 0)] `shouldReturn` Right "returned [I32Value 6]"
+        it "a poll waits for a socket, and what it reports about a secret one is secret" $ do
+            -- Two subscriptions at 0 and 48: to read from descriptor 3 (user data 5), and a clock that is
+            -- due after a millisecond (user data 7). Nobody connects, so the one event, at 128, is the clock's.
+            let subscribe =
+                    [Const SI32 0, Const SI32 5, Store SI32 (MemArg 0 0 0), Const SI32 8, Const SI32 1, Store SI32 (MemArg 0 0 0), Const SI32 16, Const SI32 3, Store SI32 (MemArg 0 0 0)]
+                        ++ [Const SI32 48, Const SI32 7, Store SI32 (MemArg 0 0 0), Const SI32 64, Const SI32 1, Store SI32 (MemArg 0 0 0), Const SI32 72, Const SI32 1000000, Store SI32 (MemArg 0 0 0)]
+                body = subscribe ++ [Const SI32 0, Const SI32 128, Const SI32 2, Const SI32 256, Call (FunctionIdx 5), Drop, Const SI32 128, Load SI32 (MemArg 0 0 0)]
+                run levels = do
+                    (address, _) <- freeAddress
+                    fmap describeCompletion <$> runWithWasi (noHost {listeners = [address], descriptorLevels = DescriptorLevels Low Low Low Map.empty (levels address)}) (either (error . show) id (load (socketModule body))) "f" []
+            run (const Map.empty) `shouldReturn` Right "returned [I32Value 7]"
+            run (`Map.singleton` High) `shouldReturn` Left (Trapped (SecretRead (AccessAt 6 6)))
         it "a path must be public" $ do
             -- path_open in the preopened directory (fd 3) of the one-byte path at 0.
             let pathOpen = wasiImport "path_open" (FuncType [I32, I32, I32, I32, I32, I64, I64, I32, I32] [I32])
                 open storePath = storePath ++ [Const SI32 3, Const SI32 0, Const SI32 0, Const SI32 1, Const SI32 0, Const SI64 0, Const SI64 0, Const SI32 0, Const SI32 16, Call (FunctionIdx 0)]
                 program storePath = either (error . show) id (load (wasiModule pathOpen (open storePath) [I32]))
-                cfg = WasiConfig [] [] [Preopen "/" "test"] publicDescriptors
+                cfg = WasiConfig [] [] [Preopen "/" "test"] [] publicDescriptors
                 name = [Const SI32 0, Const SI32 0x7A]
             secret <- runWithWasi cfg (program (name ++ [Annotated High (StoreN SI32 1 (MemArg 0 0 0))])) "f" []
             fmap describeCompletion secret `shouldBe` Left (Trapped InformationFlowViolation)
             public <- runWithWasi cfg (program (name ++ [StoreN SI32 1 (MemArg 0 0 0)])) "f" []
             fmap describeCompletion public `shouldBe` Right "returned [I32Value 44]"
         it "args_sizes_get reports the argument count and buffer size" $ do
-            let cfg = WasiConfig ["prog", "xy"] [] [] publicDescriptors
+            let cfg = WasiConfig ["prog", "xy"] [] [] [] publicDescriptors
                 body = [Const SI32 0, Const SI32 4, Call (FunctionIdx 0), Drop, Const SI32 0, Load SI32 (MemArg 0 0 0), Const SI32 4, Load SI32 (MemArg 0 0 0), Add SI32]
             completion <- runWithWasi cfg (either (error . show) id (load (wasiModule (wasiImport "args_sizes_get" (FuncType [I32, I32] [I32])) body [I32]))) "f" []
             fmap describeCompletion completion `shouldBe` Right "returned [I32Value 10]"
@@ -1148,7 +1202,93 @@ wasiModule imported body results =
     importType (RawImport _ _ (ImportFunc ft)) = ft
 
 noHost :: WasiConfig
-noHost = WasiConfig [] [] [] publicDescriptors
+noHost = WasiConfig [] [] [] [] publicDescriptors
+
+{- | A module for the socket tests: it imports @sock_accept@, @sock_recv@, @sock_send@,
+  @fd_fdstat_set_flags@, @fd_write@ and @poll_oneoff@ as functions 0 to 5, and exports @f@
+  (function 6), with the given body, which returns an i32.
+-}
+socketModule :: [RawInstr] -> RawModule
+socketModule body =
+    (moduleOf [onePageMemory] [RawFunction (FuncType [] [I32]) [] body] (FunctionIdx 6))
+        { imports = zipWith wasiImport names signatures
+        , types = signatures ++ [FuncType [] [I32]]
+        }
+  where
+    names = ["sock_accept", "sock_recv", "sock_send", "fd_fdstat_set_flags", "fd_write", "poll_oneoff"]
+    signatures =
+        [ FuncType [I32, I32, I32] [I32]
+        , FuncType [I32, I32, I32, I32, I32, I32] [I32]
+        , FuncType [I32, I32, I32, I32, I32] [I32]
+        , FuncType [I32, I32] [I32]
+        , FuncType [I32, I32, I32, I32] [I32]
+        , FuncType [I32, I32, I32, I32] [I32]
+        ]
+
+{- | Accept a connection on descriptor 3 (its number goes to address 0) and receive at most
+  four bytes from it at 64, through the iovec at 8; the count goes to 16 and the flags to 20.
+  Leaves the sum of the two error numbers.
+-}
+acceptAndReceive :: [RawInstr]
+acceptAndReceive =
+    [ Const SI32 3
+    , Const SI32 0
+    , Const SI32 0
+    , Call (FunctionIdx 0)
+    , Const SI32 8
+    , Const SI32 64
+    , Store SI32 (MemArg 0 0 0)
+    , Const SI32 12
+    , Const SI32 4
+    , Store SI32 (MemArg 0 0 0)
+    , Const SI32 0
+    , Load SI32 (MemArg 0 0 0)
+    , Const SI32 8
+    , Const SI32 1
+    , Const SI32 0
+    , Const SI32 16
+    , Const SI32 20
+    , Call (FunctionIdx 1)
+    , Add SI32
+    ]
+
+-- | Send what was received back on the connection; print it on stdout instead.
+echoesFourBytes, printsFourBytes :: RawModule
+echoesFourBytes = socketModule (acceptAndReceive ++ [Const SI32 0, Load SI32 (MemArg 0 0 0), Const SI32 8, Const SI32 1, Const SI32 0, Const SI32 24, Call (FunctionIdx 2), Add SI32])
+printsFourBytes = socketModule (acceptAndReceive ++ [Const SI32 1, Const SI32 8, Const SI32 1, Const SI32 24, Call (FunctionIdx 4), Add SI32])
+
+-- | A local address nothing listens on, as the host takes it, and its port.
+freeAddress :: IO (Text, Net.PortNumber)
+freeAddress = do
+    probe <- Net.socket Net.AF_INET Net.Stream Net.defaultProtocol
+    Net.bind probe (Net.SockAddrInet 0 (Net.tupleToHostAddress (127, 0, 0, 1)))
+    port <- Net.socketPort probe
+    Net.close probe
+    pure (T.pack ("127.0.0.1:" ++ show port), port)
+
+-- | Run a module's export @f@ under a host in another thread; the action waits for how it ended.
+serving :: WasiConfig -> RawModule -> IO (IO (Either RunError String))
+serving cfg m = do
+    ended <- newEmptyMVar
+    _ <- forkIO (runWithWasi cfg (either (error . show) id (load m)) "f" [] >>= putMVar ended . fmap describeCompletion)
+    pure (takeMVar ended)
+
+-- | Connect to a local port (once something listens on it), send, and read so many bytes of reply.
+exchange :: Net.PortNumber -> BS.ByteString -> Int -> IO BS.ByteString
+exchange port message expected = do
+    client <- Net.socket Net.AF_INET Net.Stream Net.defaultProtocol
+    let connecting :: Int -> IO ()
+        connecting attempts = do
+            outcome <- try (Net.connect client (Net.SockAddrInet port (Net.tupleToHostAddress (127, 0, 0, 1))))
+            case outcome of
+                Right () -> pure ()
+                Left (_ :: IOException) | attempts > 0 -> threadDelay 20000 >> connecting (attempts - 1)
+                Left err -> ioError err
+    connecting 200
+    NetBS.sendAll client message
+    reply <- if expected > 0 then NetBS.recv client expected else pure BS.empty
+    Net.close client
+    pure reply
 
 describeCompletion :: Completion -> String
 describeCompletion (Ran _ results) = "returned " ++ show results

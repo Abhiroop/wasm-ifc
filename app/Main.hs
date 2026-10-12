@@ -79,6 +79,9 @@ usage =
         , "                                accept only programs SecWasm's rules also type (the policy"
         , "                                statement of the same name)"
         , "          --dir HOST[::GUEST]   preopen a host directory under the guest name (default: the same)"
+        , "          --listen HOST:PORT    listen on a TCP address; the sockets are the descriptors after the"
+        , "                                preopened directories, in order (a policy gives one a level with"
+        , "                                `listen HOST:PORT : H`)"
         , "          --env NAME=VALUE      an environment variable for the program"
         , ""
         , "The embedding program observes what invoke and get deliver, so both refuse an export"
@@ -92,13 +95,14 @@ usage =
 -- | The options before the module path.
 data Options = Options
     { dirs :: [Preopen]
+    , listenAddresses :: [Text]
     , vars :: [(Text, Text)]
     , policyFile :: Maybe FilePath
     , restrictionsFlag :: Restrictions
     }
 
 parseOptions :: [String] -> Either String (Options, [String])
-parseOptions = go (Options [] [] Nothing LiftFree)
+parseOptions = go (Options [] [] [] Nothing LiftFree)
   where
     go options ("--policy" : file : rest) = go options {policyFile = Just file} rest
     go options ("--secwasm-restrictions" : rest) = go options {restrictionsFlag = SecWasmRestrictions} rest
@@ -107,6 +111,7 @@ parseOptions = go (Options [] [] Nothing LiftFree)
                 [h, g] -> (T.unpack h, g)
                 _ -> (spec, T.pack spec)
          in go options {dirs = options.dirs ++ [Preopen guest host]} rest
+    go options ("--listen" : address : rest) = go options {listenAddresses = options.listenAddresses ++ [T.pack address]} rest
     go options ("--env" : spec : rest) = case T.breakOn "=" (T.pack spec) of
         (name, value) | not (T.null value) -> go options {vars = options.vars ++ [(name, T.drop 1 value)]} rest
         _ -> Left ("--env expects NAME=VALUE, got " ++ spec)
@@ -118,12 +123,14 @@ configFor options policy path programArgs =
         { arguments = map T.pack (takeFileName path : programArgs)
         , environment = options.vars
         , preopens = options.dirs
+        , listeners = options.listenAddresses
         , descriptorLevels =
             DescriptorLevels
                 { standardInput = stream "stdin"
                 , standardOutput = stream "stdout"
                 , standardError = stream "stderr"
                 , preopenLevels = policy.preopenLevels
+                , listenerLevels = policy.listenerLevels
                 }
         }
   where

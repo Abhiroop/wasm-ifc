@@ -241,7 +241,8 @@ the labels (2026-10-06, d2839ff)"; `bench/results/2026-10-06-d2839ff*.json`; dri
   table, the operands, and the names in a directory (public in the model of `def:swpp`), and
   also on whether an operation on a secret file fails, which the model does not cover. The
   paper should keep that limit stated.
-- Sockets still return `ENOTSOCK`, `proc_raise` `ENOSYS`.
+- Sockets still return `ENOTSOCK`, `proc_raise` `ENOSYS`. (Sockets: served since 2026-10-12, see
+  "WASI sockets" below.)
 - Unit tests: a secret iovec array to a public descriptor traps; the count of a read from a
   secret descriptor is secret; a secret path traps. Spec suite and wasi-testsuite unchanged.
 
@@ -336,7 +337,8 @@ on the same inputs and requires the same result, public global and memory (2,000
 
 - Item 9, remainder: the timing sweeps again on a quiet machine, with wasm3 and, if a
   runnable build is found, WAMR (`PRE=… ./bench/sweep-labels.sh`).
-- Items 12–14: Lean; the rest of WebAssembly 3.0; WASI sockets.
+- Items 12–14: Lean (not started); the rest of WebAssembly 3.0 (done but for typed function
+  references and garbage collection, see "Where coverage stands"); WASI sockets (done).
 
 ## The 3.0 suite (item 13, first step, 2026-10-08)
 
@@ -604,6 +606,43 @@ implemented since e87e76a.
   `throw.wast` and `throw_ref.wast` pass in full. The main module of `try_table.wast` imports a
   tag from another module, which is not supported (42 assertions skipped). Four unit examples
   (`test/Spec.hs`, "exceptions").
+
+## WASI sockets (item 14, 2026-10-12)
+
+- **What:** the four socket calls of WASI Preview 1 (`sock_accept`, `sock_recv`, `sock_send`,
+  `sock_shutdown`) on sockets the host listens on. `wasm-ifc run --listen HOST:PORT` gives the
+  module a listening TCP socket as the descriptor after the preopened directories (the
+  interface has no call that makes a socket, so this is all it allows). `fd_read`, `fd_write`,
+  `fd_close`, `fd_fdstat_get`, `fd_fdstat_set_flags` (non-blocking) and `poll_oneoff` work on
+  them. New dependency: the `network` package.
+- **The rule:** the policy line `listen HOST:PORT : H` gives a listening socket a level, like
+  `preopen` gives one to a directory, and **a connection inherits the level of the socket it
+  was accepted from**. Then the boundary rule of item 11 applies unchanged: what `sock_send`
+  takes from memory (the data and the iovec array) must flow into the connection's level; what
+  `sock_recv` stores (the data, the count, the flags) carries it. The new descriptor of
+  `sock_accept` is public, like that of `path_open`, and so are the error codes.
+- **One addition to item 11's rule, for the paper track to confirm:** the events of
+  `poll_oneoff` and their count were public, since only the subscriptions decided them. With a
+  subscription to read from a socket they say whether the socket was ready, so they are now
+  stored at the join of the levels of the sockets subscribed to (public if there is none).
+- **Not covered, as before:** when a peer connects or sends is visible in how long a call
+  waits, and in whether a non-blocking call reports `EAGAIN`. Both are outside a
+  termination-insensitive statement; the second is an instance of "error codes are as the host
+  reports them" (item 11).
+- **Not provided:** `MSG_PEEK` and `MSG_WAITALL` of `sock_recv` (`ENOTSUP`); UDP; outgoing
+  connections (Preview 1 has no `connect`).
+- **Evidence:** six unit examples (`test/Spec.hs`, "WASI imports": a connection is served; it
+  inherits its socket's level, so its data goes back to it and not to stdout; the count of a
+  receive is secret; calls on what is no connection fail, and a non-blocking accept does not
+  wait; a poll on a secret socket reports at its level; the policy line parses). A C echo
+  server built with wasi-sdk 34 runs through libc's `poll`, `accept`, `recv`, `send` and
+  `shutdown` (checked by hand, not in the gate). **Case study `casestudies/service/`:** the
+  password checker as a service on a secret socket, 2 policy lines; it runs for a weak and a
+  strong password, both leaking variants trap at the report, and with the socket public the
+  leaking variant runs (`./casestudies/run.py service`, 5 of 5 as expected; see
+  `casestudies/README.md` for the two functions the coarse `load-default func` forces on the
+  program).
+- A run now closes what the host still holds open when it ends (files, sockets).
 
 ## A load no longer boxes its word (2026-10-12)
 

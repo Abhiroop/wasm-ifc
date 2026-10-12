@@ -25,7 +25,7 @@ are summarised here, not repeated.
   level from the policy, like a global.
 - Evidence: a two-run noninterference property test (100,000 cases, no counterexample); case
   studies with secrets in `casestudies/` (the password checker, SecWasm's examples, WANILLA's
-  suite as an oracle, the wasi-testsuite's C programs, PolyBench).
+  suite as an oracle, the wasi-testsuite's C programs, PolyBench, a service on a secret socket).
 
 ## Information flow
 

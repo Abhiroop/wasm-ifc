@@ -9,12 +9,15 @@ the running time. The results go to casestudies/results/<date>-<commit>.json.
     ./casestudies/run.py [STUDY...]      # all studies, or those named
 
 A study is a list of programs, each with its policy, the directories it is given (created
-fresh for every run, with the files listed), its arguments, and the outcome expected.
+fresh for every run, with the files listed), its arguments, and the outcome expected. A
+program with a "client" is a server: it is given a socket on a free local port (`{address}`
+in its policy), and the runner connects, sends the client's message and records the answer.
 """
 import datetime
 import json
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -72,6 +75,21 @@ def polybench_study():
     ]
 
 
+def service_study():
+    """The password checker as a service on a secret socket (casestudies/service/): the
+    password arrives on a connection, the verdict goes back on it, the report to the operator
+    on the standard output is public."""
+    policy = "listen {address} : H\nload-default func {__original_main} : H\n"
+    weak, strong = {"send": "letmein\n"}, {"send": "correct horse battery staple\n"}
+    return [
+        {"name": "service (weak password)", "wasm": "service/service.wasm", "policy_text": policy, "client": weak, "expect": "ran"},
+        {"name": "service (strong password)", "wasm": "service/service.wasm", "policy_text": policy, "client": strong, "expect": "ran"},
+        {"name": "service-leak-control", "wasm": "service/service-leak-control.wasm", "policy_text": policy, "client": weak, "expect": "trapped"},
+        {"name": "service-leak-memory", "wasm": "service/service-leak-memory.wasm", "policy_text": policy, "client": weak, "expect": "trapped"},
+        {"name": "service (socket public)", "wasm": "service/service-leak-memory.wasm", "policy_text": "listen {address} : L\n", "client": weak, "expect": "ran"},
+    ]
+
+
 def frames_study():
     """A helper with a stack frame called under a secret pc (casestudies/frames/): with the
     shadow-stack pointer declared preserved, and without."""
@@ -99,6 +117,7 @@ STUDIES = {
     "wasi-c": wasi_c_study(),
     "polybench": polybench_study(),
     "frames": frames_study(),
+    "service": service_study(),
 }
 
 
@@ -137,8 +156,50 @@ def function_indices(wasm):
     return {m.group(2): int(m.group(1)) for m in re.finditer(r"^ - func\[(\d+)\] sig=\d+ <([^>]+)>", listing, re.M)}
 
 
-def attempt(wasm_ifc, program, wasm, policy, scratch):
-    """One run in fresh directories: the result, the time, and the files the run created."""
+def free_address():
+    """A local TCP address that nothing listens on."""
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return f"127.0.0.1:{probe.getsockname()[1]}"
+
+
+def serve(command, address, client):
+    """Run a server, connect to it once it listens, send the client's message and read the
+    answer until the server closes the connection or ends. A program that is rejected never
+    listens, and one that traps closes nothing: the answer is then what had arrived."""
+    host, port = address.rsplit(":", 1)
+    server = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    answer = b""
+    connection = None
+    while connection is None and server.poll() is None:
+        try:
+            connection = socket.create_connection((host, int(port)), timeout=30)
+        except OSError:
+            time.sleep(0.02)
+    if connection is not None:
+        try:
+            connection.sendall(client["send"].encode())
+            connection.settimeout(0.2)
+            while True:
+                try:
+                    chunk = connection.recv(4096)
+                except socket.timeout:
+                    if server.poll() is not None:
+                        break
+                    continue
+                if not chunk:
+                    break
+                answer += chunk
+        except OSError:
+            pass
+        connection.close()
+    stdout, stderr = server.communicate(timeout=60)
+    return subprocess.CompletedProcess(command, server.returncode, stdout, stderr), answer.decode(errors="replace")
+
+
+def attempt(wasm_ifc, program, wasm, policy, scratch, address=None):
+    """One run in fresh directories: the result, the time, the files the run created, and
+    what a server answered its client."""
     run_dir = Path(tempfile.mkdtemp(dir=scratch))
     dirs = []
     for i, d in enumerate(program.get("dirs", [])):
@@ -154,8 +215,13 @@ def attempt(wasm_ifc, program, wasm, policy, scratch):
     if "invoke" in program:
         command = [wasm_ifc, "invoke", "--policy", str(policy), str(wasm), program["invoke"], *program.get("args", [])]
     else:
-        command = [wasm_ifc, "run", "--policy", str(policy), *dirs, str(wasm), *program.get("args", [])]
-    result = run(command)
+        listen = ["--listen", address] if address else []
+        command = [wasm_ifc, "run", "--policy", str(policy), *dirs, *listen, str(wasm), *program.get("args", [])]
+    answer = None
+    if "client" in program:
+        result, answer = serve(command, address, program["client"])
+    else:
+        result = run(command)
     elapsed = time.monotonic() - started
     written = {}
     for i, d in enumerate(program.get("dirs", [])):
@@ -163,7 +229,7 @@ def attempt(wasm_ifc, program, wasm, policy, scratch):
             for f in sorted((run_dir / f"dir{i}").iterdir()):
                 if f.name not in d["files"]:
                     written[f"{d['guest']}/{f.name}"] = f.read_text(errors="replace")
-    return result, elapsed, written
+    return result, elapsed, written, answer
 
 
 def evaluate(wasm_ifc, program):
@@ -173,17 +239,19 @@ def evaluate(wasm_ifc, program):
         if "policy_text" in program:
             policy = Path(scratch) / "policy"
             base = program["policy_text"]
+            address = free_address() if "client" in program else None
             if "{" in base:
-                base = base.format(**function_indices(wasm))
+                base = base.format(address=address, **function_indices(wasm))
         else:
             policy = HERE / program["policy"]
             base = policy.read_text()
+            address = None
         # With "declare", every load that traps on a secret byte is declared secret, as a user
         # reading the traps would do, until the program runs through or fails otherwise.
         while True:
             if "policy_text" in program:
                 policy.write_text(base + "".join(line + "\n" for line in declared))
-            result, elapsed, written = attempt(wasm_ifc, program, wasm, policy, scratch)
+            result, elapsed, written, answer = attempt(wasm_ifc, program, wasm, policy, scratch, address)
             trap = re.search(r"declare it with `(load \d+ \d+) : H`", result.stderr)
             if program.get("declare") and trap and len(declared) < 500:
                 declared.append(trap.group(1) + " : H")
@@ -213,6 +281,7 @@ def evaluate(wasm_ifc, program):
         "site": site_of(error) if error else None,
         "stdout": result.stdout,
         "files_written": written,
+        "answer": answer,
         "inference": lift_free,
         "secwasm_restrictions": restricted["verdict"],
         "lift_shape": lift_free["verdict"] == "accepted" and restricted["verdict"] != "accepted",

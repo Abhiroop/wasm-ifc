@@ -38,8 +38,8 @@ Levels come from a policy (`Validation.Policy`), one text format with two carrie
 module's own `ifc` custom section, keyed by function index, global index and memory-access
 position, and a file given with `--policy`, keyed by import and export names. It declares
 function types with the bound on their calling context (`export check : H -{L}-> L`), globals,
-memory accesses and regions, and the levels of the standard streams and preopened directories
-the WASI host connects to. Stores need no declaration, since their level is inferred; loads
+memory accesses and regions, and the levels of the standard streams, the preopened directories
+and the listening sockets the WASI host connects to. Stores need no declaration, since their level is inferred; loads
 take a site declaration, a region, or a default. Annotations can also be written in the source
 program as calls to an import module `ifc` (`secret_i32`, `load_secret_i32`, `declassify_i32`,
 …), which a plain runtime serves with a shim and this one rewrites into the instructions they
@@ -89,7 +89,7 @@ cabal build
 cabal run wasm-ifc -- check  [--policy P] <file.wasm>                      # decode and validate
 cabal run wasm-ifc -- explain [--policy P] <file.wasm>                     # and show what inference raised
 cabal run wasm-ifc -- invoke [--policy P] <file.wasm> <export> [args...]   # run an export
-cabal run wasm-ifc -- run    [--policy P] [--dir D[::G]]... [--env K=V]... <file.wasm> [args...]   # a WASI program
+cabal run wasm-ifc -- run    [--policy P] [--dir D[::G]]... [--listen HOST:PORT]... [--env K=V]... <file.wasm> [args...]   # a WASI program
 cabal run wasm-ifc -- get    [--policy P] <file.wasm> <global>             # an exported global
 
 ./scripts/gate.sh   # format, -Werror build, all test suites, lint, samples
@@ -111,7 +111,9 @@ WebAssembly 3.0 release, passes for this subset (62,137 assertions over 257 scri
 failing; the rest need features listed below, and `scripts/spec-report.py` counts them by
 feature), and so does
 every program in the official wasi-testsuite (72 of 72), over the complete WASI Preview 1
-interface.
+interface. Its four socket calls are served on sockets the host listens on (`--listen`): a
+module accepts connections, receives and sends, and a connection has the level of the socket
+it was accepted from.
 
 Information flow: SecWasm's typing rules in full, with the repairs of its printed rules,
 including the bound on function types, its subtyping as explicit witnesses, per-byte memory

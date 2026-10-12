@@ -145,3 +145,24 @@ byte is odd, and reports `done` on its standard output. The helper calls another
 it lowers the shadow-stack pointer on entry and raises it on exit (a leaf function uses the
 stack without moving the pointer). With `preserved global 0` the program runs for an odd and
 an even key; without it, the module is rejected at the helper's first write of the pointer.
+
+## The password checker as a service (`service/`)
+
+`service.c` accepts one connection on the socket the host listens on for it, reads a password
+from the connection, answers on it whether the password is weak, and reports `served 1 request`
+on its standard output. The policy has two lines: the socket is secret (`listen ADDRESS : H`),
+and so are the loads of `main`. A connection inherits the level of its socket, so the password
+and the count of its bytes arrive secret, the verdict may go back on the connection, and the
+report must not depend on either. `run.py` gives the program a free local port, connects, sends
+a password and records the answer.
+
+The service runs for a weak and for a strong password. The two leaking variants send their
+verdict and then trap at the write of the report: one puts the hash into it, the other chooses
+its length by whether the password was weak. With the socket declared public the variant with
+the hash runs, and prints it.
+
+Two functions of the program exist for the policy's sake. `load-default func` makes every load
+of `main` secret, and two of them must stay public: the load of the connection's descriptor,
+which the host stores in memory, and the loads by which the compiler copies the report's text
+from the module's data. Each is in a function of its own (`accept_connection`,
+`begin_report`). A policy that names the secret loads one by one would not need them.

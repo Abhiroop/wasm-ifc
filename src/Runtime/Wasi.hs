@@ -12,7 +12,11 @@
   attaches to it; resolves guest paths inside their preopened directory (a path may not climb
   above it, nor be absolute); speaks the interface's binary layouts; and reaches the file
   system through POSIX calls so that errnos, inodes, links and times are the real ones.
-  Sockets are not provided.
+
+  Of sockets the interface has four calls, none of which makes one: a module accepts
+  connections on the sockets the host listens on for it ('WasiConfig.listeners'), and reads
+  and writes on what it accepted. A listening socket has a level like a directory's, and a
+  connection accepted from it inherits that level.
 -}
 module Runtime.Wasi (
     WasiConfig (..),
@@ -29,9 +33,9 @@ module Runtime.Wasi (
     runWithWasi,
 ) where
 
-import Control.Concurrent (threadDelay, yield)
-import Control.Exception (IOException, try)
-import Control.Monad (foldM, forM, void, when)
+import Control.Concurrent (threadDelay, threadWaitRead, threadWaitReadSTM, yield)
+import Control.Exception (IOException, finally, try)
+import Control.Monad (foldM, forM, unless, void, when)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Trans.Except (ExceptT (..), except, runExceptT, throwE)
 import Data.Bits (complement, shiftL, testBit, (.&.), (.|.))
@@ -52,7 +56,10 @@ import Data.Word (Word16, Word32, Word64, Word8)
 import Foreign.C.Error qualified as C
 import Foreign.Ptr (castPtr)
 import GHC.Clock (getMonotonicTimeNSec)
+import GHC.Conc (atomically, orElse, retry)
 import GHC.IO.Exception (IOErrorType (..), IOException (..))
+import Network.Socket qualified as Net
+import Network.Socket.ByteString qualified as NetBS
 import System.CPUTime (getCPUTime)
 import System.Directory (listDirectory)
 import System.FilePath (takeDirectory, (</>))
@@ -97,8 +104,9 @@ import System.Posix.IO (
     fdWriteBuf,
     openFd,
  )
-import System.Posix.Types (Fd)
+import System.Posix.Types (Fd (..))
 import System.Posix.Unistd (fileSynchronise)
+import System.Timeout qualified as Timeout
 
 import Runtime.Bytes (bytesOfWord32, bytesOfWord64, word32OfBytes, word64OfBytes)
 import Runtime.Host (WasiFunc (..))
@@ -120,27 +128,31 @@ data WasiConfig = WasiConfig
     , environment :: [(Text, Text)]
     , preopens :: [Preopen]
     -- ^ become descriptors 3, 4, … in order
+    , listeners :: [Text]
+    -- ^ TCP addresses, as @host:port@, to listen on: the descriptors after the preopens, in order
     , descriptorLevels :: DescriptorLevels
     }
 
-{- | The security levels of what the host connects the module to: each standard stream, and
-  each preopened directory by its guest name; whatever is opened under a directory inherits
-  its level. A descriptor's level is the level of every byte a call stores about it (the data
+{- | The security levels of what the host connects the module to: each standard stream, each
+  preopened directory by its guest name, and each listening socket by its address; whatever is
+  opened under a directory, or accepted from a socket, inherits its level. A descriptor's level is the level of every byte a call stores about it (the data
   read from it, byte counts, positions, attributes, directory entries) and the most secret
   byte a call may take from memory on its behalf (the data written to it, the arrays that list
   the buffers; see 'gather'). "Validation.Policy" carries the levels as @stdin : H@,
-  @stdout : H@, @stderr : H@ and @preopen /data : H@. Everything undeclared is public.
+  @stdout : H@, @stderr : H@, @preopen /data : H@ and @listen 127.0.0.1:8080 : H@. Everything
+  undeclared is public.
 -}
 data DescriptorLevels = DescriptorLevels
     { standardInput :: SecLevel
     , standardOutput :: SecLevel
     , standardError :: SecLevel
     , preopenLevels :: Map Text SecLevel
+    , listenerLevels :: Map Text SecLevel
     }
 
--- | Every stream and directory public: the levels of a run without a policy.
+-- | Every stream, directory and socket public: the levels of a run without a policy.
 publicDescriptors :: DescriptorLevels
-publicDescriptors = DescriptorLevels Low Low Low Map.empty
+publicDescriptors = DescriptorLevels Low Low Low Map.empty Map.empty
 
 -- | A host directory the module may reach, under the name the guest sees.
 data Preopen = Preopen
@@ -164,21 +176,49 @@ data Resource
       Directory FilePath (Maybe Text)
     | -- | an open regular file: host path and POSIX descriptor
       RegularFile FilePath Fd
+    | -- | a socket the host listens on for the module
+      ListeningSocket Net.Socket
+    | -- | a connection accepted from a listening socket
+      Connection Net.Socket
 
 data WasiHost = WasiHost
     { config :: WasiConfig
     , descriptors :: IORef (Map Word32 Descriptor)
     }
 
--- | A host with the standard streams at 0–2 and the preopens from 3 on.
+{- | A host with the standard streams at 0–2, the preopens from 3 on, and the listening sockets
+  after them. An address that cannot be listened on is an 'IOException'.
+-}
 newHost :: WasiConfig -> IO WasiHost
 newHost cfg = do
+    sockets <- forM cfg.listeners listenOn
     let stream h = Descriptor (StandardStream h) streamRights 0 0
         levels = cfg.descriptorLevels
         streams = [(0, stream stdin levels.standardInput), (1, stream stdout levels.standardOutput), (2, stream stderr levels.standardError)]
         dirs = [(fd, Descriptor (Directory p.hostPath (Just p.guestPath)) directoryRights (directoryRights .|. fileRights) 0 (Map.findWithDefault Low p.guestPath levels.preopenLevels)) | (fd, p) <- zip [3 ..] cfg.preopens]
-    table <- newIORef (Map.fromList (streams ++ dirs))
+        firstSocket = 3 + fromIntegral (length cfg.preopens)
+        listening =
+            [ (fd, Descriptor (ListeningSocket socket) listenerRights connectionRights 0 (Map.findWithDefault Low address levels.listenerLevels))
+            | (fd, address, socket) <- zip3 [firstSocket ..] cfg.listeners sockets
+            ]
+    table <- newIORef (Map.fromList (streams ++ dirs ++ listening))
     pure (WasiHost cfg table)
+
+-- | Listen on a TCP address written @host:port@ (an IPv6 host in brackets).
+listenOn :: Text -> IO Net.Socket
+listenOn address = do
+    let (before, port) = T.breakOnEnd ":" address
+        hostName = T.dropAround (`elem` ['[', ']']) (T.dropEnd 1 before)
+        hints = Net.defaultHints {Net.addrSocketType = Net.Stream, Net.addrFlags = [Net.AI_NUMERICSERV]}
+    candidates <- Net.getAddrInfo (Just hints) (Just (T.unpack hostName)) (Just (T.unpack port))
+    case candidates of
+        [] -> ioError (userError ("no address to listen on for " ++ T.unpack address))
+        info : _ -> do
+            socket <- Net.openSocket info
+            Net.setSocketOption socket Net.ReuseAddr 1
+            Net.bind socket (Net.addrAddress info)
+            Net.listen socket 16
+            pure socket
 
 -- *** Rights ***
 
@@ -186,19 +226,23 @@ newHost cfg = do
   them (as wasmtime grants), and @path_open@ narrows a new descriptor's rights to what was
   asked for; @fd_fdstat_set_rights@ can only narrow further.
 -}
-rightFdRead, rightFdSeek, rightFdWrite, rightFdTell :: Int
+rightFdRead, rightFdSeek, rightFdWrite, rightFdTell, rightSockShutdown, rightSockAccept :: Int
 rightFdRead = 1
 rightFdSeek = 2
 rightFdTell = 5
 rightFdWrite = 6
+rightSockShutdown = 28
+rightSockAccept = 29
 
 rightsOf :: [Int] -> Word64
 rightsOf = foldr (\bit acc -> acc .|. (1 `shiftL` bit)) 0
 
-fileRights, directoryRights, streamRights :: Word64
+fileRights, directoryRights, streamRights, listenerRights, connectionRights :: Word64
 fileRights = rightsOf [0, rightFdRead, rightFdSeek, 3, 4, rightFdTell, rightFdWrite, 7, 8, 21, 22, 23, 27]
 directoryRights = rightsOf [3, 4, 7, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 23, 24, 25, 26, 27]
 streamRights = rightsOf [0, rightFdRead, 3, 4, rightFdWrite, 7, 21, 27]
+listenerRights = rightsOf [3, 21, 27, rightSockAccept]
+connectionRights = rightsOf [rightFdRead, 3, rightFdWrite, 21, 27, rightSockShutdown]
 
 -- *** Error numbers ***
 
@@ -442,6 +486,8 @@ replaceFd host fd descriptor = atomicModifyIORef' host.descriptors (\table -> (M
 
 closeResource :: Resource -> IO ()
 closeResource (RegularFile _ fd) = closeFd fd
+closeResource (ListeningSocket socket) = Net.close socket
+closeResource (Connection socket) = Net.close socket
 closeResource _ = pure ()
 
 -- | The operation needs this right on the descriptor (the interface's capability check).
@@ -459,7 +505,7 @@ fileOf :: Descriptor -> Host Fd
 fileOf descriptor = case descriptor.resource of
     RegularFile _ fd -> pure fd
     Directory _ _ -> throwE Isdir
-    StandardStream _ -> throwE Spipe
+    _ -> throwE Spipe
 
 -- *** Paths ***
 
@@ -571,6 +617,8 @@ descriptorStatus descriptor = case descriptor.resource of
     StandardStream _ -> hostIO (getFdStatus 1)
     Directory path _ -> statPath True path
     RegularFile _ fd -> hostIO (getFdStatus fd)
+    ListeningSocket socket -> hostIO (Net.withFdSocket socket (getFdStatus . Fd))
+    Connection socket -> hostIO (Net.withFdSocket socket (getFdStatus . Fd))
 
 {- | The @fstflags@ of the set-times calls, checked and turned into the access and
 modification times to set (each 'Nothing' when it is to be left alone).
@@ -604,6 +652,8 @@ readSome :: Resource -> Int -> Host ByteString
 readSome (StandardStream handle) count = hostIO (BS.hGetSome handle count)
 readSome (RegularFile _ fd) count = hostIO (createAndTrim count (\ptr -> fromIntegral <$> fdReadBuf fd ptr (fromIntegral count)))
 readSome (Directory _ _) _ = throwE Isdir
+readSome (Connection socket) count = hostIO (NetBS.recv socket count)
+readSome (ListeningSocket _) _ = throwE Notconn
 
 writeAll :: Descriptor -> ByteString -> Host Int
 writeAll descriptor payload = case descriptor.resource of
@@ -612,6 +662,8 @@ writeAll descriptor payload = case descriptor.resource of
         when (testBit descriptor.fdflags 0) (void (hostIO (fdSeek fd SeekFromEnd 0)))
         hostIO (fdWriteAll fd payload)
     Directory _ _ -> throwE Isdir
+    Connection socket -> hostIO (NetBS.sendAll socket payload >> pure (BS.length payload))
+    ListeningSocket _ -> throwE Notconn
 
 -- | Write the whole buffer to a POSIX descriptor (retrying short writes).
 fdWriteAll :: Fd -> ByteString -> IO Int
@@ -621,9 +673,18 @@ fdWriteAll fd payload
         written <- unsafeUseAsCStringLen payload (\(ptr, len) -> fromIntegral <$> fdWriteBuf fd (castPtr ptr) (fromIntegral len))
         (written +) <$> fdWriteAll fd (BS.drop written payload)
 
--- | Read into each iovec in turn until one comes back short (end of input).
+{- | Read into each iovec in turn until one comes back short (end of input). From a connection
+  it is one read for all of them, which returns what has arrived: a second read would wait
+  for the peer although the first delivered something.
+-}
 readInto :: MemInst m -> Descriptor -> [(Word32, Word32)] -> Host (MemInst m, Word32)
-readInto mem descriptor = go mem 0
+readInto mem descriptor iovecs = case descriptor.resource of
+    Connection socket -> do
+        unlessWouldBlock descriptor socket
+        chunk <- hostIO (NetBS.recv socket (fromIntegral (min 0x100000 (sum (map (toInteger . snd) iovecs)))))
+        mem' <- scatter descriptor.level mem iovecs chunk
+        pure (mem', fromIntegral (BS.length chunk))
+    _ -> go mem 0 iovecs
   where
     go m total [] = pure (m, total)
     go m total ((ptr, len) : rest) = do
@@ -631,6 +692,38 @@ readInto mem descriptor = go mem 0
         m' <- pokeBytesAt descriptor.level m ptr (BS.unpack chunk)
         let got = fromIntegral (BS.length chunk)
         if got < len then pure (m', total + got) else go m' (total + got) rest
+
+-- | Store bytes into the iovecs in turn, at a level.
+scatter :: SecLevel -> MemInst m -> [(Word32, Word32)] -> ByteString -> Host (MemInst m)
+scatter _ mem [] _ = pure mem
+scatter level mem ((ptr, len) : rest) bytes
+    | BS.null bytes = pure mem
+    | otherwise = do
+        let (here, later) = BS.splitAt (fromIntegral len) bytes
+        mem' <- pokeBytesAt level mem ptr (BS.unpack here)
+        scatter level mem' rest later
+
+{- | With the descriptor's non-blocking flag set, fail with 'Again' unless the socket has
+  something to read or to accept now; without it, nothing: the operation that follows waits.
+-}
+unlessWouldBlock :: Descriptor -> Net.Socket -> Host ()
+unlessWouldBlock descriptor socket = when (testBit descriptor.fdflags 2) $ do
+    ready <- liftIO (readable socket)
+    unless ready (throwE Again)
+
+{- | Whether a socket has something to read or to accept now. The run-time system reports
+  readiness to a waiting thread, so this waits for it, for a millisecond.
+-}
+readable :: Net.Socket -> IO Bool
+readable socket = Net.withFdSocket socket (\fd -> isJust <$> Timeout.timeout 1000 (threadWaitRead (Fd fd)))
+
+-- | Wait until one of the sockets is readable, at most the given microseconds if any.
+awaitReadable :: Maybe Int -> [Net.Socket] -> IO ()
+awaitReadable limit sockets = do
+    waits <- forM sockets (\socket -> Net.withFdSocket socket (threadWaitReadSTM . Fd))
+    let anyOf = atomically (foldr (orElse . fst) retry waits)
+    void (maybe (Just <$> anyOf) (`Timeout.timeout` anyOf) limit)
+    mapM_ snd waits
 
 {- | The bytes the iovecs point at, in order, for a write to the given descriptor: each byte's
   level must flow into the descriptor's. This is the host boundary's dynamic check, the
@@ -714,6 +807,8 @@ runWasiCall host func args mem = case (func, args) of
                 StandardStream _ -> 2
                 Directory _ _ -> 3
                 RegularFile _ _ -> 4
+                ListeningSocket _ -> 6
+                Connection _ -> 6
         pokeFdstat mem outPtr filetype descriptor
     (FdFdstatSetFlags, flags :# fd :# VNil) -> completing mem $ do
         descriptor <- lookupFd host fd >>= requireRight 3
@@ -740,7 +835,7 @@ runWasiCall host func args mem = case (func, args) of
                 st <- hostIO (getFdStatus fd')
                 hostIO (setFdTimesHiRes fd' (fromMaybe (accessTimeHiRes st) access) (fromMaybe (modificationTimeHiRes st) modification))
             Directory path _ -> applyTimes True path (access, modification)
-            StandardStream _ -> throwE Badf
+            _ -> throwE Badf
         pure mem
     (FdPread, nreadPtr :# offset :# iovsLen :# iovsPtr :# fd :# VNil) -> completing mem $ do
         descriptor <- lookupFd host fd >>= requireRight rightFdRead >>= requireRight rightFdSeek
@@ -879,14 +974,58 @@ runWasiCall host func args mem = case (func, args) of
     (RandomGet, len :# bufPtr :# VNil) -> completing mem $ do
         bytes <- hostIO (withBinaryFile "/dev/urandom" ReadMode (\h -> BS.hGet h (fromIntegral len)))
         pokeBytes mem bufPtr (BS.unpack bytes)
-    (SockAccept, _ :# _ :# fd :# VNil) -> completing mem (notASocket fd)
-    (SockRecv, _ :# _ :# _ :# _ :# _ :# fd :# VNil) -> completing mem (notASocket fd)
-    (SockSend, _ :# _ :# _ :# _ :# fd :# VNil) -> completing mem (notASocket fd)
-    (SockShutdown, _ :# fd :# VNil) -> completing mem (notASocket fd)
+    -- A connection has the level of the socket it was accepted from, and the rights that
+    -- socket passes on. Its number is public, like that of a file 'PathOpen' opens.
+    (SockAccept, outPtr :# flags :# fd :# VNil) -> completing mem $ do
+        listener <- lookupFd host fd
+        socket <- case listener.resource of
+            ListeningSocket socket -> pure socket
+            Connection _ -> throwE Inval
+            _ -> throwE Notsock
+        _ <- requireRight rightSockAccept listener
+        unlessWouldBlock listener socket
+        (connection, _) <- hostIO (Net.accept socket)
+        accepted <- liftIO (insertFd host (Descriptor (Connection connection) listener.rightsInheriting 0 (fromIntegral flags .&. 4) listener.level))
+        pokeWord32 mem outPtr accepted
+    -- What arrives, how much of it and the flags about it are the connection's: at its level.
+    (SockRecv, flagsPtr :# nreadPtr :# riFlags :# iovsLen :# iovsPtr :# fd :# VNil) -> completing mem $ do
+        descriptor <- lookupFd host fd
+        _ <- connectionOf descriptor
+        _ <- requireRight rightFdRead descriptor
+        -- (Neither peeking nor waiting for a full buffer is provided.)
+        when (riFlags /= 0) (throwE Notsup)
+        iovecs <- peekIovecs descriptor mem iovsPtr iovsLen
+        (mem', count) <- readInto mem descriptor iovecs
+        mem'' <- pokeWord32At descriptor.level mem' nreadPtr count
+        pokeBytesAt descriptor.level mem'' flagsPtr [0, 0]
+    -- What is sent must flow into the connection's level, like the data of 'FdWrite'.
+    (SockSend, nwrittenPtr :# siFlags :# iovsLen :# iovsPtr :# fd :# VNil) -> completing mem $ do
+        descriptor <- lookupFd host fd
+        _ <- connectionOf descriptor
+        _ <- requireRight rightFdWrite descriptor
+        when (siFlags /= 0) (throwE Inval)
+        iovecs <- peekIovecs descriptor mem iovsPtr iovsLen
+        payload <- gather descriptor mem iovecs
+        written <- writeAll descriptor payload
+        pokeWord32At descriptor.level mem nwrittenPtr (fromIntegral written)
+    (SockShutdown, how :# fd :# VNil) -> completing mem $ do
+        descriptor <- lookupFd host fd
+        socket <- connectionOf descriptor
+        _ <- requireRight rightSockShutdown descriptor
+        direction <- case how of
+            1 -> pure Net.ShutdownReceive
+            2 -> pure Net.ShutdownSend
+            3 -> pure Net.ShutdownBoth
+            _ -> throwE Inval
+        hostIO (Net.shutdown socket direction)
+        pure mem
   where
     environmentStrings = [k <> "=" <> v | (k, v) <- host.config.environment]
-    -- There are no sockets: an unknown descriptor is bad, a known one is not a socket.
-    notASocket fd = lookupFd host fd >> throwE Notsock
+    -- An unknown descriptor is bad, a known one that is no connection is not a socket or not connected.
+    connectionOf descriptor = case descriptor.resource of
+        Connection socket -> pure socket
+        ListeningSocket _ -> throwE Notconn
+        _ -> throwE Notsock
 
 -- | The argument/environment vectors: pointers into a buffer of NUL-terminated strings.
 pokeStrings :: MemInst m -> Word32 -> Word32 -> [Text] -> Host (MemInst m)
@@ -916,12 +1055,13 @@ syncDescriptor descriptor = case descriptor.resource of
     RegularFile _ fd -> hostIO (fileSynchronise fd)
     StandardStream handle -> hostIO (hFlush handle)
     Directory _ _ -> pure ()
+    _ -> throwE Inval
 
 seekableFile :: Descriptor -> Host Fd
 seekableFile descriptor = case descriptor.resource of
     RegularFile _ fd -> pure fd
     Directory _ _ -> throwE Badf
-    StandardStream _ -> throwE Spipe
+    _ -> throwE Spipe
 
 preopenName :: Descriptor -> Host Text
 preopenName descriptor = case descriptor.resource of
@@ -984,9 +1124,15 @@ openPath host parent target follow oflags requestedBase requestedInheriting flag
     trunc = testBit oflags 3
     append = testBit flags 0
 
-{- | @poll_oneoff@. File-descriptor subscriptions are ready at once (a bad descriptor reports
-  its error in the event). Clock subscriptions wait for the earliest deadline when nothing
-  else is ready; each subscription due by then produces an event.
+{- | @poll_oneoff@. A subscription to read from a socket is ready when the socket has something
+  to read or to accept; every other file-descriptor subscription is ready at once (a bad
+  descriptor reports its error in the event). When nothing is ready the call waits for a
+  socket or for the earliest deadline of the clock subscriptions, whichever comes first; each
+  clock subscription due by then produces an event.
+
+  Which events come back says whether the sockets were ready, which is theirs to tell: the
+  events and their count are stored at the join of the levels of the sockets subscribed to.
+  Without one they are public, as nothing but the subscriptions decides them.
 -}
 pollOneoff :: WasiHost -> MemInst m -> Word32 -> Word32 -> Word32 -> Word32 -> Host (MemInst m)
 pollOneoff host mem inPtr outPtr count neventsPtr = do
@@ -994,28 +1140,40 @@ pollOneoff host mem inPtr outPtr count neventsPtr = do
     -- which is public, so they must be.
     requireAtMost Low mem inPtr (count * 48)
     subscriptions <- forM [0 .. count - 1] (peekSubscription . (inPtr +) . (* 48))
-    fdEvents <- fmap concat . forM subscriptions $ \(userdata, kind) -> case kind of
-        FdSubscription fd eventType -> do
-            known <- liftIO (Map.member fd <$> readIORef host.descriptors)
-            pure [event userdata (if known then Success else Badf) eventType]
-        ClockSubscription {} -> pure []
-    clockEvents <-
-        if null fdEvents
-            then do
-                deadlines <- forM [(u, c) | (u, ClockSubscription c) <- subscriptions] $ \(userdata, clock) -> do
-                    remaining <- nanosUntil clock
-                    pure (remaining, userdata)
-                case deadlines of
-                    [] -> pure []
-                    _ -> do
-                        let earliest = minimum (map fst deadlines)
-                        liftIO (threadDelay (fromIntegral (earliest `div` 1000)))
-                        pure [event u Success 0 | (r, u) <- deadlines, r == earliest]
-            else pure []
-    let events = fdEvents ++ clockEvents
-    mem' <- pokeBytes mem outPtr (concat events)
-    pokeWord32 mem' neventsPtr (fromIntegral (length events))
+    table <- liftIO (readIORef host.descriptors)
+    -- A subscription to read from a socket waits for it; any other on a descriptor does not.
+    let socketToRead kind = case kind of
+            FdSubscription fd 0x01 | Just descriptor <- Map.lookup fd table, Just socket <- socketOf descriptor.resource -> Just (descriptor.level, socket)
+            _ -> Nothing
+        watched = [(userdata, level, socket) | (userdata, kind) <- subscriptions, Just (level, socket) <- [socketToRead kind]]
+        atOnce = [event userdata (if Map.member fd table then Success else Badf) eventType | (userdata, kind@(FdSubscription fd eventType)) <- subscriptions, null (socketToRead kind)]
+        readyNow = fmap concat . forM watched $ \(userdata, _, socket) -> do
+            ready <- liftIO (readable socket)
+            pure [event userdata Success 0x01 | ready]
+    deadlines <- forM [(u, c) | (u, ClockSubscription c) <- subscriptions] $ \(userdata, clock) -> do
+        remaining <- nanosUntil clock
+        pure (remaining, userdata)
+    let earliest = if null deadlines then Nothing else Just (minimum (map fst deadlines))
+        due = [event u Success 0 | (r, u) <- deadlines, Just r == earliest]
+    socketEvents <- readyNow
+    events <-
+        if not (null atOnce && null socketEvents)
+            then pure (atOnce ++ socketEvents)
+            else case (watched, earliest) of
+                ([], Nothing) -> pure []
+                ([], Just nanos) -> liftIO (threadDelay (fromIntegral (nanos `div` 1000))) >> pure due
+                _ -> do
+                    liftIO (awaitReadable (fromIntegral . (`div` 1000) <$> earliest) [socket | (_, _, socket) <- watched])
+                    arrived <- readyNow
+                    pure (if null arrived then due else arrived)
+    let level = if High `elem` [l | (_, l, _) <- watched] then High else Low
+    mem' <- pokeBytesAt level mem outPtr (concat events)
+    pokeWord32At level mem' neventsPtr (fromIntegral (length events))
   where
+    socketOf resource = case resource of
+        ListeningSocket socket -> Just socket
+        Connection socket -> Just socket
+        _ -> Nothing
     peekSubscription addr = do
         userdata <- peekWord64 mem addr
         tag <- peekBytes mem (addr + 8) 1
@@ -1066,4 +1224,8 @@ runWithWasi cfg wasmModule name args = do
         -- (Instantiation links no function but WASI's unless an embedder provides it, and
         -- this driver provides none.)
         serve (Right (CalledHost (SomeHostRequest _ _ _ _ (ForeignRequest moduleName fieldName _ _ _ _ _ _)))) = pure (Left (ForeignCallUnanswered moduleName fieldName))
-    serve (invokeExport wasmModule name args)
+    serve (invokeExport wasmModule name args) `finally` closeHost host
+
+-- | Close what the host still holds open when a run ends: files, sockets and connections.
+closeHost :: WasiHost -> IO ()
+closeHost host = readIORef host.descriptors >>= mapM_ (\descriptor -> void (try (closeResource descriptor.resource) :: IO (Either IOException ())))
