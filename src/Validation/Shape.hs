@@ -97,6 +97,12 @@ data Elem x xs where
     Here :: Elem x (x ': xs)
     There :: Elem x xs -> Elem x (y ': xs)
 
+-- | Whether two indices into one list are the same position, and so name the same element.
+sameElem :: Elem a xs -> Elem b xs -> Maybe (a :~: b)
+sameElem Here Here = Just Refl
+sameElem (There a) (There b) = sameElem a b
+sameElem _ _ = Nothing
+
 {- | A branch target: like an 'Elem' into the label context, it names the label at a position
   and proves its result type is @rs@. It also says what the branch does to the pc stack
   ("Syntax.TypesIFC"): the entries of the blocks the branch may leave, the target's included,
@@ -207,31 +213,37 @@ data ModuleShape = ModuleShape
     -- ^ one entry per data segment: the data index space, which only has a size
     , elemShapes :: [ElemShape]
     -- ^ one entry per element segment, with the type of its references
+    , tagTypes :: [[LabelledValType]]
+    -- ^ one entry per exception tag: the types of what an exception of that tag carries
     }
 
 type ModuleFuncs :: ModuleShape -> [LabelledFuncType]
 type family ModuleFuncs s where
-    ModuleFuncs ('ModuleShape fs _ _ _ _ _) = fs
+    ModuleFuncs ('ModuleShape fs _ _ _ _ _ _) = fs
 
 type ModuleGlobals :: ModuleShape -> [GlobalTypeOf LabelledValType]
 type family ModuleGlobals s where
-    ModuleGlobals ('ModuleShape _ gs _ _ _ _) = gs
+    ModuleGlobals ('ModuleShape _ gs _ _ _ _ _) = gs
 
 type ModuleMems :: ModuleShape -> [MemShape]
 type family ModuleMems s where
-    ModuleMems ('ModuleShape _ _ ms _ _ _) = ms
+    ModuleMems ('ModuleShape _ _ ms _ _ _ _) = ms
 
 type ModuleTables :: ModuleShape -> [TableShape]
 type family ModuleTables s where
-    ModuleTables ('ModuleShape _ _ _ ts _ _) = ts
+    ModuleTables ('ModuleShape _ _ _ ts _ _ _) = ts
 
 type ModuleData :: ModuleShape -> [DataShape]
 type family ModuleData s where
-    ModuleData ('ModuleShape _ _ _ _ ds _) = ds
+    ModuleData ('ModuleShape _ _ _ _ ds _ _) = ds
 
 type ModuleElems :: ModuleShape -> [ElemShape]
 type family ModuleElems s where
-    ModuleElems ('ModuleShape _ _ _ _ _ es) = es
+    ModuleElems ('ModuleShape _ _ _ _ _ es _) = es
+
+type ModuleTags :: ModuleShape -> [[LabelledValType]]
+type family ModuleTags s where
+    ModuleTags ('ModuleShape _ _ _ _ _ _ gs) = gs
 
 {- | The per-activation (function-scoped) part of an instruction's context: the local
   variable types and the function's result type. These two always share a scope — both

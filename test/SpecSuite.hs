@@ -328,6 +328,8 @@ runCommand dir state cmd = case cmd.kind of
         pure (state', outcome)
     "assert_return" -> pure (withAction (\current i act -> assertReturn current i act cmd.expected))
     "assert_trap" -> pure (withAction (\current i act -> assertTrap current i act cmd.trapText))
+    -- (An exception that leaves the function invoked: the run ends with it.)
+    "assert_exception" -> pure (withAction (\current i act -> assertTrap current i act (Just (trapText UncaughtException))))
     "assert_exhaustion" -> pure (withAction (\current i act -> assertTrap current i act cmd.trapText))
     "action" -> pure (withAction (\current i act -> either (Failed . show) (const Passed) <$> invoke current i act))
     "assert_malformed" -> rejectedBy malformed
@@ -392,7 +394,7 @@ runCommand dir state cmd = case cmd.kind of
   extensions. (@gc-types@ enables no instruction: it lets @wasm-tools@ accept @externref@.)
 -}
 supportedFeatures :: String
-supportedFeatures = "-all,mutable-global,saturating-float-to-int,sign-extension,multi-value,bulk-memory,reference-types,simd,multi-memory,memory64,tail-call,extended-const,floats,gc-types"
+supportedFeatures = "-all,mutable-global,saturating-float-to-int,sign-extension,multi-value,bulk-memory,reference-types,simd,multi-memory,memory64,tail-call,extended-const,exceptions,floats,gc-types"
 
 {- | The features of WebAssembly 3.0 beyond 'supportedFeatures', each with the flags that
   enable it in @wasm-tools@ together with the features it builds on.
@@ -502,6 +504,8 @@ trapText OutOfBoundsMemoryAccess = "out of bounds memory access"
 trapText InvalidConversionToInteger = "invalid conversion to integer"
 trapText UnreachableExecuted = "unreachable"
 trapText OutOfBoundsTableAccess = "out of bounds table access"
+trapText UncaughtException = "uncaught exception"
+trapText NullExceptionReference = "null exception reference"
 trapText UndefinedElement = "undefined element"
 trapText UninitializedElement = "uninitialized element"
 trapText IndirectCallTypeMismatch = "indirect call type mismatch"
@@ -512,13 +516,14 @@ trapText (SecretRead _) = "secret read"
 trapText GlobalNotRestored = "global not restored"
 
 numericTypes :: [Text]
-numericTypes = ["i32", "i64", "f32", "f64", "v128", "funcref", "externref"]
+numericTypes = ["i32", "i64", "f32", "f64", "v128", "funcref", "externref", "exnref"]
 
 -- | A literal's value from its bit pattern.
 literalValue :: Literal -> Maybe Value
 literalValue lit = case (lit.litType, lit.litValue) of
     ("funcref", Just "null") -> Just (FuncRefValue nullReference)
     ("externref", Just "null") -> Just (ExternRefValue nullReference)
+    ("exnref", Just "null") -> Just (ExnRefValue nullReference)
     ("externref", Just number) -> ExternRefValue . referenceTo <$> readMaybe (T.unpack number)
     ("v128", _) -> do
         bits <- laneWidth =<< lit.laneType
@@ -576,9 +581,11 @@ matches lit actual
     typeName V128 = "v128"
     typeName FuncRef = "funcref"
     typeName ExternRef = "externref"
+    typeName ExnRef = "exnref"
     referenceOf value = case value of
         FuncRefValue reference -> Just reference
         ExternRefValue reference -> Just reference
+        ExnRefValue reference -> Just reference
         _ -> Nothing
     width = case valueType actual of
         I64 -> 2 ^ (64 :: Int)
@@ -598,6 +605,7 @@ valueBits (F64Value d) = fromIntegral (castDoubleToWord64 d :: Word64)
 valueBits (V128Value (Vector128 low _)) = fromIntegral low
 valueBits (FuncRefValue (Reference word)) = fromIntegral word
 valueBits (ExternRefValue (Reference word)) = fromIntegral word
+valueBits (ExnRefValue (Reference word)) = fromIntegral word
 
 -- *** Reporting ***
 

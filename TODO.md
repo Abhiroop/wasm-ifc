@@ -12,7 +12,7 @@ are summarised here, not repeated.
 ## Where things stand (2026-10-08)
 
 - WebAssembly: the spec testsuite, at the WebAssembly 3.0 release (all 257 scripts), passes for
-  the supported subset (62,081 assertions, none failing, 3,121 skipped, counted by feature
+  the supported subset (62,137 assertions, none failing, 3,065 skipped, counted by feature
   below); the wasi-testsuite passes 72 of 72. Both also with SecWasm's restrictions on.
 - Information flow: SecWasm's static rules in the single instruction type, with the repairs of
   the paper's findings (`br_table` raises down to its deepest target); inference of stores,
@@ -56,16 +56,17 @@ are summarised here, not repeated.
 ## WebAssembly coverage
 
 The supported subset is WebAssembly 2.0 without state shared between modules, plus several
-memories per module, 64-bit memories and tables, tail calls and extended constant expressions. What the 3.0 suite skips
+memories per module, 64-bit memories and tables, tail calls, extended constant expressions and
+exceptions. What the 3.0 suite skips
 (`WASM_IFC_SPEC_REPORT=f cabal test wasm-ifc-spec; ./scripts/spec-report.py f`), by the features
 a skipped module uses according to `wasm-tools`, in assertions:
 
 | Skipped | Features the module uses beyond the subset |
 |---:|---|
-| 823 | garbage collection |
-| 512 | typed function references (88 of them in the scripts for tail calls) |
-| 302 | none: a memory, a table or a mutable global of another module of the script, and what depends on state shared with one |
-| 114 | exceptions (45 more with another feature) |
+| 860 | garbage collection |
+| 509 | typed function references (88 of them in the scripts for tail calls) |
+| 371 | none: a memory, a table, a mutable global or an exception tag of another module of the script, and what depends on state shared with one |
+| 77 | three or more features at once |
 | 1,245 | none: malformed modules given as text, which the harness does not run |
 
 `return_call.wast` and `return_call_indirect.wast` have one function each with a typed function
@@ -97,7 +98,12 @@ reference in its type, so their main modules are skipped whole.
   instruction (`IRelabelTop`) before what the caller returns to; a long chain of such calls
   between functions of different result levels grows that continuation. A function that calls
   itself in tail position, or one of the same result levels, does not.
-- [ ] **P3** Exceptions; typed function references; garbage collection.
+- [ ] **P3** Exceptions do not cross modules: a tag is not imported, and an exception that
+  leaves a function called from another module ends the run there. The main module of
+  `try_table.wast` imports a tag and is skipped (42 assertions).
+- [ ] **P3** The store keeps every exception that a clause caught by reference, for the
+  `exnref` that names it, and never frees one.
+- [ ] **P3** Typed function references; garbage collection.
 - [ ] **P3** The vector instructions work on lists of lanes (`Runtime/Vector.hs`), which is
   simple and slow; nothing measures them. A vector is two words on the stack and in a frame.
 

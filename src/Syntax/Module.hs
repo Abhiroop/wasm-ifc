@@ -42,7 +42,7 @@ import Data.Word (Word32)
 
 import Syntax.Functions (FunctionSpace, RawFunction)
 import Syntax.Globals (ConstExpr, GlobalSpace, RawGlobal (..))
-import Syntax.Indices (FunctionIdx, GlobalIdx, MemoryIdx, TableIdx)
+import Syntax.Indices (FunctionIdx, GlobalIdx, MemoryIdx, TableIdx, TagIdx)
 import Syntax.Instructions (RawExpr, RawInstr (RefFunc))
 import Syntax.Types (AddrType, AddrVal, FuncType, IsRef, Limits, MemType, ValType (..))
 import Syntax.TypesIFC (LabelledFuncType (..), SecLevel (..))
@@ -69,6 +69,8 @@ data RawModule = RawModule
     -}
     , stateImports :: StateImports
     -- ^ which globals, memories and tables are imported
+    , tags :: [FuncType]
+    -- ^ the exception tags, each with the type of what an exception of it carries (as parameters)
     }
 
 {- | The imports that are not functions. An imported global, memory or table comes first in its
@@ -161,6 +163,7 @@ data ExportDesc
     | ExportGlobal GlobalIdx
     | ExportMem MemoryIdx
     | ExportTable TableIdx
+    | ExportTag TagIdx
     deriving stock (Eq, Show)
 
 -- *** As validated ***

@@ -65,6 +65,7 @@ data Value
     | V128Value Vector128
     | FuncRefValue Reference
     | ExternRefValue Reference
+    | ExnRefValue Reference
     deriving stock (Eq, Show)
 
 valueType :: Value -> ValType
@@ -75,6 +76,7 @@ valueType (F64Value _) = F64
 valueType (V128Value _) = V128
 valueType (FuncRefValue _) = FuncRef
 valueType (ExternRefValue _) = ExternRef
+valueType (ExnRefValue _) = ExnRef
 
 -- | Integers as unsigned decimals (the raw bits), floats as Haskell shows them, references by index.
 renderValue :: Value -> String
@@ -85,6 +87,7 @@ renderValue (F64Value d) = show d
 renderValue (V128Value (Vector128 low high)) = "0x" ++ concatMap (\word -> let digits = showHex word "" in replicate (16 - length digits) '0' ++ digits) [high, low]
 renderValue (FuncRefValue r) = maybe "null" (\index -> "func " ++ show index) (referent r)
 renderValue (ExternRefValue r) = maybe "null" (\index -> "extern " ++ show index) (referent r)
+renderValue (ExnRefValue r) = maybe "null" (\index -> "exception " ++ show index) (referent r)
 
 -- | A call the module made to a function its embedder provides, arguments in declared order.
 data ForeignCall = ForeignCall
@@ -275,10 +278,12 @@ fromValue SI64 (I64Value w) = Just w
 fromValue SF32 (F32Value f) = Just f
 fromValue SF64 (F64Value d) = Just d
 fromValue SV128 (V128Value v) = Just v
--- (From outside, the only reference to a function is null: one that names a function comes
--- from the module's own code, 'Validation.Ref.FunctionRef'.)
+-- (From outside, the only reference to a function or to an exception is null: one that names
+-- a function comes from the module's own code, 'Validation.Ref.FunctionRef', and an exception
+-- from its store.)
 fromValue SFuncRef (FuncRefValue r) | isNullReference r = Just r
 fromValue SExternRef (ExternRefValue r) = Just r
+fromValue SExnRef (ExnRefValue r) | isNullReference r = Just r
 fromValue _ _ = Nothing
 
 toValues :: Sing (rs :: [LabelledValType]) -> ValueStack rs -> [Value]
@@ -293,6 +298,7 @@ toValue SF64 = F64Value
 toValue SV128 = V128Value
 toValue SFuncRef = FuncRefValue
 toValue SExternRef = ExternRefValue
+toValue SExnRef = ExnRefValue
 
 note :: e -> Maybe a -> Either e a
 note e = maybe (Left e) Right

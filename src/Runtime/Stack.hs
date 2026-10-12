@@ -33,6 +33,9 @@ module Runtime.Stack (
     getTable,
     setTable,
     getElements,
+    ExceptionInst (..),
+    keepException,
+    keptException,
     dropElements,
     DataSpaceInst (..),
     getSegment,
@@ -58,6 +61,8 @@ module Runtime.Stack (
 
 import Control.Monad.ST (ST)
 import Data.ByteString (ByteString)
+import Data.IntMap.Strict (IntMap)
+import Data.IntMap.Strict qualified as IntMap
 import Data.Kind (Type)
 import Data.Vector.Unboxed qualified as UV
 import Data.Vector.Unboxed.Mutable qualified as MV
@@ -68,7 +73,7 @@ import Data.List.Singletons (type (++))
 import Data.Singletons.Base.TH (SList (SCons, SNil), Sing)
 import Runtime.MemInst (MemInst)
 import Runtime.TableInst (FunctionDirectory, TableInst, functionDirectory)
-import Syntax.Immediates (HostType, Reference (..), Vector128 (..))
+import Syntax.Immediates (HostType, Reference (..), Vector128 (..), referenceTo, referent)
 import Syntax.Types
 import Syntax.TypesIFC
 import Validation.Ref (LocalRef, localPosition, localType, wordsOf)
@@ -218,6 +223,7 @@ packValue SF64 v = castDoubleToWord64 v
 packValue SV128 (Vector128 low _) = low
 packValue SFuncRef (Reference w) = w
 packValue SExternRef (Reference w) = w
+packValue SExnRef (Reference w) = w
 
 -- | The second word of a value: a vector's high word, and zero for every other type.
 highWord :: Sing (t :: ValType) -> HostType t -> Word64
@@ -235,6 +241,7 @@ unpackValue SF64 w = castWord64ToDouble w
 unpackValue SV128 w = Vector128 w 0
 unpackValue SFuncRef w = Reference w
 unpackValue SExternRef w = Reference w
+unpackValue SExnRef w = Reference w
 
 -- | The words a frame of these locals takes: one each, two for a vector.
 wordsIn :: Sing (ls :: [LabelledValType]) -> Int
@@ -303,12 +310,29 @@ setFirstMem mem (MCons _ rest) = MCons mem rest
   resolves an entry in. They are one field of the machine's store because none of them is
   touched by ordinary code.
 -}
-type TableSpaceInst :: [LabelledFuncType] -> [TableShape] -> [ElemShape] -> Type
-data TableSpaceInst fts ts es = TableSpaceInst
+type TableSpaceInst :: [LabelledFuncType] -> [TableShape] -> [ElemShape] -> [[LabelledValType]] -> Type
+data TableSpaceInst fts ts es tags = TableSpaceInst
     { directory :: !(FunctionDirectory fts)
     , instances :: !(TableInsts ts)
     , segments :: !(ElemSpaceInst es)
+    , caught :: !(IntMap (ExceptionInst tags))
+    -- ^ the exceptions an @exnref@ refers to, by its index: those that a clause caught by reference
     }
+
+-- | An exception: its tag, by its witness in the module's tags, and the values it carries.
+type ExceptionInst :: [[LabelledValType]] -> Type
+data ExceptionInst tags where
+    ExceptionInst :: Elem ps tags -> ValueStack ps -> ExceptionInst tags
+
+-- | Keep an exception for a reference to it, which is returned.
+keepException :: ExceptionInst tags -> TableSpaceInst fts ts es tags -> (Reference, TableSpaceInst fts ts es tags)
+keepException exception tables =
+    let index = IntMap.size tables.caught
+     in (referenceTo (fromIntegral index), tables {caught = IntMap.insert index exception tables.caught})
+
+-- | The exception a reference refers to, or 'Nothing' for null.
+keptException :: Reference -> TableSpaceInst fts ts es tags -> Maybe (ExceptionInst tags)
+keptException reference tables = referent reference >>= \index -> IntMap.lookup (fromIntegral index) tables.caught
 
 type TableInsts :: [TableShape] -> Type
 data TableInsts ts where
@@ -316,17 +340,17 @@ data TableInsts ts where
     TCons :: !TableInst -> !(TableInsts ts) -> TableInsts (t ': ts)
 
 -- | The table space of a module with no table and no element segment.
-noTables :: TableSpaceInst fts '[] '[]
-noTables = TableSpaceInst (functionDirectory []) TNil ENil
+noTables :: TableSpaceInst fts '[] '[] tags
+noTables = TableSpaceInst (functionDirectory []) TNil ENil IntMap.empty
 
-getTable :: Elem t ts -> TableSpaceInst fts ts es -> TableInst
+getTable :: Elem t ts -> TableSpaceInst fts ts es tags -> TableInst
 getTable ix tables = go ix tables.instances
   where
     go :: Elem t ts -> TableInsts ts -> TableInst
     go Here (TCons table _) = table
     go (There rest) (TCons _ others) = go rest others
 
-setTable :: Elem t ts -> TableInst -> TableSpaceInst fts ts es -> TableSpaceInst fts ts es
+setTable :: Elem t ts -> TableInst -> TableSpaceInst fts ts es tags -> TableSpaceInst fts ts es tags
 setTable ix table tables = tables {instances = go ix tables.instances}
   where
     go :: Elem t ts -> TableInsts ts -> TableInsts ts
@@ -338,14 +362,14 @@ data ElemSpaceInst es where
     ENil :: ElemSpaceInst '[]
     ECons :: ![Reference] -> !(ElemSpaceInst es) -> ElemSpaceInst ('ElemShape t ': es)
 
-getElements :: Elem ('ElemShape t) es -> TableSpaceInst fts ts es -> [Reference]
+getElements :: Elem ('ElemShape t) es -> TableSpaceInst fts ts es tags -> [Reference]
 getElements ix tables = go ix tables.segments
   where
     go :: Elem e es -> ElemSpaceInst es -> [Reference]
     go Here (ECons references _) = references
     go (There rest) (ECons _ others) = go rest others
 
-dropElements :: Elem ('ElemShape t) es -> TableSpaceInst fts ts es -> TableSpaceInst fts ts es
+dropElements :: Elem ('ElemShape t) es -> TableSpaceInst fts ts es tags -> TableSpaceInst fts ts es tags
 dropElements ix tables = tables {segments = go ix tables.segments}
   where
     go :: Elem e es -> ElemSpaceInst es -> ElemSpaceInst es

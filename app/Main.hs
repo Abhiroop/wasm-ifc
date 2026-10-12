@@ -242,6 +242,7 @@ parseValue valType raw = case valType of
     -- A reference from the command line is null, or a value of the host by its number.
     FuncRef -> if text == "null" then Just (FuncRefValue nullReference) else Nothing
     ExternRef -> if text == "null" then Just (ExternRefValue nullReference) else ExternRefValue . referenceTo . fromInteger <$> readInteger
+    ExnRef -> if text == "null" then Just (ExnRefValue nullReference) else Nothing
   where
     text = T.unpack raw
     readInteger = readMaybe text :: Maybe Integer

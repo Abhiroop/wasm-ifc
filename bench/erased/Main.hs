@@ -495,7 +495,7 @@ taggedInt I32IsInt = VI32
 taggedInt I64IsInt = VI64
 
 byteWidth :: ValType -> Int
-byteWidth ty = case ty of I32 -> 4; I64 -> 8; F32 -> 4; F64 -> 8; V128 -> 16; FuncRef -> 8; ExternRef -> 8
+byteWidth ty = case ty of I32 -> 4; I64 -> 8; F32 -> 4; F64 -> 8; V128 -> 16; FuncRef -> 8; ExternRef -> 8; ExnRef -> 8
 
 loaded :: ValType -> Word64 -> Value
 loaded I32 word = VI32 (loadValue I32IsNum word)
@@ -505,6 +505,7 @@ loaded F64 word = VF64 (loadValue F64IsNum word)
 loaded V128 word = VI64 word
 loaded FuncRef word = VI64 word
 loaded ExternRef word = VI64 word
+loaded ExnRef word = VI64 word
 
 withMemory :: MemInst m -> Store m -> Store m
 withMemory mem store = Store {globals = store.globals, memory = Just mem, table = store.table, segments = store.segments}
@@ -601,6 +602,7 @@ unpackAs ty w = case ty of
     V128 -> VI64 w
     FuncRef -> VI64 w
     ExternRef -> VI64 w
+    ExnRef -> VI64 w
 
 tagOf :: Value -> ValType
 tagOf v = case v of VI32 _ -> I32; VI64 _ -> I64; VF32 _ -> F32; VF64 _ -> F64
@@ -702,9 +704,12 @@ eraseInstr instr = case instr of
     IGlobalSet _ _ ix -> EGlobalSet (positionOf ix)
     IGlobalSetPreserved _ ix -> EGlobalSet (positionOf ix)
     IRequireRestored _ -> ENop
-    -- The twin predates references, vectors and tail calls: it carries a reference as its word
+    -- The twin predates references, vectors, exceptions and tail calls: it carries a reference as its word
     -- (and of a vector only the low one) and runs none of these instructions, which no
     -- workload of the benchmarks uses.
+    IThrow {} -> ENotModelled
+    IThrowRef -> ENotModelled
+    ITryTable {} -> ENotModelled
     IVector0 {} -> ENotModelled
     IVector1 {} -> ENotModelled
     IVector2 {} -> ENotModelled
@@ -795,8 +800,9 @@ eraseGlobals (SCons (SGlobalType _ (valTypeS :%~ _)) rest) (GCons v vs) = valueO
     valueOf SV128 = \(Vector128 low _) -> VI64 low
     valueOf SFuncRef = \(Reference word) -> VI64 word
     valueOf SExternRef = \(Reference word) -> VI64 word
+    valueOf SExnRef = \(Reference word) -> VI64 word
 
-eraseTable :: TableSpaceInst fts ts es -> Maybe Table
+eraseTable :: TableSpaceInst fts ts es tags -> Maybe Table
 eraseTable tables = case tables.instances of
     TNil -> Nothing
     TCons t _ -> Just (Table n (IntMap.fromList [(fromIntegral i, erased ref) | n > 0, i <- [0 .. n - 1], Right ref <- [tableEntryUnchecked tables.directory t i]]))
@@ -828,7 +834,7 @@ forced funcs = go funcs `seq` funcs
         _ -> ()
 
 runExport :: SomeModuleInst -> Text -> Either String [Value]
-runExport (SomeModuleInst (SModuleShape _ globalTypesS _ _ _ _) inst exports) name =
+runExport (SomeModuleInst (SModuleShape _ globalTypesS _ _ _ _ _) inst exports) name =
     case [index | Export exportName (ExportFunc (FunctionIdx index)) <- exports, exportName == name] of
         [] -> Left ("no exported function named " ++ T.unpack name)
         index : _ -> case functionAt (unary index) funcs of

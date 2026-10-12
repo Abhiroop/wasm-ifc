@@ -20,6 +20,10 @@ data Trap
       OutOfBoundsTableAccess
     | InvalidConversionToInteger
     | UnreachableExecuted
+    | -- | an exception left the function that was invoked: not a trap of the spec's, but how a run ends then
+      UncaughtException
+    | -- | @throw_ref@ of a null reference
+      NullExceptionReference
     | -- | @call_indirect@ with an index past the table
       UndefinedElement
     | -- | @call_indirect@ through an entry never initialised

@@ -228,6 +228,7 @@ compileModule generated =
         , start = Nothing
         , customSections = []
         , stateImports = importsNoState
+        , tags = []
         }
   where
     helperType = FuncType [I32] [I32]

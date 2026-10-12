@@ -19,6 +19,7 @@ module Runtime.Instantiate (
 import Control.Monad (foldM, when)
 import Data.Bifunctor (first)
 import Data.ByteString qualified as BS
+import Data.IntMap.Strict qualified as IntMap
 import Data.Singletons (Sing, fromSing)
 import Data.Singletons.Base.TH (SList (SCons, SNil))
 import Data.Text (Text)
@@ -104,14 +105,14 @@ providesFunctions answered = Embedder answered none none none
 -- | 'instantiate' for a module that imports from its embedder.
 instantiateWith :: Embedder -> SomeModule -> Either InstantiationError SomeModuleInst
 instantiateWith embedder (SomeModule shapeS m) = case shapeS of
-    SModuleShape ftsS _ msS tsS dsS _ -> do
+    SModuleShape ftsS _ msS tsS dsS _ _ -> do
         funcs <- link embedder.functions (memsNonEmpty msS) ftsS m.functions
         globals <- instantiateGlobals embedder m.globals
         placed <- placeData embedder m.dataSegments =<< allocateMemories embedder (map Just m.memoryImports ++ repeat Nothing) msS
         mems <- labelRegions m.secretRegions placed
         emptyTables <- allocateTables embedder (map Just m.tableImports ++ repeat Nothing) tsS
         kept <- keptElements embedder m.elementSegments
-        tables <- placeElements embedder 0 m.elementSegments (TableSpaceInst (functionDirectory (allFuncRefs ftsS)) emptyTables kept)
+        tables <- placeElements embedder 0 m.elementSegments (TableSpaceInst (functionDirectory (allFuncRefs ftsS)) emptyTables kept IntMap.empty)
         let inst = ModuleInst {functions = funcs, globals, memories = mems, tables, dataSegments = remainingData dsS m.dataSegments}
         started <- runStart inst m.start
         Right (SomeModuleInst shapeS started m.exports)
@@ -246,7 +247,7 @@ labelRegions regions (MCons mem rest) = do
 labelRegions ((lo, hi) : _) MNil = Left (RegionOutOfBounds lo hi)
 
 -- | Write the active element segments into their tables, in order.
-placeElements :: Embedder -> Int -> ElementSpace shape es -> TableSpaceInst fts (ModuleTables shape) kept -> Either InstantiationError (TableSpaceInst fts (ModuleTables shape) kept)
+placeElements :: Embedder -> Int -> ElementSpace shape es -> TableSpaceInst fts (ModuleTables shape) kept tags -> Either InstantiationError (TableSpaceInst fts (ModuleTables shape) kept tags)
 placeElements _ _ NoElements tables = Right tables
 placeElements embedder index (Elements segment rest) tables = do
     written <- case segment.mode of

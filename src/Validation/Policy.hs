@@ -515,6 +515,7 @@ assemble policy m = do
             , start = m.start
             , customSections = m.customSections
             , stateImports = m.stateImports
+            , tags = m.tags
             }
     -- The function index space: imports first, then the module's own functions.
     signatures = [ft | RawImport _ _ (ImportFunc ft) <- m.imports] ++ map (\(RawFunction sig _ _) -> sig) m.functions

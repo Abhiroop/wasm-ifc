@@ -45,6 +45,7 @@ type family HostType (t :: ValType) :: Type where
     HostType 'V128 = Vector128
     HostType 'FuncRef = Reference
     HostType 'ExternRef = Reference
+    HostType 'ExnRef = Reference
 
 {- | A 128-bit vector: its low and its high 64 bits. Lanes are numbered from the low end, and
   bytes in memory are little-endian, so lane 0 is in the low bits of the first word.
@@ -53,7 +54,8 @@ data Vector128 = Vector128 !Word64 !Word64 deriving stock (Eq, Show)
 
 {- | A reference as a machine holds it: null, or the index of what it refers to. For a
   @funcref@ that is a function of the module, by its place in the function index space; for an
-  @externref@ it is whatever number the host uses for its value. Like every other value it is
+  @externref@ it is whatever number the host uses for its value; for an @exnref@ it is the
+  place of a thrown exception among those the store keeps. Like every other value it is
   one word, zero for null (which is also what a local starts at), so it is kept in a frame
   unchanged. A @funcref@ is only made by @ref.func@ and by element segments, both of which
   validation resolves to a function that exists, and no instruction computes on references.
@@ -64,6 +66,7 @@ newtype Reference = Reference Word64 deriving stock (Eq, Show)
 withReference :: IsRef t -> ((HostType t ~ Reference) => result) -> result
 withReference FuncRefIsRef result = result
 withReference ExternRefIsRef result = result
+withReference ExnRefIsRef result = result
 
 nullReference :: Reference
 nullReference = Reference 0

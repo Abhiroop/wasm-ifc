@@ -450,6 +450,27 @@ spec = do
         it "a lane index is within the vector" $
             elabRunModule (singleFunctionModule [] [] [I32] [] [Const SI32 1, splat32, extract32 4]) [] `shouldSatisfy` errorContaining "a lane index past the lanes of a vector"
 
+    describe "exceptions" $ do
+        -- tag 0 carries an i32. Function 0 throws its argument if it is not zero; function 1, exported, calls it in a
+        -- try_table whose clause branches out of an enclosing block with what was thrown, and adds 100 to that.
+        let thrower = RawFunction (FuncType [I32] []) [] [LocalGet (LocalIdx 0), If (FuncType [] []) [LocalGet (LocalIdx 0), Throw (TagIdx 0)] []]
+            catching body = (moduleOf [] [thrower, RawFunction (FuncType [I32] [I32]) [] body] (FunctionIdx 1)) {tags = [FuncType [I32] []]}
+            caught = catching [Block (FuncType [] [I32]) [TryTable (FuncType [] []) [CatchTag (TagIdx 0) (LabelIdx 0)] [LocalGet (LocalIdx 0), Call (FunctionIdx 0)], Const SI32 0, Return], Const SI32 100, Add SI32]
+        it "an exception leaves the functions between its throw and the clause that catches it" $ do
+            elabRunModule caught [0] `shouldBe` Right ["0"]
+            elabRunModule caught [7] `shouldBe` Right ["107"]
+        it "an exception that nothing catches ends the run" $
+            elabRunModule (catching [LocalGet (LocalIdx 0), Call (FunctionIdx 0), Const SI32 1]) [7] `shouldSatisfy` trapContaining "UncaughtException"
+        it "is thrown under a public pc, with public values" $ do
+            elabRunWithPolicy "export f : H -> L" caught [7] `shouldSatisfy` errorContaining "IllegalFlow"
+            -- the thrower's argument public, the decision to call it secret
+            let secretly = catching [LocalGet (LocalIdx 0), If (FuncType [] []) [Const SI32 1, Call (FunctionIdx 0)] [], Const SI32 0]
+            elabRunWithPolicy "export f : H -> L" secretly [7] `shouldSatisfy` errorContaining "IllegalFlow"
+            elabRunWithPolicy "export f : L -> L" secretly [7] `shouldSatisfy` trapContaining "UncaughtException"
+        it "a try_table with clauses is entered under a public pc" $
+            elabRunWithPolicy "export f : H -> H" (catching [LocalGet (LocalIdx 0), If (FuncType [] []) [TryTable (FuncType [] []) [CatchAll (LabelIdx 0)] []] [], Const SI32 0]) [1]
+                `shouldSatisfy` errorContaining "IllegalFlow \"try_table\" High Low"
+
     describe "tail calls" $ do
         -- function 0 sums the numbers up to its first argument into its second, calling itself in tail position
         let summing = RawFunction (FuncType [I32, I32] [I32]) [] [LocalGet (LocalIdx 0), Eqz SI32, If (FuncType [] [I32]) [LocalGet (LocalIdx 1)] [LocalGet (LocalIdx 0), Const SI32 1, Sub SI32, LocalGet (LocalIdx 1), LocalGet (LocalIdx 0), Add SI32, ReturnCall (FunctionIdx 0)]]
@@ -793,7 +814,7 @@ spec = do
             decodeSections [section 1 [0xFF, 0xFF, 0xFF, 0xFF, 0x7F]]
                 `shouldSatisfy` decodeErrorContaining "too large"
         it "rejects an unknown section id" $
-            decodeSections [section 13 []] `shouldSatisfy` decodeErrorContaining "malformed section id"
+            decodeSections [section 14 []] `shouldSatisfy` decodeErrorContaining "malformed section id"
         it "rejects sections out of order" $
             decodeSections [funcSection [0], typeSection] `shouldSatisfy` decodeErrorContaining "out of order"
         it "rejects a custom section without a name" $
@@ -1037,6 +1058,7 @@ moduleOf memories funcs exported =
         , start = Nothing
         , customSections = []
         , stateImports = importsNoState
+        , tags = []
         }
 
 {- | Validate and instantiate a module and run its export @f@ on integer arguments.
@@ -1090,6 +1112,7 @@ invokeWithIntegers sm args = do
     integerValue V128 n = V128Value (Vector128 (fromInteger n) 0)
     integerValue FuncRef _ = FuncRefValue nullReference
     integerValue ExternRef n = ExternRefValue (referenceTo (fromInteger n))
+    integerValue ExnRef _ = ExnRefValue nullReference
 
 onePageMemory :: RawMemory
 onePageMemory = RawMemory (MemType AddrI32 (Limits 1 Nothing))
@@ -1141,6 +1164,7 @@ startModule startBody =
         , start = Just (FunctionIdx 0)
         , customSections = []
         , stateImports = importsNoState
+        , tags = []
         }
 
 withData :: [RawDataSegment] -> RawModule -> RawModule

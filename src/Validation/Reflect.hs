@@ -54,6 +54,9 @@ module Validation.Reflect (
     memShapesSing,
     tableShapesSing,
     elemShapesSing,
+    tagTypesSing,
+    SomeTagRef (..),
+    lookupTagRef,
     SomeMemoryRef (..),
     lookupMemoryRef,
     SomeTableRef (..),
@@ -281,8 +284,8 @@ tableShapeOf (entryType, level, indexType, Limits lo hi) = TableShape entryType 
   to a runtime witness with the type-level signature hidden existentially. The function types
   are given in declared order (as decoded) and stored in stack order.
 -}
-reflectCtx :: [LabelledFuncType] -> [LabelledGlobalType] -> [MemType] -> [(ValType, SecLevel, AddrType, Limits)] -> Int -> [ValType] -> SomeModuleShape
-reflectCtx funcTypes globalTypes memTypes tables dataCount elementTypes =
+reflectCtx :: [LabelledFuncType] -> [LabelledGlobalType] -> [MemType] -> [(ValType, SecLevel, AddrType, Limits)] -> Int -> [ValType] -> [[ValType]] -> SomeModuleShape
+reflectCtx funcTypes globalTypes memTypes tables dataCount elementTypes tagParams =
     withSomeSing
         ( ModuleShape
             (map stackOrderLabelled funcTypes)
@@ -291,12 +294,14 @@ reflectCtx funcTypes globalTypes memTypes tables dataCount elementTypes =
             (map tableShapeOf tables)
             (replicate dataCount DataShape)
             (map ElemShape elementTypes)
+            -- (What an exception carries is public, and listed with the last value first, as on the stack.)
+            (map (reverse . map (:~ Low)) tagParams)
         )
         SomeModuleShape
 
 -- | The six index spaces of a module-shape singleton.
 funcTypesSing :: SModuleShape shape -> Sing (ModuleFuncs shape)
-funcTypesSing (SModuleShape fts _ _ _ _ _) = fts
+funcTypesSing (SModuleShape fts _ _ _ _ _ _) = fts
 
 -- | Which globals of a global space are preserved, from its singleton.
 preservedOf :: Sing (gs :: [LabelledGlobalType]) -> PreservedOf gs
@@ -308,20 +313,32 @@ preservedOf (SCons (SGlobalType mutability (t :%~ level)) rest) = case (mutabili
     (SPreserved, SLow) -> PreservedHere t (preservedOf rest)
 
 globalTypesSing :: SModuleShape shape -> Sing (ModuleGlobals shape)
-globalTypesSing (SModuleShape _ gs _ _ _ _) = gs
+globalTypesSing (SModuleShape _ gs _ _ _ _ _) = gs
 
 memShapesSing :: SModuleShape shape -> Sing (ModuleMems shape)
-memShapesSing (SModuleShape _ _ ms _ _ _) = ms
+memShapesSing (SModuleShape _ _ ms _ _ _ _) = ms
 
 tableShapesSing :: SModuleShape shape -> Sing (ModuleTables shape)
-tableShapesSing (SModuleShape _ _ _ ts _ _) = ts
+tableShapesSing (SModuleShape _ _ _ ts _ _ _) = ts
 
 dataShapesSing :: SModuleShape shape -> Sing (ModuleData shape)
-dataShapesSing (SModuleShape _ _ _ _ ds _) = ds
+dataShapesSing (SModuleShape _ _ _ _ ds _ _) = ds
 
 -- | A bounds-checked index into the data index space.
 elemShapesSing :: SModuleShape shape -> Sing (ModuleElems shape)
-elemShapesSing (SModuleShape _ _ _ _ _ es) = es
+elemShapesSing (SModuleShape _ _ _ _ _ es _) = es
+
+tagTypesSing :: SModuleShape shape -> Sing (ModuleTags shape)
+tagTypesSing (SModuleShape _ _ _ _ _ _ gs) = gs
+
+-- | @∃ps. (Sing ps, Elem ps tags)@: an exception tag found by its index, with what it carries.
+data SomeTagRef (tags :: [[LabelledValType]]) where
+    SomeTagRef :: Sing (ps :: [LabelledValType]) -> Elem ps tags -> SomeTagRef tags
+
+lookupTagRef :: Sing (tags :: [[LabelledValType]]) -> Word32 -> Maybe (SomeTagRef tags)
+lookupTagRef (SCons ps _) 0 = Just (SomeTagRef ps Here)
+lookupTagRef (SCons _ rest) n = (\(SomeTagRef ps ix) -> SomeTagRef ps (There ix)) <$> lookupTagRef rest (n - 1)
+lookupTagRef SNil _ = Nothing
 
 -- | @∃at. MemoryRef at ms@: a memory found by its index.
 data SomeMemoryRef (ms :: [MemShape]) where

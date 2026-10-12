@@ -135,14 +135,14 @@ runSpinFor fuel = case runFor fuel FsNil (Config (moduleToStore emptyMod) noLoca
     Right (OutOfFuel _) -> Right True
     Right (Halted _) -> Right False
   where
-    emptyMod :: ModuleInst ('ModuleShape '[] '[] '[] '[] '[] '[])
+    emptyMod :: ModuleInst ('ModuleShape '[] '[] '[] '[] '[] '[] '[])
     emptyMod = ModuleInst FsNil GNil MNil noTables DNil
 
 runFactorial :: Word32 -> Either String Word32
 runFactorial input =
     either (Left . show) completedI32 (runFunction (SCons publicI32 SNil) emptyModule factorial (input :# VNil))
   where
-    emptyModule :: ModuleInst ('ModuleShape '[] '[] '[] '[] '[] '[])
+    emptyModule :: ModuleInst ('ModuleShape '[] '[] '[] '[] '[] '[] '[])
     emptyModule = ModuleInst FsNil GNil MNil noTables DNil
 
 {- *** call *** -
@@ -150,7 +150,7 @@ runFactorial input =
    @square x = mul x x@, exercising a typed 'call' into another function in the module.
 -}
 
-type CallCtx = 'ModuleShape '[ 'LabelledFuncType 'Low '[PublicI32, PublicI32] '[PublicI32]] '[] '[] '[] '[] '[]
+type CallCtx = 'ModuleShape '[ 'LabelledFuncType 'Low '[PublicI32, PublicI32] '[PublicI32]] '[] '[] '[] '[] '[] '[]
 
 multiply :: FuncInst CallCtx ('LabelledFuncType 'Low '[PublicI32, PublicI32] '[PublicI32])
 multiply = WasmFunc . Function (SCons publicI32 (SCons publicI32 SNil)) SNil ReturnsUnderPublicPc $ (ILocalGet (resolveLocal (SCons publicI32 (SCons publicI32 SNil)) Here) :. ILocalGet (resolveLocal (SCons publicI32 (SCons publicI32 SNil)) (There Here)) :. IMul I32IsNum :. INil)
@@ -174,7 +174,7 @@ runSquare input = either (Left . show) completedI32 (runFunction (SCons publicI3
    on the (only) global type-checks only because it is declared 'Mutable.
 -}
 
-type GlobalCtx = 'ModuleShape '[] '[ 'GlobalType 'Mutable PublicI32] '[] '[] '[] '[]
+type GlobalCtx = 'ModuleShape '[] '[ 'GlobalType 'Mutable PublicI32] '[] '[] '[] '[] '[]
 
 increment :: FuncInst GlobalCtx ('LabelledFuncType 'Low '[] '[PublicI32])
 increment =
@@ -227,7 +227,7 @@ secretPlusPublic = secret :. one :. IAdd I32IsNum :. INil
   store rules); a call is not yet, since calls are only allowed at a public pc until function
   types carry a bound (see the TODO on 'ICall').
 -}
-leakThroughControl :: Expr ('ModuleShape '[] '[] '[] '[] '[] '[]) ('FrameShape '[PublicI32] '[]) '[ '[]] '[ 'Low] '[ 'Low] '[SecretI32] '[]
+leakThroughControl :: Expr ('ModuleShape '[] '[] '[] '[] '[] '[] '[]) ('FrameShape '[PublicI32] '[]) '[ '[]] '[ 'Low] '[ 'Low] '[SecretI32] '[]
 leakThroughControl =
     -- The pc drops at the end of this conditional, so it must leave the preserved globals as
     -- it found them; the module has no globals, hence none to compare.
@@ -241,7 +241,7 @@ leakThroughControl =
     noSuchProof = error "unreachable: a secret pc never flows into a public local"
 
 -- | A module shape with one memory, which is all the load and store rules ask of the module.
-type ExampleShape = 'ModuleShape '[] '[] '[ 'MemShape 'AddrI32 1 'Nothing] '[] '[] '[]
+type ExampleShape = 'ModuleShape '[] '[] '[ 'MemShape 'AddrI32 1 'Nothing] '[] '[] '[] '[]
 
 {- | Writing a secret into memory. The store declares the level its bytes get ('High here) and
   carries the proof that what flows into it may: the pc, the address and the value joined,

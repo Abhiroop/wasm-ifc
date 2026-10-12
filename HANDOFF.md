@@ -575,19 +575,52 @@ implemented since e87e76a.
   run with nothing skipped. Four unit examples (`test/Spec.hs`, "vectors").
 - **Cost:** the allocation tripwire is unchanged; no workload of the benchmarks uses vectors.
 
+## Exceptions (item 13c, 2026-10-12)
+
+- **What:** exception tags, `throw`, `throw_ref`, `try_table` with its four kinds of clause,
+  and the `exnref` type (WebAssembly 3.0's exceptions; the earlier `try`/`catch` instructions
+  are not in 3.0).
+- **The rule, as decided on 2026-09-30 and as section 5 states it:** `throw` requires a public
+  pc and public operands (`IThrow` is typed at pc `Low`, with a witness that the tag's values
+  are public); `throw_ref` requires a public pc and a public reference. No function type has a
+  label for exceptional exits: a function whose body may throw has bound `Low`.
+- **One thing the text leaves open, decided here:** a `try_table` is typed only under a public
+  pc (`ITryTable` is at pc `Low`). Its clauses are then branches taken under a public pc, with
+  the public values of the exception, so they raise nothing. Under a secret pc no exception can
+  arrive anyway (nothing reachable from there may throw), so the clauses would be dead; typing
+  them there would need the branch rule's raise for no gain. A `try_table` under a secret pc
+  is rejected (`IllegalFlow "try_table" High Low`). **For the paper track to confirm.**
+- **Run time:** an exception unwinds the control stack, through calls, to the nearest clause
+  that catches it; one that nothing catches ends the run (`UncaughtException`).
+- **Preserved globals:** an exception skips no comparison that the rule for preserved globals
+  needs. A construct compares them where the pc drops on the way out of it. A `throw` is typed
+  at a public pc, the pc of an enclosing construct is never above that of what it encloses,
+  and a caller's pc flows into the bound of its callee, which is public here. So every
+  construct and every call the exception leaves is left under a public pc, and whatever ran
+  under a secret pc before the throw had ended, and was compared, by then. The clause's branch
+  goes through the same code as a `br`, so the construct it lands behind compares as usual.
+  This is my argument, not a proof; the paper track should check it against section 6.6.
+- **Spec suite:** 62,137 passed, 0 failed, 3,065 skipped (62,081 and 3,121 before);
+  `throw.wast` and `throw_ref.wast` pass in full. The main module of `try_table.wast` imports a
+  tag from another module, which is not supported (42 assertions skipped). Four unit examples
+  (`test/Spec.hs`, "exceptions").
+
 ## Where coverage stands (2026-10-12, for the paper's claim)
 
 Supported, with the 3.0 suite passing on all of it: **every instruction and type of
 WebAssembly 2.0**, and of what 3.0 adds, **several memories, 64-bit memories and tables, tail
-calls and extended constant expressions**. With one restriction that cuts across versions:
-**a module does not share a memory, a table or a mutable global with another module**; what it
-imports of these it gets by value. A program that is one module, as every WASI program is, is
-not affected.
+calls, extended constant expressions and exceptions** (thrown under a public pc only). With one
+restriction that cuts across versions: **a module does not share a memory, a table, a mutable
+global or an exception tag with another module**; what it imports of the first three it gets
+by value. A program that is one module, as every WASI program is, is not affected.
 
-Not supported: exceptions, typed function references and garbage collection (all 3.0).
+Not supported: typed function references and garbage collection (both 3.0). So the paper's
+"3.0 without garbage collection" is short of one feature, typed function references, which
+changes the value types (references to a function type, nullable or not, with subtyping) and
+is not a matter of days.
 
 Every feature that clang 23 (wasi-sdk 34) and rustc 1.99 enable by default for
-`wasm32-wasip1` is supported. The suite's 3,121 skipped assertions are: 1,245 malformed modules
-given as text, which the harness does not run; 1,571 on modules that use the three unsupported
-features; 302 that need state shared between modules; 3 whose start function calls an import.
-Counts by feature are in `TODO.md`.
+`wasm32-wasip1` is supported. The suite's 3,065 skipped assertions are: 1,245 malformed modules
+given as text, which the harness does not run; 1,446 on modules that use the two unsupported
+features (alone or with others); 371 that need state or a tag shared between modules; 3 whose
+start function calls an import. Counts by feature are in `TODO.md`.

@@ -199,6 +199,7 @@ withFunctions functions m =
         , start = m.start
         , customSections = m.customSections
         , stateImports = m.stateImports
+        , tags = m.tags
         }
 
 -- | The local of every definition, the starting values included.

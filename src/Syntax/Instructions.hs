@@ -20,6 +20,7 @@ module Syntax.Instructions (
     -- * Untyped (decoded) AST
     RawInstr (..),
     RawExpr,
+    Catch (..),
     ConvertOp (..),
     convertEnds,
     BitwiseOp (..),
@@ -30,6 +31,7 @@ module Syntax.Instructions (
     -- * Intrinsically-typed AST
     Instr (..),
     Expr (..),
+    Handler (..),
     FallThrough (..),
 
     -- * Smart constructors (empty-result label variants)
@@ -65,6 +67,7 @@ import Validation.Shape (
     ModuleMems,
     ModuleShape,
     ModuleTables,
+    ModuleTags,
     RecordedGlobals,
     Restores (..),
     TableReach,
@@ -88,6 +91,14 @@ data RawInstr where
     Return :: RawInstr
     Call :: FunctionIdx -> RawInstr
     CallIndirect :: TableIdx -> TypeIdx -> RawInstr
+    -- \*** Exceptions ***
+
+    -- | throw an exception of a tag, carrying the tag's values off the stack
+    Throw :: TagIdx -> RawInstr
+    -- | throw again the exception an @exnref@ refers to
+    ThrowRef :: RawInstr
+    -- | a block whose clauses catch the exceptions thrown in it, each by branching to a label
+    TryTable :: BlockType -> [Catch] -> [RawInstr] -> RawInstr
     -- | tail calls: the call's results are the function's, and its frame replaces the caller's
     ReturnCall :: FunctionIdx -> RawInstr
     ReturnCallIndirect :: TableIdx -> TypeIdx -> RawInstr
@@ -191,6 +202,16 @@ data RawInstr where
     -- | @select t*@ as encoded: the annotation is a vector, which validation requires to hold one type
     SelectTyped :: [ValType] -> RawInstr
 
+{- | A clause of a @try_table@: catch the exceptions of one tag, or all of them, by branching
+  to a label of the context around the block with what the exception carries; the @Ref@ forms
+  also hand over a reference to the exception.
+-}
+data Catch
+    = CatchTag TagIdx LabelIdx
+    | CatchTagRef TagIdx LabelIdx
+    | CatchAll LabelIdx
+    | CatchAllRef LabelIdx
+
 -- | An expression: a flat list of (tree-structured) instructions — a function body or an initializer.
 type RawExpr = [RawInstr]
 
@@ -274,6 +295,17 @@ data BitwiseOp = BwAnd | BwOr | BwXor | BwShl | BwShr Signedness | BwRotl | BwRo
 data CountOp = OpClz | OpCtz | OpPopcnt deriving stock (Eq, Show)
 data FloatUnOp = FAbs | FNeg | FSqrt | FCeil | FFloor | FTrunc | FNearest deriving stock (Eq, Show)
 data FloatBinOp = FMin | FMax | FCopysign deriving stock (Eq, Show)
+
+{- | A clause of a typed @try_table@, in a module and a label context (that around the block).
+  It names a label whose types the caught values flow into: the values an exception of the tag
+  carries, with a public reference to the exception on top for the @Ref@ forms, or nothing but
+  that reference for the clauses that catch every exception.
+-}
+data Handler (m :: ModuleShape) (labels :: [LabelledResultType]) where
+    HandlesTag :: Elem ps (ModuleTags m) -> SegmentFlows ps target -> Elem target labels -> Handler m labels
+    HandlesTagRef :: Elem ps (ModuleTags m) -> SegmentFlows (('ExnRef ':~ 'Low) ': ps) target -> Elem target labels -> Handler m labels
+    HandlesAll :: SegmentFlows '[] target -> Elem target labels -> Handler m labels
+    HandlesAllRef :: SegmentFlows (('ExnRef ':~ 'Low) ': '[]) target -> Elem target labels -> Handler m labels
 
 {- | The intrinsically-typed instruction. Its last two indices, @stackIn@/@stackOut@, are
   the instruction's actual type — the operand stack before and after. The first three are
@@ -683,6 +715,30 @@ data
         SegmentFlows carried (FrameReturn f) ->
         Append carried s full ->
         Instr m f l (pc ': pcs) (RaiseAll pc (pc ': pcs)) 'NoDynamicCheck full anyOut
+    {- Exceptions, the one feature whose use the rules restrict: an exception is thrown only
+       under a public pc, carrying public values (and a reference to an exception is thrown
+       again only if it is public). Whether and what a piece of code throws is then public, so
+       an exception needs no level of its own, and neither does a function's type for the ones
+       that leave it: a function whose body may throw has a public bound, and was called under
+       a public pc. A @try_table@ is a block that is entered under a public pc, and each of
+       its clauses is a branch to a label of the context around it, taken under that pc, with
+       the public values the exception carries ('Handler'). -}
+    IThrow ::
+        AllPublic ps ->
+        SegmentFlows args ps ->
+        Append args s full ->
+        Elem ps (ModuleTags m) ->
+        Instr m f l ('Low ': pcs) ('Low ': pcs) 'NoDynamicCheck full anyOut
+    IThrowRef :: Instr m f l ('Low ': pcs) ('Low ': pcs) 'NoDynamicCheck (('ExnRef ':~ 'Low) ': s) anyOut
+    ITryTable ::
+        AllAtLeast 'Low rs ->
+        ResultsAtEndPc pcBody rs ->
+        Restores pcBody pcs' (ModuleGlobals m) ->
+        SegmentFlows psIn ps ->
+        Append psIn s full ->
+        [Handler m l] ->
+        Expr m f (rs ': l) ('Low ': 'Low ': pcs) (pcBody ': pcs') ps rs ->
+        Instr m f l ('Low ': pcs) pcs' 'NoDynamicCheck full (rs ++ s)
     {- Tail calls, typed as the call followed by a @return@ that they stand for: the premises of
        'ICall' (or 'ICallIndirect', with its run-time check) on the callee and the arguments,
        then those of 'IReturn' on what the callee returns. Its results are the function's, at

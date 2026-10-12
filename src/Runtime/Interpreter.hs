@@ -136,6 +136,7 @@ import Syntax.Instructions (
     FallThrough (..),
     FloatBinOp (..),
     FloatUnOp (..),
+    Handler (..),
     Instr (..),
  )
 import Syntax.Types
@@ -143,7 +144,7 @@ import Syntax.TypesIFC
 import Syntax.Vector (VectorLoadKind (..), VectorOp (..), laneBytes, loadedBytes)
 import Validation.Ref (MemoryRef (..), TableRef (..), functionReference)
 import Validation.Reflect (appendNil)
-import Validation.Shape (Append (..), BranchTarget (..), DataShape (..), Elem (..), ElemShape (..), FrameShape (..), ModuleData, ModuleElems, ModuleFuncs, ModuleGlobals, ModuleMems, ModuleShape, ModuleTables, PreservedOf, Restores (..), ReturnsWith (..), appendFromSing, appendIs, withinReach)
+import Validation.Shape (Append (..), BranchTarget (..), DataShape (..), Elem (..), ElemShape (..), FrameShape (..), ModuleData, ModuleElems, ModuleFuncs, ModuleGlobals, ModuleMems, ModuleShape, ModuleTables, ModuleTags, PreservedOf, Restores (..), ReturnsWith (..), appendFromSing, appendIs, sameElem, withinReach)
 
 -- *** Module and runtime state ***
 
@@ -201,7 +202,7 @@ getFunc (There ix) (FsCons _ rest) = getFunc ix rest
 data Store (mod :: ModuleShape) = Store
     { globals :: !(GlobalSpaceInst (ModuleGlobals mod))
     , memories :: !(MemSpaceInst (ModuleMems mod))
-    , tables :: !(TableSpaceInst (ModuleFuncs mod) (ModuleTables mod) (ModuleElems mod))
+    , tables :: !(TableSpaceInst (ModuleFuncs mod) (ModuleTables mod) (ModuleElems mod) (ModuleTags mod))
     , dataSegments :: !(DataSpaceInst (ModuleData mod))
     }
 
@@ -213,7 +214,7 @@ data ModuleInst (mod :: ModuleShape) = ModuleInst
     { functions :: !(FuncSpaceInst mod (ModuleFuncs mod))
     , globals :: !(GlobalSpaceInst (ModuleGlobals mod))
     , memories :: !(MemSpaceInst (ModuleMems mod))
-    , tables :: !(TableSpaceInst (ModuleFuncs mod) (ModuleTables mod) (ModuleElems mod))
+    , tables :: !(TableSpaceInst (ModuleFuncs mod) (ModuleTables mod) (ModuleElems mod) (ModuleTags mod))
     , dataSegments :: !(DataSpaceInst (ModuleData mod))
     }
 
@@ -259,6 +260,16 @@ data
     BlockLabel ::
         !(ValueStack below) ->
         Expr mod ('FrameShape locals ret) labels pcA1 pcB1 (rs ++ below) contOut ->
+        Control mod res ret locals labels contOut ->
+        Control mod res ret locals (rs ': labels) rs
+    {- | The label of a @try_table@: a block label that also holds the block's clauses, which
+    an exception thrown inside it is offered on its way out. The clauses name labels of the
+    context around the block, which is the context of what is below this entry.
+    -}
+    HandlerLabel ::
+        [Handler mod labels] ->
+        !(ValueStack below) ->
+        Expr mod ('FrameShape locals ret) labels pcA8 pcB8 (rs ++ below) contOut ->
         Control mod res ret locals labels contOut ->
         Control mod res ret locals (rs ': labels) rs
     {- | A @loop@ label. A branch to it (carrying the loop's parameters) restarts the body;
@@ -616,6 +627,19 @@ stepInstr funcs store locals stack instr rest control = case instr of
         let (params, below) = splitStack witness stack
             !after = restoring restores store rest
          in Right (Stepped NothingToCheck (Config store locals (relabelStack flows params) body (BlockLabel below after control)))
+    ITryTable _ _ restores flows witness handlers body ->
+        let (params, below) = splitStack witness stack
+            !after = restoring restores store rest
+         in Right (Stepped NothingToCheck (Config store locals (relabelStack flows params) body (HandlerLabel handlers below after control)))
+    {- Exceptions: a throw unwinds the control stack to the nearest clause that catches it
+       ('throwException'); a reference is thrown again with the exception it refers to. -}
+    IThrow _ flows witness tag ->
+        let (args, _) = splitStack witness stack
+         in throwException store (ExceptionInst tag (relabelStack flows args)) Nothing locals control
+    IThrowRef -> case stack of
+        reference :# _ -> case keptException reference store.tables of
+            Just exception -> throwException store exception (Just reference) locals control
+            Nothing -> Left NullExceptionReference
     ILoop _ restores _ _ flows witness body ->
         let (params, below) = splitStack witness stack
             !after = restoring restores store rest
@@ -767,6 +791,7 @@ activationDepth control = case control of
     EntryBoundary -> 1
     CallBoundary depth _ _ _ _ -> depth
     BlockLabel _ _ rest -> activationDepth rest
+    HandlerLabel _ _ _ rest -> activationDepth rest
     LoopLabel _ _ _ rest -> activationDepth rest
 
 {- | The "continue in the current frame" case: a successor configuration, with the evidence of
@@ -930,6 +955,7 @@ popControl ::
     StepResult 'NoDynamicCheck mod res
 popControl store _ vs EntryBoundary = Done store vs
 popControl store locals vs (BlockLabel below cont rest) = resume store locals vs below cont rest
+popControl store locals vs (HandlerLabel _ below cont rest) = resume store locals vs below cont rest
 popControl store locals vs (LoopLabel below _ cont rest) = resume store locals vs below cont rest
 popControl store _ vs (CallBoundary _ below cl cont cf) = resume store cl vs below cont cf
 
@@ -946,10 +972,12 @@ unwind ::
     StepResult 'NoDynamicCheck mod res
 unwind store _ TargetHere vs EntryBoundary = Done store vs
 unwind store locals TargetHere vs (BlockLabel below cont rest) = resume store locals vs below cont rest
+unwind store locals TargetHere vs (HandlerLabel _ below cont rest) = resume store locals vs below cont rest
 unwind store locals TargetHere vs (LoopLabel below body cont rest) =
     Stepped NothingToCheck (Config store locals vs body (LoopLabel below body cont rest))
 unwind store _ TargetHere vs (CallBoundary _ below cl cont cf) = resume store cl vs below cont cf
 unwind store locals (TargetThere ix') vs (BlockLabel _ _ rest) = unwind store locals ix' vs rest
+unwind store locals (TargetThere ix') vs (HandlerLabel _ _ _ rest) = unwind store locals ix' vs rest
 unwind store locals (TargetThere ix') vs (LoopLabel _ _ _ rest) = unwind store locals ix' vs rest
 unwind _ _ (TargetThere ix') _ (CallBoundary {}) = case ix' of {}
 unwind _ _ (TargetThere ix') _ EntryBoundary = case ix' of {}
@@ -964,10 +992,12 @@ unwindTo ::
     StepResult 'NoDynamicCheck mod res
 unwindTo store _ Here vs EntryBoundary = Done store vs
 unwindTo store locals Here vs (BlockLabel below cont rest) = resume store locals vs below cont rest
+unwindTo store locals Here vs (HandlerLabel _ below cont rest) = resume store locals vs below cont rest
 unwindTo store locals Here vs (LoopLabel below body cont rest) =
     Stepped NothingToCheck (Config store locals vs body (LoopLabel below body cont rest))
 unwindTo store _ Here vs (CallBoundary _ below cl cont cf) = resume store cl vs below cont cf
 unwindTo store locals (There ix') vs (BlockLabel _ _ rest) = unwindTo store locals ix' vs rest
+unwindTo store locals (There ix') vs (HandlerLabel _ _ _ rest) = unwindTo store locals ix' vs rest
 unwindTo store locals (There ix') vs (LoopLabel _ _ _ rest) = unwindTo store locals ix' vs rest
 unwindTo _ _ (There ix') _ (CallBoundary {}) = case ix' of {}
 unwindTo _ _ (There ix') _ EntryBoundary = case ix' of {}
@@ -992,6 +1022,7 @@ tailCall ::
     Either Trap (StepResult check mod res)
 tailCall evidence funcs store flows witness ix args results control = case control of
     BlockLabel _ _ rest -> tailCall evidence funcs store flows witness ix args results rest
+    HandlerLabel _ _ _ rest -> tailCall evidence funcs store flows witness ix args results rest
     LoopLabel _ _ _ rest -> tailCall evidence funcs store flows witness ix args results rest
     CallBoundary _ below callerLocals cont callerControl ->
         let onStack = appendOnto witness
@@ -1018,6 +1049,42 @@ segmentAppends :: ValueStack s -> SegmentFlows from to -> (Append from s (from +
 segmentAppends _ NoValuesFlow = (ANil, ANil)
 segmentAppends below (ValueFlows _ rest) = case segmentAppends below rest of (from, to) -> (ACons from, ACons to)
 
+{- | Throw an exception: unwind the control stack, through call boundaries too, to the nearest
+  @try_table@ with a clause for it, and branch to that clause's label with what the clause
+  catches. The clause's label is in the context around its block, so the branch is an
+  'unwindTo' from below the block's entry, with the locals of the function the block is in.
+  An exception that no clause catches ends the run. A clause that catches by reference gets
+  the reference the exception was thrown again from, or a new one, for which the store keeps
+  the exception.
+-}
+throwException ::
+    Store mod ->
+    ExceptionInst (ModuleTags mod) ->
+    Maybe Reference ->
+    LocalSpaceInst locals ->
+    Control mod res ret locals labels cur ->
+    Either Trap (StepResult 'NoDynamicCheck mod res)
+throwException store exception@(ExceptionInst tag values) known locals control = case control of
+    EntryBoundary -> Left UncaughtException
+    CallBoundary _ _ callerLocals _ callerControl -> throwException store exception known callerLocals callerControl
+    BlockLabel _ _ rest -> throwException store exception known locals rest
+    LoopLabel _ _ _ rest -> throwException store exception known locals rest
+    HandlerLabel handlers _ _ rest -> offer handlers
+      where
+        offer [] = throwException store exception known locals rest
+        offer (handler : others) = case handler of
+            HandlesTag caught flows target | Just Refl <- sameElem tag caught -> Right (unwindTo store locals target (relabelStack flows values) rest)
+            HandlesTagRef caught flows target | Just Refl <- sameElem tag caught -> case referenced of
+                (reference, kept) -> Right (unwindTo kept locals target (relabelStack flows (reference :# values)) rest)
+            HandlesAll flows target -> Right (unwindTo store locals target (relabelStack flows VNil) rest)
+            HandlesAllRef flows target -> case referenced of
+                (reference, kept) -> Right (unwindTo kept locals target (relabelStack flows (reference :# VNil)) rest)
+            _ -> offer others
+        referenced = case known of
+            Just reference -> (reference, store)
+            Nothing -> case keepException exception store.tables of
+                (reference, tables) -> (reference, Store {globals = store.globals, memories = store.memories, tables, dataSegments = store.dataSegments})
+
 -- | @return@: unwind past every label frame in the current activation to the call boundary.
 returnUnwind ::
     Store mod ->
@@ -1028,6 +1095,7 @@ returnUnwind ::
 returnUnwind store _ vs EntryBoundary = Done store vs
 returnUnwind store _ vs (CallBoundary _ below cl cont cf) = resume store cl vs below cont cf
 returnUnwind store locals vs (BlockLabel _ _ rest) = returnUnwind store locals vs rest
+returnUnwind store locals vs (HandlerLabel _ _ _ rest) = returnUnwind store locals vs rest
 returnUnwind store locals vs (LoopLabel _ _ _ rest) = returnUnwind store locals vs rest
 
 -- | The mutable state of an instantiated module, and the module with that state put back.

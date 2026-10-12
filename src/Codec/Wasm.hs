@@ -134,13 +134,14 @@ getValType = do
         0x7B -> pure V128
         0x70 -> pure FuncRef
         0x6F -> pure ExternRef
+        0x69 -> pure ExnRef
         _ -> fail ("unknown valtype byte 0x" ++ showHex byte "")
 
 -- | A reference type: a value type that is one.
 getRefType :: Get ValType
 getRefType = do
     valType <- getValType
-    if valType `elem` [FuncRef, ExternRef] then pure valType else fail "malformed reference type"
+    if valType `elem` [FuncRef, ExternRef, ExnRef] then pure valType else fail "malformed reference type"
 
 getFuncType :: Get FuncType
 getFuncType = do
@@ -186,6 +187,7 @@ getBlockType types = do
         -5 -> pure (FuncType [] [V128])
         -16 -> pure (FuncType [] [FuncRef])
         -17 -> pure (FuncType [] [ExternRef])
+        -23 -> pure (FuncType [] [ExnRef])
         n -> case nth types (fromIntegral n) of
             Just ft -> pure ft
             Nothing -> fail ("block type index out of range: " ++ show n)
@@ -243,6 +245,9 @@ getInstr hasDataCount types opcode = case opcode of
         (thenArm, term) <- getBlockBody hasDataCount types
         elseArm <- if term == 0x05 then getExpr hasDataCount types else pure []
         pure (If blockType thenArm elseArm)
+    0x08 -> Throw . TagIdx <$> getULEB128
+    0x0A -> pure ThrowRef
+    0x1F -> TryTable <$> getBlockType types <*> getVec getCatch <*> getExpr hasDataCount types
     0x0C -> Br . LabelIdx <$> getULEB128
     0x0D -> BrIf . LabelIdx <$> getULEB128
     0x0E -> BrTable <$> getVec (LabelIdx <$> getULEB128) <*> (LabelIdx <$> getULEB128)
@@ -469,6 +474,17 @@ getInstr hasDataCount types opcode = case opcode of
             _ -> fail ("unsupported: 0xFC opcode " ++ show sub)
     0xFD -> getVectorInstr
     _ -> fail ("unsupported opcode 0x" ++ showHex opcode "")
+
+-- | A clause of a @try_table@.
+getCatch :: Get Catch
+getCatch = do
+    kind <- getWord8
+    case kind of
+        0x00 -> CatchTag . TagIdx <$> getULEB128 <*> (LabelIdx <$> getULEB128)
+        0x01 -> CatchTagRef . TagIdx <$> getULEB128 <*> (LabelIdx <$> getULEB128)
+        0x02 -> CatchAll . LabelIdx <$> getULEB128
+        0x03 -> CatchAllRef . LabelIdx <$> getULEB128
+        _ -> fail ("unknown catch clause " ++ show kind)
 
 {- | A vector instruction: the prefix @0xFD@ has been read, its own opcode follows as a @u32@.
   The table is the binary format's, in its order; the gaps are opcodes it reserves.
@@ -705,10 +721,11 @@ data Sections = Sections
     , dataCountSection :: Maybe Word32
     -- ^ the data count section, which must agree with the data section
     , customs :: [(Text, BL.ByteString)]
+    , tagSection :: [FuncType]
     }
 
 emptySections :: Sections
-emptySections = Sections [] [] [] [] [] [] [] [] [] Nothing [] Nothing []
+emptySections = Sections [] [] [] [] [] [] [] [] [] Nothing [] Nothing [] []
 
 getModule :: Get RawModule
 getModule = do
@@ -740,10 +757,10 @@ readSections = go 0
                 acc' <- isolate (fromIntegral size) (parseSection sectionId acc)
                 go (if sectionId == 0 then lastRank else rank) acc'
 
--- | The position of a section id in the required order; the data count (12) precedes code (10).
+-- | The position of a section id in the required order: tags (13) follow memories, and the data count (12) precedes code (10).
 sectionRank :: Word8 -> Maybe Int
 sectionRank 0 = Just 0
-sectionRank sectionId = (+ 1) <$> elemIndex sectionId [1, 2, 3, 4, 5, 6, 7, 8, 9, 12, 10, 11]
+sectionRank sectionId = (+ 1) <$> elemIndex sectionId [1, 2, 3, 4, 5, 13, 6, 7, 8, 9, 12, 10, 11]
 
 parseSection :: Word8 -> Sections -> Get Sections
 parseSection sectionId acc = case sectionId of
@@ -760,6 +777,7 @@ parseSection sectionId acc = case sectionId of
     10 -> (\cs -> acc {codeSection = cs}) <$> getVec (getCode (isJust acc.dataCountSection) (acc.typeSection))
     11 -> (\ds -> acc {dataSection = ds}) <$> getVec getData
     12 -> (\n -> acc {dataCountSection = Just n}) <$> getULEB128
+    13 -> (\ts -> acc {tagSection = ts}) <$> getVec (getTag acc.typeSection)
     _ -> fail ("malformed section id " ++ show sectionId)
 
 -- | A data segment: active for memory 0 (mode 0) or for a memory it names (mode 2), or passive (mode 1).
@@ -797,7 +815,16 @@ getImport types = do
         0x01 -> TableImport moduleName fieldName <$> getTable
         0x02 -> MemoryImport moduleName fieldName <$> getMemory
         0x03 -> GlobalImport moduleName fieldName <$> getGlobalType
+        0x04 -> fail "unsupported: tag import"
         _ -> fail ("unknown import kind 0x" ++ showHex kind "")
+
+-- | A tag: an attribute byte, which is zero (an exception), and the type of what it carries.
+getTag :: [FuncType] -> Get FuncType
+getTag types = do
+    attribute <- getWord8
+    when (attribute /= 0) (fail "malformed tag attribute")
+    typeIdx <- getULEB128
+    maybe (fail ("tag type index out of range: " ++ show typeIdx)) pure (nth types (fromIntegral typeIdx))
 
 -- | A table type: the reference type of its entries, then its limits.
 getTable :: Get RawTable
@@ -848,6 +875,7 @@ getExport = do
         0x01 -> pure (ExportTable (TableIdx idx))
         0x02 -> pure (ExportMem (MemoryIdx idx))
         0x03 -> pure (ExportGlobal (GlobalIdx idx))
+        0x04 -> pure (ExportTag (TagIdx idx))
         _ -> fail ("unsupported export kind 0x" ++ showHex kind "")
     pure (Export name desc)
 
@@ -898,6 +926,7 @@ assemble secs = do
             , start = secs.startSection
             , customSections = secs.customs
             , stateImports = StateImports (map names importedGlobals) (map names importedMemories) (map names importedTables)
+            , tags = secs.tagSection
             }
   where
     importedGlobals = [(moduleName, fieldName, globalType) | GlobalImport moduleName fieldName globalType <- secs.importSection]

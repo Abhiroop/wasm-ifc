@@ -37,7 +37,7 @@ import Data.Word (Word64)
   constructors 'ValType' currently happens to have: @FuncRef@ and @V128@ came later, and
   @funcref.add@ did not become representable.
 -}
-data ValType = I32 | I64 | F32 | F64 | V128 | FuncRef | ExternRef
+data ValType = I32 | I64 | F32 | F64 | V128 | FuncRef | ExternRef | ExnRef
     deriving stock (Eq, Show)
 
 -- Singletons for the value type: the intrinsically-typed layer reflects these between the
@@ -85,6 +85,7 @@ decideNum SF64 = Just F64IsNum
 decideNum SV128 = Nothing
 decideNum SFuncRef = Nothing
 decideNum SExternRef = Nothing
+decideNum SExnRef = Nothing
 
 -- | The width in bytes of a numeric type (4 for i32/f32, 8 for i64/f64).
 numBytes :: IsNum t -> Int
@@ -108,6 +109,7 @@ decideInt SF64 = Nothing
 decideInt SV128 = Nothing
 decideInt SFuncRef = Nothing
 decideInt SExternRef = Nothing
+decideInt SExnRef = Nothing
 
 decideFloat :: Sing (t :: ValType) -> Maybe (IsFloat t)
 decideFloat SF32 = Just F32IsFloat
@@ -117,18 +119,22 @@ decideFloat SI64 = Nothing
 decideFloat SV128 = Nothing
 decideFloat SFuncRef = Nothing
 decideFloat SExternRef = Nothing
+decideFloat SExnRef = Nothing
 
 {- | Evidence that a value type is a reference type (the spec's @reftype@), refined to which
-  one: a reference to a function of the module, or to a value of the host that the module
-  cannot inspect. Carried by the instructions on references and by a table's element type.
+  one: a reference to a function of the module, to a value of the host that the module cannot
+  inspect, or to an exception that was thrown. Carried by the instructions on references and
+  by a table's element type.
 -}
 data IsRef (t :: ValType) where
     FuncRefIsRef :: IsRef 'FuncRef
     ExternRefIsRef :: IsRef 'ExternRef
+    ExnRefIsRef :: IsRef 'ExnRef
 
 decideRef :: Sing (t :: ValType) -> Maybe (IsRef t)
 decideRef SFuncRef = Just FuncRefIsRef
 decideRef SExternRef = Just ExternRefIsRef
+decideRef SExnRef = Just ExnRefIsRef
 decideRef SI32 = Nothing
 decideRef SI64 = Nothing
 decideRef SF32 = Nothing
@@ -139,6 +145,7 @@ decideRef SV128 = Nothing
 refSing :: IsRef t -> Sing t
 refSing FuncRefIsRef = SFuncRef
 refSing ExternRefIsRef = SExternRef
+refSing ExnRefIsRef = SExnRef
 
 {- | A result type — the stack shape a block, loop, if, or function yields (the spec's
   @resulttype@). It is exactly a list of value types; the synonym names the intent so

@@ -45,15 +45,17 @@ import Runtime.MemInst (maxMemoryPages)
 import Syntax.Functions (Function (..), FunctionSpace (..), RawFunction (RawFunction))
 import Syntax.Globals (ConstExpr (..), ConstOp (..), Global (..), GlobalSpace (..), RawGlobal (..))
 import Syntax.Immediates
-import Syntax.Indices (DataIdx (..), ElemIdx (..), FunctionIdx (..), GlobalIdx (..), LabelIdx (..), LocalIdx (..), MemoryIdx (..), TableIdx (..), TypeIdx (..))
+import Syntax.Indices (DataIdx (..), ElemIdx (..), FunctionIdx (..), GlobalIdx (..), LabelIdx (..), LocalIdx (..), MemoryIdx (..), TableIdx (..), TagIdx (..), TypeIdx (..))
 import Syntax.Instructions (
     BitwiseOp (..),
+    Catch (..),
     ConvertOp (..),
     CountOp (..),
     Expr (..),
     FallThrough (..),
     FloatBinOp (..),
     FloatUnOp (..),
+    Handler (..),
     Instr (..),
     RawInstr (..),
     convertEnds,
@@ -174,7 +176,7 @@ data OperandKind = Numeric | Integral | FloatingPoint
     deriving stock (Eq, Show)
 
 -- | The index spaces an instruction or export may refer into.
-data IndexSpace = Locals | Globals | Functions | Labels | Memories | Types | Tables | DataSegments | ElementSegments
+data IndexSpace = Locals | Globals | Functions | Labels | Memories | Types | Tables | DataSegments | ElementSegments | Tags
     deriving stock (Eq, Show)
 
 -- *** Elaboration environment & results ***
@@ -679,6 +681,32 @@ elabInstr env pcsIn@(SCons pc _) stackIn instr = case instr of
             calledFrom <- blame [RaiseBound f] (requireFlow "call" pc boundS)
             atCallPc <- blame (raisesToAtLeast (RaiseParam f) pc psS) (argumentsAtCallPc env "call" pc psS)
             Right (Produces (sameLengthAs pcsIn) pcsIn (rsS %++ sS) (ICall calledFrom flows atCallPc witness fix))
+    {- Exceptions: thrown and caught under a public pc only, with public values -}
+    Throw (TagIdx x) -> case pc of
+        SHigh -> Left (IllegalFlow "throw" High Low)
+        SLow -> do
+            SomeTagRef psS tix <- tagAt env x
+            allPublic <- note (Malformed "a tag whose values are not public") (decideAllPublic psS)
+            SomeCoercion _ flows witness <- prefixFlows "throw" psS stackIn
+            Right (Transfers (sameLengthAs pcsIn) pcsIn (IThrow allPublic flows witness tix))
+    ThrowRef -> case (pc, stackIn) of
+        (SHigh, _) -> Left (IllegalFlow "throw_ref" High Low)
+        (SLow, SCons (se :%~ le) _) -> do
+            Refl <- operandIs "throw_ref" SExnRef se
+            case le of
+                SLow -> Right (Transfers (sameLengthAs pcsIn) pcsIn IThrowRef)
+                SHigh -> Left (IllegalFlow "throw_ref" High Low)
+        (SLow, SNil) -> Left (StackUnderflow "throw_ref")
+    TryTable (FuncType psT rsT) clauses body -> case pc of
+        SHigh -> Left (IllegalFlow "try_table" High Low)
+        SLow -> do
+            handlers <- traverse (handlerOf env) clauses
+            first leaveBlock $ blockParams "try_table" psT stackIn $ \psS sS witness ->
+                inferResults (\e -> aboutOwnResults e || aboutOwnLabel e) rsT pc $ \rsS ->
+                    elabBodyChecked (pushLabel rsS (bodyAfter [] env)) (SCons pc pcsIn) psS rsS body $ \(BodyResult (BothLonger same) (SCons pcBody pcsOut) bodySeq) -> do
+                        atStart <- forBlock OwnResults (requireCarried "block result" pc rsS)
+                        atEnd <- forBlock OwnResults (resultsAtEndPc env "block result" pcBody rsS)
+                        Right (Produces same pcsOut (rsS %++ sS) (ITryTable atStart atEnd (restoresWhere env pcBody pcsOut) (segmentSelf psS) witness handlers bodySeq))
     {- Tail calls: the call's premises, then the return's on what the callee returns -}
     ReturnCall (FunctionIdx f) -> case lookupFuncRef (funcTypesSing (env.shape)) f of
         Nothing -> Left (IndexOutOfRange Functions f)
@@ -1179,6 +1207,34 @@ laneInRange op = case op of
   where
     outside = Left (Malformed "a lane index past the lanes of a vector")
 
+-- | The exception tag an instruction names.
+tagAt :: ElabEnv shape ret locals labels -> Word32 -> Either ElabError (SomeTagRef (ModuleTags shape))
+tagAt env x = note (IndexOutOfRange Tags x) (lookupTagRef (tagTypesSing (env.shape)) x)
+
+{- | A clause of a @try_table@: its label, in the context around the block, takes what the
+  clause catches, which is public.
+-}
+handlerOf :: ElabEnv shape ret locals labels -> Catch -> Either ElabError (Handler shape labels)
+handlerOf env clause = case clause of
+    CatchTag (TagIdx x) (LabelIdx l) -> do
+        SomeTagRef psS tix <- tagAt env x
+        SomeLabel targetS lix <- labelAt l
+        HandlesTag tix <$> caught psS targetS <*> pure lix
+    CatchTagRef (TagIdx x) (LabelIdx l) -> do
+        SomeTagRef psS tix <- tagAt env x
+        SomeLabel targetS lix <- labelAt l
+        HandlesTagRef tix <$> caught (SCons (SExnRef :%~ SLow) psS) targetS <*> pure lix
+    CatchAll (LabelIdx l) -> do
+        SomeLabel targetS lix <- labelAt l
+        HandlesAll <$> caught SNil targetS <*> pure lix
+    CatchAllRef (LabelIdx l) -> do
+        SomeLabel targetS lix <- labelAt l
+        HandlesAllRef <$> caught (SCons (SExnRef :%~ SLow) SNil) targetS <*> pure lix
+  where
+    labelAt l = note (IndexOutOfRange Labels l) (mkLabelElem (env.labels) l)
+    caught :: Sing (values :: [LabelledValType]) -> Sing (target :: [LabelledValType]) -> Either ElabError (SegmentFlows values target)
+    caught valuesS targetS = note (StackMismatch "try_table" (stackToList targetS) (stackToList valuesS)) (decideSegmentFlows valuesS targetS)
+
 -- | An operand has the type an instruction asks for.
 operandIs :: Text -> Sing (expected :: ValType) -> Sing (actual :: ValType) -> Either ElabError (actual :~: expected)
 operandIs name expected actual = note (OperandMismatch name (valTypeOf expected) (valTypeOf actual)) (decideEquality actual expected)
@@ -1385,6 +1441,10 @@ stepDead env pcsIn s instr = case instr of
     Call (FunctionIdx f) -> case lookupFuncRef (funcTypesSing (env.shape)) f of
         Nothing -> Left (IndexOutOfRange Functions f)
         Just (SomeFuncRef _ psS rsS _) -> afterFrame (stackToList psS) (stackToList rsS) s
+    Throw (TagIdx x) -> tagAt env x >>= \(SomeTagRef psS _) -> popTypes (stackToList psS) s >> Right (PolyStack [])
+    ThrowRef -> popKnown ExnRef s >> Right (PolyStack [])
+    TryTable (FuncType psT rsT) clauses body ->
+        mapM_ (handlerOf env) clauses >> validateFrame env pcsIn rsT psT rsT body >> afterFrame (stackOrder psT) (stackOrder rsT) s
     ReturnCall (FunctionIdx f) -> case lookupFuncRef (funcTypesSing (env.shape)) f of
         Nothing -> Left (IndexOutOfRange Functions f)
         Just (SomeFuncRef _ psS rsS _) -> do
@@ -1727,7 +1787,7 @@ applyRaises inferable choices raises
 elaborateUnder :: Assembled -> Choices -> Either ElabError SomeModule
 elaborateUnder assembled choices =
     case moduleShape of
-        SomeModuleShape ctxS@(SModuleShape ftsS gsS msS _ _ esS) -> do
+        SomeModuleShape ctxS@(SModuleShape ftsS gsS msS _ _ esS _) -> do
             mapM_ declared (concat [functionsReferencedIn body | RawFunction _ _ body <- m.functions])
             functions <- gathered (elaborateFuncs ctxS assembled.sectionTypes assembled.declassify assembled.typingRestrictions ftsS entries)
             let constEnv = ConstEnv ftsS (zip assembled.globalTypes (map Just m.stateImports.globals ++ repeat Nothing))
@@ -1745,7 +1805,7 @@ elaborateUnder assembled choices =
     gathered :: Either ElabError a -> Either ElabError a
     gathered result = case result of
         Left (LevelTooLow raises failure) -> case moduleShape of
-            SomeModuleShape ctxS@(SModuleShape ftsS _ _ _ _ _) ->
+            SomeModuleShape ctxS@(SModuleShape ftsS _ _ _ _ _ _) ->
                 Left (LevelTooLow (raises ++ concat [more | LevelTooLow more _ <- functionErrors ctxS assembled.sectionTypes assembled.declassify assembled.typingRestrictions ftsS entries]) failure)
         other -> other
     importCount = fromIntegral (length m.imports)
@@ -1757,6 +1817,7 @@ elaborateUnder assembled choices =
             [(t.entryType, level, t.addrType, t.limits) | (t, level) <- zip m.tables assembled.tableLevels]
             (length m.dataSegments)
             [segment.entryType | segment <- m.elementSegments]
+            [params | FuncType params _ <- m.tags]
     -- A function body may take a reference only to a function the module names outside its
     -- code, in an element segment, a global's initial value or an export (the spec's C.refs).
     declared (FunctionIdx f)
@@ -1772,6 +1833,7 @@ validateStructure :: RawModule -> Either ElabError ()
 validateStructure m = do
     mapM_ checkLimits [(addresses, declared) | RawMemory (MemType addresses declared) <- m.memories]
     mapM_ checkTableLimits [(t.addrType, t.limits) | t <- m.tables]
+    when (or [not (null results) | FuncType _ results <- m.tags]) (Left (Malformed "an exception tag whose type has results"))
     checkDistinct [e.name | e <- m.exports]
     mapM_ checkExport m.exports
   where
@@ -1791,6 +1853,7 @@ validateStructure m = do
         ExportGlobal (GlobalIdx i) -> inRange Globals i (length m.globals)
         ExportMem (MemoryIdx i) -> inRange Memories i (length m.memories)
         ExportTable (TableIdx i) -> inRange Tables i (length m.tables)
+        ExportTag (TagIdx i) -> inRange Tags i (length m.tags)
     inRange space i count
         | fromIntegral i < count = Right ()
         | otherwise = Left (IndexOutOfRange space i)
