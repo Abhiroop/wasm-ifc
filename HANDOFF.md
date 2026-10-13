@@ -1255,6 +1255,211 @@ has to replace them, and I did not start one.
   configuration is used once. The second is that a call finds its function by walking a list
   as long as the function's index.
 
+## The findings in Lean, evidence for Lemma 1, and the guide (the plan's block of 2026-10-14, at bc768cc)
+
+The four items of the block and the two small ones before it are done. `lake build` is green
+without `sorry`. `lean/WasmIfc/*.lean` has 5,996 lines (it had 5,566). Nothing that the paper
+cites was renamed or restated: the two new files import the old ones and nothing imports
+them. The gate passes, the suite passes in both configurations, and the case studies give
+their recorded results (numbers at the end of this section).
+
+### Item 1: the three programs of the findings (`lean/WasmIfc/Findings.lean`, 206 lines)
+
+| Lean name | Statement | Axioms |
+|---|---|---|
+| `leak` | Program (a): four blocks without parameters or results, `local.get 0; br_table [0] 3` in the innermost, `const 1; global.set 0` after the third block inside the fourth. | |
+| `leak_not_typed` | `∀ Ls st P' st', ¬ Typed leakCtx Ls leak [L] st P' st'`: no typing from a public pc, for any labels around the program, any segment before it, and any pc stack and segment after it. | `propext` |
+| `leak_runs_differ` | For every `ls`, `s`, `t` with `s.loc 0 = 0` and `t.loc 0 ≠ 0`: `Eval [] 8 ls leak [] s (.normal [] (s.setGlob 0 1))` and `Eval [] 6 ls leak [] t (.normal [] t)`. | `propext`, `Quot.sound` |
+| `leak_runs_globals` | If `s.glob 0 = t.glob 0`, the first final state has 1 in global 0 and the second has what `s` had. | `propext` |
+| `call_after_secret_branch_typed` | `Typed callCtx [[]] callAfterSecretBranch [L] [] [L] []` for program (b), `const 7; block (param L) [local.get 0; br_if 0; call 0]`. | `propext` |
+| `write_after_public_branch_typed` | `Typed branchCtx [[]] writeAfterPublicBranch [L] [] [L] [H]` for program (c), `block (result H) [const 7; local.get 0; br_if 0; local.set 1; local.get 2; br 0]`. | `propext` |
+
+The contexts are as the plan says. In `leakCtx`, local 0 is secret and global 0 is public and
+not preserved. In `callCtx`, local 0 is secret and function 0 has the type `[L] -{H}-> []`. In
+`branchCtx`, locals 0 and 1 are public and local 2 is secret. Three remarks for the text:
+
+- `leak_runs_differ` asks nothing of the two states but the value of the secret local, so it
+  holds in particular for two states that differ there only. The numbers 8 and 6 are the sizes
+  of the two derivations.
+- (b) and (c) are typed under one label, the function's, with no results (`[[]]`). The result
+  of (c) is the pc stack `[L]` and the segment `[H]`.
+- `leak_not_typed` is about SecWasm+. That the repaired rule of SecWasm rejects the program
+  is `repaired_rule_rejects_leak` of item 4.
+
+### Item 4: the printed rule in Lean (`lean/WasmIfc/SecWasmPrinted.lean`, 224 lines, namespace `WasmIfc.SecWasm`)
+
+It took under the four hours. `SecWasm.Typed lifted C Ls e γ γ'` is SecWasm's judgment on a
+stack of stacks (`List (STy × Lab)`, an entry being a labelled type stack and a pc), with
+T-Const, T-Get-Local, T-Set-Global, T-Block and T-Br-Table, each composed with T-Seq. I wrote
+the rules from Fig. 13 of the full version (pages 34 and 35, read as images) and compared
+them with `paper/reference/secwasm-printed-rules-checker.py`. The parameter `lifted` is how
+many entries below the current one T-Br-Table lifts, given the targets: `printed` is their
+number `m` (the printed `γ'[0 : m - 1]`), and `repaired` is the deepest target (as T-Br-If
+lifts `γ'[0 : i - 1]` for its target `i`).
+
+| Lean name | Statement | Axioms |
+|---|---|---|
+| `SecWasm.printed_rule_accepts_leak` | `Typed printed leakCtx [] leak [([], L)] [([], L)]`: the printed rules type the leak as a function body (T-Func's premise, with a public bound and no results). | `propext` |
+| `SecWasm.write_under_public_pc` | In any typing by these rules, with any `lifted`, the `global.set 0` of the leak is under a public pc (this is T-Set-Global for a public global). | `propext` |
+| `SecWasm.repaired_rule_rejects_leak` | `∀ γ', ¬ Typed repaired leakCtx [] leak [([], L)] γ'`. | `propext` |
+| `SecWasm.printed_rule_rejects_shallow_leak` | The printed rules reject the same leak two blocks deep (`br_table [0] 1`, the write after the first block inside the second). A check that the encoding does not accept everything: the printed rule is wrong only for a target deeper than the number of targets. | `propext` |
+| `SecWasm.printed_rule_unsound` | The finding in one statement: for `s`, `t` with `s.loc 0 = 0`, `t.loc 0 ≠ 0`, `s.glob 0 = t.glob 0` and `s.glob 0 ≠ 1`, the printed rules type `leak`, and there are final states `s'`, `t'` of `Eval` from `s` and from `t` with `s'.glob 0 ≠ t'.glob 0`. | `propext`, `Quot.sound` |
+
+Three choices of the encoding, in case the paper describes it:
+
+- `br_table ts d` has the targets `ts` and then the default `d`, so the `m` of the printed
+  rule is `ts.length + 1`, which is 2 for the leak. The premises `m ≥ 1` and `|γ| ≥ m` are
+  premises of the Lean rule. For the repaired rule the second one reads `k ≤ |γ|` with the
+  deepest target `k`. The reference checker asks `|γ| > k` there. The Lean premise is the
+  weaker one, so the theorem that the repaired rule rejects the leak is the stronger one.
+- `γ ⊑ γ'` is `Below`, the order of Definition 14 entry by entry. The proof of rejection goes
+  through every `γ'` that the rule may choose.
+- The code after a `br_table` is typed from the rule's output, as T-Seq does. `WasmIfc.Typed`
+  does not type that code. In the leak nothing follows the `br_table` in its block.
+
+### Item 3: the reading guide (`lean/STATEMENTS.md`, `lean/guide.py`)
+
+- The column "Paper's rule" has the names T+-Block and so on, from the three figures of the
+  appendix. Where the paper prints no rule and says in the text which rule an instruction
+  follows, the column says "as" that rule. The three host instructions are under T+-Call,
+  since the paper types a call of a host import by its rule for calls.
+- Section 4 names the five evaluation rules of the paper's figure: E+-Load is `load`, E+-Br
+  is `br`, E+-Block is `blockCont`, E+-Block-Exit is `blockExit`, E+-Call is `call`; and the
+  paper's `lands`, `exits`, `kept` are `Out.lands`, `Out.exits`, `Kept`.
+- The section on differences no longer mentions an erasure or a typing inclusion. What is
+  left: `refinement` and `machine_noninterference` also cover a run that ends by an exception,
+  which the paper's `lem:refinement` and `thm:tini` do not state; and the two links outside
+  Lean, by reading (a Haskell typed instruction is a derivation of `Typed`; `step` makes the
+  transitions of `Step`).
+- Section 7 is new and lists the theorems of items 1 and 4 with their lines.
+
+**The paper's clauses (i) to (viii) against `LowEq`.** Every clause of the paper is a clause
+of `LowEq` (the table is in the guide's section 5). `LowEq` has two clauses that the paper's
+definition lacks:
+
+1. *The public local variables agree* (`∀ i, C.locals i = L → s.loc i = t.loc i`). These are
+   the locals of whoever makes the call. The callee gets a frame made of its arguments, and
+   the final state has the caller's locals as they were, so the clause is assumed of the
+   initial states and holds of the final ones for that reason alone. The paper can leave it
+   out without changing what the theorem says of a program, but as stated in Lean it is a
+   hypothesis.
+2. *`ExnOk C s`*: every exception that the first state keeps for a reference carries as many
+   values as its tag says. It is a condition on one state. A new instance keeps no exception,
+   so it holds there, and the theorem gives it back for the final state.
+
+Two remarks on wording. Clauses (ii) and (iii) say "the memory", and the core has two: the
+second memory's public bytes and its size are clauses of `LowEq` as well. Clause (v) covers
+`fdt`, `chan`, `names` and also `file`, the function that gives a file of a directory its
+channel.
+
+### Item 2: evidence for the proof of Lemma 1
+
+All three points are now checked by a script in the gate, `scripts/step-inventory.py`, except
+the last, which is by reading with the divisions covered by the script.
+
+**How.** The script builds the library without optimization into `dist-recursion/` with
+`-ddump-ds` and reads the desugared Core of every module. It computes the definitions that
+`Runtime.Interpreter.step` can reach, by name, through the imports of each module, and takes
+two inventories over them. Each is compared with a list in `test/` in which every entry has
+its reason. A definition that is found and not listed fails the gate, and so does an entry
+that is no longer found. `step` reaches 278 definitions, in `Runtime.Interpreter`, `Stack`,
+`MemInst`, `Chunks`, `TableInst`, `Numeric`, `Vector`, `Convert`, and besides in
+`Syntax.TypesIFC`, `Syntax.Immediates`, `Validation.Shape` and `Validation.Reflect`.
+
+**Recursion (mechanical).** `step` and `stepInstr` are in no recursive group. 56 of the 278
+definitions are recursive: the `Rec` groups of the top level and the `letrec`s inside
+definitions, which GHC forms by dependency analysis. `test/recursion-allowed.txt` has each
+with what it descends on. By kind:
+
+| Descends on | Number | Which |
+|---|---:|---|
+| a witness or a singleton (`Elem`, `Append`, `SegmentFlows`, `PreservedGlobals`, `TableReach`, `Sing`) | 30 | `getFunc`, `getGlobal`, `setGlobal`, `splitValues`, `relabelByValue`, `stillRestored`, `withArguments`, `appendIs`, `withinReach` and the like |
+| the control stack | 7 | `unwindFrom`, `unwindTo`, `returnUnwind`, `tailCall`, `throwException` and its local `offer` (which also descends on a handler's list of clauses), `activationDepth` |
+| a count of bytes or words, or a list of them | 9 | in `MemInst`: `runsByChunk`, `setLevelsFrom`, `levelWhereSecrets` and four local loops; in `Vector`: `pairs` and a comprehension |
+| a tree: the chunks of a memory, or a frame of more than 64 words | 6 | `chunkAt`'s `descend`, `withChunk`'s `put` and `below`; `frameSlot`, `slotOfLargeFrame`, `withFrameSlot` |
+| an operand stack | 1 | `appendValues` |
+| a size that grows a bounded number of times | 2 | `withChunk` raises the tree's root while the key has bits above it, at most 13 times for a key below 2^56; `zeroFrame`'s `eightOf` multiplies the frame by 8 until it holds the locals, at most 5 times for the decoder's bound of 50,000 locals |
+| nothing: a recursive value | 1 | in `throwException`, the dictionary of the singletons library's equality on lists of types, which refers to itself for the tail of a list. The comparison it serves descends on the types of a tag. |
+
+So the sentence of the paper's proof, "descends on a witness, on a stack, or on a count of
+bytes", needs two more cases: a tree (of chunks, or of a frame), and the two functions that
+enlarge a structure a bounded number of times. The paper side's text scan found about forty
+recursive definitions in four files. The exact number that a step reaches is 56, in eight
+modules.
+
+**Partial functions (mechanical).** The script looks, in the same 278 definitions, for the
+functions of other packages that can raise an exception or read outside an array. No
+definition calls `error`, `undefined`, `head`, `tail`, `fromJust`, an indexing that raises
+(`!`), `toEnum`, `throw`, a record selector that can fail, or an unsafe coercion. It found
+one hole, which is now closed:
+
+- `Runtime.Vector` indexed a list of lanes with `!!` at four places. Two of them
+  (`extractLane`, `laneBitsAt`) took the index from the instruction's lane immediate, a byte
+  that validation bounds and the instruction's type does not. A typed instruction with a lane
+  index past the last lane would have raised a Haskell exception in a step. The lookup is now
+  total (`laneAt`, 0 past the last lane), and `!!` is on the list of names that fail the gate.
+
+113 uses remain, each in `test/partial-allowed.txt` with its reason: 36 are the fall-through
+that GHC's desugarer leaves under a match on a GADT (`patError`), which no value reaches
+since the exhaustiveness checker accepts each match and an incomplete one is an error of the
+build; 35 are divisions, remainders and powers, with a constant or a guarded divisor and an
+exponent that is not negative; 24 are shifts and bit tests, whose counts are not negative
+(they are on the list because GHC's shifts raise on a negative count); and 18 are unchecked
+primitives of arrays and shifts in the tree of chunks, in frames, and in the read and the
+write of a word, each within a bound that the entry states. `fromIntegral` wraps and raises
+nothing, and the runtime modules have no `Natural`.
+
+**Traps (by reading; the divisions are in the list above).** Each operation for which
+WebAssembly prescribes a trap returns `Left` and raises nothing:
+
+- Division by zero and the overflow of signed division: `Runtime.Numeric.intDiv32`,
+  `intDiv64`, `intRem32`, `intRem64` return `Left IntegerDivideByZero` and `Left
+  IntegerOverflow` in clauses before the division. The remainder of the least integer by -1
+  is answered 0 before `rem` is called.
+- A float that is no number or out of range: `Runtime.Convert.truncToI32` and `truncToI64`
+  return `Left InvalidConversionToInteger` and `Left IntegerOverflow`. They compare the
+  truncation as an unbounded integer with the range before they convert it.
+- An access outside a memory: `Runtime.MemInst.loadChecked` compares with the size first and
+  answers a failure through its continuation, which the interpreter turns into `Left
+  OutOfBoundsMemoryAccess` (`loadTrap`); `storeWordAt` and the bulk operations return
+  `Nothing`. The tables do the same (`Runtime.TableInst`).
+- `unreachable` is `Left UnreachableExecuted`, and a call beyond the bound on the depth of
+  calls is `Left CallStackExhausted`.
+
+**What the script does not show.** Reachability is by name, so a local variable named like a
+definition adds an edge, which only makes the lists longer. Functions of other packages
+(base, containers, vector, primitive) are not followed: that they terminate and raise only
+what their documentation says is an assumption, and the names that the script treats as
+partial are a list in the script. Exhaustion of memory or of the Haskell stack is outside.
+These belong with the assumptions on GHC in the paper's appendix on type safety.
+
+### The two small items
+
+- `dir PATH : LEVEL` is the policy statement for a directory's level, and `preopen` is a
+  synonym. `dir` is in `--help`, `README.md`, the case studies' policies and their README,
+  and the documentation of `Validation.Policy`. A unit test checks that the two spellings
+  parse to the same policy. The recorded result files are unchanged.
+- The guide's rule names: item 3 above.
+
+### Commits and verification
+
+| Commit | What |
+|---|---|
+| `8991e09` | items 1, 3 and 4: `Findings.lean`, `SecWasmPrinted.lean`, the guide |
+| `44a7bf5` | the statement `dir` |
+| `bc768cc` | item 2: `scripts/step-inventory.py`, the two lists, the gate's stage, `laneAt` |
+
+At `bc768cc`: the gate passes (240 unit tests, 72 WASI programs, 257 scripts, lint, 7
+obligation checks, the step inventory, the samples); the suite gives 63,080 passed, 0 failed
+and 2,122 skipped in both configurations; the 93 case studies give their recorded results;
+the allocation of the nine reference workloads is unchanged. A clean `lake build` takes 57 s.
+The axioms of the three cited theorems are as before: `noninterference` and
+`machine_noninterference` depend on `propext`, `Classical.choice` and `Quot.sound`, and
+`refinement` on `propext` and `Quot.sound`.
+
+For the paper's numbers: the Lean development has 5,996 lines (the paper quotes 5,566), the
+unit suite has 240 tests, and the obligations script still makes seven checks.
+
 ## Where coverage stands (2026-10-12, for the paper's claim)
 
 Supported, with the 3.0 suite passing on all of it: **WebAssembly 3.0 without garbage
