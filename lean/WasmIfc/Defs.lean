@@ -64,6 +64,10 @@ def joinEach : Pcs → Pcs → Pcs
 inductive Instr where
   | const (n : Nat)
   | binop (f : Nat → Nat → Nat)
+  /-- an operation on one value, `ref.is_null` among them -/
+  | unop (f : Nat → Nat)
+  /-- the top of the stack twice: with `unop` and `ite`, what `br_on_null` is elaborated to -/
+  | dup
   | select
   | drop
   | nop
@@ -115,6 +119,8 @@ inductive Instr where
   | retCall (i : Nat)
   /-- `callIndirect ps b rs`: call the function a table entry names, expected at the type `ps -[b]-> rs` -/
   | callIndirect (ps : STy) (b : Lab) (rs : STy)
+  /-- `callRef ps b rs`: call the function a reference on the stack names, expected at the type `ps -[b]-> rs` -/
+  | callRef (ps : STy) (b : Lab) (rs : STy)
   | unreachable
   /-- `throw t k`: throw an exception of tag `t`, which carries `k` values -/
   | throw (t k : Nat)
@@ -173,6 +179,12 @@ inductive Typed (C : Ctx) : List STy → List Instr → Pcs → STy → Pcs → 
   | binop {Ls rest pc Pr l0 l1 st P' st'} (f : Nat → Nat → Nat) :
       Typed C Ls rest (pc :: Pr) (((l0.join l1).join pc) :: st) P' st' →
       Typed C Ls (.binop f :: rest) (pc :: Pr) (l0 :: l1 :: st) P' st'
+  | unop {Ls rest pc Pr l st P' st'} (f : Nat → Nat) :
+      Typed C Ls rest (pc :: Pr) ((l.join pc) :: st) P' st' →
+      Typed C Ls (.unop f :: rest) (pc :: Pr) (l :: st) P' st'
+  | dup {Ls rest P l st P' st'} :
+      Typed C Ls rest P (l :: l :: st) P' st' →
+      Typed C Ls (.dup :: rest) P (l :: st) P' st'
   | select {Ls rest pc Pr lc l1 l2 st P' st'} :
       Typed C Ls rest (pc :: Pr) ((pc.join (lc.join (l1.join l2))) :: st) P' st' →
       Typed C Ls (.select :: rest) (pc :: Pr) (lc :: l1 :: l2 :: st) P' st'
@@ -331,6 +343,14 @@ inductive Typed (C : Ctx) : List STy → List Instr → Pcs → STy → Pcs → 
       Lab.le (pc.join (l.join C.table)) b → AllGe b rs → SFlows targs ps →
       Typed C Ls rest (pc :: Pr) (rs ++ st) P' st' →
       Typed C Ls (.callIndirect ps b rs :: rest) (pc :: Pr) (l :: (targs ++ st)) P' st'
+  /--
+  A call through a reference is an indirect call without the table: the reference decides the
+  callee as a table index does, so its level is in the premise on the bound.
+  -/
+  | callRef {Ls rest pc Pr l ps b rs targs st P' st'} :
+      Lab.le (pc.join l) b → AllGe b rs → SFlows targs ps →
+      Typed C Ls rest (pc :: Pr) (rs ++ st) P' st' →
+      Typed C Ls (.callRef ps b rs :: rest) (pc :: Pr) (l :: (targs ++ st)) P' st'
   | unreachable {Ls rest P st stAny} :
       Typed C Ls (.unreachable :: rest) P st P stAny
   /-- An exception is thrown only under a public pc, and carries public values. -/
@@ -554,6 +574,10 @@ inductive Eval (F : List Func) : Nat → List Nat → List Instr → List Nat �
       Eval F n ls rest (v :: σ) s o → Eval F (n + 1) ls (.const v :: rest) σ s o
   | binop {n ls rest a b σ s o} (f : Nat → Nat → Nat) :
       Eval F n ls rest (f b a :: σ) s o → Eval F (n + 1) ls (.binop f :: rest) (a :: b :: σ) s o
+  | unop {n ls rest a σ s o} (f : Nat → Nat) :
+      Eval F n ls rest (f a :: σ) s o → Eval F (n + 1) ls (.unop f :: rest) (a :: σ) s o
+  | dup {n ls rest a σ s o} :
+      Eval F n ls rest (a :: a :: σ) s o → Eval F (n + 1) ls (.dup :: rest) (a :: σ) s o
   | select {n ls rest c v1 v2 σ s o} :
       Eval F n ls rest ((if c = 0 then v1 else v2) :: σ) s o →
       Eval F (n + 1) ls (.select :: rest) (c :: v1 :: v2 :: σ) s o
@@ -703,6 +727,18 @@ inductive Eval (F : List Func) : Nat → List Nat → List Instr → List Nat �
       s.tbl c = some i → F[i]? = some f → f.ty = ⟨ps, b, rs⟩ → args.length = ps.length →
       Eval F n1 [rs.length] f.body [] { s with loc := frame args } (.exn t w u) →
       Eval F (n1 + 1) ls (.callIndirect ps b rs :: rest) (c :: (args ++ base)) s
+        (.exn t w { u with loc := s.loc })
+  /-- A null reference is a trap; so is a function of another type than the expected one. -/
+  | callRef {n1 n2 ls rest ps b rs c i f args base s ob r t o} :
+      ofRef c = some i → F[i]? = some f → f.ty = ⟨ps, b, rs⟩ → args.length = ps.length →
+      Eval F n1 [rs.length] f.body [] { s with loc := frame args } ob →
+      ob.lands = some (r, t) → Kept f.keep s t →
+      Eval F n2 ls rest (r ++ base) { t with loc := s.loc } o →
+      Eval F (n1 + n2 + 1) ls (.callRef ps b rs :: rest) (c :: (args ++ base)) s o
+  | callRefExn {n1 ls rest ps b rs c i f args base s t w u} :
+      ofRef c = some i → F[i]? = some f → f.ty = ⟨ps, b, rs⟩ → args.length = ps.length →
+      Eval F n1 [rs.length] f.body [] { s with loc := frame args } (.exn t w u) →
+      Eval F (n1 + 1) ls (.callRef ps b rs :: rest) (c :: (args ++ base)) s
         (.exn t w { u with loc := s.loc })
   | throw {ls rest t k σ s} : Eval F 1 ls (.throw t k :: rest) σ s (.exn t (σ.take k) s)
   | tryCont {n1 n2 ls rest keep ps rs clauses body vs base s ob σ1 s1 o} :

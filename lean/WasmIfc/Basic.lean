@@ -722,6 +722,8 @@ theorem rise {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : Pcs} {st st' : S
   | nil => exact SFlows.refl _
   | const _ _ ih => exact ih
   | binop _ _ ih => exact ih
+  | unop _ _ ih => exact ih
+  | dup _ ih => exact ih
   | select _ ih => exact ih
   | drop _ ih => exact ih
   | nop _ ih => exact ih
@@ -753,6 +755,7 @@ theorem rise {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : Pcs} {st st' : S
   | retCall _ _ _ _ _ _ => exact sflows_raise _ _ _
   | call _ _ _ _ ih => exact ih
   | callIndirect _ _ _ _ ih => exact ih
+  | callRef _ _ _ _ ih => exact ih
   | unreachable => exact SFlows.refl _
   | throw _ _ _ => exact SFlows.refl _
   | tryTable _ _ _ _ _ ihb ihr => exact SFlows.trans ihb.tail ihr

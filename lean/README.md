@@ -2,8 +2,8 @@
 
 A Lean 4 development that proves termination-insensitive noninterference for the labelled
 typing rules of this repository on a core of WebAssembly: blocks, loops and conditionals with
-parameters and results, `br`, `br_if`, `br_table` and `return`, direct calls, indirect calls
-and tail calls of the module's functions (recursion included), a bounded memory whose cells carry a level, with
+parameters and results, `br`, `br_if`, `br_table` and `return`, direct calls, indirect calls,
+calls through a reference and tail calls of the module's functions (recursion included), a bounded memory whose cells carry a level, with
 SecWasm's run-time check on loads, `memory.size`, `memory.grow`, `memory.fill` and
 `memory.copy`, a function table with a level (`table.get`, `table.set`), a host that reads
 from and writes to descriptors with levels, local and global
@@ -57,6 +57,10 @@ type `Syntax.Instructions.Instr` for the instructions above:
   flow into the bound of the expected type, and that type to be well formed: its results are
   at least its bound. At run
   time it traps unless the table entry names a function of exactly the expected type.
+- A call through a reference (`call_ref`) is an indirect call without the table: the pc and
+  the level of the reference flow into the bound of the expected type. `br_on_null` has no
+  rule of its own. It is the three instructions the elaborator writes for it, a copy of the
+  reference (`dup`), a test (`unop`) and a conditional, each of which has its rule here.
 - An exception is thrown only under a public pc and carries public values, and a `try_table`
   is typed only under a public pc. A clause's branch raises no pc.
 - `memory.fill` labels the cells it writes at a level that is at least the pc's and those of
