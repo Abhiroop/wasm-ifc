@@ -9,7 +9,8 @@ SecWasm's run-time check on loads, `memory.size`, `memory.grow`, `memory.fill` a
 descriptors of channels with levels and opens files in directories (`path_open`), local and global
 variables with `local.tee`, exceptions (`throw`, `throw_ref` and `try_table` with its four kinds
 of clause, so references to exceptions), preserved globals with
-their run-time comparison, and arithmetic on one value type. It has no `sorry`, and its
+their run-time comparison, and arithmetic on one value type, with the operations that trap
+(division, remainder, the truncation of a float) as partial functions. It has no `sorry`, and its
 theorems depend on Lean's three standard axioms only (`propext`, `Classical.choice`,
 `Quot.sound`).
 

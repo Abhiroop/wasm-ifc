@@ -71,6 +71,10 @@ inductive Basic : Instr → List Nat → State → List Nat → State → Prop w
   | const {σ s} (v : Nat) : Basic (.const v) σ s (v :: σ) s
   | binop {a b σ s} (f : Nat → Nat → Nat) : Basic (.binop f) (a :: b :: σ) s (f b a :: σ) s
   | unop {a σ s} (f : Nat → Nat) : Basic (.unop f) (a :: σ) s (f a :: σ) s
+  | partialBinop {a b v σ s} (f : Nat → Nat → Option Nat) :
+      f b a = some v → Basic (.partialBinop f) (a :: b :: σ) s (v :: σ) s
+  | partialUnop {a v σ s} (f : Nat → Option Nat) :
+      f a = some v → Basic (.partialUnop f) (a :: σ) s (v :: σ) s
   | dup {a σ s} : Basic .dup (a :: σ) s (a :: a :: σ) s
   | select {c v1 v2 σ s} :
       Basic .select (c :: v1 :: v2 :: σ) s ((if c = 0 then v1 else v2) :: σ) s

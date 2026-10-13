@@ -1051,6 +1051,8 @@ theorem rise {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : Pcs} {st st' : S
   | const _ _ ih => exact ih
   | binop _ _ ih => exact ih
   | unop _ _ ih => exact ih
+  | partialBinop _ _ ih => exact ih
+  | partialUnop _ _ ih => exact ih
   | dup _ ih => exact ih
   | select _ ih => exact ih
   | drop _ ih => exact ih

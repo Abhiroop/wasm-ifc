@@ -633,6 +633,30 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
           | cons hv hσ' =>
             exact ih _ (by omega) hF ht' he0' he1'
               (.cons (fun hl => by rw [hv (Lab.join_eq_L hl).1]) hσ') hs hp
+    | partialBinop f ht' =>
+      cases he0 with
+      | partialBinop _ hv0 he0' =>
+        cases he1 with
+        | partialBinop _ hv1 he1' =>
+          cases hσ with
+          | cons h0 hσa =>
+            cases hσa with
+            | cons h1 hσb =>
+              refine ih _ (by omega) hF ht' he0' he1' (.cons (fun hl => ?_) hσb) hs hp
+              obtain ⟨hl01, _⟩ := Lab.join_eq_L hl
+              obtain ⟨hl0, hl1⟩ := Lab.join_eq_L hl01
+              rw [h0 hl0, h1 hl1] at hv0
+              exact Option.some.inj (hv0.symm.trans hv1)
+    | partialUnop f ht' =>
+      cases he0 with
+      | partialUnop _ hv0 he0' =>
+        cases he1 with
+        | partialUnop _ hv1 he1' =>
+          cases hσ with
+          | cons hv hσ' =>
+            refine ih _ (by omega) hF ht' he0' he1' (.cons (fun hl => ?_) hσ') hs hp
+            rw [hv (Lab.join_eq_L hl).1] at hv0
+            exact Option.some.inj (hv0.symm.trans hv1)
     | dup ht' =>
       cases he0 with
       | dup he0' =>

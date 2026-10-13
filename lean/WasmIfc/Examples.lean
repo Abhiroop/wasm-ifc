@@ -88,6 +88,30 @@ example (pc : Lab) (P' : Pcs) (st st' : STy) :
         exact absurd (hH rfl) (by decide)
       | globalSetPreserved _ hpi _ _ => exact hpi
 
+/-! ### An operation that traps -/
+
+/-- Division of natural numbers, not defined for the divisor 0. -/
+def divide (a b : Nat) : Option Nat := if b = 0 then none else some (a / b)
+
+/-- 6 divided by 2 runs and leaves 3. -/
+example (s : State) : Eval [] 3 [0] [.const 6, .const 2, .partialBinop divide] [] s (.normal [3] s) :=
+  .const 6 (.const 2 (.partialBinop divide rfl .nil))
+
+/-- 6 divided by 0 has no evaluation, of any size and with any outcome: the run traps. -/
+example (s : State) (n : Nat) (o : Out) :
+    ¬ Eval [] n [0] [.const 6, .const 0, .partialBinop divide] [] s o := by
+  intro h
+  cases h with
+  | const _ h1 =>
+    cases h1 with
+    | const _ h2 =>
+      cases h2 with
+      | partialBinop _ hv _ => simp [divide] at hv
+
+/-- The quotient of a secret is secret, and the division is typed as any operation on two values. -/
+example : Typed exampleCtx [[]] [.const 6, .localGet 0, .partialBinop divide, .drop] [Lab.L] [] [Lab.L] [] :=
+  .const 6 (.localGet 0 (.partialBinop divide (.drop .nil)))
+
 /-! ### Memory -/
 
 /-- Store the secret local in four bytes at address 0, labelled secret, and read it back as a secret. -/

@@ -66,6 +66,10 @@ inductive Instr where
   | binop (f : Nat → Nat → Nat)
   /-- an operation on one value, `ref.is_null` among them -/
   | unop (f : Nat → Nat)
+  /-- an operation on two values that traps where it is not defined: a division, a remainder -/
+  | partialBinop (f : Nat → Nat → Option Nat)
+  /-- an operation on one value that traps where it is not defined: a float truncated to an integer -/
+  | partialUnop (f : Nat → Option Nat)
   /-- the top of the stack twice: with `unop` and `ite`, what `br_on_null` is elaborated to -/
   | dup
   | select
@@ -212,6 +216,13 @@ inductive Typed (C : Ctx) : List STy → List Instr → Pcs → STy → Pcs → 
   | unop {Ls rest pc Pr l st P' st'} (f : Nat → Nat) :
       Typed C Ls rest (pc :: Pr) ((l.join pc) :: st) P' st' →
       Typed C Ls (.unop f :: rest) (pc :: Pr) (l :: st) P' st'
+  /-- An operation that may trap is typed as one that does not: whether it traps is not observed. -/
+  | partialBinop {Ls rest pc Pr l0 l1 st P' st'} (f : Nat → Nat → Option Nat) :
+      Typed C Ls rest (pc :: Pr) (((l0.join l1).join pc) :: st) P' st' →
+      Typed C Ls (.partialBinop f :: rest) (pc :: Pr) (l0 :: l1 :: st) P' st'
+  | partialUnop {Ls rest pc Pr l st P' st'} (f : Nat → Option Nat) :
+      Typed C Ls rest (pc :: Pr) ((l.join pc) :: st) P' st' →
+      Typed C Ls (.partialUnop f :: rest) (pc :: Pr) (l :: st) P' st'
   | dup {Ls rest P l st P' st'} :
       Typed C Ls rest P (l :: l :: st) P' st' →
       Typed C Ls (.dup :: rest) P (l :: st) P' st'
@@ -763,7 +774,8 @@ def frame (args : List Nat) : Nat → Nat := fun i => (args[i]?).getD 0
 the size of the derivation. A block's body runs on the block's parameters alone; what lies
 below them on the stack waits for the body's results. A call runs the callee's body on an
 empty segment with its own local variables, and the caller's are as before when it returns.
-A trap is the absence of a rule: `unreachable` has none, a `load` and a `store` have one only
+A trap is the absence of a rule: `unreachable` has none, an operation that is not defined on
+its operands (a division by zero) has none, a `load` and a `store` have one only
 if their bytes are within the memory, an instruction on the table only if the entries it
 names are within the table, and a `load` only if, besides, the level of every byte
 it reads flows into the level the load declares (SecWasm's run-time check), and an
@@ -791,6 +803,12 @@ inductive Eval (F : List Func) : Nat → List Nat → List Instr → List Nat �
       Eval F n ls rest (f b a :: σ) s o → Eval F (n + 1) ls (.binop f :: rest) (a :: b :: σ) s o
   | unop {n ls rest a σ s o} (f : Nat → Nat) :
       Eval F n ls rest (f a :: σ) s o → Eval F (n + 1) ls (.unop f :: rest) (a :: σ) s o
+  | partialBinop {n ls rest a b v σ s o} (f : Nat → Nat → Option Nat) :
+      f b a = some v →
+      Eval F n ls rest (v :: σ) s o → Eval F (n + 1) ls (.partialBinop f :: rest) (a :: b :: σ) s o
+  | partialUnop {n ls rest a v σ s o} (f : Nat → Option Nat) :
+      f a = some v →
+      Eval F n ls rest (v :: σ) s o → Eval F (n + 1) ls (.partialUnop f :: rest) (a :: σ) s o
   | dup {n ls rest a σ s o} :
       Eval F n ls rest (a :: a :: σ) s o → Eval F (n + 1) ls (.dup :: rest) (a :: σ) s o
   | select {n ls rest c v1 v2 σ s o} :

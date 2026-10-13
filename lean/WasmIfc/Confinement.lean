@@ -128,6 +128,12 @@ theorem confine : ∀ (n : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P'
     | unop f he' =>
       cases ht with
       | unop _ ht' => exact ih _ (by omega) hF ht' hP (by simpa using hlen) he'
+    | partialBinop f _ he' =>
+      cases ht with
+      | partialBinop _ ht' => exact ih _ (by omega) hF ht' hP (by simpa using hlen) he'
+    | partialUnop f _ he' =>
+      cases ht with
+      | partialUnop _ ht' => exact ih _ (by omega) hF ht' hP (by simpa using hlen) he'
     | dup he' =>
       cases ht with
       | dup ht' => exact ih _ (by omega) hF ht' hP (by simpa using hlen) he'

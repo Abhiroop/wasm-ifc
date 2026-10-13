@@ -59,6 +59,8 @@ RULES = [
     ("const", "`IConst`", "T+-Const", ""),
     ("binop", "`IAdd` and the other operations on two values", "T+-Binop", "one rule for all of them"),
     ("unop", "the operations on one value, `IRefIsNull` among them", "as T+-Binop", ""),
+    ("partialBinop", "`IDiv`, `IRem`", "T+-Binop", "the operation is a partial function, and where it is not defined the instruction traps"),
+    ("partialUnop", "`IConvert` with a truncation that traps", "as T+-Binop", "as `partialBinop`"),
     ("dup", "`IDuplicate`", "none", "written by the elaborator for `br_on_null`"),
     ("select", "`ISelect`", "T+-Select", ""),
     ("drop", "`IDrop`", "T+-Drop", ""),
@@ -229,7 +231,9 @@ labels of arities `ls`, the sequence `e` on the segment `σ` and the state `s` e
 is the size of the derivation and nothing else. An outcome (`Out`,
 {at("Defs", r"^inductive Out")}) is the end of the sequence, a branch to an enclosing label
 with the values it carries, or an exception that nothing in the sequence caught. A trap is the
-absence of a rule, and so is a run that does not terminate.
+absence of a rule, and so is a run that does not terminate. An operation that traps on some
+operands (`partialBinop`, `partialUnop`) is a partial function, and its rule has the premise
+that the function is defined there.
 
 The paper's evaluation rules are named E+-Load and so on, and its figure `fig:eval` prints
 five: E+-Load is `load` (line {evaluated["load"]}), E+-Br is `br` (line {evaluated["br"]}),
@@ -418,7 +422,8 @@ nothing follows the `br_table` in its block.
 
 ### Outside the core
 
-More than one value type, and so the numeric and vector instructions as such; 64-bit
+More than one value type, and so the numeric and vector instructions as such (the operations
+that trap are in the core, as partial functions); 64-bit
 memories, more than two memories, and every instruction on the second memory but
 `memory.copy` to and from it; several tables;
 linking; the WASI calls other than one that reads, one that writes and one that opens a file
