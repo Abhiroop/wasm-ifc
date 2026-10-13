@@ -1460,6 +1460,39 @@ The axioms of the three cited theorems are as before: `noninterference` and
 For the paper's numbers: the Lean development has 5,996 lines (the paper quotes 5,566), the
 unit suite has 240 tests, and the obligations script still makes seven checks.
 
+## Closing the gaps of the Lean core (the plan's items 5 to 9 of 2026-10-14)
+
+One entry per item, each with its commit, the line count of `lean/WasmIfc/*.lean` after it,
+and what changed in the statements that the paper cites. After every item `lake build` is
+green without `sorry`, and the axioms of `noninterference`, `refinement` and
+`machine_noninterference` are as before.
+
+### Item 5: operations that trap (`169e993`, 6,074 lines)
+
+The core has two new instructions, `partialBinop f` and `partialUnop f`, whose `f` is a
+partial function (`Nat → Nat → Option Nat`, `Nat → Option Nat`). They stand for `IDiv`, `IRem`
+and the conversions that trap. They are typed exactly as `binop` and `unop`. Their evaluation
+rules have one premise more, that `f` is defined on the operands (`f b a = some v`), so a
+division by zero has no evaluation, which is how the core says "traps".
+
+**What changed in the statements.**
+
+- `Instr`: two constructors more, `partialBinop` and `partialUnop`.
+- `Typed`: two rules more, `partialBinop` and `partialUnop`, with the premises and the
+  conclusion of `binop` and `unop`. In the paper's terms they are T+-Binop for a division.
+- `Eval`: two rules more, with the premise that the operation is defined.
+- `Machine.Basic` (and so `Step`): two basic steps more, with the same premise.
+- No theorem's statement changed. `State`, `LowEq`, `WellTyped`, `Invoke`, `Config`, `Runs`
+  are as they were. `rise`, `confine`, `ni`, `noninterference`, `refinement` and
+  `machine_noninterference` now cover the two instructions.
+
+For the paper: the proof case is that of the total operation. If both runs get past the
+instruction, the function was defined in both, and where the result's label is public the
+operands agree, so the results do. Whether the operation traps may depend on a secret
+operand, and the theorem says nothing of a run that traps, as for the load check.
+`Examples.lean` has 6 divided by 2, which runs, 6 divided by 0, which has no evaluation, and
+the typing of a division of a secret.
+
 ## Where coverage stands (2026-10-12, for the paper's claim)
 
 Supported, with the 3.0 suite passing on all of it: **WebAssembly 3.0 without garbage
