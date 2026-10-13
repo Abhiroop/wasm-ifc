@@ -72,7 +72,7 @@ import GHC.Float (castDoubleToWord64, castFloatToWord32, castWord32ToFloat, cast
 
 import Data.List.Singletons (type (++))
 import Data.Singletons.Base.TH (SList (SCons, SNil), Sing)
-import Runtime.MemInst (MemInst)
+import Runtime.MemInst (MemInst, modifiedCopy)
 import Runtime.TableInst (FunctionDirectory, TableInst, functionDirectory)
 import Syntax.Immediates (HostType, Reference (..), Vector128 (..), referenceTo, referent)
 import Syntax.Types
@@ -160,7 +160,7 @@ appendWith (ACons w) (x :# xs) ys = x :# appendWith w xs ys
 -- | Split a concatenated stack into its parts, guided by an 'Append' witness.
 splitStack :: Append a b c -> ValueStack c -> (ValueStack a, ValueStack b)
 splitStack ANil vs = (VNil, vs)
-splitStack (ACons w) (x :# vs) = let (upper, lower) = splitStack w vs in (x :# upper, lower)
+splitStack (ACons w) (x :# vs) = case splitStack w vs of (upper, lower) -> (x :# upper, lower)
 
 {- | Seed a callee's locals from its argument segment: the parameters, then the declared locals
   at zero. The segment lists the last argument first (top of stack) while local 0 is the first
@@ -224,8 +224,8 @@ getLocal ref (LocalSpaceInst values) = case localType ref of
 setLocal :: LocalRef (t ':~ l) ls -> HostType t -> LocalSpaceInst ls -> LocalSpaceInst ls
 setLocal ref v (LocalSpaceInst values) = case localType ref of
     SV128 -> case v of
-        Vector128 low high -> LocalSpaceInst (UV.modify (\slots -> MV.unsafeWrite slots at low >> MV.unsafeWrite slots (at + 1) high) values)
-    ty -> LocalSpaceInst (UV.modify (\slots -> MV.unsafeWrite slots at (packValue ty v)) values)
+        Vector128 low high -> LocalSpaceInst (modifiedCopy (\slots -> MV.unsafeWrite slots at low >> MV.unsafeWrite slots (at + 1) high) values)
+    ty -> LocalSpaceInst (modifiedCopy (\slots -> MV.unsafeWrite slots at (packValue ty v)) values)
   where
     at = localPosition ref
 

@@ -1,6 +1,6 @@
 {-# LANGUAGE CPP #-}
 -- -O2, as "Runtime.Interpreter" has: the two machines are compared at the same optimisation.
-{-# OPTIONS_GHC -O2 #-}
+{-# OPTIONS_GHC -O2 -fno-full-laziness #-}
 
 {- | The erased machine: the interpreter with its types forgotten (TODO.md §I, experiment E1).
 
@@ -82,7 +82,7 @@ import Runtime.Interpreter (
     numRem,
     storedWord,
  )
-import Runtime.MemInst (MemInst, copyWithin, fillBytes, growMemory, loadWordUnchecked, memoryPages, storeWord, writeBytes)
+import Runtime.MemInst (MemInst, copyWithin, fillBytes, growMemory, loadWordUnchecked, memoryPages, modifiedCopy, storeWord, writeBytes)
 import Runtime.Module (SomeModuleInst (..))
 import Runtime.Stack (DataSpaceInst (..), GlobalSpaceInst (..), MemSpaceInst (..), TableInsts (..), TableSpaceInst (..))
 import Runtime.TableInst (tableEntryUnchecked, tableSize)
@@ -194,9 +194,9 @@ data Store m = Store
 
 data Control
     = EntryBoundary
-    | BlockLabel !Values [Instruction] Control
-    | LoopLabel !Values [Instruction] [Instruction] Control
-    | CallBoundary !Word !Values !Frame [Instruction] Control
+    | BlockLabel !Values ![Instruction] !Control
+    | LoopLabel !Values ![Instruction] ![Instruction] !Control
+    | CallBoundary !Word !Values !Frame ![Instruction] !Control
 
 #ifdef EXISTENTIAL_CONFIG
 -- The control experiment for E1's last allocation gap (built with -DEXISTENTIAL_CONFIG): the
@@ -205,9 +205,9 @@ data Control
 -- existential type variables into a worker's arguments. If that is what keeps the typed machine
 -- building a configuration per step, this build allocates like the typed machine does.
 data Config m where
-    Config :: forall m (unused :: Type). !(Store m) -> !Frame -> !Values -> [Instruction] -> Control -> Config m
+    Config :: forall m (unused :: Type). !(Store m) -> !Frame -> !Values -> ![Instruction] -> !Control -> Config m
 #else
-data Config m = Config !(Store m) !Frame !Values [Instruction] Control
+data Config m = Config !(Store m) !Frame !Values ![Instruction] !Control
 #endif
 
 data StepResult m = Stepped !(Config m) | Done !(Store m) !Values | Wedged
@@ -584,7 +584,7 @@ frameGet position ty frame = unpackAs ty (UV.unsafeIndex frame position)
 
 -- | The erasure of 'Runtime.Stack.setLocal': a copy of the frame with one word replaced.
 frameSet :: Int -> Value -> Frame -> Frame
-frameSet position v = UV.modify (\slots -> MV.unsafeWrite slots position (packTagged v))
+frameSet position v = modifiedCopy (\slots -> MV.unsafeWrite slots position (packTagged v))
 
 packTagged :: Value -> Word64
 packTagged v = case v of

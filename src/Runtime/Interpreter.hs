@@ -270,8 +270,8 @@ data
     -}
     BlockLabel ::
         !(ValueStack below) ->
-        Expr mod ('FrameShape locals ret) labels pcA1 pcB1 (rs ++ below) contOut ->
-        Control mod res ret locals labels contOut ->
+        !(Expr mod ('FrameShape locals ret) labels pcA1 pcB1 (rs ++ below) contOut) ->
+        !(Control mod res ret locals labels contOut) ->
         Control mod res ret locals (rs ': labels) rs
     {- | The label of a @try_table@: a block label that also holds the block's clauses, which
     an exception thrown inside it is offered on its way out. The clauses name labels of the
@@ -280,17 +280,17 @@ data
     HandlerLabel ::
         [Handler mod labels] ->
         !(ValueStack below) ->
-        Expr mod ('FrameShape locals ret) labels pcA8 pcB8 (rs ++ below) contOut ->
-        Control mod res ret locals labels contOut ->
+        !(Expr mod ('FrameShape locals ret) labels pcA8 pcB8 (rs ++ below) contOut) ->
+        !(Control mod res ret locals labels contOut) ->
         Control mod res ret locals (rs ': labels) rs
     {- | A @loop@ label. A branch to it (carrying the loop's parameters) restarts the body;
     normal completion runs the continuation, exactly like 'BlockLabel'.
     -}
     LoopLabel ::
         !(ValueStack below) ->
-        Expr mod ('FrameShape locals ret) (ps ': labels) pcA2 pcB2 ps rs ->
-        Expr mod ('FrameShape locals ret) labels pcA3 pcB3 (rs ++ below) contOut ->
-        Control mod res ret locals labels contOut ->
+        !(Expr mod ('FrameShape locals ret) (ps ': labels) pcA2 pcB2 ps rs) ->
+        !(Expr mod ('FrameShape locals ret) labels pcA3 pcB3 (rs ++ below) contOut) ->
+        !(Control mod res ret locals labels contOut) ->
         Control mod res ret locals (ps ': labels) rs
     {- | A call boundary: the callee's bottom frame. When the callee finishes (or returns),
     put its @rs@ results on the caller's saved stack and resume the caller. The 'Word' is the
@@ -301,8 +301,8 @@ data
         !Word ->
         !(ValueStack below) ->
         !(LocalSpaceInst callerLocals) ->
-        Expr mod ('FrameShape callerLocals callerRet) callerLabels pcA4 pcB4 (rs ++ below) contOut ->
-        Control mod res callerRet callerLocals callerLabels contOut ->
+        !(Expr mod ('FrameShape callerLocals callerRet) callerLabels pcA4 pcB4 (rs ++ below) contOut) ->
+        !(Control mod res callerRet callerLocals callerLabels contOut) ->
         Control mod res rs calleeLocals '[rs] rs
 
 {- | A machine configuration. The instruction sequence runs from @cur@ to @out@; the control
@@ -314,8 +314,8 @@ data Config (mod :: ModuleShape) (res :: LabelledResultType) where
         !(Store mod) ->
         !(LocalSpaceInst locals) ->
         !(ValueStack cur) ->
-        Expr mod ('FrameShape locals ret) labels pcA5 pcB5 cur out ->
-        Control mod res ret locals labels out ->
+        !(Expr mod ('FrameShape locals ret) labels pcA5 pcB5 cur out) ->
+        !(Control mod res ret locals labels out) ->
         Config mod res
 
 {- | A call into the host, suspended: which function, its arguments (a stack of exactly its
@@ -656,77 +656,77 @@ stepInstr funcs store locals stack instr rest control = case instr of
     -- (What follows the construct is forced before the label holds it: left lazy, every block
     -- entered would allocate the suspended choice of 'restoring'.)
     IBlock _ _ restores flows witness body ->
-        let (params, below) = splitStack witness stack
+        let !(params, below) = splitStack witness stack
             !after = restoring restores store rest
          in Right (Stepped NothingToCheck (Config store locals (relabelStack flows params) body (BlockLabel below after control)))
     ITryTable _ _ restores flows witness handlers body ->
-        let (params, below) = splitStack witness stack
+        let !(params, below) = splitStack witness stack
             !after = restoring restores store rest
          in Right (Stepped NothingToCheck (Config store locals (relabelStack flows params) body (HandlerLabel handlers below after control)))
     {- Exceptions: a throw unwinds the control stack to the nearest clause that catches it
        ('throwException'); a reference is thrown again with the exception it refers to. -}
     IThrow carried _ flows witness tag ->
-        let (args, _) = splitStack witness stack
+        let !(args, _) = splitStack witness stack
          in throwException store (ExceptionInst (tagName tag store.tables) carried (relabelStack flows args)) Nothing locals control
     IThrowRef -> case stack of
         reference :# _ -> case keptException reference store.tables of
             Just exception -> throwException store exception (Just reference) locals control
             Nothing -> Left NullExceptionReference
     ILoop _ restores _ _ flows witness body ->
-        let (params, below) = splitStack witness stack
+        let !(params, below) = splitStack witness stack
             !after = restoring restores store rest
          in Right (Stepped NothingToCheck (Config store locals (relabelStack flows params) body (LoopLabel below body after control)))
     IIf _ _ restores flows witness thenArm elseArm -> case stack of
         cond :# below' ->
-            let (params, below) = splitStack witness below'
+            let !(params, below) = splitStack witness below'
                 !after = restoring restores store rest
              in Right . Stepped NothingToCheck $
                     if cond /= 0
                         then Config store locals (relabelStack flows params) thenArm (BlockLabel below after control)
                         else Config store locals (relabelStack flows params) elseArm (BlockLabel below after control)
     {- Branches: unwind the control stack to the targeted frame -}
-    IBr _ flows witness target -> let (vs, _) = splitStack witness stack in Right (unwind store locals target (relabelStack flows vs) control)
+    IBr _ flows witness target -> let !(vs, _) = splitStack witness stack in Right (unwind store locals target (relabelStack flows vs) control)
     IBrIf _ flows witness fallThrough target -> case stack of
         cond :# below'
             | cond /= 0 ->
-                let (vs, _) = splitStack witness below'
+                let !(vs, _) = splitStack witness below'
                  in Right (unwind store locals target (relabelStack flows vs) control)
             | otherwise -> case fallThrough of
                 KeepsLevels -> stepped NothingToCheck store locals below' rest control
                 TakesTargetType ->
-                    let (vs, below) = splitStack witness below'
+                    let !(vs, below) = splitStack witness below'
                      in stepped NothingToCheck store locals (appendStack (relabelStack flows vs) below) rest control
     IBrTable _ flows witness reach targets def -> case stack of
         idx :# below' ->
             let target = withinReach reach (case drop (fromIntegral idx) targets of t : _ -> t; [] -> def)
-                (vs, _) = splitStack witness below'
+                !(vs, _) = splitStack witness below'
              in Right (unwindTo store locals target (relabelStack flows vs) control)
     IReturn _ flows witness ->
-        let (vs, _) = splitStack witness stack in Right (returnUnwind store locals (relabelStack flows vs) control)
+        let !(vs, _) = splitStack witness stack in Right (returnUnwind store locals (relabelStack flows vs) control)
     {- Tail calls: the call is made from where the function was called, with what the function
        returns to (see 'tailCall'); the function's own frame and labels are dropped. -}
     IReturnCall _ flows _ witness ix _ results ->
-        let (args, _) = splitStack witness stack
+        let !(args, _) = splitStack witness stack
          in tailCall NothingToCheck funcs store flows witness (Within ix) args results control
     IReturnCallIndirect (TableRef width tableIx) _ flows _ witness expected _ results -> case stack of
         index :# below' -> case maybe (Left UndefinedElement) (\at -> lookupChecked store.tables.directory (getTable tableIx store.tables) at expected) (countFrom width index) of
             Left trap -> case (calleeElsewhere trap store (getTable tableIx store.tables) (countFrom width index) expected, expected) of
                 (Left stays, _) -> Left stays
                 (Right callee@(ElsewhereCallee reference allPublic), SLabelledFuncType _ params results') ->
-                    let (args, _) = splitStack witness below'
+                    let !(args, _) = splitStack witness below'
                      in tailCall (CalleeWasElsewhere callee) funcs store flows witness (Elsewhere reference params results' allPublic) args results control
             Right checked -> enteredCallee checked $ \ix ->
-                let (args, _) = splitStack witness below'
+                let !(args, _) = splitStack witness below'
                  in tailCall (CalleeWasWithin checked) funcs store flows witness (Within ix) args results control
     IReturnCallRef _ flows _ witness expected _ results -> case stack of
         reference :# below' -> case lookupReferenced store.tables.directory reference expected of
             Left trap -> case (elsewhereByReference trap store reference expected, expected) of
                 (Left stays, _) -> Left stays
                 (Right callee@(ElsewhereCallee named allPublic), SLabelledFuncType _ params results') ->
-                    let (args, _) = splitStack witness below'
+                    let !(args, _) = splitStack witness below'
                      in tailCall (CalleeWasElsewhere callee) funcs store flows witness (Elsewhere named params results' allPublic) args results control
             Right checked -> enteredCallee checked $ \ix ->
-                let (args, _) = splitStack witness below'
+                let !(args, _) = splitStack witness below'
                  in tailCall (CalleeWasWithin checked) funcs store flows witness (Within ix) args results control
     IRelabelTop flows from to -> case splitStack from stack of
         (top, below') -> stepped NothingToCheck store locals (appendWith to (relabelStack flows top) below') rest control
@@ -759,16 +759,16 @@ enterCall evidence funcs store locals flows witness ix stack rest control = case
     WasmFunc (Function params declared returns body)
         | depth > callDepthBound -> Left CallStackExhausted
         | otherwise ->
-            let (args, below) = splitStack witness stack
+            let !(args, below) = splitStack witness stack
                 calleeLocals = seedLocals flows params declared args
                 !after = restoringOnReturn returns store rest
              in Right (Stepped evidence (Config store calleeLocals VNil body (CallBoundary depth below locals after control)))
     HostFunc wasiFunc argsAgree resultsAgree ->
-        let (args, below) = splitStack witness stack
+        let !(args, below) = splitStack witness stack
             suspended = Suspended (appendFromSameValues resultsAgree) locals below rest control
          in Right (HostCall evidence (HostRequest wasiFunc (relabelStack argsAgree (relabelStack flows args)) store resultsAgree suspended))
     ForeignFunc target params results allPublic ->
-        let (args, below) = splitStack witness stack
+        let !(args, below) = splitStack witness stack
             suspended = Suspended (appendFromSing results) locals below rest control
          in Right (HostCall evidence (ForeignRequest target params allPublic (relabelStack flows args) results store suspended))
     GhostFunc -> Left InformationFlowViolation
@@ -796,7 +796,7 @@ enterCallee ::
 enterCallee evidence funcs store locals flows witness callee stack rest control = case callee of
     Within ix -> enterCall evidence funcs store locals flows witness ix stack rest control
     Elsewhere reference params results allPublic ->
-        let (args, below) = splitStack witness stack
+        let !(args, below) = splitStack witness stack
             suspended = Suspended (appendFromSing results) locals below rest control
          in Right (HostCall evidence (ForeignRequest (ReferencedBy reference) params allPublic (relabelStack flows args) results store suspended))
 
