@@ -90,29 +90,29 @@ example (pc : Lab) (P' : Pcs) (st st' : STy) :
 
 /-! ### Memory -/
 
-/-- Store the secret local at address 0 in a cell labelled secret, and read it back as a secret. -/
+/-- Store the secret local in four bytes at address 0, labelled secret, and read it back as a secret. -/
 def storeSecret : List Instr :=
-  [.const 0, .localGet 0, .store Lab.H, .const 0, .load Lab.H, .drop]
+  [.const 0, .localGet 0, .store 4 Lab.H, .const 0, .load 4 Lab.H, .drop]
 
 example : Typed exampleCtx [[]] storeSecret [Lab.L] [] [Lab.L] [] :=
-  .const 0 (.localGet 0 (.store Lab.H (fun _ => rfl) (.const 0 (.load Lab.H (.drop .nil)))))
+  .const 0 (.localGet 0 (.store 4 Lab.H (fun _ => rfl) (.const 0 (.load 4 Lab.H (.drop .nil)))))
 
-/-- The run: the cell holds the secret and is labelled so, and the load's check passes. -/
-example (s : State) (hs : 0 < s.size) :
-    Eval [] 6 [0] storeSecret [] s (.normal [] (s.setMem 0 (s.loc 0) Lab.H)) :=
-  .const 0 (.localGet 0 (.store Lab.H hs (.const 0 (.load Lab.H hs (by simp [State.setMem, Lab.le])
-    (.drop .nil)))))
+/-- The run: the four bytes hold the secret and are labelled so, and the load's check passes. -/
+example (s : State) (hs : 4 ≤ s.size) :
+    Eval [] 6 [0] storeSecret [] s (.normal [] (s.put 0 (bytesOf (s.loc 0) 4) Lab.H)) :=
+  .const 0 (.localGet 0 (.store 4 Lab.H (by omega) (.const 0 (.load 4 Lab.H (by simpa [State.put] using hs)
+    (fun _ _ _ => rfl) (.drop .nil)))))
 
 /-- The same store into a cell labelled public is not typed. -/
 example (pc : Lab) (P' : Pcs) (st' : STy) :
-    ¬ Typed exampleCtx [[]] [.const 0, .localGet 0, .store Lab.L] [pc] [] P' st' := by
+    ¬ Typed exampleCtx [[]] [.const 0, .localGet 0, .store 4 Lab.L] [pc] [] P' st' := by
   intro h
   cases h with
   | const _ h1 =>
     cases h1 with
     | localGet _ h2 =>
       cases h2 with
-      | store _ hle _ =>
+      | store _ _ hle _ =>
         have hH : Lab.le Lab.H Lab.L := by
           cases pc <;> simpa [Lab.join, exampleCtx] using hle
         exact absurd (hH rfl) (by decide)

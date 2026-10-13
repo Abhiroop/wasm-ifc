@@ -78,10 +78,10 @@ inductive Instr where
   | localTee (i : Nat)
   | globalGet (i : Nat)
   | globalSet (i : Nat)
-  /-- `load lm`: read a cell, which must be labelled at most `lm` -/
-  | load (lm : Lab)
-  /-- `store lm`: write a cell and label it `lm` -/
-  | store (lm : Lab)
+  /-- `load w lm`: read a value of `w` bytes, each of which must be labelled at most `lm` -/
+  | load (w : Nat) (lm : Lab)
+  /-- `store w lm`: write the low `w` bytes of a value and label them `lm` -/
+  | store (w : Nat) (lm : Lab)
   | memSize
   | memGrow
   /-- read an entry of the function table, as a reference -/
@@ -96,6 +96,10 @@ inductive Instr where
   | fill (lm : Lab)
   /-- `copy lm`: copy a range of cells; each keeps its level, raised by `lm` -/
   | copy (lm : Lab)
+  /-- `memInit k lm`: copy bytes of the data segment `k` into the memory and label them `lm` -/
+  | memInit (k : Nat) (lm : Lab)
+  /-- `dataDrop k`: the data segment `k` is empty from now on -/
+  | dataDrop (k : Nat)
   /--
   `block keep ps rs body`: where control comes out of the block, by its end or by a branch to
   its label, the globals `keep` must hold what they held at its start, or the run traps
@@ -224,13 +228,13 @@ inductive Typed (C : Ctx) : List STy → List Instr → Pcs → STy → Pcs → 
       C.preserved i → Lab.le l pc →
       Typed C Ls rest (pc :: Pr) st P' st' →
       Typed C Ls (.globalSet i :: rest) (pc :: Pr) (l :: st) P' st'
-  | load {Ls rest pc Pr la st P' st'} (lm : Lab) :
+  | load {Ls rest pc Pr la st P' st'} (w : Nat) (lm : Lab) :
       Typed C Ls rest (pc :: Pr) (((la.join lm).join pc) :: st) P' st' →
-      Typed C Ls (.load lm :: rest) (pc :: Pr) (la :: st) P' st'
-  | store {Ls rest pc Pr lv la st P' st'} (lm : Lab) :
+      Typed C Ls (.load w lm :: rest) (pc :: Pr) (la :: st) P' st'
+  | store {Ls rest pc Pr lv la st P' st'} (w : Nat) (lm : Lab) :
       Lab.le ((pc.join la).join lv) lm →
       Typed C Ls rest (pc :: Pr) st P' st' →
-      Typed C Ls (.store lm :: rest) (pc :: Pr) (lv :: la :: st) P' st'
+      Typed C Ls (.store w lm :: rest) (pc :: Pr) (lv :: la :: st) P' st'
   /-- `memory.fill`: the cells get a level at least the pc's, the count's, the value's and the address's. -/
   | fill {Ls rest pc Pr ln lv ld st P' st'} (lm : Lab) :
       Lab.le (pc.join (ln.join (lv.join ld))) lm →
@@ -265,6 +269,15 @@ inductive Typed (C : Ctx) : List STy → List Instr → Pcs → STy → Pcs → 
   | hostWrite {Ls rest Pr st P' st'} :
       Typed C Ls rest (Lab.L :: Pr) st P' st' →
       Typed C Ls (.hostWrite :: rest) (Lab.L :: Pr) (Lab.L :: Lab.L :: Lab.L :: st) P' st'
+  /-- `memory.init`: as `memory.fill`, with the segment's bytes for the value. A segment is public. -/
+  | memInit {Ls rest pc Pr ln lsrc ld st P' st'} (k : Nat) (lm : Lab) :
+      Lab.le (pc.join (ln.join (lsrc.join ld))) lm →
+      Typed C Ls rest (pc :: Pr) st P' st' →
+      Typed C Ls (.memInit k lm :: rest) (pc :: Pr) (ln :: lsrc :: ld :: st) P' st'
+  /-- `data.drop` has no premise, under any pc. -/
+  | dataDrop {Ls rest P st P' st'} (k : Nat) :
+      Typed C Ls rest P st P' st' →
+      Typed C Ls (.dataDrop k :: rest) P st P' st'
   /-- The size of the memory is public. -/
   | memSize {Ls rest pc Pr st P' st'} :
       Typed C Ls rest (pc :: Pr) (pc :: st) P' st' →
@@ -401,8 +414,8 @@ def WellTyped (C : Ctx) (F : List Func) : Prop :=
         (p = Lab.L ∨ ∀ j, C.preserved j → j ∈ f.keep)
 
 /--
-The values of the local and of the global variables, and the memory: each cell's value and
-level, how many cells it has, and how many it may grow to.
+The values of the local and of the global variables, and the memory: each byte's value and
+level, how many bytes it has, and how many it may grow to.
 -/
 structure State where
   loc : Nat → Nat
@@ -419,6 +432,8 @@ structure State where
   out : Nat → List Nat
   /-- what is left to read from each descriptor -/
   inp : Nat → List Nat
+  /-- the data segments; a dropped one is empty -/
+  segs : Nat → List Nat
 
 def State.setLoc (s : State) (i v : Nat) : State :=
   { s with loc := fun j => if j = i then v else s.loc j }
@@ -461,6 +476,19 @@ def State.put (s : State) (a : Nat) (vs : List Nat) (l : Lab) : State :=
 /-- Take `k` values off what is left to read from the descriptor `fd`. -/
 def State.consume (s : State) (fd k : Nat) : State :=
   { s with inp := fun d => if d = fd then (s.inp fd).drop k else s.inp d }
+
+/-- The value of the `w` bytes from `a`, the first the least significant. -/
+def State.word (s : State) : Nat → Nat → Nat
+  | _, 0 => 0
+  | a, w + 1 => s.mem a + 256 * s.word (a + 1) w
+
+/-- The low `w` bytes of a value, the least significant first. -/
+def bytesOf (v : Nat) : Nat → List Nat
+  | 0 => []
+  | w + 1 => v % 256 :: bytesOf (v / 256) w
+
+def State.dropSeg (s : State) (k : Nat) : State :=
+  { s with segs := fun j => if j = k then [] else s.segs j }
 
 /-- The `k` cells from `a`. -/
 def State.cells (s : State) (a k : Nat) : List Nat := (List.range k).map (fun i => s.mem (a + i))
@@ -552,8 +580,8 @@ the size of the derivation. A block's body runs on the block's parameters alone;
 below them on the stack waits for the body's results. A call runs the callee's body on an
 empty segment with its own local variables, and the caller's are as before when it returns.
 A trap is the absence of a rule: `unreachable` has none, a `load` and a `store` have one only
-if the address is within the memory, and a `load` only if, besides, the
-cell's level flows into the level the load declares (SecWasm's run-time check), and an
+if their bytes are within the memory, and a `load` only if, besides, the level of every byte
+it reads flows into the level the load declares (SecWasm's run-time check), and an
 indirect call only if the table entry names a function of exactly the expected type. A block,
 a loop and a conditional go on only if the globals they name hold what they held at the
 construct's start (`Kept`), and so does a call for the globals its callee names. A branch
@@ -598,12 +626,13 @@ inductive Eval (F : List Func) : Nat → List Nat → List Instr → List Nat �
       Eval F n ls rest (s.glob i :: σ) s o → Eval F (n + 1) ls (.globalGet i :: rest) σ s o
   | globalSet {n ls rest v σ s o} (i : Nat) :
       Eval F n ls rest σ (s.setGlob i v) o → Eval F (n + 1) ls (.globalSet i :: rest) (v :: σ) s o
-  | load {n ls rest a σ s o} (lm : Lab) :
-      a < s.size → Lab.le (s.lab a) lm →
-      Eval F n ls rest (s.mem a :: σ) s o → Eval F (n + 1) ls (.load lm :: rest) (a :: σ) s o
-  | store {n ls rest v a σ s o} (lm : Lab) :
-      a < s.size →
-      Eval F n ls rest σ (s.setMem a v lm) o → Eval F (n + 1) ls (.store lm :: rest) (v :: a :: σ) s o
+  | load {n ls rest a σ s o} (w : Nat) (lm : Lab) :
+      a + w ≤ s.size → (∀ i, i < w → Lab.le (s.lab (a + i)) lm) →
+      Eval F n ls rest (s.word a w :: σ) s o → Eval F (n + 1) ls (.load w lm :: rest) (a :: σ) s o
+  | store {n ls rest v a σ s o} (w : Nat) (lm : Lab) :
+      a + w ≤ s.size →
+      Eval F n ls rest σ (s.put a (bytesOf v w) lm) o →
+      Eval F (n + 1) ls (.store w lm :: rest) (v :: a :: σ) s o
   | fill {n ls rest k v a σ s o} (lm : Lab) :
       a + k ≤ s.size →
       Eval F n ls rest σ (s.fill a v k lm) o →
@@ -633,6 +662,13 @@ inductive Eval (F : List Func) : Nat → List Nat → List Instr → List Nat �
       a + k ≤ s.size → (∀ x, a ≤ x → x < a + k → Lab.le (s.lab x) (s.chan fd)) →
       Eval F n ls rest σ (s.emit fd (s.cells a k)) o →
       Eval F (n + 1) ls (.hostWrite :: rest) (k :: a :: fd :: σ) s o
+  /-- A trap if the bytes asked for are not in the segment, which is so of any byte of a dropped one. -/
+  | memInit {n ls rest c b a σ s o} (k : Nat) (lm : Lab) :
+      a + c ≤ s.size → b + c ≤ (s.segs k).length →
+      Eval F n ls rest σ (s.put a (((s.segs k).drop b).take c) lm) o →
+      Eval F (n + 1) ls (.memInit k lm :: rest) (c :: b :: a :: σ) s o
+  | dataDrop {n ls rest σ s o} (k : Nat) :
+      Eval F n ls rest σ (s.dropSeg k) o → Eval F (n + 1) ls (.dataDrop k :: rest) σ s o
   | memSize {n ls rest σ s o} :
       Eval F n ls rest (s.size :: σ) s o → Eval F (n + 1) ls (.memSize :: rest) σ s o
   | memGrow {n ls rest d σ s o} :

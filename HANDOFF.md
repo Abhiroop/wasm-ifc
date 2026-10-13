@@ -609,7 +609,7 @@ implemented since e87e76a.
 
 ## Lean: noninterference on a core with control flow, calls and memory (item 12, 2026-10-12)
 
-- **Where:** `lean/` (Lean 4.35.0, no dependencies; `cd lean && lake build`). 3,640 lines in
+- **Where:** `lean/` (Lean 4.35.0, no dependencies; `cd lean && lake build`). 3,795 lines in
   five files; `lean/README.md` states what is proved and what differs from the paper.
 - **What is proved** (`WasmIfc.tini`, from `WasmIfc.ni`): termination-insensitive
   noninterference for a function of a well-typed module, under the lift-free rules, on a core
@@ -703,6 +703,16 @@ implemented since e87e76a.
        skips its epilogue, but it can only be called where no secret has decided the control
        flow, and there the stack pointer is the same in both runs.
     Not modelled: references to exceptions (`exnref`, `throw_ref`, `catch_ref`).
+  - *A memory of bytes and data segments* (2026-10-13, the plan's item 5). A load and a store
+    name a number of bytes. A load of several bytes checks the level of each, which is the
+    check on the join of their labels that the paper states, and the proof of the case is that
+    each byte passed the check in both runs, so each is public in both and they agree.
+    `memory.init` and `data.drop` are in the core with the rules of `IMemInit` and
+    `IDataDrop`. **A finding:** `IDataDrop` has no premise on the pc, so under a secret pc one
+    run may drop a segment that the other keeps. This is sound, but only because traps are
+    not observed: `memory.init` on a dropped segment traps unless it asks for no byte, so
+    where both runs go on they have copied the same bytes. If the paper ever states a
+    termination-sensitive property, `data.drop` needs the pc to be public.
   - *A call through a reference* (2026-10-13, after the benchmark): `call_ref` with the rule
     of `ICallRef`, and the two instructions `br_on_null` is elaborated to besides the
     conditional. This is the proof on the core of the rule for `call_ref`, and it shows the

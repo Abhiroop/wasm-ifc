@@ -242,26 +242,42 @@ theorem StkRel.same : ∀ {st : STy} {w : List Nat}, w.length = st.length → St
 /-! ### Two states that agree where public, and one state after a run under a secret pc -/
 
 /--
+The data segments of two runs: one that both still have is the same in both. A run may have
+dropped a segment under a secret pc, so one of the two may be empty where the other is not;
+`memory.init` then traps in that run unless it asks for no byte.
+-/
+def SegRel (s t : State) : Prop := ∀ k, s.segs k = t.segs k ∨ s.segs k = [] ∨ t.segs k = []
+
+/--
 What the attacker sees of the host: the levels of the descriptors, and for a public descriptor
 what was written to it and what is left to read from it.
 -/
 def IoRel (s t : State) : Prop :=
-  s.chan = t.chan ∧ ∀ d, s.chan d = Lab.L → s.out d = t.out d ∧ s.inp d = t.inp d
+  s.chan = t.chan ∧ (∀ d, s.chan d = Lab.L → s.out d = t.out d ∧ s.inp d = t.inp d) ∧
+    SegRel s t
 
 theorem IoRel.symm {s t : State} (h : IoRel s t) : IoRel t s :=
-  ⟨h.1.symm, fun d hd => ⟨(h.2 d (h.1 ▸ hd)).1.symm, (h.2 d (h.1 ▸ hd)).2.symm⟩⟩
+  ⟨h.1.symm, fun d hd => ⟨(h.2.1 d (h.1 ▸ hd)).1.symm, (h.2.1 d (h.1 ▸ hd)).2.symm⟩,
+    fun k => (h.2.2 k).elim (fun e => .inl e.symm)
+      (fun e => e.elim (fun a => .inr (.inr a)) (fun b => .inr (.inl b)))⟩
 
-/-- A run under a secret pc makes no host call. -/
-def IoSame (s t : State) : Prop := s.chan = t.chan ∧ s.out = t.out ∧ s.inp = t.inp
+/-- A run under a secret pc makes no host call. It may drop data segments. -/
+def IoSame (s t : State) : Prop :=
+  s.chan = t.chan ∧ s.out = t.out ∧ s.inp = t.inp ∧ ∀ k, t.segs k = s.segs k ∨ t.segs k = []
 
-theorem IoSame.refl (s : State) : IoSame s s := ⟨rfl, rfl, rfl⟩
+theorem IoSame.refl (s : State) : IoSame s s := ⟨rfl, rfl, rfl, fun _ => .inl rfl⟩
 
 theorem IoSame.trans {s t u : State} (h1 : IoSame s t) (h2 : IoSame t u) : IoSame s u :=
-  ⟨h1.1.trans h2.1, h1.2.1.trans h2.2.1, h1.2.2.trans h2.2.2⟩
+  ⟨h1.1.trans h2.1, h1.2.1.trans h2.2.1, h1.2.2.1.trans h2.2.2.1,
+    fun k => (h2.2.2.2 k).elim
+      (fun e => (h1.2.2.2 k).elim (fun e1 => .inl (e.trans e1)) (fun e1 => .inr (e.trans e1))) .inr⟩
 
 theorem IoRel.conf_left {s s' t : State} (h : IoRel s t) (hc : IoSame s s') : IoRel s' t := by
-  obtain ⟨h1, h2, h3⟩ := hc
-  exact ⟨h1.symm.trans h.1, fun d hd => by rw [← h2, ← h3]; exact h.2 d (h1 ▸ hd)⟩
+  obtain ⟨h1, h2, h3, h4⟩ := hc
+  refine ⟨h1.symm.trans h.1, fun d hd => by rw [← h2, ← h3]; exact h.2.1 d (h1 ▸ hd), fun k => ?_⟩
+  rcases h4 k with e | e
+  · rw [e]; exact h.2.2 k
+  · exact .inr (.inl e)
 
 /--
 `StRel C s t`: two runs' states agree on the public variables and on the memory cells that are
@@ -530,11 +546,36 @@ theorem StRel.put {C : Ctx} {s t : State} {a0 a1 : Nat} {vs0 vs1 : List Nat} {lm
       · simp only [State.put, hr0, hr1, ite_false] at hx hy ⊢
         exact h.2.2.1 x hx hy
 
+/-- A store at a secret level makes its bytes secret and touches no other. -/
+theorem Conf.put_high (C : Ctx) (s : State) (a : Nat) (vs : List Nat) : Conf C s (s.put a vs Lab.H) := by
+  refine ⟨fun _ _ => rfl, fun _ _ _ => rfl, fun x hx => ?_, fun _ => rfl, rfl, rfl, .refl _⟩
+  by_cases hr : a ≤ x ∧ x < a + vs.length
+  · simp [State.put, hr] at hx
+  · simp only [State.put, hr, ite_false] at hx ⊢
+    exact ⟨hx, trivial⟩
+
+theorem bytesOf_length (v : Nat) : ∀ w, (bytesOf v w).length = w
+  | 0 => rfl
+  | w + 1 => by simp [bytesOf, bytesOf_length (v / 256) w]
+
+/-- Two words whose bytes agree are the same. -/
+theorem word_eq {s t : State} : ∀ (w a : Nat), (∀ i, i < w → s.mem (a + i) = t.mem (a + i)) →
+    s.word a w = t.word a w
+  | 0, _, _ => rfl
+  | w + 1, a, h => by
+      have h0 := h 0 (Nat.succ_pos w)
+      have hrest := word_eq w (a + 1) (fun i hi => by
+        have := h (i + 1) (Nat.succ_lt_succ hi)
+        simpa [Nat.add_assoc, Nat.add_comm 1 i] using this)
+      simp only [State.word]
+      rw [hrest]
+      simpa using h0
+
 /-- Two reads of the same descriptor, of the same amount, leave what the attacker sees to read alike. -/
 theorem StRel.consume {C : Ctx} {s t : State} (fd k : Nat) (h : StRel C s t) :
     StRel C (s.consume fd k) (t.consume fd k) := by
-  obtain ⟨h1, h2, h3, h4, h5, h6, hc, hio⟩ := h
-  refine ⟨h1, h2, h3, h4, h5, h6, hc, fun d hd => ⟨(hio d hd).1, ?_⟩⟩
+  obtain ⟨h1, h2, h3, h4, h5, h6, hc, hio, hseg⟩ := h
+  refine ⟨h1, h2, h3, h4, h5, h6, hc, fun d hd => ⟨(hio d hd).1, ?_⟩, hseg⟩
   by_cases hdf : d = fd
   · subst hdf
     simp [State.consume, (hio d hd).2]
@@ -548,8 +589,8 @@ theorem StRel.emit {C : Ctx} {s t : State} {fd a k : Nat} (h : StRel C s t)
     (h0 : ∀ x, a ≤ x → x < a + k → Lab.le (s.lab x) (s.chan fd))
     (h1 : ∀ x, a ≤ x → x < a + k → Lab.le (t.lab x) (t.chan fd)) :
     StRel C (s.emit fd (s.cells a k)) (t.emit fd (t.cells a k)) := by
-  obtain ⟨g1, g2, g3, g4, g5, g6, hc, hio⟩ := h
-  refine ⟨g1, g2, g3, g4, g5, g6, hc, fun d hd => ⟨?_, (hio d hd).2⟩⟩
+  obtain ⟨g1, g2, g3, g4, g5, g6, hc, hio, hseg⟩ := h
+  refine ⟨g1, g2, g3, g4, g5, g6, hc, fun d hd => ⟨?_, (hio d hd).2⟩, hseg⟩
   by_cases hdf : d = fd
   · subst hdf
     have hd' : s.chan d = Lab.L := hd
@@ -562,6 +603,39 @@ theorem StRel.emit {C : Ctx} {s t : State} {fd a k : Nat} (h : StRel C s t)
         (Lab.eq_L_of_le (h1 (a + i) (by omega) (by omega)) (hc ▸ hd'))
     simp [State.emit, hcells, (hio d hd').1]
   · simp [State.emit, hdf, (hio d hd).1]
+
+/-! ### Data segments -/
+
+theorem StRel.dropSeg {C : Ctx} {s t : State} (k : Nat) (h : StRel C s t) :
+    StRel C (s.dropSeg k) (t.dropSeg k) := by
+  obtain ⟨h1, h2, h3, h4, h5, h6, hc, hio, hseg⟩ := h
+  refine ⟨h1, h2, h3, h4, h5, h6, hc, hio, fun j => ?_⟩
+  by_cases hj : j = k
+  · simp [State.dropSeg, hj]
+  · simpa [State.dropSeg, hj] using hseg j
+
+theorem Conf.dropSeg (C : Ctx) (s : State) (k : Nat) : Conf C s (s.dropSeg k) := by
+  refine ⟨fun _ _ => rfl, fun _ _ _ => rfl, fun _ h => ⟨h, rfl⟩, fun _ => rfl, rfl, rfl, rfl, rfl,
+    rfl, fun j => ?_⟩
+  by_cases hj : j = k <;> simp [State.dropSeg, hj]
+
+/--
+The bytes two runs take from a segment, each within the segment it has: the same. If one run
+has dropped the segment, it takes no byte, and then neither does the other.
+-/
+theorem seg_payload {C : Ctx} {s t : State} (h : StRel C s t) {k b c : Nat}
+    (h0 : b + c ≤ (s.segs k).length) (h1 : b + c ≤ (t.segs k).length) :
+    ((s.segs k).drop b).take c = ((t.segs k).drop b).take c := by
+  rcases h.2.2.2.2.2.2.2.2 k with e | e | e
+  · rw [e]
+  · rw [e] at h0
+    have hc : c = 0 := by simp at h0; omega
+    subst hc
+    simp
+  · rw [e] at h1
+    have hc : c = 0 := by simp at h1; omega
+    subst hc
+    simp
 
 /-- The memory grows by the same amount in two runs: the same result, and states that still agree. -/
 theorem StRel.grow {C : Ctx} {s t : State} (d : Nat) (h : StRel C s t) :
@@ -734,14 +808,16 @@ theorem rise {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : Pcs} {st st' : S
   | globalGet _ _ ih => exact ih
   | globalSet _ _ _ _ _ ih => exact ih
   | globalSetPreserved _ _ _ _ ih => exact ih
-  | load _ _ ih => exact ih
-  | store _ _ _ ih => exact ih
+  | load _ _ _ ih => exact ih
+  | store _ _ _ _ ih => exact ih
   | fill _ _ _ ih => exact ih
   | copy _ _ _ ih => exact ih
   | tableGet _ ih => exact ih
   | tableSet _ _ ih => exact ih
   | hostRead _ ih => exact ih
   | hostWrite _ ih => exact ih
+  | memInit _ _ _ _ ih => exact ih
+  | dataDrop _ _ ih => exact ih
   | memSize _ ih => exact ih
   | memGrow _ _ ih => exact ih
   | block _ _ _ _ _ ihb ihr => exact SFlows.trans ihb.tail ihr

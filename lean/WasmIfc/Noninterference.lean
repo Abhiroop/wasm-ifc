@@ -670,11 +670,11 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
             · have hpcH := hl hlH
               subst hpcH
               exact .inr (hiUpTo_zero_cons _)
-    | load lm ht' =>
+    | load w lm ht' =>
       cases he0 with
-      | load _ hsz0 hlab0 he0' =>
+      | load _ _ hsz0 hlab0 he0' =>
         cases he1 with
-        | load _ hsz1 hlab1 he1' =>
+        | load _ _ hsz1 hlab1 he1' =>
           cases hσ with
           | cons ha hσ' =>
             refine ih _ (by omega) hF ht' he0' he1' (.cons (fun hl => ?_) hσ') hs hp
@@ -683,22 +683,24 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
             have haa := ha hla
             subst haa
             subst hlm
-            exact hs.2.2.1 _ (Lab.eq_L_of_le hlab0 rfl) (Lab.eq_L_of_le hlab1 rfl)
-    | store lm hle ht' =>
+            -- each byte passed the check in both runs, so each is public in both
+            exact word_eq _ _ (fun i hi =>
+              hs.2.2.1 _ (Lab.eq_L_of_le (hlab0 i hi) rfl) (Lab.eq_L_of_le (hlab1 i hi) rfl))
+    | store w lm hle ht' =>
       cases he0 with
-      | store _ hsz0 he0' =>
+      | store _ _ hsz0 he0' =>
         cases he1 with
-        | store _ hsz1 he1' =>
+        | store _ _ hsz1 he1' =>
           cases hσ with
           | cons hv hσa =>
             cases hσa with
             | cons ha hσb =>
-              refine ih _ (by omega) hF ht' he0' he1' hσb (hs.setMem (fun hlm => ?_))
+              refine ih _ (by omega) hF ht' he0' he1' hσb (hs.put (fun hlm => ?_))
                 (hp.of_glob rfl rfl)
               have hj := Lab.eq_L_of_le hle hlm
               obtain ⟨hj', hlv⟩ := Lab.join_eq_L hj
               obtain ⟨_, hla⟩ := Lab.join_eq_L hj'
-              exact ⟨ha hla, hv hlv⟩
+              exact ⟨ha hla, by rw [hv hlv]⟩
     | fill lm hle ht' =>
       cases he0 with
       | fill _ hb0 he0' =>
@@ -782,7 +784,7 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
                   rw [← hchan]
                   -- what a public descriptor has left to read is the same in both runs
                   have hin : ∀ d, s0.chan d = Lab.L → s0.inp d = s1.inp d :=
-                    fun d hl => (hs.2.2.2.2.2.2.2 d hl).2
+                    fun d hl => (hs.2.2.2.2.2.2.2.1 d hl).2
                   exact ((hs.put (fun hl => ⟨rfl, by rw [hin _ hl]⟩)).setMem
                     (fun hl => ⟨rfl, by rw [hin _ hl]⟩)).consume _ _
     | hostWrite ht' =>
@@ -802,6 +804,33 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
                 subst e1 e2 e3
                 exact ih _ (by omega) hF ht' he0' he1' hσc (hs.emit hchk0 hchk1)
                   (hp.of_glob rfl rfl)
+    | memInit k lm hle ht' =>
+      cases he0 with
+      | memInit _ _ hb0 hs0 he0' =>
+        cases he1 with
+        | memInit _ _ hb1 hs1 he1' =>
+          cases hσ with
+          | cons hc hσa =>
+            cases hσa with
+            | cons hb hσb =>
+              cases hσb with
+              | cons ha hσc =>
+                refine ih _ (by omega) hF ht' he0' he1' hσc (hs.put (fun hlm => ?_))
+                  (hp.of_glob rfl rfl)
+                obtain ⟨_, hj1⟩ := Lab.join_eq_L (Lab.eq_L_of_le hle hlm)
+                obtain ⟨hln, hj2⟩ := Lab.join_eq_L hj1
+                obtain ⟨hlb, hld⟩ := Lab.join_eq_L hj2
+                have e1 := ha hld
+                have e2 := hb hlb
+                have e3 := hc hln
+                subst e1 e2 e3
+                exact ⟨rfl, seg_payload hs hs0 hs1⟩
+    | dataDrop k ht' =>
+      cases he0 with
+      | dataDrop _ he0' =>
+        cases he1 with
+        | dataDrop _ he1' =>
+          exact ih _ (by omega) hF ht' he0' he1' hσ (hs.dropSeg k) (hp.of_glob rfl rfl)
     | memSize ht' =>
       cases he0 with
       | memSize he0' =>

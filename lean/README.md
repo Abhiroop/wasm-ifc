@@ -3,7 +3,7 @@
 A Lean 4 development that proves termination-insensitive noninterference for the labelled
 typing rules of this repository on a core of WebAssembly: blocks, loops and conditionals with
 parameters and results, `br`, `br_if`, `br_table` and `return`, direct calls, indirect calls,
-calls through a reference and tail calls of the module's functions (recursion included), a bounded memory whose cells carry a level, with
+calls through a reference and tail calls of the module's functions (recursion included), a bounded memory whose bytes carry a level, with loads and stores of several bytes, data segments (`memory.init`, `data.drop`),
 SecWasm's run-time check on loads, `memory.size`, `memory.grow`, `memory.fill` and
 `memory.copy`, a function table with a level (`table.get`, `table.set`), a host that reads
 from and writes to descriptors with levels, local and global
@@ -46,8 +46,14 @@ type `Syntax.Instructions.Instr` for the instructions above:
 - The results of a block, a loop and a conditional are at least the pc at which the body
   starts (the paper's Property (E), a witness of `IBlock`, `ILoop` and `IIf`).
 - A load declares a level, and its result is at least that level, the address's and the pc. A
-  store declares the level it gives the cell, which is at least the pc, the address's and the
-  value's. At run time a load traps unless the cell's level flows into the declared one.
+  store declares the level it gives the bytes it writes, which is at least the pc, the
+  address's and the value's. A load and a store name how many bytes they access. At run time
+  a load traps unless the level of every byte it reads flows into the declared one, which is
+  the check on the join of their labels.
+- `memory.init` is typed as `memory.fill`, and `data.drop` has no premise, under any pc. A
+  run under a secret pc may therefore drop a segment that the other run keeps. The only
+  instruction that reads a segment then traps in the run that dropped it, unless it asks for
+  no byte, so two runs that both go on have read the same bytes (`seg_payload`).
 - A call needs the caller's pc to flow into the callee's bound, and the arguments to flow into
   the parameters. The arguments need not be at least the pc (SecWasm's lift raised them).
 - The function table has one level (`Ctx.table`). What `table.get` reads is as secret as the
@@ -147,8 +153,7 @@ paper's appendix B.4 has no counterpart here.
 - **The host is two calls.** One reads and one writes, with the checks and the labels of the
   implementation's rule for the host boundary. WASI's other calls, its error codes, and
   results on the stack are not modelled.
-- **The core is small.** One value type; two levels; no data segments (`memory.init`,
-  `data.drop`); a tail call names its
+- **The core is small.** One value type; two levels; a tail call names its
   callee (`return_call`, not the indirect forms), and the semantics does not model that it
   runs in constant space. A tag
   is the number of public values its exceptions carry, a clause catches by tag or catches
@@ -156,7 +161,7 @@ paper's appendix B.4 has no counterpart here.
   clauses that hand one out). The function table has no bound and no size, a reference in it is a number (zero for null), and
 there is no `table.grow`, `table.fill` or `table.copy`. An indirect call
   asks the callee's type to equal the expected one, where the implementation compares the
-  bounds by the order of the levels. The memory's cells hold whole values, not bytes. A load
+  bounds by the order of the levels. A value is a natural number, of which a store writes the low bytes. A load
   or a store outside the memory traps, a load also by the level check, and `unreachable` is
   the other trap. `memory.grow` fails only if the memory would exceed its limit, which is
   part of the state and the same in both runs; the implementation's may also fail for want of

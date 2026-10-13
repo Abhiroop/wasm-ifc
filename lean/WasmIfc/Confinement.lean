@@ -198,6 +198,20 @@ theorem confine : ∀ (n : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P'
     | hostWrite hb hchk he' =>
       cases ht with
       | hostWrite _ => exact absurd hP.head (by decide)
+    | memInit k lm hb hb' he' =>
+      cases ht with
+      | memInit _ _ hle ht' =>
+        have hpc := hP.head
+        subst hpc
+        have hlm := hle (Lab.H_join _)
+        subst hlm
+        obtain ⟨h1, h2⟩ := ih _ (by omega) hF ht' (hiUpTo_zero_cons _) (by simpa using hlen) he'
+        exact ⟨(Conf.put_high _ _ _ _).trans h1, h2⟩
+    | dataDrop k he' =>
+      cases ht with
+      | dataDrop _ ht' =>
+        obtain ⟨h1, h2⟩ := ih _ (by omega) hF ht' hP hlen he'
+        exact ⟨(Conf.dropSeg _ _ _).trans h1, h2⟩
     | memSize he' =>
       cases ht with
       | memSize ht' => exact ih _ (by omega) hF ht' hP (by simp [hlen]) he'
@@ -207,18 +221,18 @@ theorem confine : ∀ (n : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P'
         have hpc := hP.head
         subst hpc
         exact absurd (hle (Lab.H_join _)) (by decide)
-    | load lm hsz hlab he' =>
+    | load w lm hsz hlab he' =>
       cases ht with
-      | load _ ht' => exact ih _ (by omega) hF ht' hP (by simpa using hlen) he'
-    | store lm hsz he' =>
+      | load _ _ ht' => exact ih _ (by omega) hF ht' hP (by simpa using hlen) he'
+    | store w lm hsz he' =>
       cases ht with
-      | store _ hle ht' =>
+      | store _ _ hle ht' =>
         have hpc := hP.head
         subst hpc
         have hlm := hle (by rw [Lab.H_join, Lab.H_join])
         subst hlm
         obtain ⟨h1, h2⟩ := ih _ (by omega) hF ht' (hiUpTo_zero_cons _) (by simpa using hlen) he'
-        exact ⟨(Conf.setMem_high _ _ _ _).trans h1, h2⟩
+        exact ⟨(Conf.put_high _ _ _ _).trans h1, h2⟩
     | blockCont hvs hb hl hk hr =>
       cases ht with
       | block hfl hge hres hbody hrest =>

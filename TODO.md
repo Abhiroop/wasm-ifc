@@ -54,7 +54,7 @@ are summarised here, not repeated.
   with `return`, direct and indirect calls, calls through a reference and tail calls, a
   memory with levels, local and global variables,
   preserved globals, `memory.size`, `memory.grow`, `memory.fill` and `memory.copy`, exceptions.
-  Not in it: a memory of bytes, data segments, a table's size and growth, references to exceptions, indirect tail calls, the
+  The memory is of bytes, with data segments. Not in it: a table's size and growth, references to exceptions, indirect tail calls, the
   host's calls other than a read and a write, more than one value
   type. Its semantics evaluates a block's body on the block's parameters alone; that this
   agrees with the flat stack is not proved. `Formalisation/` holds earlier Agda and Lean
