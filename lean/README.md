@@ -16,6 +16,10 @@ theorems depend on Lean's three standard axioms only (`propext`, `Classical.choi
 cd lean && lake build        # Lean 4.35.0, no dependencies; elan reads lean-toolchain
 ```
 
+**To check the statement without reading the proofs, read `STATEMENTS.md`**: it lists the
+definitions and the theorem with their lines, each typing rule beside the constructor of the
+implementation and the rule of the paper it stands for, and what is assumed.
+
 ## What is proved
 
 | Theorem | File | Statement |
@@ -24,6 +28,7 @@ cd lean && lake build        # Lean 4.35.0, no dependencies; elan reads lean-too
 | `confine` | `Confinement.lean` | A typed sequence that starts under a secret pc leaves the public variables unchanged, except the preserved globals, and changes no public memory cell except to make it secret (`Conf`). If it leaves by a branch, the label's type is all secret and the pcs of the blocks it leaves are secret (`Info`). |
 | `pres_after`, `pres_after_call` | `Basic.lean` | Where two runs come out of a block, a loop, a conditional or a call, they agree on the preserved globals unless the pc there is secret. |
 | `ni` | `Noninterference.lean` | Two runs of a typed sequence from stacks and states that agree where public, and on the preserved globals unless the pc is secret, end in related outcomes (`OutRel`). |
+| `noninterference` | `Statement.lean` | The theorem in the paper's terms: two calls of a function from low-equivalent states (`LowEq`, the paper's definition of the attacker), if both end, end alike and in low-equivalent states. It is `tini` with the two relations of the proof put together. |
 | `tini` | `Noninterference.lean` | For a function of a well-typed module: two calls with arguments that agree where the parameters are public, from states that agree where public, if both end, either both return or both end by the same exception with the same values, and they leave states that agree where public. If they return, their results agree where the result type is public, and they agree on the preserved globals too if both pass the comparison made at the function's return. |
 
 `Examples.lean` also has a `try_table` that catches what its body throws, with its typing and
@@ -62,7 +67,8 @@ type `Syntax.Instructions.Instr` for the instructions above:
 - An indirect call needs the pc, the level of the table index and the level of the table to
   flow into the bound of the expected type, and that type to be well formed: its results are
   at least its bound. At run
-  time it traps unless the table entry names a function of exactly the expected type.
+  time it traps unless the table entry names a function with the expected parameters and
+  results whose bound is at least the expected one, as in the implementation and the paper.
 - A call through a reference (`call_ref`) is an indirect call without the table: the pc and
   the level of the reference flow into the bound of the expected type. `br_on_null` has no
   rule of its own. It is the three instructions the elaborator writes for it, a copy of the
@@ -159,9 +165,7 @@ paper's appendix B.4 has no counterpart here.
   is the number of public values its exceptions carry, a clause catches by tag or catches
   everything, and there is no reference to an exception (`exnref`, `throw_ref`, and the
   clauses that hand one out). The function table has no bound and no size, a reference in it is a number (zero for null), and
-there is no `table.grow`, `table.fill` or `table.copy`. An indirect call
-  asks the callee's type to equal the expected one, where the implementation compares the
-  bounds by the order of the levels. A value is a natural number, of which a store writes the low bytes. A load
+there is no `table.grow`, `table.fill` or `table.copy`. A value is a natural number, of which a store writes the low bytes. A load
   or a store outside the memory traps, a load also by the level check, and `unreachable` is
   the other trap. `memory.grow` fails only if the memory would exceed its limit, which is
   part of the state and the same in both runs; the implementation's may also fail for want of

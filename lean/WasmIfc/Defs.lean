@@ -582,7 +582,8 @@ empty segment with its own local variables, and the caller's are as before when 
 A trap is the absence of a rule: `unreachable` has none, a `load` and a `store` have one only
 if their bytes are within the memory, and a `load` only if, besides, the level of every byte
 it reads flows into the level the load declares (SecWasm's run-time check), and an
-indirect call only if the table entry names a function of exactly the expected type. A block,
+indirect call only if the table entry names a function with the expected parameters and
+results whose bound is at least the expected one (SecWasm's other run-time check). A block,
 a loop and a conditional go on only if the globals they name hold what they held at the
 construct's start (`Kept`), and so does a call for the globals its callee names. A branch
 further out skips the comparison of the constructs it leaves.
@@ -739,7 +740,8 @@ inductive Eval (F : List Func) : Nat → List Nat → List Instr → List Nat �
       Eval F n2 ls rest (r ++ base) { t with loc := s.loc } o →
       Eval F (n1 + n2 + 1) ls (.call i :: rest) (args ++ base) s o
   | callIndirect {n1 n2 ls rest ps b rs c i f args base s ob r t o} :
-      s.tbl c = some i → F[i]? = some f → f.ty = ⟨ps, b, rs⟩ → args.length = ps.length →
+      s.tbl c = some i → F[i]? = some f → f.ty.params = ps → f.ty.results = rs → Lab.le b f.ty.bound →
+      args.length = ps.length →
       Eval F n1 [rs.length] f.body [] { s with loc := frame args } ob →
       ob.lands = some (r, t) → Kept f.keep s t →
       Eval F n2 ls rest (r ++ base) { t with loc := s.loc } o →
@@ -760,19 +762,22 @@ inductive Eval (F : List Func) : Nat → List Nat → List Instr → List Nat �
       Eval F n1 [f.ty.results.length] f.body [] { s with loc := frame args } (.exn t w u) →
       Eval F (n1 + 1) ls (.call i :: rest) (args ++ base) s (.exn t w { u with loc := s.loc })
   | callIndirectExn {n1 ls rest ps b rs c i f args base s t w u} :
-      s.tbl c = some i → F[i]? = some f → f.ty = ⟨ps, b, rs⟩ → args.length = ps.length →
+      s.tbl c = some i → F[i]? = some f → f.ty.params = ps → f.ty.results = rs → Lab.le b f.ty.bound →
+      args.length = ps.length →
       Eval F n1 [rs.length] f.body [] { s with loc := frame args } (.exn t w u) →
       Eval F (n1 + 1) ls (.callIndirect ps b rs :: rest) (c :: (args ++ base)) s
         (.exn t w { u with loc := s.loc })
-  /-- A null reference is a trap; so is a function of another type than the expected one. -/
+  /-- A null reference is a trap; so is a function that an indirect call would refuse. -/
   | callRef {n1 n2 ls rest ps b rs c i f args base s ob r t o} :
-      ofRef c = some i → F[i]? = some f → f.ty = ⟨ps, b, rs⟩ → args.length = ps.length →
+      ofRef c = some i → F[i]? = some f → f.ty.params = ps → f.ty.results = rs → Lab.le b f.ty.bound →
+      args.length = ps.length →
       Eval F n1 [rs.length] f.body [] { s with loc := frame args } ob →
       ob.lands = some (r, t) → Kept f.keep s t →
       Eval F n2 ls rest (r ++ base) { t with loc := s.loc } o →
       Eval F (n1 + n2 + 1) ls (.callRef ps b rs :: rest) (c :: (args ++ base)) s o
   | callRefExn {n1 ls rest ps b rs c i f args base s t w u} :
-      ofRef c = some i → F[i]? = some f → f.ty = ⟨ps, b, rs⟩ → args.length = ps.length →
+      ofRef c = some i → F[i]? = some f → f.ty.params = ps → f.ty.results = rs → Lab.le b f.ty.bound →
+      args.length = ps.length →
       Eval F n1 [rs.length] f.body [] { s with loc := frame args } (.exn t w u) →
       Eval F (n1 + 1) ls (.callRef ps b rs :: rest) (c :: (args ++ base)) s
         (.exn t w { u with loc := s.loc })

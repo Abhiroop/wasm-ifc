@@ -609,8 +609,8 @@ implemented since e87e76a.
 
 ## Lean: noninterference on a core with control flow, calls and memory (item 12, 2026-10-12)
 
-- **Where:** `lean/` (Lean 4.35.0, no dependencies; `cd lean && lake build`). 3,795 lines in
-  five files; `lean/README.md` states what is proved and what differs from the paper.
+- **Where:** `lean/` (Lean 4.35.0, no dependencies; `cd lean && lake build`). 3,945 lines in
+  six files; `lean/README.md` states what is proved and what differs from the paper.
 - **What is proved** (`WasmIfc.tini`, from `WasmIfc.ni`): termination-insensitive
   noninterference for a function of a well-typed module, under the lift-free rules, on a core
   with blocks, loops and conditionals (with parameters and results), `br`, `br_if`, the
@@ -703,6 +703,27 @@ implemented since e87e76a.
        skips its epilogue, but it can only be called where no secret has decided the control
        flow, and there the stack pointer is the same in both runs.
     Not modelled: references to exceptions (`exnref`, `throw_ref`, `catch_ref`).
+  - *The statement in the paper's terms, and a reading guide* (2026-10-13, the plan's second
+    list, items 1 and 2). `lean/STATEMENTS.md` is for a reviewer who checks definitions and
+    the statement only: where each is, what to be convinced of, each typing rule beside its
+    `Instr` constructor and the paper's rule, what is assumed, what is outside the core.
+    `lean/guide.py` writes it, with the line numbers. Two changes to the statement:
+    - **The indirect call compares bounds by the order.** It goes on if the callee has the
+      expected parameters and results and its bound is at least the expected one, as
+      `compared` does in the implementation and as the paper says, where the core asked for
+      equal types. The same for a call through a reference.
+    - **`WasmIfc.noninterference` (`Statement.lean`) is the theorem with the paper's
+      attacker.** `LowEq` is `def:attacker` clause by clause: public locals, every public
+      global, the bytes public in both, the memory's size, the descriptors' levels, and for
+      every public descriptor the output written and the input left. Its conclusion has what
+      the attacker observes: the results, the final public globals, the bytes written to
+      public descriptors. A call from outside is `Invoke`, which includes the comparison of
+      preserved globals that the machine makes for the invoked function, so the conclusion is
+      unconditional. Two clauses of the paper's definition have no counterpart: stack
+      positions (a call from outside starts on an empty stack) and the names of files in
+      directories (the core's host has none). One hypothesis is new and explicit: a preserved
+      global is public, which the policy ensures.
+    3,945 lines; `noninterference` depends on the three standard axioms.
   - *A memory of bytes and data segments* (2026-10-13, the plan's item 5). A load and a store
     name a number of bytes. A load of several bytes checks the level of each, which is the
     check on the join of their labels that the paper states, and the proof of the case is that

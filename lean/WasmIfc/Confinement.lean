@@ -340,28 +340,21 @@ theorem confine : ∀ (n : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P'
         have hbound := hpc hP.head
         exact False.elim (ih _ (by omega) (hF.enter _) hbodyT
           (by rw [hbound]; exact hiUpTo_zero_cons _) rfl hb).2
-    | callIndirectExn htbl hf hty hargs hb =>
+    | callIndirect htbl hf hps hrs hbd hargs hb hl hk hr =>
       cases ht with
       | callIndirect hpc hge hfl hrest =>
         obtain ⟨_, P'', hbodyT, _⟩ := hF _ _ hf
-        rw [hty] at hbodyT
         have hpcH := hP.head
         subst hpcH
         have hbound := hpc (Lab.H_join _)
         subst hbound
-        exact False.elim (ih _ (by omega) (hF.enter _) hbodyT (hiUpTo_zero_cons _) rfl hb).2
-    | callRef href hf hty hargs hb hl hk hr =>
-      cases ht with
-      | callRef hpc hge hfl hrest =>
-        obtain ⟨_, P'', hbodyT, _⟩ := hF _ _ hf
-        rw [hty] at hbodyT
-        have hpcH := hP.head
-        subst hpcH
-        have hbound := hpc (Lab.H_join _)
-        subst hbound
-        obtain ⟨hs1, hi1⟩ := ih _ (by omega) (hF.enter _) hbodyT (hiUpTo_zero_cons _) rfl hb
+        -- the callee's bound is at least the expected one, which is secret
+        have hfb := hbd rfl
+        rw [← hrs] at hb
+        obtain ⟨hs1, hi1⟩ := ih _ (by omega) (hF.enter _) hbodyT
+          (by rw [hfb]; exact hiUpTo_zero_cons _) rfl hb
         obtain ⟨r', t', hl', hlen', hst', _⟩ := top_lands hi1
-        dsimp only at hlen'
+        rw [hrs] at hlen'
         rw [hl] at hl'
         cases hl'
         have hfl' := hfl.length_eq
@@ -370,16 +363,53 @@ theorem confine : ∀ (n : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P'
         obtain ⟨h1, h2⟩ := ih _ (by omega) hF hrest hP
           (by simp only [List.length_append]; omega) hr
         exact ⟨(Conf.call (hst' ▸ hs1)).trans h1, h2⟩
-    | callRefExn href hf hty hargs hb =>
+    | callIndirectExn htbl hf hps hrs hbd hargs hb =>
       cases ht with
-      | callRef hpc hge hfl hrest =>
+      | callIndirect hpc hge hfl hrest =>
         obtain ⟨_, P'', hbodyT, _⟩ := hF _ _ hf
-        rw [hty] at hbodyT
         have hpcH := hP.head
         subst hpcH
         have hbound := hpc (Lab.H_join _)
         subst hbound
-        exact False.elim (ih _ (by omega) (hF.enter _) hbodyT (hiUpTo_zero_cons _) rfl hb).2
+        have hfb := hbd rfl
+        rw [← hrs] at hb
+        exact False.elim (ih _ (by omega) (hF.enter _) hbodyT
+          (by rw [hfb]; exact hiUpTo_zero_cons _) rfl hb).2
+    | callRef href hf hps hrs hbd hargs hb hl hk hr =>
+      cases ht with
+      | callRef hpc hge hfl hrest =>
+        obtain ⟨_, P'', hbodyT, _⟩ := hF _ _ hf
+        have hpcH := hP.head
+        subst hpcH
+        have hbound := hpc (Lab.H_join _)
+        subst hbound
+        -- the callee's bound is at least the expected one, which is secret
+        have hfb := hbd rfl
+        rw [← hrs] at hb
+        obtain ⟨hs1, hi1⟩ := ih _ (by omega) (hF.enter _) hbodyT
+          (by rw [hfb]; exact hiUpTo_zero_cons _) rfl hb
+        obtain ⟨r', t', hl', hlen', hst', _⟩ := top_lands hi1
+        rw [hrs] at hlen'
+        rw [hl] at hl'
+        cases hl'
+        have hfl' := hfl.length_eq
+        have hbase : (_ :: (_ ++ _) : List Nat).length = (_ :: (_ ++ _) : STy).length := hlen
+        simp only [List.length_append, List.length_cons] at hbase
+        obtain ⟨h1, h2⟩ := ih _ (by omega) hF hrest hP
+          (by simp only [List.length_append]; omega) hr
+        exact ⟨(Conf.call (hst' ▸ hs1)).trans h1, h2⟩
+    | callRefExn href hf hps hrs hbd hargs hb =>
+      cases ht with
+      | callRef hpc hge hfl hrest =>
+        obtain ⟨_, P'', hbodyT, _⟩ := hF _ _ hf
+        have hpcH := hP.head
+        subst hpcH
+        have hbound := hpc (Lab.H_join _)
+        subst hbound
+        have hfb := hbd rfl
+        rw [← hrs] at hb
+        exact False.elim (ih _ (by omega) (hF.enter _) hbodyT
+          (by rw [hfb]; exact hiUpTo_zero_cons _) rfl hb).2
     | iteCont hvs hb hl hk hr =>
       cases ht with
       | ite hfl hge hres h1 h2 hrest =>
@@ -473,26 +503,6 @@ theorem confine : ∀ (n : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P'
         have hfl' := hfl.length_eq
         have hbase : (_ ++ _ : List Nat).length = (_ ++ _ : STy).length := hlen
         simp only [List.length_append] at hbase
-        obtain ⟨h1, h2⟩ := ih _ (by omega) hF hrest hP
-          (by simp only [List.length_append]; omega) hr
-        exact ⟨(Conf.call (hst' ▸ hs1)).trans h1, h2⟩
-    | callIndirect htbl hf hty hargs hb hl hk hr =>
-      cases ht with
-      | callIndirect hpc hge hfl hrest =>
-        obtain ⟨_, P'', hbodyT, _⟩ := hF _ _ hf
-        rw [hty] at hbodyT
-        have hpcH := hP.head
-        subst hpcH
-        have hbound := hpc (Lab.H_join _)
-        subst hbound
-        obtain ⟨hs1, hi1⟩ := ih _ (by omega) (hF.enter _) hbodyT (hiUpTo_zero_cons _) rfl hb
-        obtain ⟨r', t', hl', hlen', hst', _⟩ := top_lands hi1
-        dsimp only at hlen'
-        rw [hl] at hl'
-        cases hl'
-        have hfl' := hfl.length_eq
-        have hbase : (_ :: (_ ++ _) : List Nat).length = (_ :: (_ ++ _) : STy).length := hlen
-        simp only [List.length_append, List.length_cons] at hbase
         obtain ⟨h1, h2⟩ := ih _ (by omega) hF hrest hP
           (by simp only [List.length_append]; omega) hr
         exact ⟨(Conf.call (hst' ▸ hs1)).trans h1, h2⟩
