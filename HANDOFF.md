@@ -1723,6 +1723,73 @@ theorem says nothing of it (that the exit code is public follows from the typing
 which is under a public pc with a public operand, but it is not proved); the count that
 `fd_write` stores; and that `fd_seek` stores the new position besides moving it.
 
+### Item 9: value types, and with them 64-bit memories (`a2ab617`, 7,066 lines)
+
+**How it is done, which is not how the plan put it.** The plan asked for the stack type of
+`Typed` to become a list of labelled value types. I added the value types as a layer on top
+and left `Typed` as it is. `ValueTypes.lean` (572 lines) has a second judgment, `ValueTyped`,
+with labelled value types over the same instructions, and the lemma `ValueTyped.erase`: a
+derivation with value types is, with the types forgotten, a derivation of `Typed`. The
+theorems for a module typed with value types then follow from the existing ones in one line
+each. The reason is that the semantics does not look at types (a value is a number, an
+operation a function on numbers), so a change of `Typed` itself would have touched every
+proof case to carry a type along that no proof uses. The layer says the same thing, "the
+proofs do not change in content", as a lemma. The file imports the rest and nothing imports
+it, so the commit can be read and reverted on its own, as the plan asked.
+
+**What changed in the statements: nothing that the paper cites.** `Typed`, `WellTyped`,
+`Eval`, `State`, `LowEq`, `Step`, `Runs` and the three theorems are as after item 8. New, all
+in `ValueTypes.lean`:
+
+| Lean name | What it is | Axioms |
+|---|---|---|
+| `VTy`, `LTy`, `VSTy`, `labelsOf` | the value types (`i32`, `i64`, `f32`, `f64`, `v128`, `funcref`, `exnref`), a labelled type `t⟨ℓ⟩` as a pair, a stack type as a list of them, and its labels | |
+| `VFuncTy`, `VCtx`, `VCtx.erase` | function types and the context with value types; the context has an address type for each memory and each table, `i32` or `i64` | |
+| `ValueTyped` | the judgment `Λ ⊢ e : Π | st ⇒ Π' | st'` with `st` of labelled value types: one rule for each rule of `Typed` (but `iter`, which no program contains), with the operand types of `Syntax.Instructions` | |
+| `ValueTyped.erase` | `ValueTyped C Ls e P st P' st' → Typed C.erase (Ls.map labelsOf) e P (labelsOf st) P' (labelsOf st')` | `propext` |
+| `VFunc`, `WellValueTyped`, `WellValueTyped.erase` | functions and well-typed modules with value types, and that such a module is `WellTyped` | `propext`, `Quot.sound` |
+| `value_typed_noninterference` | `noninterference` for a module that is `WellValueTyped`: the hypotheses and the conclusion read the function's type through `labelsOf` and the context through `VCtx.erase` | the three standard ones |
+| `value_typed_machine_noninterference` | the same for two runs of the machine | the three standard ones |
+
+**What the rules with value types say beyond the labels.** An address has its memory's
+address type, and so have `memory.size`'s result and `memory.grow`'s operand and result; the
+same for a table. The count of a copy between two memories or tables is `i32` unless both are
+64-bit (`minAddr`, the `MinAddr` of `Syntax.Instructions`). A condition (`select`, `if`,
+`br_if`, `br_table`) and every operand and result of a host call are `i32`. A table holds
+`funcref`s, and `throw_ref` takes an `exnref`. The two operands of an operation on two values
+have one type; its result may have another (a comparison gives `i32`, a conversion another
+type), because the core's `binop` and `unop` are any functions and carry no type. A tag
+carries a list of value types, and a clause's label has those types, with `exnref` on top
+for a clause by reference.
+
+**For the paper.**
+
+- The sentence that the core "has a single value type, so it treats the numeric and vector
+  instructions alike" can become: the proofs are on labels, and a judgment with labelled value
+  types `t⟨ℓ⟩`, with address types for 64-bit memories and tables, erases to it
+  (`ValueTyped.erase`). If the paper's table of notation should show `t⟨ℓ⟩`, it would cite
+  `ValueTyped` and `WellValueTyped` in `ValueTypes.lean` for the judgment and the well-typed
+  module, and `value_typed_noninterference` for the theorem. Say if you would rather have
+  the names `Typed` and `noninterference` on the value-typed ones: that is a renaming, which
+  I did not do since the statements are under review.
+- Two things remain outside, and the guide says so: an instruction of the core carries no
+  value type (an operation is any function on numbers), and a value is a natural number with
+  no range, so the wrapping of a 32-bit address is not modelled. With these, "64-bit
+  memories" means that the typing distinguishes the address types, and the semantics has no
+  width.
+
+### After items 5 to 9: what the core leaves out
+
+The paper's sentence was that the core "leaves out 64-bit memories, linking, and most WASI
+calls". After these items it leaves out: linking of several modules; the pass that splits
+locals into webs and the inference of labels, which happen before typing; declassification;
+the numeric and vector instructions one by one, and the ranges of the value types;
+`proc_exit` and the operating system's failures on a secret file. The first two are the ones
+the plan set aside as new proofs. `lean/STATEMENTS.md`, "Outside the core", has the list.
+The development has 7,066 lines in ten files, no `sorry`, and its theorems depend on
+`propext`, `Classical.choice` and `Quot.sound` only. A clean `lake build` takes about a
+minute and a half.
+
 ## Where coverage stands (2026-10-12, for the paper's claim)
 
 Supported, with the 3.0 suite passing on all of it: **WebAssembly 3.0 without garbage
