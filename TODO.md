@@ -114,14 +114,30 @@ Every other assertion of the suite passes (63,080).
 
 ## Performance
 
-What a profile of instructions executed found, and what was done about it, is in
-`BENCHMARKS.md` ("Performance work of 2026-10-13"). Open:
+What two profiles of instructions executed found, and what was done about it, is in
+`BENCHMARKS.md` ("Performance work of 2026-10-13" and its second round, which ends with
+what each open point below would give). Open:
 
-- [ ] **P2** A store copies its 1 KiB chunk of bytes and inserts it in the chunk map: with the
-  clearing gone, that is what is left of a store, and 10 to 15 % of a memory-bound program
-  (`IntMap` insertion and the copy). Memory in `ST`, or as a mutable array behind a pure
-  interface, is the next step; it changes how instances hand a shared memory over
-  (`Runtime.Link`) and how the two-run tests keep two states. **decision**
+- [ ] **P1** The times in `BENCHMARKS.md` and in the paper are of c2a3f4b. The second round
+  (1d633f3) took 28 % of the instructions away and was not timed: a sweep on a quiet machine
+  (`bench/sweep-labels.sh`, about two hours) has to replace them.
+- [ ] **P2** A store copies its 1 KiB chunk of bytes and inserts it in the chunk map: 600
+  instructions, against 250 for a load. A store in place gave 16 to 20 % fewer cycles on
+  three memory-bound programs in an experiment (not committed). Memory in `ST`, or as a
+  mutable array behind a pure interface, is the next step; the machine is then a function
+  of a configuration only if each configuration is used once, and it changes how instances
+  hand a shared memory over (`Runtime.Link`) and how the two-run tests keep two states.
+  **decision**
+- [ ] **P2** A call finds its function, and `global.get` its global, by walking a list as
+  long as the index (`getFunc`, `getGlobal`): 189 instructions per step on `funcs-64` against
+  106 on `funcs-2`. An array indexed by the witness's position makes it constant; a function
+  read from it has the type its witness says by how the array is built, which GHC cannot
+  check without a comparison of types at each call.
+- [ ] **P3** GHC's LLVM backend for the interpreter's module: untried, since `opt` and `llc`
+  are not installed (GHC 9.12 takes LLVM 13 to 19). The native code generator moves values
+  between registers and the C stack around the dispatch.
+- [ ] **P3** The allocation area: `-A1m` looked 10 to 15 % better than the default in a noisy
+  run. Needs a quiet machine and an executable linked with `-rtsopts`.
 - [ ] **P3** A call computes the size of the callee's frame from the singletons of its types
   (`Runtime.Stack.wordsIn`, 4 % of `fib`), and a return appends the results to the caller's
   stack cell by cell (`appendStack`, 7 %). The frame size can be kept in `Function`.

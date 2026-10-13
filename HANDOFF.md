@@ -1212,6 +1212,40 @@ the medium programs), so the times may be quoted, for this machine: an AMD Ryzen
   memory is still persistent: a store copies 1 KiB and inserts it in a map, which is the
   largest cost left in a memory-bound program.
 
+## A second round on performance, by instructions executed (2026-10-13, 1d633f3)
+
+`BENCHMARKS.md`, last section, has the tables. The machine was busy, so nothing was timed:
+every number is a count of instructions executed per machine step, which does not depend on
+the load. **The times in the paper's evaluation are those of c2a3f4b and are now too high
+for the labelled build**; a sweep on a quiet machine (about two hours, `bench/sweep-labels.sh`)
+has to replace them, and I did not start one.
+
+- **What changed.** The labelled build executes 0.72 times the instructions on the 24
+  kernels (0.61 to 0.92) and 0.72 times on the 11 small programs (0.69 to 0.76). Five
+  changes, each with its cause in `BENCHMARKS.md`: strict fields in the typed instructions
+  and their witnesses, the six most frequent instructions declared first, loads and stores
+  of a word without a loop over its bytes, frames of locals kept in groups of eight words so
+  that a `local.set` copies one group, and a driver loop that does not pass the functions.
+- **For the paper: a typed instruction cannot hold an undefined witness any more.** The
+  fields of `Instr`, `Expr` and the witnesses (`FlowsInto`, `Elem`, `BranchTarget`, ...) are
+  strict. Before, `ILocalSet undefined undefined ref` was a value of the instruction type,
+  and the machine would have run it, since it never looks at those two proofs. Now building
+  it fails. The paper's claim that an ill-typed program is not representable needed this to
+  be literally true in Haskell, where every type has an undefined value. The example in
+  `test/Examples.hs` that leaves a hole for a proof that does not exist now fails when the
+  program is built, and the test expects that. GHC's coverage check also uses the strictness:
+  five clauses for targets that no witness can name were redundant and are removed.
+- **The erased twin** has the same changes, so the ratio of the typed machine to it can be
+  measured again in the next sweep. By instructions it is 1.00 to 1.11 on eleven kernels.
+- **The allocation reference** is recorded anew: up to 3 % less on the programs, 6 % more on
+  kernels that have two or three locals.
+- **What is left**, with what each would take, is at the end of that section of
+  `BENCHMARKS.md`. The large one is still the memory: a store in place gave 16 to 20 % fewer
+  cycles on three memory-bound programs in an experiment that is not committed, and it needs
+  Daniel's decision, since the machine then is a function of a configuration only if each
+  configuration is used once. The second is that a call finds its function by walking a list
+  as long as the function's index.
+
 ## Where coverage stands (2026-10-12, for the paper's claim)
 
 Supported, with the 3.0 suite passing on all of it: **WebAssembly 3.0 without garbage

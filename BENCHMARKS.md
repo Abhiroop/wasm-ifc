@@ -902,3 +902,161 @@ three test suites and the case studies pass as before, and the allocation refere
 03:16:22 programs medium exit 0 (load 1.16 1.20 1.18)
 04:03:24 secrets medium exit 0 (load 1.09 1.10 1.09)
 ```
+
+## Performance work of 2026-10-13, second round: instructions executed (1d633f3)
+
+**Read this first.** This round has no timings. The machine was busy the whole time (load
+average 12 to 21), so every number below is a count of user-space instructions executed
+(`perf stat -e instructions:u`), which is the same to under 1 % from run to run whatever
+else the machine does. Divided by the machine steps of the workload
+(`bench/results/steps.json`) it is instructions per step. The tables of the section above
+are therefore out of date for the labelled build, and a sweep on a quiet machine has to
+replace them before the paper quotes a time again. The counts say what to expect: the
+labelled build executes 28 % fewer instructions, on the kernels and on the programs alike.
+
+### What the profile found
+
+| # | Cost | Why it was there | What was done | Effect (instructions per step) |
+|---|---|---|---|---|
+| 1 | A check, before each field of an instruction is used, whether the field has been evaluated, with the live values saved around it; for `i32.const` the literal went through the runtime's generic evaluation | the fields of the typed instructions, of a sequence's cells and of the witnesses were lazy | the fields are strict (`StrictData` in `Syntax.Instructions`, `Syntax.Types`, `Syntax.TypesIFC`, `Syntax.Immediates`, `Validation.Shape`) | `loop-arith` 108 to 88, CoreMark 195 to 166 |
+| 2 | Two indirect jumps to reach the clause of most instructions | GHC keeps a constructor's number in the pointer for the first six constructors of a type only; the others are found through the constructor's info table. The first six were `IConst`, `IAdd`, `ISub`, `IMul`, `IDiv`, `IRem` | the six that compiled code runs most are declared first: `ILocalGet`, `IConst`, `ILocalSet`, `ILocalTee`, `IAdd`, `ILoad` | `loop-arith` 88 to 85, CoreMark 166 to 159, `local.get` 89 to 66 |
+| 3 | A loop over the bytes of every load and store, with a bounds check per byte, and a call to find the memory | the word was assembled by a general loop, and `getMem` is recursive, so it was not inlined | the widths 1, 2, 4 and 8 are read and written without a loop and without a second check (the range is inside its chunk by then); the first memory is found without a call | LU 242 to 204, Jacobi 182 to 153, a store of eight bytes 811 to 622 |
+| 4 | A copy of the whole frame at every `local.set` and `local.tee`, through two calls into the runtime system | the frame was one unboxed vector, whose size is known only at run time, so GHC allocates and copies it out of line | a frame keeps its words in groups of eight (`Runtime.Stack.Frame`), one group for at most 8 words and an array of eight groups for at most 64: a write copies one group of 64 bytes and the eight pointers, which GHC allocates and copies in line, since their sizes are constants | in a frame of 18 words a `local.set` 214 to 138, with a `local.get` at 68 as before; the loop no longer takes the vector apart at every step, which is 8 less for every instruction (`i32.const` 52 to 44); `loop-arith` 85 to 72, CoreMark 150 to 135 |
+| 5 | An argument of the driver loop passed on the stack | the functions of the module were the loop's sixth argument, and five fit in registers | the loop closes over them | `labels-16` 125 to 120 |
+
+The changes are in f566d9d and 1d633f3. The gate, the three test suites in both
+configurations and the case studies pass as before.
+
+Change 1 is also a change to what the types guarantee. With lazy fields a typed instruction
+could be built with an undefined witness, and the machine, which does not look at most
+witnesses, would have run it. `test/Examples.hs` had such a program, with a hole for the proof
+that a secret pc flows into a public local; the test now expects the hole's error when the
+program is built. Four clauses of `unwind` and `unwindTo` and one of `withinReach`, which
+handled targets that no witness can name, are gone: with strict fields GHC's coverage check
+proves them redundant and rejects them.
+
+Tried without effect: `-O2` for every module (the interpreter's module has it already),
+and GHC's graph-colouring register allocator (`-fregs-graph`), which made `loop-arith` three
+instructions per step worse.
+
+### Instructions per machine step
+
+| Workload | before (48ac063) | after | ratio |
+|---|---:|---:|---:|
+| br-table | 140 | 98 | 0.70 |
+| call-indirect | 168 | 126 | 0.75 |
+| fib | 159 | 128 | 0.81 |
+| float | 119 | 80 | 0.67 |
+| funcs-16 | 167 | 125 | 0.75 |
+| funcs-2 | 149 | 106 | 0.71 |
+| funcs-4 | 151 | 109 | 0.72 |
+| funcs-64 | 232 | 189 | 0.81 |
+| globals-16 | 207 | 168 | 0.81 |
+| globals-2 | 130 | 91 | 0.70 |
+| globals-4 | 141 | 102 | 0.72 |
+| globals-64 | 472 | 432 | 0.92 |
+| labels-16 | 151 | 108 | 0.72 |
+| labels-2 | 130 | 86 | 0.66 |
+| labels-4 | 135 | 91 | 0.67 |
+| labels-64 | 166 | 123 | 0.74 |
+| locals-16 | 122 | 81 | 0.66 |
+| locals-2 | 119 | 74 | 0.62 |
+| locals-4 | 119 | 74 | 0.62 |
+| locals-64 | 129 | 106 | 0.82 |
+| loop-arith | 108 | 72 | 0.67 |
+| loop-arith64 | 113 | 76 | 0.67 |
+| memory-random | 143 | 87 | 0.61 |
+| memory-stream | 187 | 137 | 0.73 |
+
+Geometric mean of the 24 kernels: 0.72 (0.61 to 0.92).
+
+| Program | before (48ac063) | after | ratio |
+|---|---:|---:|---:|
+| coremark-100 | 195 | 135 | 0.69 |
+| pb-2mm-small | 236 | 165 | 0.70 |
+| pb-3mm-small | 244 | 171 | 0.70 |
+| pb-atax-small | 297 | 224 | 0.75 |
+| pb-correlation-small | 240 | 176 | 0.73 |
+| pb-floyd-warshall-small | 217 | 166 | 0.76 |
+| pb-gemm-small | 253 | 182 | 0.72 |
+| pb-jacobi-2d-small | 197 | 144 | 0.73 |
+| pb-lu-small | 256 | 191 | 0.75 |
+| pb-nussinov-small | 210 | 147 | 0.70 |
+| pb-seidel-2d-small | 178 | 124 | 0.70 |
+
+Geometric mean of the 11 programs: 0.72 (0.69 to 0.76).
+
+Cycles moved with the instructions (0.69 and 0.82 times the cycles in two passes over the
+same workloads, as geometric means), but a cycle count on a loaded machine with two threads
+per core is not a measurement.
+
+The erased twin (`bench/erased`) has the same changes where it has the same thing: strict
+cells for its code, the same order of constructors, the same frames (it uses
+`Runtime.Stack.Frame`), the same loop; its instructions had strict fields already, and it
+reads memory through `Runtime.MemInst`. On eleven kernels the labelled build executes 1.00 to
+1.11 times the twin's instructions, start-up subtracted: 1.00 to 1.03 on arithmetic, locals,
+globals and direct calls in a loop, 1.07 to 1.08 on `fib` and memory, 1.10 to 1.11 on
+indirect calls, blocks and `br_table`.
+
+The allocation reference (`bench/allocation.txt`) is recorded anew. The programs allocate up
+to 3 % less. Kernels with two or three locals allocate 6 % more: a `local.set` there
+now allocates a group of 64 bytes where it allocated a vector of 16 or 24.
+
+### What one instruction costs now
+
+Measured on loops whose body is the pattern eight times, as the difference from the empty
+loop, per pattern. The frame has 18 words, the address is a constant, and the memory has two
+pages.
+
+| Pattern | before | after |
+|---|---:|---:|
+| `i32.const 1; drop` | 140 | 88 |
+| `local.get; drop` | 165 | 112 |
+| `local.get; local.set` | 339 | 206 |
+| `local.get; local.tee; drop` | 409 | 252 |
+| `local.get; local.get; i32.add; drop` | 351 | 240 |
+| the same with `f64.mul` | 353 | 255 |
+| `i32.const; i32.load; drop` | 420 | 334 |
+| `i32.const; f64.load; drop` | 420 | 334 |
+| `i32.const; local.get; i32.store` | 918 | 715 |
+| `i32.const; local.get; f64.store` | 1023 | 734 |
+| `block nop end` | 325 | 260 |
+| `local.get; if nop end` | 368 | 289 |
+| `local.get; br_if`, not taken | 180 | 122 |
+| `global.get; drop` | 177 | 134 |
+| `call` of a function that returns a constant, then `drop` | 727 | 552 |
+
+Taking a constant and a `drop` at 44 each, a `local.get` costs 68, a `local.set` 138,
+`i32.add` 60, a load 246, a store 603 to 622, a block with its end 216, and a call with its
+return about 500.
+
+### What is left, and what it would take
+
+In the order of what they would give on compiled programs:
+
+1. **A store still copies a chunk of 1 KiB** (225 instructions in `memmove`, 60 to allocate
+   it, and the map's path). As an experiment, not committed, a store wrote into the chunk
+   where it was: LU, Jacobi and Floyd-Warshall then executed 7 to 10 % fewer instructions
+   and 16 to 20 % fewer cycles. This is the one large gain left, and it is a decision: the
+   machine is a pure function of a configuration today, and with a store in place it is one
+   only if every configuration is used once. The drivers use them so; the tests that run a
+   configuration twice would have to copy the memory first. A memory that is persistent
+   again by keeping the old values of what it overwrites (Baker's arrays) would keep the
+   function pure, but a caller that holds on to the first configuration of a long run would
+   then hold every overwritten value.
+2. **A function and a global are found by walking a list** as long as their index:
+   `funcs-64` 191 instructions per step against 108 for `funcs-2`, `globals-64` 434 against
+   93. Compiled C has few globals but hundreds of functions (the Rust checker has 715), so
+   each call there walks hundreds of cells. An array indexed by the witness's position would
+   make it constant; reading a function of the right type out of it needs either a
+   comparison of types at each call or an unchecked coercion justified by how the array is
+   built.
+3. **The fixed cost of a step, about 44 instructions.** The loop still loads a field of the
+   store before it looks at the instruction, most clauses are two jumps away, and GHC's
+   native code generator moves values between registers and the C stack around the
+   dispatch. GHC's LLVM backend usually does better on such a loop; `opt` and `llc` are not
+   installed here (GHC 9.12 takes LLVM 13 to 19), so this is untried.
+4. **The size of the allocation area.** With `-A1m` instead of the default 4 MB, `fib`, LU
+   and CoreMark took 10 to 15 % fewer cycles in one noisy run each, and with `-A16m` more.
+   This needs a quiet machine, and the executable would have to be linked with `-rtsopts`
+   or `-with-rtsopts`.
