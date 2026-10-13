@@ -248,7 +248,7 @@ def tagCtx : Ctx where
 
 /-- Throw 5 in a `try_table` whose clause for the tag branches to the function's label. -/
 def throwsAndCatches : List Instr :=
-  [.tryTable [] [] [] [(some 0, 0)] [.const 5, .throw 0 1], .const 9]
+  [.tryTable [] [] [] [(some 0, 0, false)] [.const 5, .throw 0 1], .const 9]
 
 example : Typed tagCtx [[Lab.L]] throwsAndCatches [Lab.L] [] [Lab.L] [Lab.L] := by
   refine Typed.tryTable (tin := []) (st := []) (p := Lab.L) (P1 := [Lab.L]) .nil
@@ -293,14 +293,14 @@ theorem nothingKept {s t : State} : ∀ c, c ∈ [(([] : List Nat), s)] → Kept
 example (s : State) : Runs [catcher] (Config.entry catcher [] s) (.returned [5] s) :=
   .go (.tryTable (vs := []) (base := []) rfl) <|
   .go (.basic (.const 5)) <|
-  .go (.throw (.caught (j := 0) (carry := true) rfl (.call nothingKept))) <|
+  .go (.throw (.caught (j := 0) (carry := true) (r := false) rfl (.call nothingKept))) <|
   .stop .done
 
 /-- So the big-step semantics has the same end for the call. -/
 example (s : State) : Invoke [catcher] catcher [] s (.returned [5] s) :=
   refinement (.go (.tryTable (vs := []) (base := []) rfl) <|
     .go (.basic (.const 5)) <|
-    .go (.throw (.caught (j := 0) (carry := true) rfl (.call nothingKept))) <|
+    .go (.throw (.caught (j := 0) (carry := true) (r := false) rfl (.call nothingKept))) <|
     .stop .done)
 
 /-- A function that throws 5. -/
@@ -315,7 +315,7 @@ def tailCaller : Func where
   ty := ⟨[], Lab.L, [Lab.L]⟩
   extra := []
   keep := []
-  body := [.tryTable [] [] [] [(none, 0)] [.retCall 0], .const 9]
+  body := [.tryTable [] [] [] [(none, 0, false)] [.retCall 0], .const 9]
 
 /--
 The exception leaves the call: the tail call replaced the function that had the `try_table`,
@@ -326,5 +326,27 @@ example (s : State) : Runs [thrower, tailCaller] (Config.entry tailCaller [] s) 
   .go (.retCall (args := []) (base := []) (f := thrower) rfl rfl rfl) <|
   .go (.basic (.const 5)) <|
   .stop (.throw (.pastCall .escaped))
+
+/--
+A `try_table` whose clause catches every exception by reference and branches to the block
+around it, and after the block the exception is thrown again from the reference.
+-/
+def rethrower : Func where
+  ty := ⟨[], Lab.L, []⟩
+  extra := []
+  keep := []
+  body := [.block [] [] [Lab.L]
+    [.tryTable [] [] [] [(none, 0, true)] [.const 5, .throw 0 1], .unreachable], .throwRef]
+
+/-- The run from a state that keeps no exception: it keeps one at the end, which left the call. -/
+example (s : State) :
+    Runs [rethrower] (Config.entry rethrower [] { s with exns := [] })
+      (.threw 0 [5] { s with exns := [(0, [5])] }) :=
+  .go (.block (vs := []) (base := []) rfl) <|
+  .go (.tryTable (vs := []) (base := []) rfl) <|
+  .go (.basic (.const 5)) <|
+  .go (.throw (.caught (j := 0) (carry := false) (r := true) rfl
+    (.label (fun _ h => nomatch h)))) <|
+  .stop (.throwRef (i := 0) rfl (.pastCall .escaped))
 
 end WasmIfc

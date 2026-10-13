@@ -258,7 +258,7 @@ theorem ite_inv {n : Nat} {ls keep : List Nat} {ps rs : STy} {thn els rest : Lis
   | iteExit hvs hb hx => exact ⟨_, _, _, _, _, rfl, hvs, by omega, hb, .exit hx⟩
 
 /-- A `try_table` is a block whose body's outcome is first looked up in its clauses. -/
-theorem try_inv {n : Nat} {ls keep : List Nat} {ps rs : STy} {cs : List (Option Nat × Nat)}
+theorem try_inv {n : Nat} {ls keep : List Nat} {ps rs : STy} {cs : List (Option Nat × Nat × Bool)}
     {body rest : List Instr} {σ : List Nat} {s : State} {o : Out}
     (h : Eval F n ls (.tryTable keep ps rs cs body :: rest) σ s o) :
     ∃ vs base n1 ob, σ = vs ++ base ∧ vs.length = ps.length ∧ n1 < n ∧
@@ -269,35 +269,46 @@ theorem try_inv {n : Nat} {ls keep : List Nat} {ps rs : STy} {cs : List (Option 
   | tryExit hvs hb hx => exact ⟨_, _, _, _, rfl, hvs, by omega, hb, .exit hx⟩
 
 /-- The label of the clause that catches an exception takes what the branch to it carries. -/
-theorem catches_ok {C : Ctx} {Ls : List STy} : ∀ {cs : List (Option Nat × Nat)} {t k j : Nat}
-    {carry : Bool} {w : List Nat}, (∀ c, c ∈ cs → ClauseOk C Ls c) →
-    catches cs t = some (j, carry) → C.tags[t]? = some k → w.length = k →
-    ∃ target, Ls[j]? = some target ∧ (if carry then w else []).length = target.length
-  | [], _, _, _, _, _, _, h, _, _ => by simp [catches] at h
-  | (some t', j') :: cs, t, k, j, carry, w, hcl, h, htag, hlen => by
+theorem catches_ok {C : Ctx} {Ls : List STy} : ∀ {cs : List (Option Nat × Nat × Bool)} {t k j : Nat}
+    {carry r : Bool} {w : List Nat} (s : State), (∀ c, c ∈ cs → ClauseOk C Ls c) →
+    catches cs t = some (j, carry, r) → C.tags[t]? = some k → w.length = k →
+    ∃ target, Ls[j]? = some target ∧ (s.handed t w carry r).1.length = target.length
+  | [], _, _, _, _, _, _, _, _, h, _, _ => by simp [catches] at h
+  | (some t', j', r') :: cs, t, k, j, carry, r, w, s, hcl, h, htag, hlen => by
       by_cases ht : t' = t
       · simp [catches, ht] at h
-        obtain ⟨rfl, rfl⟩ := h
+        obtain ⟨rfl, rfl, rfl⟩ := h
         subst ht
-        have hc : ClauseOk C Ls (some t', j') := hcl _ List.mem_cons_self
-        obtain ⟨k', target, h1, h2, h3⟩ := hc
-        rw [htag] at h1
-        cases h1
-        exact ⟨target, h2, by simp [hlen, h3]⟩
+        have hc : ClauseOk C Ls (some t', j', r') := hcl _ List.mem_cons_self
+        cases r' with
+        | false =>
+          obtain ⟨k', target, h1, h2, h3⟩ := hc
+          rw [htag] at h1
+          cases h1
+          exact ⟨target, h2, by simp [State.handed, hlen, h3]⟩
+        | true =>
+          obtain ⟨k', target, h1, h2, h3⟩ := hc
+          rw [htag] at h1
+          cases h1
+          exact ⟨target, h2, by simp [State.handed, hlen, h3]⟩
       · simp [catches, ht] at h
-        exact catches_ok (fun c hc => hcl c (List.mem_cons_of_mem _ hc)) h htag hlen
-  | (none, j') :: cs, t, k, j, carry, w, hcl, h, _, _ => by
+        exact catches_ok s (fun c hc => hcl c (List.mem_cons_of_mem _ hc)) h htag hlen
+  | (none, j', r') :: cs, t, k, j, carry, r, w, s, hcl, h, _, _ => by
       simp [catches] at h
-      obtain ⟨rfl, rfl⟩ := h
-      have hc : ClauseOk C Ls (none, j') := hcl _ List.mem_cons_self
-      exact ⟨[], hc, by simp⟩
+      obtain ⟨rfl, rfl, rfl⟩ := h
+      have hc : ClauseOk C Ls (none, j', r') := hcl _ List.mem_cons_self
+      cases r' with
+      | false => exact ⟨[], hc, by simp [State.handed]⟩
+      | true =>
+        obtain ⟨l, hl⟩ := hc
+        exact ⟨[l], hl, by simp [State.handed]⟩
 
 /--
 The outcomes of two runs of a `try_table`'s body, after its clauses. The two runs throw the
 same exception or none, since one is thrown only under a public pc, so the same clause catches
 it in both, with the same values.
 -/
-theorem caught_rel {C : Ctx} {Ls : List STy} {rs : STy} {P : Pcs} {cs : List (Option Nat × Nat)}
+theorem caught_rel {C : Ctx} {Ls : List STy} {rs : STy} {P : Pcs} {cs : List (Option Nat × Nat × Bool)}
     {ob0 ob1 : Out} (hcl : ∀ c, c ∈ cs → ClauseOk C Ls c)
     (h : OutRel C (rs :: Ls) P rs ob0 ob1) : BodyRel C Ls rs P (ob0.caught cs) (ob1.caught cs) := by
   rcases h with hs | ⟨hl, hbr⟩
@@ -310,9 +321,13 @@ theorem caught_rel {C : Ctx} {Ls : List STy} {rs : STy} {P : Pcs} {cs : List (Op
       cases hcat : catches cs t with
       | none => exact .inl (.exn htag hlen hst hpe)
       | some jc =>
-        obtain ⟨j, carry⟩ := jc
-        obtain ⟨target, hj, hpay⟩ := catches_ok hcl hcat htag hlen
-        exact .inl (.br (by simpa using hj) (StkRel.same hpay) hst (.inl hpe))
+        obtain ⟨j, carry, r⟩ := jc
+        obtain ⟨target, hj, hpay⟩ := catches_ok s0 hcl hcat htag hlen
+        obtain ⟨hval, hst'⟩ := hst.handed carry r htag hlen
+        simp only []
+        rw [← hval]
+        exact .inl (.br (by simpa using hj) (StkRel.same hpay) hst'
+          (.inl (fun i hi => by rw [State.handed_glob, State.handed_glob]; exact hpe i hi)))
   · have e0 : ob0.caught cs = ob0 := by
       cases ob0 <;> first | rfl | exact False.elim hl.2.1
     have e1 : ob1.caught cs = ob1 := by
@@ -1563,6 +1578,20 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
           simp only [List.length_append] at h1
           simp only [List.length_take]
           omega
+    | throwRef =>
+      cases he0 with
+      | throwRef h0 =>
+        cases he1 with
+        | throwRef h1 =>
+          cases hσ with
+          | cons hr hσ' =>
+            -- a public reference under a public pc: the same one, to the same kept exception
+            have hpe : PresEq C s0 s1 := hp.resolve_right (fun h => absurd h.head (by decide))
+            have hok := hs.2.2.2.2.2.1.2.2 _ (List.mem_of_getElem? h0)
+            cases hr rfl
+            rw [hs.2.2.2.2.2.1.2.1] at h0
+            cases h0.symm.trans h1
+            exact .inl (.exn hok rfl hs hpe)
     | tryTable hfl hres hcl hbody hrest =>
       obtain ⟨vs0, base0, m0, ob0, rfl, hvs0, hm0, hb0, hc0⟩ := try_inv he0
       obtain ⟨vs1, base1, m1, ob1, rfl, hvs1, hm1, hb1, hc1⟩ := try_inv he1

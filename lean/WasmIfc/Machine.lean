@@ -29,7 +29,7 @@ A call boundary holds the same for the caller, and the caller's local variables.
 of comparisons, since a tail call adds its callee's to those of the function it replaces.
 -/
 inductive Frame where
-  | label (n : Nat) (clauses : List (Option Nat × Nat)) (keep : List Nat) (recorded : State)
+  | label (n : Nat) (clauses : List (Option Nat × Nat × Bool)) (keep : List Nat) (recorded : State)
       (base : List Nat) (rest : List Instr)
   | loop (ps rs : STy) (body : List Instr) (keep : List Nat) (recorded : State)
       (base : List Nat) (rest : List Instr)
@@ -145,13 +145,14 @@ inductive Unwind : List Frame → Nat → List Nat → State → Config → Prop
 /--
 `Raise K t w s nx`: an exception of tag `t` with the values `w` leaves the control stack `K`
 and the state `s` for `nx`. The first label with a clause for it turns it into a branch from
-around its block. A call boundary gives the caller its local variables back and no comparison
+around its block, with a new reference to the exception if the clause is by reference. A call boundary gives the caller its local variables back and no comparison
 is made. Below the last boundary the exception ends the run.
 -/
 inductive Raise : List Frame → Nat → List Nat → State → Next → Prop where
   | escaped {t w s} : Raise [] t w s (.stop (.threw t w s))
-  | caught {n cl keep g base rest K t w s j carry c} :
-      catches cl t = some (j, carry) → Unwind K j (if carry then w else []) s c →
+  | caught {n cl keep g base rest K t w s j carry r c} :
+      catches cl t = some (j, carry, r) →
+      Unwind K j (s.handed t w carry r).1 (s.handed t w carry r).2 c →
       Raise (.label n cl keep g base rest :: K) t w s (.go c)
   | pastLabel {n cl keep g base rest K t w s nx} :
       catches cl t = none → Raise K t w s nx → Raise (.label n cl keep g base rest :: K) t w s nx
@@ -241,6 +242,9 @@ inductive Step (F : List Func) : Config → Next → Prop where
           .call rs.length ((f.keep, s) :: checks) locals base' rest' :: K'⟩)
   | throw {t k σ s rest K nx} :
       Raise K t (σ.take k) s nx → Step F ⟨s, σ, .throw t k :: rest, K⟩ nx
+  | throwRef {i t w σ s rest K nx} :
+      s.exns[i]? = some (t, w) → Raise K t w s nx →
+      Step F ⟨s, (i + 1) :: σ, .throwRef :: rest, K⟩ nx
 
 /-- A run of the machine to its end. A run that traps or goes on forever has none. -/
 inductive Runs (F : List Func) : Config → Ended → Prop where
@@ -512,6 +516,7 @@ theorem Step.sem {F : List Func} {c : Config} {nx : Next} {e : Ended} (h : Step 
     | callThrown hth hf' =>
       exact ⟨_, _, .retCallIndirectExn htbl hf hps hrs hbd hargs he hth, boundary_thrown hb hf'⟩
   | throw hr => exact ⟨_, _, .throw, hr.fin hs⟩
+  | throwRef he hr => exact ⟨_, _, .throwRef he, hr.fin hs⟩
 
 theorem Runs.sem {F : List Func} {c : Config} {e : Ended} (h : Runs F c e) : Sem F c e := by
   induction h with

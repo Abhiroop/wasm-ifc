@@ -138,11 +138,15 @@ inductive Instr where
   | unreachable
   /-- `throw t k`: throw an exception of tag `t`, which carries `k` values -/
   | throw (t k : Nat)
+  /-- `throw_ref`: throw the exception a reference on the stack is to, again -/
+  | throwRef
   /--
   `tryTable keep ps rs clauses body`: a block that catches exceptions. A clause is a tag, or
-  none for every exception, with the label of the context around the block that it branches to.
+  none for every exception, with the label of the context around the block that it branches
+  to, and whether the branch carries a reference to the exception besides (`catch_ref`,
+  `catch_all_ref`).
   -/
-  | tryTable (keep : List Nat) (ps rs : STy) (clauses : List (Option Nat × Nat)) (body : List Instr)
+  | tryTable (keep : List Nat) (ps rs : STy) (clauses : List (Option Nat × Nat × Bool)) (body : List Instr)
 
 /-- A function type: the parameters, the bound on the pc of its callers, and the results. -/
 structure FuncTy where
@@ -165,10 +169,16 @@ structure Ctx where
   /-- how many values an exception of each tag carries; they are public -/
   tags : List Nat
 
-/-- A clause is typed if its label takes what it catches: the public values of its tag, or nothing. -/
-def ClauseOk (C : Ctx) (Ls : List STy) : Option Nat × Nat → Prop
-  | (some t, j) => ∃ k target, C.tags[t]? = some k ∧ Ls[j]? = some target ∧ target.length = k
-  | (none, j) => Ls[j]? = some []
+/--
+A clause is typed if its label takes what it catches: the public values of its tag, or nothing,
+and one more value if it catches by reference. The reference is public as the values are.
+-/
+def ClauseOk (C : Ctx) (Ls : List STy) : Option Nat × Nat × Bool → Prop
+  | (some t, j, false) => ∃ k target, C.tags[t]? = some k ∧ Ls[j]? = some target ∧ target.length = k
+  | (some t, j, true) =>
+      ∃ k target, C.tags[t]? = some k ∧ Ls[j]? = some target ∧ target.length = k + 1
+  | (none, j, false) => Ls[j]? = some []
+  | (none, j, true) => ∃ l, Ls[j]? = some [l]
 
 /--
 `Restores C pcEnd after keep`: whether control coming out of a block, a loop or a conditional has
@@ -405,6 +415,9 @@ inductive Typed (C : Ctx) : List STy → List Instr → Pcs → STy → Pcs → 
   | throw {Ls rest Pr t k args st stAny} :
       C.tags[t]? = some k → args.length = k → (∀ l, l ∈ args → l = Lab.L) →
       Typed C Ls (.throw t k :: rest) (Lab.L :: Pr) (args ++ st) (Lab.L :: Pr) stAny
+  /-- An exception is thrown again only under a public pc, from a public reference. -/
+  | throwRef {Ls rest Pr st stAny} :
+      Typed C Ls (.throwRef :: rest) (Lab.L :: Pr) (Lab.L :: st) (Lab.L :: Pr) stAny
   /--
   A `try_table` is typed only under a public pc, and otherwise as a block. A clause branches
   under that pc, so it raises none.
@@ -472,6 +485,8 @@ structure State where
   inp : Nat → List Nat
   /-- the data segments; a dropped one is empty -/
   segs : Nat → List Nat
+  /-- the exceptions kept for the references to them: reference `i + 1` is to the `i`-th -/
+  exns : List (Nat × List Nat)
 
 /-- Two states have the same table: its entries, its size and its limit. -/
 def State.sameTable (s t : State) : Prop := s.tbl = t.tbl ∧ s.tsize = t.tsize ∧ s.tcap = t.tcap
@@ -482,6 +497,9 @@ theorem State.sameTable.symm {s t : State} (h : s.sameTable t) : t.sameTable s :
 theorem State.sameTable.trans {s t u : State} (h1 : s.sameTable t) (h2 : t.sameTable u) :
     s.sameTable u :=
   ⟨h1.1.trans h2.1, h1.2.1.trans h2.2.1, h1.2.2.trans h2.2.2⟩
+
+/-- The exceptions a state keeps for the references to them carry what their tags say. -/
+def ExnOk (C : Ctx) (s : State) : Prop := ∀ e, e ∈ s.exns → C.tags[e.1]? = some e.2.length
 
 def State.setLoc (s : State) (i v : Nat) : State :=
   { s with loc := fun j => if j = i then v else s.loc j }
@@ -633,22 +651,32 @@ def Out.exits : Out → Option Out
   | _ => none
 
 /--
-The first clause for an exception of tag `t`: the label it branches to, and whether the branch
-carries the exception's values.
+The first clause for an exception of tag `t`: the label it branches to, whether the branch
+carries the exception's values, and whether it carries a reference to the exception.
 -/
-def catches : List (Option Nat × Nat) → Nat → Option (Nat × Bool)
+def catches : List (Option Nat × Nat × Bool) → Nat → Option (Nat × Bool × Bool)
   | [], _ => none
-  | (some t', j) :: cs, t => if t' = t then some (j, true) else catches cs t
-  | (none, j) :: _, _ => some (j, false)
+  | (some t', j, r) :: cs, t => if t' = t then some (j, true, r) else catches cs t
+  | (none, j, r) :: _, _ => some (j, false, r)
+
+/--
+What a clause hands to its label for an exception of tag `t` with the values `w`, and the state
+then: the values if the clause is for the tag, and for a clause by reference a new reference
+on top of them, for which the state keeps the exception.
+-/
+def State.handed (s : State) (t : Nat) (w : List Nat) (carry : Bool) : Bool → List Nat × State
+  | false => (if carry then w else [], s)
+  | true => ((s.exns.length + 1) :: (if carry then w else []),
+      { s with exns := s.exns ++ [(t, w)] })
 
 /--
 A body's outcome as its `try_table` sees it: an exception that a clause catches is a branch to
 the clause's label, counted from inside the block.
 -/
-def Out.caught (cs : List (Option Nat × Nat)) : Out → Out
+def Out.caught (cs : List (Option Nat × Nat × Bool)) : Out → Out
   | .exn t w s =>
     match catches cs t with
-    | some (j, carry) => .br (j + 1) (if carry then w else []) s
+    | some (j, carry, r) => .br (j + 1) (s.handed t w carry r).1 (s.handed t w carry r).2
     | none => .exn t w s
   | o => o
 
@@ -905,6 +933,9 @@ inductive Eval (F : List Func) : Nat → List Nat → List Instr → List Nat �
       Eval F (n1 + 1) ls (.callRef ps b rs :: rest) (c :: (args ++ base)) s
         (.exn t w { u with loc := s.loc })
   | throw {ls rest t k σ s} : Eval F 1 ls (.throw t k :: rest) σ s (.exn t (σ.take k) s)
+  /-- The null reference is a trap. -/
+  | throwRef {ls rest i t w σ s} :
+      s.exns[i]? = some (t, w) → Eval F 1 ls (.throwRef :: rest) ((i + 1) :: σ) s (.exn t w s)
   | tryCont {n1 n2 ls rest keep ps rs clauses body vs base s ob σ1 s1 o} :
       vs.length = ps.length →
       Eval F n1 (rs.length :: ls) body vs s ob → (ob.caught clauses).lands = some (σ1, s1) →

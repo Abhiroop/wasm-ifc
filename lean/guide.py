@@ -102,6 +102,7 @@ RULES = [
     ("callRef", "`ICallRef`", "typed references", ""),
     ("unreachable", "`IUnreachable`", "W-Unreachable-Poly", ""),
     ("throw", "`IThrow`", "exceptions", "a tag is the number of public values it carries"),
+    ("throwRef", "`IThrowRef`", "exceptions", "the reference is to an exception the state keeps"),
     ("tryTable", "`ITryTable`", "exceptions", ""),
 ]
 
@@ -211,7 +212,8 @@ call through a reference ask that of the type they expect, which is where the pr
 
 `State`, {at("Defs", r"^structure State")}: the locals, the globals, the memory as bytes with a
 level each, its size and limit, the function table with its size and limit, the levels of the host's descriptors, what
-was written to each and what is left to read from each, and the data segments.
+was written to each and what is left to read from each, the data segments, and the
+exceptions kept for the references to them.
 
 `Eval F n ls e σ s o`, {at("Defs", r"^inductive Eval")}: in the module `F`, with enclosing
 labels of arities `ls`, the sequence `e` on the segment `σ` and the state `s` ends as `o`. `n`
@@ -266,7 +268,7 @@ text:
 | the input not yet read from and the output written to every public channel | the clause on `out` and `inp` |
 | every stack position labelled public | none: a call from outside starts on an empty stack |
 | the same names of files in every directory | none: the core's host has no directories |
-| (not in the paper) | the function table with its size and limit, if it is public (`State.sameTable`); and a data segment that both states still have is the same |
+| (not in the paper) | the function table with its size and limit, if it is public (`State.sameTable`); a data segment that both states still have is the same; the two states keep the same exceptions for the references to them, and these carry as many values as their tags say (`ExnOk`), which holds of a new instance, which keeps none |
 
 `Invoke F f a s e`, {at("Statement", r"^inductive Invoke")}: the function `f` called from
 outside on the arguments `a` in the state `s` ends as `e`, by returning results or by an
@@ -342,15 +344,18 @@ paper's `lem:refinement`, in the direction the theorem needs.
 of `noninterference` with two runs of the machine for the two `Invoke`s.
 
 What stays by reading is the table above: that the Haskell `step` makes the transitions of
-`Step`. Three differences are known. The Haskell machine bounds the depth of calls and traps
+`Step`. Four differences are known. The Haskell machine bounds the depth of calls and traps
 beyond it. It suspends at a call of the host and is resumed with the results, where the
-core's two host calls are instructions. And its typed instructions carry coercions between
-segments (`relabelStack`), which do nothing to the values.
+core's two host calls are instructions. Its typed instructions carry coercions between
+segments (`relabelStack`), which do nothing to the values. And a clause by reference that
+catches an exception thrown by `throw_ref` gets the reference it was thrown from, where the
+Lean machine keeps the exception once more and hands out a new reference; WebAssembly has no
+instruction that compares two references to exceptions.
 
 ### Outside the core
 
 More than one value type, and so the numeric and vector instructions as such; 64-bit and
-several memories; several tables; references to exceptions (`exnref`, `throw_ref`, the clauses that hand one out);
+several memories; several tables;
 linking; the WASI calls other than one that reads and one that writes, with directories,
 error codes and sockets; local variables split into webs and the inference of labels, which
 happen before typing; declassification.

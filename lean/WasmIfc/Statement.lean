@@ -14,7 +14,8 @@ attacker may know: the public local variables, the public globals, every byte of
 is public in both, the size of the memory and its limit, the function table if it is public,
 the levels of the host's descriptors, and for each public descriptor what was written to it
 and what is left to read from it. A data segment that both states still have is the same in
-both (one of them may have dropped it).
+both (one of them may have dropped it). The two states keep the same exceptions for the
+references to them, and these carry what their tags say; a new instance keeps none.
 -/
 def LowEq (C : Ctx) (s t : State) : Prop :=
   (∀ i, C.locals i = Lab.L → s.loc i = t.loc i) ∧
@@ -24,18 +25,19 @@ def LowEq (C : Ctx) (s t : State) : Prop :=
   (C.table = Lab.L → s.sameTable t) ∧
   s.chan = t.chan ∧
   (∀ d, s.chan d = Lab.L → s.out d = t.out d ∧ s.inp d = t.inp d) ∧
-  (∀ k, s.segs k = t.segs k ∨ s.segs k = [] ∨ t.segs k = [])
+  (∀ k, s.segs k = t.segs k ∨ s.segs k = [] ∨ t.segs k = []) ∧
+  s.exns = t.exns ∧ ExnOk C s
 
 /-- Low equivalence is the two relations of the proof together, if the preserved globals are public. -/
 theorem LowEq.split {C : Ctx} {s t : State} (hpub : ∀ i, C.preserved i → C.globals i = Lab.L)
     (h : LowEq C s t) : StRel C s t ∧ PresEq C s t := by
-  obtain ⟨hloc, hglob, hmem, hsize, hcap, htbl, hchan, hio, hseg⟩ := h
-  exact ⟨⟨hloc, fun i hi _ => hglob i hi, hmem, htbl, hsize, hcap, hchan, hio, hseg⟩,
+  obtain ⟨hloc, hglob, hmem, hsize, hcap, htbl, hchan, hio, hseg, hexn, hok⟩ := h
+  exact ⟨⟨hloc, fun i hi _ => hglob i hi, hmem, htbl, hsize, ⟨hcap, hexn, hok⟩, hchan, hio, hseg⟩,
     fun i hi => hglob i (hpub i hi)⟩
 
 theorem LowEq.join {C : Ctx} {s t : State} (h : StRel C s t) (hp : PresEq C s t) : LowEq C s t := by
-  obtain ⟨hloc, hglob, hmem, htbl, hsize, hcap, hchan, hio, hseg⟩ := h
-  refine ⟨hloc, fun i hi => ?_, hmem, hsize, hcap, htbl, hchan, hio, hseg⟩
+  obtain ⟨hloc, hglob, hmem, htbl, hsize, ⟨hcap, hexn, hok⟩, hchan, hio, hseg⟩ := h
+  refine ⟨hloc, fun i hi => ?_, hmem, hsize, hcap, htbl, hchan, hio, hseg, hexn, hok⟩
   by_cases hpi : C.preserved i
   · exact hp i hpi
   · exact hglob i hi hpi

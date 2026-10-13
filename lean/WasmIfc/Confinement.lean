@@ -332,6 +332,9 @@ theorem confine : ∀ (n : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P'
     | throw =>
       cases ht with
       | throw _ _ _ => exact absurd hP.head (by decide)
+    | throwRef _ =>
+      cases ht with
+      | throwRef => exact absurd hP.head (by decide)
     | tryCont hvs hb hl hk hr =>
       cases ht with
       | tryTable _ _ _ _ _ => exact absurd hP.head (by decide)

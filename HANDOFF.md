@@ -609,7 +609,7 @@ implemented since e87e76a.
 
 ## Lean: noninterference on a core with control flow, calls and memory (item 12, 2026-10-12)
 
-- **Where:** `lean/` (Lean 4.35.0, no dependencies; `cd lean && lake build`). 5,032 lines in
+- **Where:** `lean/` (Lean 4.35.0, no dependencies; `cd lean && lake build`). 5,170 lines in
   seven files; `lean/README.md` states what is proved and what differs from the paper.
 - **What is proved** (`WasmIfc.tini`, from `WasmIfc.ni`): termination-insensitive
   noninterference for a function of a well-typed module, under the lift-free rules, on a core
@@ -735,8 +735,9 @@ implemented since e87e76a.
     `sorry`; `refinement` depends on `propext` and `Quot.sound`, the other on the three
     standard axioms. Section 6 of `lean/STATEMENTS.md` puts each part of the Lean machine
     beside the Haskell one with both lines; that correspondence is the paper's Assumption (M),
-    and it lists three known differences (the bound on the depth of calls, the suspension at
-    host calls, the coercions between segments).
+    and it lists four known differences (the bound on the depth of calls, the suspension at
+    host calls, the coercions between segments, the reference a clause gets for an
+    exception thrown again).
     - **The proof found an error in the Lean semantics, now fixed** (`e75d54a`). `Eval` ran a
       tail call as a call inside the function, so a `try_table` around a `return_call`
       caught an exception of the callee. The Haskell machine drops the function's labels and
@@ -745,6 +746,13 @@ implemented since e87e76a.
       which the function's blocks pass and which is an exception again for the function's
       caller. `ni` has the case; the theorem's statement is unchanged, but `Invoke.threw` is
       now stated with `Out.thrown`. The implementation was right; no Haskell changed.
+  - *References to exceptions* (the list of 2026-10-14, item 4): `throw_ref`, and clauses that
+    catch by reference (`catch_ref`, `catch_all_ref`), with the rule of `IThrowRef` and of the
+    two handlers. The state keeps the exceptions that references are to. Two runs keep the same
+    ones, since a clause catches only under a public pc, and this is a clause of `StRel` and
+    of `LowEq`, with the condition that a kept exception carries as many values as its tag
+    says (`ExnOk`). **For the paper:** this is an assumption on the two initial states that
+    `def:attacker` does not have; it holds of a new instance, which keeps no exception.
   - *More of the table, and the indirect tail call* (the same list, item 6): `table.fill`,
     `table.copy` and `return_call_indirect`, with the rules of `ITableFill`, `ITableCopy` and
     `IReturnCallIndirect`. Then `table.size` and `table.grow` (the list of 2026-10-14, item 4),
