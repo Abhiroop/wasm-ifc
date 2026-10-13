@@ -1539,6 +1539,43 @@ premise as printed. The text does not say how `table.init` and `elem.drop` are t
 table: a copy from the public one to the secret one is typed, the copy back has no typing,
 and a `table.init` followed by `elem.drop` runs.
 
+### Item 7: any number of memories (`1eb1b37`, 6,134 lines)
+
+Every instruction on a memory takes a memory index, and `memory.copy` takes two. Each memory
+has its own bytes, levels, size and limit. The second memory of a fixed size that the core
+had, with its two copy instructions, is gone: it is the case of two indices. The line count
+went down because one lemma on copies replaces three.
+
+**What changed in the statements.**
+
+- `Instr`: `load m w lm`, `store m w lm`, `memSize m`, `memGrow m`, `fill m lm` and
+  `memInit m k lm` take the memory `m`; `copy md ms lm` takes the memory copied to and the one
+  copied from. Removed: `copyTo` and `copyFrom`.
+- `Typed`: the same rules with the index. No premise changed, because a memory has no static
+  level: the levels are per byte, at run time. The rule of `copy` is the same within a memory
+  and between two. Removed: the rules `copyTo` and `copyFrom`.
+- `State`: `mem : Nat → Nat → Nat` and `lab : Nat → Nat → Lab` are indexed by the memory, and
+  so are `size` and `cap` (`Nat → Nat`). Removed: `mem2`, `lab2`, `size2`.
+- `Eval`: each rule reads and writes its memory, within that memory's size. In `copy` the
+  range written is within `md` and the range read within `ms`. `memGrow m` grows the memory
+  `m` up to its own limit. The three host calls read and write memory 0, which is WASI's.
+- `LowEq`: the clause on bytes is `∀ m a, s.lab m a = L → t.lab m a = L → s.mem m a = t.mem m a`,
+  for every memory. `s.size = t.size` and `s.cap = t.cap` are now equalities of functions: the
+  size and the limit of every memory. Removed: the two clauses on the second memory.
+- `StRel` and `Conf` change in the same way, and the relation `Limits` loses its part on the
+  second memory.
+- `Machine`: `Basic` has the memory steps with their indices; the steps for `copyTo` and
+  `copyFrom` are removed.
+- The theorems are stated as before.
+
+For the paper. Clauses (ii) and (iii) of its definition of low equivalence should say "of
+every memory". Its rules T+-Load, T+-Store, T+-Memory-Grow, T+-Memory-Fill and
+T+-Memory-Copy stand as printed, with a memory index on the instruction. The appendix says
+that the core has "two memories of labeled bytes": it has any number. `Examples.lean` stores
+a secret byte in memory 0 and copies it to memory 1 with the level `L` declared: the program
+is typed, it runs, and the byte of memory 1 is secret afterwards, since the level moved with
+the value.
+
 ## Where coverage stands (2026-10-12, for the paper's claim)
 
 Supported, with the 3.0 suite passing on all of it: **WebAssembly 3.0 without garbage
