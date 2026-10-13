@@ -52,8 +52,8 @@ the specification suite, and `wat2wasm` (wabt) for the examples written as text.
 
 | Claim | Command | Recorded in | Time |
 |---|---|---|---|
-| the verdict for each of the 312 specifications, under both translations | `casestudies/wanilla/oracle.py [ARTIFACT]`, after unpacking WANILLA's artifact (https://researchdata.tuwien.ac.at/records/hc4rp-xp328) into `~/.local/wasm-bench-tools/src/wanilla` | `casestudies/results/2026-10-13-67e5597-wanilla.json` (`verdict`, and `verdict_narrow` for the translation without the queries on imports and memory data) | 2 s |
-| where the rejected secure specifications stop | the field `error` of the rows with the verdict `precision loss` | the same file | |
+| the verdict for each of the 312 specifications, under both translations | `casestudies/wanilla/oracle.py [ARTIFACT]`, after unpacking WANILLA's artifact (https://researchdata.tuwien.ac.at/records/hc4rp-xp328) into `~/.local/wasm-bench-tools/src/wanilla` | `casestudies/results/2026-10-13-309c9a4-wanilla.json`: `counts` is 73 leaks caught, 163 secure accepted, 48 secure rejected, 28 not expressible; `verdict_narrow` is the translation without the queries on imports and memory data | 2 s |
+| where the 48 rejected secure specifications stop (21, 11, 5, 4, 4, 2, 1) | the command's third line of output | `precision_losses_at` of the same file | |
 
 ## Run-time cost (RQ5)
 

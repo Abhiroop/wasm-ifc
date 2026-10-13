@@ -1,5 +1,5 @@
 {
-  "commit": "67e5597",
+  "commit": "309c9a4",
   "counts": {
     "precise": 163,
     "not expressible": 28,
@@ -19,6 +19,15 @@
     "queries memory, tables or imports": 8,
     "no function named": 4,
     "integrity": 3
+  },
+  "precision_losses_at": {
+    "result": 21,
+    "return": 11,
+    "memory.grow": 5,
+    "call_indirect": 4,
+    "store": 4,
+    "call": 2,
+    "local.tee": 1
   },
   "specifications": [
     {
