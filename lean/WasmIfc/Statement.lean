@@ -21,7 +21,7 @@ def LowEq (C : Ctx) (s t : State) : Prop :=
   (∀ i, C.globals i = Lab.L → s.glob i = t.glob i) ∧
   (∀ a, s.lab a = Lab.L → t.lab a = Lab.L → s.mem a = t.mem a) ∧
   s.size = t.size ∧ s.cap = t.cap ∧
-  (C.table = Lab.L → s.tbl = t.tbl) ∧
+  (C.table = Lab.L → s.sameTable t) ∧
   s.chan = t.chan ∧
   (∀ d, s.chan d = Lab.L → s.out d = t.out d ∧ s.inp d = t.inp d) ∧
   (∀ k, s.segs k = t.segs k ∨ s.segs k = [] ∨ t.segs k = [])

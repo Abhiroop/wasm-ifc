@@ -493,7 +493,7 @@ theorem retCall_inv {n i : Nat} {ls : List Nat} {rest : List Instr} {σ : List N
 
 theorem callIndirect_inv {n : Nat} {ls : List Nat} {ps rs : STy} {b : Lab} {rest : List Instr}
     {σ : List Nat} {s : State} {o : Out} (h : Eval F n ls (.callIndirect ps b rs :: rest) σ s o) :
-    ∃ c i f args base n1 ob, s.tbl c = some i ∧ F[i]? = some f ∧ f.ty.params = ps ∧ f.ty.results = rs ∧
+    ∃ c i f args base n1 ob, s.entry c = some i ∧ F[i]? = some f ∧ f.ty.params = ps ∧ f.ty.results = rs ∧
       Lab.le b f.ty.bound ∧ σ = c :: (args ++ base) ∧ args.length = ps.length ∧ n1 < n ∧
       Eval F n1 [rs.length] f.body [] { s with loc := frame args } ob ∧
       CallCont F ls f.keep s rest base ob n o := by
@@ -507,7 +507,7 @@ theorem callIndirect_inv {n : Nat} {ls : List Nat} {ps rs : STy} {b : Lab} {rest
 theorem retCallIndirect_inv {n : Nat} {ls : List Nat} {ps rs : STy} {b : Lab} {rest : List Instr}
     {σ : List Nat} {s : State} {o : Out}
     (h : Eval F n ls (.retCallIndirect ps b rs :: rest) σ s o) :
-    ∃ c i f args base n1 ob, s.tbl c = some i ∧ F[i]? = some f ∧ f.ty.params = ps ∧ f.ty.results = rs ∧
+    ∃ c i f args base n1 ob, s.entry c = some i ∧ F[i]? = some f ∧ f.ty.params = ps ∧ f.ty.results = rs ∧
       Lab.le b f.ty.bound ∧ σ = c :: (args ++ base) ∧ args.length = ps.length ∧ n1 < n ∧
       Eval F n1 [rs.length] f.body [] { s with loc := frame args } ob ∧
       TailCont f.keep s (ls.length - 1) ob o := by
@@ -773,20 +773,20 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
                 exact ⟨ha hld, hb hlb, hk hln⟩
     | tableGet ht' =>
       cases he0 with
-      | tableGet he0' =>
+      | tableGet _ he0' =>
         cases he1 with
-        | tableGet he1' =>
+        | tableGet _ he1' =>
           cases hσ with
           | cons hc hσ' =>
             refine ih _ (by omega) hF ht' he0' he1' (.cons (fun hl => ?_) hσ') hs hp
             obtain ⟨_, hj⟩ := Lab.join_eq_L hl
             obtain ⟨hli, hlt⟩ := Lab.join_eq_L hj
-            rw [hc hli, hs.2.2.2.1 hlt]
+            rw [hc hli, (hs.2.2.2.1 hlt).1]
     | tableSet hle ht' =>
       cases he0 with
-      | tableSet he0' =>
+      | tableSet _ he0' =>
         cases he1 with
-        | tableSet he1' =>
+        | tableSet _ he1' =>
           cases hσ with
           | cons hv hσa =>
             cases hσa with
@@ -869,9 +869,9 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
           exact ih _ (by omega) hF ht' he0' he1' hσ (hs.dropSeg k) (hp.of_glob rfl rfl)
     | tableFill hle ht' =>
       cases he0 with
-      | tableFill he0' =>
+      | tableFill _ he0' =>
         cases he1 with
-        | tableFill he1' =>
+        | tableFill _ he1' =>
           cases hσ with
           | cons hk hσa =>
             cases hσa with
@@ -883,13 +883,14 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
                 obtain ⟨_, hj1⟩ := Lab.join_eq_L (Lab.eq_L_of_le hle hlt)
                 obtain ⟨hln, hj2⟩ := Lab.join_eq_L hj1
                 obtain ⟨hlv, hli⟩ := Lab.join_eq_L hj2
+                refine ⟨?_, (hs.2.2.2.1 hlt).2⟩
                 simp only [State.fillTbl]
-                rw [hk hln, hv hlv, hc hli, hs.2.2.2.1 hlt]
+                rw [hk hln, hv hlv, hc hli, (hs.2.2.2.1 hlt).1]
     | tableCopy hle ht' =>
       cases he0 with
-      | tableCopy he0' =>
+      | tableCopy _ _ he0' =>
         cases he1 with
-        | tableCopy he1' =>
+        | tableCopy _ _ he1' =>
           cases hσ with
           | cons hk hσa =>
             cases hσa with
@@ -901,8 +902,34 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
                 obtain ⟨_, hj1⟩ := Lab.join_eq_L (Lab.eq_L_of_le hle hlt)
                 obtain ⟨hln, hj2⟩ := Lab.join_eq_L hj1
                 obtain ⟨hlb, hld⟩ := Lab.join_eq_L hj2
+                refine ⟨?_, (hs.2.2.2.1 hlt).2⟩
                 simp only [State.copyTbl]
-                rw [hk hln, hb hlb, ha hld, hs.2.2.2.1 hlt]
+                rw [hk hln, hb hlb, ha hld, (hs.2.2.2.1 hlt).1]
+    | tableSize ht' =>
+      cases he0 with
+      | tableSize he0' =>
+        cases he1 with
+        | tableSize he1' =>
+          refine ih _ (by omega) hF ht' he0' he1' (.cons (fun hl => ?_) hσ) hs hp
+          exact (hs.2.2.2.1 (Lab.join_eq_L hl).2).2.1
+    | tableGrow hle ht' =>
+      cases he0 with
+      | @tableGrow _ _ _ d0 v0 _ _ _ he0' =>
+        cases he1 with
+        | @tableGrow _ _ _ d1 v1 _ _ _ he1' =>
+          cases hσ with
+          | cons hd hσa =>
+            cases hσa with
+            | cons hv hσb =>
+              -- a public table grows by the same amount with the same reference in both runs
+              have hsame : C.table = Lab.L → d0 = d1 ∧ ofRef v0 = ofRef v1 := fun hlt =>
+                have hj := Lab.join_eq_L (Lab.eq_L_of_le hle hlt)
+                have hj2 := Lab.join_eq_L hj.2
+                ⟨hd hj2.1, by rw [hv hj2.2]⟩
+              obtain ⟨hs', hres⟩ := StRel.growTbl hsame hs
+              exact ih _ (by omega) hF ht' he0' he1'
+                (.cons (fun hl => hres (Lab.join_eq_L hl).2) hσb) hs'
+                (hp.of_glob (State.growTbl_glob _ _ _) (State.growTbl_glob _ _ _))
     | memSize ht' =>
       cases he0 with
       | memSize he0' =>
@@ -1276,7 +1303,7 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
         rcases Lab.table_cases C.table hc with ⟨hcc, hlt⟩ | hsec
         · -- the same entry of a public table: the same function, as for a direct call
           subst hcc
-          rw [hs.2.2.2.1 hlt] at htbl0
+          simp only [State.entry, (hs.2.2.2.1 hlt).1, (hs.2.2.2.1 hlt).2.1] at htbl0 htbl1
           cases htbl0.symm.trans htbl1
           cases hf0.symm.trans hf1
           have hrel := ih _ hm0 (hF.enter _) hbody0 hb0 hb1 .nil
@@ -1451,7 +1478,7 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
         simp only [List.length_map] at hc0 hc1
         rcases Lab.table_cases C.table hc with ⟨hcc, hlt⟩ | hsec
         · subst hcc
-          rw [hs.2.2.2.1 hlt] at htbl0
+          simp only [State.entry, (hs.2.2.2.1 hlt).1, (hs.2.2.2.1 hlt).2.1] at htbl0 htbl1
           cases htbl0.symm.trans htbl1
           cases hf0.symm.trans hf1
           have hrel := ih _ hm0 (hF.enter _) hbody0 hb0 hb1 .nil

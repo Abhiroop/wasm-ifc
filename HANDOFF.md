@@ -609,7 +609,7 @@ implemented since e87e76a.
 
 ## Lean: noninterference on a core with control flow, calls and memory (item 12, 2026-10-12)
 
-- **Where:** `lean/` (Lean 4.35.0, no dependencies; `cd lean && lake build`). 4,893 lines in
+- **Where:** `lean/` (Lean 4.35.0, no dependencies; `cd lean && lake build`). 5,032 lines in
   seven files; `lean/README.md` states what is proved and what differs from the paper.
 - **What is proved** (`WasmIfc.tini`, from `WasmIfc.ni`): termination-insensitive
   noninterference for a function of a well-typed module, under the lift-free rules, on a core
@@ -747,8 +747,10 @@ implemented since e87e76a.
       now stated with `Out.thrown`. The implementation was right; no Haskell changed.
   - *More of the table, and the indirect tail call* (the same list, item 6): `table.fill`,
     `table.copy` and `return_call_indirect`, with the rules of `ITableFill`, `ITableCopy` and
-    `IReturnCallIndirect`. 4,193 lines. Not done: `table.size` and `table.grow`, for
-    which the core's table would need a size that two runs agree on when the table is public.
+    `IReturnCallIndirect`. Then `table.size` and `table.grow` (the list of 2026-10-14, item 4),
+    with the rules of `ITableSize` and `ITableGrow`: the table has a size and a limit, which
+    two runs agree on when the table is public, and its instructions and the indirect calls
+    trap beyond the size.
   - *A memory of bytes and data segments* (2026-10-13, the plan's item 5). A load and a store
     name a number of bytes. A load of several bytes checks the level of each, which is the
     check on the join of their labels that the paper states, and the proof of the case is that

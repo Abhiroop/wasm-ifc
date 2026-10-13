@@ -185,10 +185,10 @@ theorem confine : ∀ (n : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P'
         subst hlm
         obtain ⟨h1, h2⟩ := ih _ (by omega) hF ht' (hiUpTo_zero_cons _) (by simpa using hlen) he'
         exact ⟨(Conf.copy_high _ _ _ _ _).trans h1, h2⟩
-    | tableGet he' =>
+    | tableGet _ he' =>
       cases ht with
       | tableGet ht' => exact ih _ (by omega) hF ht' hP (by simpa using hlen) he'
-    | tableSet he' =>
+    | tableSet _ he' =>
       cases ht with
       | tableSet hle ht' =>
         have hpc := hP.head
@@ -215,20 +215,30 @@ theorem confine : ∀ (n : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P'
       | dataDrop _ ht' =>
         obtain ⟨h1, h2⟩ := ih _ (by omega) hF ht' hP hlen he'
         exact ⟨(Conf.dropSeg _ _ _).trans h1, h2⟩
-    | tableFill he' =>
+    | tableFill _ he' =>
       cases ht with
       | tableFill hle ht' =>
         have hpc := hP.head
         subst hpc
         obtain ⟨h1, h2⟩ := ih _ (by omega) hF ht' (hiUpTo_zero_cons _) (by simpa using hlen) he'
-        exact ⟨(Conf.tbl_high _ _ (hle (Lab.H_join _))).trans h1, h2⟩
-    | tableCopy he' =>
+        exact ⟨(Conf.tbl_high _ _ _ (hle (Lab.H_join _))).trans h1, h2⟩
+    | tableCopy _ _ he' =>
       cases ht with
       | tableCopy hle ht' =>
         have hpc := hP.head
         subst hpc
         obtain ⟨h1, h2⟩ := ih _ (by omega) hF ht' (hiUpTo_zero_cons _) (by simpa using hlen) he'
-        exact ⟨(Conf.tbl_high _ _ (hle (Lab.H_join _))).trans h1, h2⟩
+        exact ⟨(Conf.tbl_high _ _ _ (hle (Lab.H_join _))).trans h1, h2⟩
+    | tableSize he' =>
+      cases ht with
+      | tableSize ht' => exact ih _ (by omega) hF ht' hP (by simp [hlen]) he'
+    | tableGrow he' =>
+      cases ht with
+      | tableGrow hle ht' =>
+        have hpc := hP.head
+        subst hpc
+        obtain ⟨h1, h2⟩ := ih _ (by omega) hF ht' (hiUpTo_zero_cons _) (by simpa using hlen) he'
+        exact ⟨(Conf.growTbl_high _ _ _ (hle (Lab.H_join _))).trans h1, h2⟩
     | memSize he' =>
       cases ht with
       | memSize ht' => exact ih _ (by omega) hF ht' hP (by simp [hlen]) he'

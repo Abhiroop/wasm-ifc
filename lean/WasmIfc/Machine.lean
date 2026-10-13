@@ -92,10 +92,17 @@ inductive Basic : Instr → List Nat → State → List Nat → State → Prop w
   | copy {k b a σ s} (lm : Lab) :
       a + k ≤ s.size → b + k ≤ s.size →
       Basic (.copy lm) (k :: b :: a :: σ) s σ (s.copy a b k lm)
-  | tableGet {c σ s} : Basic .tableGet (c :: σ) s (refOf (s.tbl c) :: σ) s
-  | tableSet {v c σ s} : Basic .tableSet (v :: c :: σ) s σ (s.setTbl c (ofRef v))
-  | tableFill {k v c σ s} : Basic .tableFill (k :: v :: c :: σ) s σ (s.fillTbl c (ofRef v) k)
-  | tableCopy {k b a σ s} : Basic .tableCopy (k :: b :: a :: σ) s σ (s.copyTbl a b k)
+  | tableGet {c σ s} : c < s.tsize → Basic .tableGet (c :: σ) s (refOf (s.tbl c) :: σ) s
+  | tableSet {v c σ s} :
+      c < s.tsize → Basic .tableSet (v :: c :: σ) s σ (s.setTbl c (ofRef v))
+  | tableFill {k v c σ s} :
+      c + k ≤ s.tsize → Basic .tableFill (k :: v :: c :: σ) s σ (s.fillTbl c (ofRef v) k)
+  | tableCopy {k b a σ s} :
+      a + k ≤ s.tsize → b + k ≤ s.tsize →
+      Basic .tableCopy (k :: b :: a :: σ) s σ (s.copyTbl a b k)
+  | tableSize {σ s} : Basic .tableSize σ s (s.tsize :: σ) s
+  | tableGrow {d v σ s} :
+      Basic .tableGrow (d :: v :: σ) s ((s.growTbl d (ofRef v)).1 :: σ) (s.growTbl d (ofRef v)).2
   | hostRead {np k a fd σ s} :
       a + k ≤ s.size → np < s.size →
       Basic .hostRead (np :: k :: a :: fd :: σ) s σ
@@ -208,7 +215,7 @@ inductive Step (F : List Func) : Config → Next → Prop where
         (.go ⟨{ s with loc := frame args }, [], f.body,
           .call f.ty.results.length [(f.keep, s)] s.loc base rest :: K⟩)
   | callIndirect {ps b rs v i f args base rest s K} :
-      s.tbl v = some i → F[i]? = some f → f.ty.params = ps → f.ty.results = rs →
+      s.entry v = some i → F[i]? = some f → f.ty.params = ps → f.ty.results = rs →
       Lab.le b f.ty.bound → args.length = ps.length →
       Step F ⟨s, v :: (args ++ base), .callIndirect ps b rs :: rest, K⟩
         (.go ⟨{ s with loc := frame args }, [], f.body,
@@ -226,7 +233,7 @@ inductive Step (F : List Func) : Config → Next → Prop where
         (.go ⟨{ s with loc := frame args }, [], f.body,
           .call f.ty.results.length ((f.keep, s) :: checks) locals base' rest' :: K'⟩)
   | retCallIndirect {ps b rs v i f args base rest s K checks locals base' rest' K'} :
-      s.tbl v = some i → F[i]? = some f → f.ty.params = ps → f.ty.results = rs →
+      s.entry v = some i → F[i]? = some f → f.ty.params = ps → f.ty.results = rs →
       Lab.le b f.ty.bound → args.length = ps.length →
       boundary K = some (checks, locals, base', rest', K') →
       Step F ⟨s, v :: (args ++ base), .retCallIndirect ps b rs :: rest, K⟩

@@ -289,7 +289,7 @@ def StRel (C : Ctx) (s t : State) : Prop :=
   (∀ i, C.locals i = Lab.L → s.loc i = t.loc i) ∧
     (∀ i, C.globals i = Lab.L → ¬ C.preserved i → s.glob i = t.glob i) ∧
     (∀ a, s.lab a = Lab.L → t.lab a = Lab.L → s.mem a = t.mem a) ∧
-    (C.table = Lab.L → s.tbl = t.tbl) ∧ s.size = t.size ∧ s.cap = t.cap ∧ IoRel s t
+    (C.table = Lab.L → s.sameTable t) ∧ s.size = t.size ∧ s.cap = t.cap ∧ IoRel s t
 
 theorem StRel.symm {C : Ctx} {s t : State} (h : StRel C s t) : StRel C t s :=
   ⟨fun i hi => (h.1 i hi).symm, fun i hi hn => (h.2.1 i hi hn).symm,
@@ -341,10 +341,10 @@ def Conf (C : Ctx) (s t : State) : Prop :=
   (∀ i, C.locals i = Lab.L → s.loc i = t.loc i) ∧
     (∀ i, C.globals i = Lab.L → ¬ C.preserved i → s.glob i = t.glob i) ∧
     (∀ a, t.lab a = Lab.L → s.lab a = Lab.L ∧ s.mem a = t.mem a) ∧
-    (C.table = Lab.L → s.tbl = t.tbl) ∧ s.size = t.size ∧ s.cap = t.cap ∧ IoSame s t
+    (C.table = Lab.L → s.sameTable t) ∧ s.size = t.size ∧ s.cap = t.cap ∧ IoSame s t
 
 theorem Conf.refl (C : Ctx) (s : State) : Conf C s s :=
-  ⟨fun _ _ => rfl, fun _ _ _ => rfl, fun _ h => ⟨h, rfl⟩, fun _ => rfl, rfl, rfl, .refl _⟩
+  ⟨fun _ _ => rfl, fun _ _ _ => rfl, fun _ h => ⟨h, rfl⟩, fun _ => ⟨rfl, rfl, rfl⟩, rfl, rfl, .refl _⟩
 
 theorem Conf.trans {C : Ctx} {s t u : State} (h1 : Conf C s t) (h2 : Conf C t u) : Conf C s u :=
   ⟨fun i hi => (h1.1 i hi).trans (h2.1 i hi), fun i hi hn => (h1.2.1 i hi hn).trans (h2.2.1 i hi hn),
@@ -416,14 +416,14 @@ theorem StRel.setMem {C : Ctx} {s t : State} {a0 a1 v0 v1 : Nat} {lm : Lab}
 /-- A write to a secret local variable leaves the state as the attacker sees it. -/
 theorem Conf.setLoc_high {C : Ctx} (s : State) {i : Nat} (v : Nat) (hi : C.locals i = Lab.H) :
     Conf C s (s.setLoc i v) := by
-  refine ⟨fun j hj => ?_, fun _ _ _ => rfl, fun _ h => ⟨h, rfl⟩, fun _ => rfl, rfl, rfl, .refl _⟩
+  refine ⟨fun j hj => ?_, fun _ _ _ => rfl, fun _ h => ⟨h, rfl⟩, fun _ => ⟨rfl, rfl, rfl⟩, rfl, rfl, .refl _⟩
   by_cases hji : j = i
   · subst hji; rw [hi] at hj; cases hj
   · simp [State.setLoc, hji]
 
 theorem Conf.setGlob_high {C : Ctx} (s : State) {i : Nat} (v : Nat) (hi : C.globals i = Lab.H) :
     Conf C s (s.setGlob i v) := by
-  refine ⟨fun _ _ => rfl, fun j hj _ => ?_, fun _ h => ⟨h, rfl⟩, fun _ => rfl, rfl, rfl, .refl _⟩
+  refine ⟨fun _ _ => rfl, fun j hj _ => ?_, fun _ h => ⟨h, rfl⟩, fun _ => ⟨rfl, rfl, rfl⟩, rfl, rfl, .refl _⟩
   by_cases hji : j = i
   · subst hji; rw [hi] at hj; cases hj
   · simp [State.setGlob, hji]
@@ -431,14 +431,14 @@ theorem Conf.setGlob_high {C : Ctx} (s : State) {i : Nat} (v : Nat) (hi : C.glob
 /-- A write to a preserved global is one a run under a secret pc may make. -/
 theorem Conf.setGlob_preserved {C : Ctx} (s : State) {i : Nat} (v : Nat) (hi : C.preserved i) :
     Conf C s (s.setGlob i v) := by
-  refine ⟨fun _ _ => rfl, fun j _ hn => ?_, fun _ h => ⟨h, rfl⟩, fun _ => rfl, rfl, rfl, .refl _⟩
+  refine ⟨fun _ _ => rfl, fun j _ hn => ?_, fun _ h => ⟨h, rfl⟩, fun _ => ⟨rfl, rfl, rfl⟩, rfl, rfl, .refl _⟩
   by_cases hji : j = i
   · subst hji; exact absurd hi hn
   · simp [State.setGlob, hji]
 
 /-- A store at a secret level makes its cell secret and touches no other. -/
 theorem Conf.setMem_high (C : Ctx) (s : State) (a v : Nat) : Conf C s (s.setMem a v Lab.H) := by
-  refine ⟨fun _ _ => rfl, fun _ _ _ => rfl, fun x hx => ?_, fun _ => rfl, rfl, rfl, .refl _⟩
+  refine ⟨fun _ _ => rfl, fun _ _ _ => rfl, fun x hx => ?_, fun _ => ⟨rfl, rfl, rfl⟩, rfl, rfl, .refl _⟩
   by_cases hxa : x = a
   · simp [State.setMem, hxa] at hx
   · simp only [State.setMem, hxa, ite_false] at hx ⊢
@@ -450,18 +450,19 @@ theorem StRel.setTbl {C : Ctx} {s t : State} {c0 c1 : Nat} {e0 e1 : Option Nat}
     StRel C (s.setTbl c0 e0) (t.setTbl c1 e1) := by
   refine ⟨h.1, h.2.1, h.2.2.1, fun hl => ?_, h.2.2.2.2⟩
   obtain ⟨rfl, rfl⟩ := hv hl
-  simp [State.setTbl, h.2.2.2.1 hl]
+  exact ⟨by simp [State.setTbl, (h.2.2.2.1 hl).1], (h.2.2.2.1 hl).2⟩
 
 /-- Two states that differ in a public table at most as two others that agree on it do. -/
 theorem StRel.tbl {C : Ctx} {s t s' t' : State} (h : StRel C s t)
-    (hs : { s with tbl := s'.tbl } = s') (ht : { t with tbl := t'.tbl } = t')
-    (htbl : C.table = Lab.L → s'.tbl = t'.tbl) : StRel C s' t' := by
+    (hs : { s with tbl := s'.tbl, tsize := s'.tsize, tcap := s'.tcap } = s')
+    (ht : { t with tbl := t'.tbl, tsize := t'.tsize, tcap := t'.tcap } = t')
+    (htbl : C.table = Lab.L → s'.sameTable t') : StRel C s' t' := by
   rw [← hs, ← ht]
   exact ⟨h.1, h.2.1, h.2.2.1, htbl, h.2.2.2.2⟩
 
 /-- Any write to a secret table leaves the state as the attacker sees it. -/
-theorem Conf.tbl_high {C : Ctx} (s : State) (tbl : Nat → Option Nat) (hl : C.table = Lab.H) :
-    Conf C s { s with tbl := tbl } := by
+theorem Conf.tbl_high {C : Ctx} (s : State) (tbl : Nat → Option Nat) (n : Nat)
+    (hl : C.table = Lab.H) : Conf C s { s with tbl := tbl, tsize := n } := by
   refine ⟨fun _ _ => rfl, fun _ _ _ => rfl, fun _ h => ⟨h, rfl⟩, fun h => ?_, rfl, rfl, .refl _⟩
   rw [hl] at h
   cases h
@@ -497,7 +498,7 @@ theorem StRel.fill {C : Ctx} {s t : State} {a0 a1 v0 v1 k0 k1 : Nat} {lm : Lab}
         exact h.2.2.1 x hx hy
 
 theorem Conf.fill_high (C : Ctx) (s : State) (a v k : Nat) : Conf C s (s.fill a v k Lab.H) := by
-  refine ⟨fun _ _ => rfl, fun _ _ _ => rfl, fun x hx => ?_, fun _ => rfl, rfl, rfl, .refl _⟩
+  refine ⟨fun _ _ => rfl, fun _ _ _ => rfl, fun x hx => ?_, fun _ => ⟨rfl, rfl, rfl⟩, rfl, rfl, .refl _⟩
   by_cases hr : a ≤ x ∧ x < a + k
   · simp [State.fill, hr] at hx
   · simp only [State.fill, hr, ite_false] at hx ⊢
@@ -529,7 +530,7 @@ theorem StRel.copy {C : Ctx} {s t : State} {d0 d1 a0 a1 k0 k1 : Nat} {lm : Lab}
         exact h.2.2.1 x hx hy
 
 theorem Conf.copy_high (C : Ctx) (s : State) (d a k : Nat) : Conf C s (s.copy d a k Lab.H) := by
-  refine ⟨fun _ _ => rfl, fun _ _ _ => rfl, fun x hx => ?_, fun _ => rfl, rfl, rfl, .refl _⟩
+  refine ⟨fun _ _ => rfl, fun _ _ _ => rfl, fun x hx => ?_, fun _ => ⟨rfl, rfl, rfl⟩, rfl, rfl, .refl _⟩
   by_cases hr : d ≤ x ∧ x < d + k
   · simp [State.copy, hr, Lab.H_join] at hx
   · simp only [State.copy, hr, ite_false] at hx ⊢
@@ -562,7 +563,7 @@ theorem StRel.put {C : Ctx} {s t : State} {a0 a1 : Nat} {vs0 vs1 : List Nat} {lm
 
 /-- A store at a secret level makes its bytes secret and touches no other. -/
 theorem Conf.put_high (C : Ctx) (s : State) (a : Nat) (vs : List Nat) : Conf C s (s.put a vs Lab.H) := by
-  refine ⟨fun _ _ => rfl, fun _ _ _ => rfl, fun x hx => ?_, fun _ => rfl, rfl, rfl, .refl _⟩
+  refine ⟨fun _ _ => rfl, fun _ _ _ => rfl, fun x hx => ?_, fun _ => ⟨rfl, rfl, rfl⟩, rfl, rfl, .refl _⟩
   by_cases hr : a ≤ x ∧ x < a + vs.length
   · simp [State.put, hr] at hx
   · simp only [State.put, hr, ite_false] at hx ⊢
@@ -629,7 +630,7 @@ theorem StRel.dropSeg {C : Ctx} {s t : State} (k : Nat) (h : StRel C s t) :
   · simpa [State.dropSeg, hj] using hseg j
 
 theorem Conf.dropSeg (C : Ctx) (s : State) (k : Nat) : Conf C s (s.dropSeg k) := by
-  refine ⟨fun _ _ => rfl, fun _ _ _ => rfl, fun _ h => ⟨h, rfl⟩, fun _ => rfl, rfl, rfl, rfl, rfl,
+  refine ⟨fun _ _ => rfl, fun _ _ _ => rfl, fun _ h => ⟨h, rfl⟩, fun _ => ⟨rfl, rfl, rfl⟩, rfl, rfl, rfl, rfl,
     rfl, fun j => ?_⟩
   by_cases hj : j = k <;> simp [State.dropSeg, hj]
 
@@ -671,6 +672,49 @@ theorem StRel.grow {C : Ctx} {s t : State} (d : Nat) (h : StRel C s t) :
 theorem State.grow_glob (s : State) (d : Nat) : (s.grow d).2.glob = s.glob := by
   unfold State.grow
   split <;> rfl
+
+/-! ### The table grows -/
+
+theorem State.growTbl_glob (s : State) (d : Nat) (e : Option Nat) :
+    (s.growTbl d e).2.glob = s.glob := by
+  unfold State.growTbl
+  split <;> rfl
+
+/-- `table.grow` changes the table and nothing else. -/
+theorem State.growTbl_eq (s : State) (d : Nat) (e : Option Nat) :
+    { s with tbl := (s.growTbl d e).2.tbl, tsize := (s.growTbl d e).2.tsize,
+             tcap := (s.growTbl d e).2.tcap } = (s.growTbl d e).2 := by
+  unfold State.growTbl
+  split <;> rfl
+
+/-- The same table grows alike in two runs: the same result and the same table again. -/
+theorem State.growTbl_same {s t : State} (d : Nat) (e : Option Nat) (h : s.sameTable t) :
+    (s.growTbl d e).1 = (t.growTbl d e).1 ∧ (s.growTbl d e).2.sameTable (t.growTbl d e).2 := by
+  obtain ⟨htb, hts, htc⟩ := h
+  unfold State.growTbl State.sameTable
+  rw [hts, htc]
+  split
+  · simp [htb]
+  · exact ⟨rfl, htb, hts, htc⟩
+
+/-- Two runs grow the table. If the table is public, they grow it alike. -/
+theorem StRel.growTbl {C : Ctx} {s t : State} {d0 d1 : Nat} {e0 e1 : Option Nat}
+    (hv : C.table = Lab.L → d0 = d1 ∧ e0 = e1) (h : StRel C s t) :
+    StRel C (s.growTbl d0 e0).2 (t.growTbl d1 e1).2 ∧
+      (C.table = Lab.L → (s.growTbl d0 e0).1 = (t.growTbl d1 e1).1) := by
+  refine ⟨h.tbl (State.growTbl_eq _ _ _) (State.growTbl_eq _ _ _) (fun hl => ?_), fun hl => ?_⟩
+  · obtain ⟨rfl, rfl⟩ := hv hl
+    exact (State.growTbl_same _ _ (h.2.2.2.1 hl)).2
+  · obtain ⟨rfl, rfl⟩ := hv hl
+    exact (State.growTbl_same _ _ (h.2.2.2.1 hl)).1
+
+/-- A secret table that grows leaves the state as the attacker sees it. -/
+theorem Conf.growTbl_high {C : Ctx} (s : State) (d : Nat) (e : Option Nat)
+    (hl : C.table = Lab.H) : Conf C s (s.growTbl d e).2 := by
+  unfold State.growTbl
+  split
+  · exact Conf.tbl_high _ _ _ hl
+  · exact Conf.refl _ _
 
 /-! ### Calls -/
 
@@ -858,6 +902,8 @@ theorem rise {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : Pcs} {st st' : S
   | dataDrop _ _ ih => exact ih
   | tableFill _ _ ih => exact ih
   | tableCopy _ _ ih => exact ih
+  | tableSize _ ih => exact ih
+  | tableGrow _ _ ih => exact ih
   | memSize _ ih => exact ih
   | memGrow _ _ ih => exact ih
   | block _ _ _ _ _ ihb ihr => exact SFlows.trans ihb.tail ihr

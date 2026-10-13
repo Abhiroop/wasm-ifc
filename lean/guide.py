@@ -83,6 +83,8 @@ RULES = [
     ("tableSet", "`ITableSet`", "tables", ""),
     ("tableFill", "`ITableFill`", "tables", ""),
     ("tableCopy", "`ITableCopy`", "tables", "one table, so the source's level is the table's"),
+    ("tableSize", "`ITableSize`", "tables", ""),
+    ("tableGrow", "`ITableGrow`", "tables", ""),
     ("hostRead", "a call of a host import that reads (`HostFunc`), with the driver's labelling", "W-Host", "one call stands for the reading ones"),
     ("hostWrite", "a call of a host import that writes, with the driver's check", "W-Host", "one call stands for the writing ones"),
     ("block", "`IBlock`", "W-Block", "with `Restores`, the comparison of preserved globals"),
@@ -208,7 +210,7 @@ call through a reference ask that of the type they expect, which is where the pr
 ## 4. States and semantics
 
 `State`, {at("Defs", r"^structure State")}: the locals, the globals, the memory as bytes with a
-level each, its size and limit, the function table, the levels of the host's descriptors, what
+level each, its size and limit, the function table with its size and limit, the levels of the host's descriptors, what
 was written to each and what is left to read from each, and the data segments.
 
 `Eval F n ls e σ s o`, {at("Defs", r"^inductive Eval")}: in the module `F`, with enclosing
@@ -227,6 +229,7 @@ text:
    agree is not proved.
 2. **The run-time checks are premises.** A load goes on only if every byte it reads is within
    the memory and its level flows into the load's declared level (line {evaluated["load"]}).
+   An instruction on the table goes on only if the entries it names are within the table.
    An indirect call goes on only if the entry names a function with the expected parameters
    and results whose bound is at least the expected one (line {evaluated["callIndirect"]}).
    A host write goes on only if every byte it takes flows into the descriptor's level
@@ -263,7 +266,7 @@ text:
 | the input not yet read from and the output written to every public channel | the clause on `out` and `inp` |
 | every stack position labelled public | none: a call from outside starts on an empty stack |
 | the same names of files in every directory | none: the core's host has no directories |
-| (not in the paper) | the function table, if it is public; and a data segment that both states still have is the same |
+| (not in the paper) | the function table with its size and limit, if it is public (`State.sameTable`); and a data segment that both states still have is the same |
 
 `Invoke F f a s e`, {at("Statement", r"^inductive Invoke")}: the function `f` called from
 outside on the arguments `a` in the state `s` ends as `e`, by returning results or by an
@@ -347,7 +350,7 @@ segments (`relabelStack`), which do nothing to the values.
 ### Outside the core
 
 More than one value type, and so the numeric and vector instructions as such; 64-bit and
-several memories; several tables, and a table's size and growth; references to exceptions (`exnref`, `throw_ref`, the clauses that hand one out);
+several memories; several tables; references to exceptions (`exnref`, `throw_ref`, the clauses that hand one out);
 linking; the WASI calls other than one that reads and one that writes, with directories,
 error codes and sockets; local variables split into webs and the inference of labels, which
 happen before typing; declassification.
