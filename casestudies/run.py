@@ -119,6 +119,16 @@ STUDIES = {
     "frames": frames_study(),
     "service": service_study(),
 }
+# The checker in Rust (casestudies/password-rust/build.sh, which needs rustc with the target
+# wasm32-wasip1): listed if it has been built.
+if (HERE / "build/password-rust/password.wasm").exists():
+    STUDIES["password-rust"] = [
+        {"name": "password (Rust)", "wasm": "password-rust/password.wasm", "policy": "password-rust/checker.policy", "dirs": PASSWORD_DIRS, "expect": "ran"},
+        # The branch on the verdict calls the allocator, through a function pointer, under a secret pc.
+        {"name": "password-leak-control (Rust)", "wasm": "password-rust/password-leak-control.wasm", "policy": "password-rust/checker.policy", "dirs": PASSWORD_DIRS, "expect": "rejected"},
+        # Formatting the hash reads its digits back from memory, at a load that declares nothing.
+        {"name": "password-leak-memory (Rust)", "wasm": "password-rust/password-leak-memory.wasm", "policy": "password-rust/checker.policy", "dirs": PASSWORD_DIRS, "expect": "trapped"},
+    ]
 
 
 def run(command, **kwargs):

@@ -15,6 +15,7 @@ cabal build all --enable-tests --enable-benchmarks
 ./bench/tools/fetch.sh                      # wasi-sdk 34, wabt, wasm-tools and the other runtimes, into ~/.local/wasm-bench-tools
 ./bench/build.sh && ./bench/c/build.sh && ./bench/c/build-silent.sh     # the kernels, CoreMark and PolyBench
 for study in password service frames polybench secwasm; do ./casestudies/$study/build.sh; done
+rustup target add wasm32-wasip1 && ./casestudies/password-rust/build.sh     # the checker in Rust, optional
 ```
 
 The first build takes about 15 minutes. `wasm-tools` 1.261 or later must be on the `PATH` for

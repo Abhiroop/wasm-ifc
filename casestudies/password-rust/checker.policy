@@ -1,0 +1,15 @@
+; The Rust password checker's policy (casestudies/password-rust/password.rs, built by build.sh).
+preopen /secrets : H           ; files opened here are secret: the password
+preopen /log : L               ; the log shared with the developer is public
+stdout : H                     ; only the user sees the verdict
+; The loads of password::main (function 17) that read what the host stored for the password:
+; how many bytes were read, and the bytes. They are the declarations that the traps name, one
+; per run (casestudies/declare-loads.py). A default for the whole function, as the C checker
+; has, would also make secret the file descriptor that Rust keeps in memory, and with it the
+; call that reads the file.
+load 17 15 : H
+load 17 16 : H
+load 17 17 : H
+load 17 18 : H
+load 17 19 : H
+load 17 20 : H

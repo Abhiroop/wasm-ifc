@@ -71,6 +71,31 @@ What it took, in the order we met it:
    it would need the check removed or folded into branch-free code, or rules that let the host
    and the shadow stack be used under a secret pc (`TODO.md`).
 
+## The password checker in Rust (`password-rust/`)
+
+The same program in Rust, built by `rustc` 1.99.0 for `wasm32-wasip1` with the standard
+library (`password-rust/build.sh`; `rustup target add wasm32-wasip1` first). The module has
+715 functions, most of them the library's.
+
+| Program | Outcome | Policy lines |
+|---|---|---|
+| `password.rs` | runs, prints the verdict, logs `checked 4` | 9 |
+| `--cfg 'feature="leak_control"'` (logs the verdict, chosen by a branch) | rejected: the branch calls the allocator through a function pointer, under a secret pc | 9 |
+| `--cfg 'feature="leak_memory"'` (logs the hash) | traps where the formatting of the hash reads its digits back from memory | 9 |
+
+The source follows the C checker: the standard library opens the two files, the password is
+read and the verdict written by the host's `fd_read` and `fd_write` directly, and the code
+between them does not branch on the password. Nothing in the interpreter had to change.
+
+One thing differs in the policy. The C checker declares the loads of `main` secret with one
+line, `load-default func 11 : H`. In the Rust binary that line also makes secret the file
+descriptor, which Rust keeps in memory where clang kept it in a local variable, and the call
+that reads the file is then rejected (`IllegalFlow "call" High Low`: a secret argument to a
+host function). So the policy declares the six loads that read what the host stored, which
+are the ones that the traps name, one per run (`declare-loads.py`): 3 lines for the channels
+and 6 for the loads. A person who knew the binary could not write fewer without a way to
+declare the loads of an address range that is on the stack.
+
 ## SecWasm's examples and the counterexamples to its printed rules (`secwasm/`)
 
 `secwasm/build.sh` assembles (wabt) the examples of Bastys et al. (Figure 2a, Examples 1–8,

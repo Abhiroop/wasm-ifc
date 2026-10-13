@@ -1076,6 +1076,28 @@ Directories: `test/wasi/testsuite/tests/{c,rust,assemblyscript}/testsuite/wasm32
 `casestudies/build/{password,frames,service,polybench}`, `bench/wasm-t2`. Data:
 `bench/results/2026-10-13-secwasm-shapes.json`.
 
+## A Rust program with secrets (the plan's second list, item 5, 2026-10-13)
+
+The password checker is ported to Rust (`casestudies/password-rust/`), built by the installed
+`rustc` 1.99.0 for `wasm32-wasip1` with the standard library, at `-C opt-level=2`. It took
+about half an hour, and nothing in the interpreter changed.
+
+- **It runs under a policy**: the verdict on the secret standard output, `checked 4` in the
+  public log; also under SecWasm's restrictions. Inference raises three locals of `main`.
+- **The policy has 9 lines, not 4.** The checker's one line for the loads of `main`
+  (`load-default func`) is too coarse for this binary: Rust keeps the file descriptor in
+  memory, so the default makes it secret, and the call of `fd_read` is rejected for a secret
+  argument. Declaring the six loads that the traps name instead works. So "at most five
+  lines" holds of the C programs; with the Rust one the range is two to nine.
+- **Both leaking variants are stopped, earlier than in C.** Logging the verdict by a branch is
+  rejected statically, at an indirect call under a secret pc (the string's growth calls the
+  allocator through a function pointer). Logging the hash traps at a load in the formatting
+  code that reads a secret byte without a declaration. In C both reached `fd_write` and
+  trapped there.
+- **What it shows for the abstract's claim**: one program with secrets from `rustc`, 715
+  functions with the standard library, typed and run. `casestudies/run.py` runs it if it has
+  been built, and the results file of this commit has its three rows.
+
 ## Performance and the clean benchmark (item 9, 2026-10-13)
 
 `BENCHMARKS.md`, last section, has the tables; `bench/results/2026-10-13-c2a3f4b*` the data.
