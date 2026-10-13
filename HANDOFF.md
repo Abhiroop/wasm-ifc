@@ -609,7 +609,7 @@ implemented since e87e76a.
 
 ## Lean: noninterference on a core with control flow, calls and memory (item 12, 2026-10-12)
 
-- **Where:** `lean/` (Lean 4.35.0, no dependencies; `cd lean && lake build`). 5,170 lines in
+- **Where:** `lean/` (Lean 4.35.0, no dependencies; `cd lean && lake build`). 5,383 lines in
   seven files; `lean/README.md` states what is proved and what differs from the paper.
 - **What is proved** (`WasmIfc.tini`, from `WasmIfc.ni`): termination-insensitive
   noninterference for a function of a well-typed module, under the lift-free rules, on a core
@@ -753,6 +753,16 @@ implemented since e87e76a.
     of `LowEq`, with the condition that a kept exception carries as many values as its tag
     says (`ExnOk`). **For the paper:** this is an assumption on the two initial states that
     `def:attacker` does not have; it holds of a new instance, which keeps no exception.
+  - *Opening a file in a directory* (the list of 2026-10-14, item 4): `hostOpen`, which is the
+    paper's Host-Open (appendix B) operand for operand. The state has a descriptor table from
+    descriptors to channels, the names of the files in each directory, and the channel of each
+    file; the two host calls that were there go through the table. The name's bytes must be
+    public or the call traps; the file is opened if the directory has the name or `O_CREAT`
+    is set, as the least free descriptor from 3 on, which is stored as a public value; a new
+    file starts empty; otherwise the status is an error code. `LowEq` has the two clauses of
+    `def:attacker` that it lacked: the same descriptor table and the same names in every
+    directory. The proof does not use that a file has its directory's level, which the paper
+    states of the policy: two runs open the same channel whatever its level.
   - *More of the table, and the indirect tail call* (the same list, item 6): `table.fill`,
     `table.copy` and `return_call_indirect`, with the rules of `ITableFill`, `ITableCopy` and
     `IReturnCallIndirect`. Then `table.size` and `table.grow` (the list of 2026-10-14, item 4),

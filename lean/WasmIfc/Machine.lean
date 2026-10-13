@@ -103,14 +103,26 @@ inductive Basic : Instr → List Nat → State → List Nat → State → Prop w
   | tableSize {σ s} : Basic .tableSize σ s (s.tsize :: σ) s
   | tableGrow {d v σ s} :
       Basic .tableGrow (d :: v :: σ) s ((s.growTbl d (ofRef v)).1 :: σ) (s.growTbl d (ofRef v)).2
-  | hostRead {np k a fd σ s} :
-      a + k ≤ s.size → np < s.size →
+  | hostRead {np k a fd c σ s} :
+      s.fdt fd = some c → a + k ≤ s.size → np < s.size →
       Basic .hostRead (np :: k :: a :: fd :: σ) s σ
-        (((s.put a ((s.inp fd).take k) (s.chan fd)).setMem np ((s.inp fd).take k).length
-          (s.chan fd)).consume fd k)
-  | hostWrite {k a fd σ s} :
-      a + k ≤ s.size → (∀ x, a ≤ x → x < a + k → Lab.le (s.lab x) (s.chan fd)) →
-      Basic .hostWrite (k :: a :: fd :: σ) s σ (s.emit fd (s.cells a k))
+        (((s.put a ((s.inp c).take k) (s.chan c)).setMem np ((s.inp c).take k).length
+          (s.chan c)).consume c k)
+  | hostWrite {k a fd c σ s} :
+      s.fdt fd = some c → a + k ≤ s.size →
+      (∀ x, a ≤ x → x < a + k → Lab.le (s.lab x) (s.chan c)) →
+      Basic .hostWrite (k :: a :: fd :: σ) s σ (s.emit c (s.cells a k))
+  | hostOpen {p o k a fd c d σ s} :
+      s.fdt fd = some c → a + k ≤ s.size → p < s.size →
+      (∀ x, a ≤ x → x < a + k → s.lab x = Lab.L) →
+      (s.cells a k ∈ s.names c ∨ o % 2 = 1) → s.fresh d →
+      Basic .hostOpen (p :: o :: k :: a :: fd :: σ) s (0 :: σ)
+        ((s.openAt c (s.cells a k) d).setMem p d Lab.L)
+  | hostOpenNone {p o k a fd c σ s} :
+      s.fdt fd = some c → a + k ≤ s.size → p < s.size →
+      (∀ x, a ≤ x → x < a + k → s.lab x = Lab.L) →
+      s.cells a k ∉ s.names c → o % 2 ≠ 1 →
+      Basic .hostOpen (p :: o :: k :: a :: fd :: σ) s (noEntry :: σ) s
   | memInit {c b a σ s} (k : Nat) (lm : Lab) :
       a + c ≤ s.size → b + c ≤ (s.segs k).length →
       Basic (.memInit k lm) (c :: b :: a :: σ) s σ (s.put a (((s.segs k).drop b).take c) lm)
@@ -264,7 +276,10 @@ def Config.entry (f : Func) (a : List Nat) (s : State) : Config :=
 theorem Basic.eval {F : List Func} {n : Nat} {ls : List Nat} {i : Instr} {rest : List Instr}
     {σ σ' : List Nat} {s s' : State} {o : Out} (h : Basic i σ s σ' s')
     (he : Eval F n ls rest σ' s' o) : Eval F (n + 1) ls (i :: rest) σ s o := by
-  cases h <;> constructor <;> assumption
+  cases h with
+  | hostOpen h1 h2 h3 h4 h5 h6 => exact .hostOpen h1 h2 h3 h4 h5 h6 he
+  | hostOpenNone h1 h2 h3 h4 h5 h6 => exact .hostOpenNone h1 h2 h3 h4 h5 h6 he
+  | _ => constructor <;> assumption
 
 theorem caught_nil (o : Out) : o.caught [] = o := by
   cases o <;> rfl

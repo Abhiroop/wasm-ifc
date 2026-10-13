@@ -465,6 +465,22 @@ theorem carried_rel {carried rs st : STy} {σ0 σ1 : List Nat} (hfl : SFlows car
 
 /-! ### Noninterference -/
 
+/-- Five public operands are the same in two runs. -/
+theorem five_public {st : STy} {p0 o0 k0 a0 fd0 p1 o1 k1 a1 fd1 : Nat} {σa σb : List Nat}
+    (h : StkRel (Lab.L :: Lab.L :: Lab.L :: Lab.L :: Lab.L :: st)
+      (p0 :: o0 :: k0 :: a0 :: fd0 :: σa) (p1 :: o1 :: k1 :: a1 :: fd1 :: σb)) :
+    p0 = p1 ∧ o0 = o1 ∧ k0 = k1 ∧ a0 = a1 ∧ fd0 = fd1 ∧ StkRel st σa σb := by
+  cases h with
+  | cons hp h =>
+    cases h with
+    | cons ho h =>
+      cases h with
+      | cons hk h =>
+        cases h with
+        | cons ha h =>
+          cases h with
+          | cons hfd h => exact ⟨hp rfl, ho rfl, hk rfl, ha rfl, hfd rfl, h⟩
+
 /--
 What a call does after the callee's body: the rest of the caller's sequence, if the globals the
 callee names hold what they held at the call, or the exception that left the callee.
@@ -813,9 +829,9 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
               exact ⟨hc hli, by rw [hv hlv]⟩
     | hostRead ht' =>
       cases he0 with
-      | hostRead hb0 hn0 he0' =>
+      | hostRead hc0 hb0 hn0 he0' =>
         cases he1 with
-        | hostRead hb1 hn1 he1' =>
+        | hostRead hc1 hb1 hn1 he1' =>
           cases hσ with
           | cons hnp hσa =>
             cases hσa with
@@ -830,6 +846,9 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
                   have e3 := ha rfl
                   have e4 := hfd rfl
                   subst e1 e2 e3 e4
+                  -- the same descriptor table: the same channel
+                  rw [hs.2.2.2.2.2.1.2.2.2.1] at hc0
+                  cases hc0.symm.trans hc1
                   have hchan := hs.2.2.2.2.2.2.1
                   refine ih _ (by omega) hF ht' he0' he1' hσd ?_ (hp.of_glob rfl rfl)
                   rw [← hchan]
@@ -840,9 +859,9 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
                     (fun hl => ⟨rfl, by rw [hin _ hl]⟩)).consume _ _
     | hostWrite ht' =>
       cases he0 with
-      | hostWrite hb0 hchk0 he0' =>
+      | hostWrite hc0 hb0 hchk0 he0' =>
         cases he1 with
-        | hostWrite hb1 hchk1 he1' =>
+        | hostWrite hc1 hb1 hchk1 he1' =>
           cases hσ with
           | cons hk hσa =>
             cases hσa with
@@ -853,8 +872,43 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
                 have e2 := ha rfl
                 have e3 := hfd rfl
                 subst e1 e2 e3
+                rw [hs.2.2.2.2.2.1.2.2.2.1] at hc0
+                cases hc0.symm.trans hc1
                 exact ih _ (by omega) hF ht' he0' he1' hσc (hs.emit hchk0 hchk1)
                   (hp.of_glob rfl rfl)
+    | hostOpen ht' =>
+      -- the arguments are public, and so are the name's bytes in both runs, by the check:
+      -- the two runs look the same name up in the same directory
+      have hhost := hs.2.2.2.2.2.1.2.2.2
+      cases he0 with
+      | hostOpen hc0 hb0 hp0 hl0 hin0 hd0 he0' =>
+        cases he1 with
+        | hostOpen hc1 hb1 hp1 hl1 hin1 hd1 he1' =>
+          obtain ⟨rfl, rfl, rfl, rfl, rfl, hσ'⟩ := five_public hσ
+          rw [hhost.1] at hc0
+          cases hc0.symm.trans hc1
+          cases State.fresh_same hhost.1 hd0 hd1
+          have hx := hs.cells_public hl0 hl1
+          rw [hx] at he0'
+          exact ih _ (by omega) hF ht' he0' he1' (.cons (fun _ => rfl) hσ')
+            ((hs.openAt _ _ _).setMem (fun _ => ⟨rfl, rfl⟩)) (hp.of_glob rfl rfl)
+        | hostOpenNone hc1 hb1 hp1 hl1 hin1 ho1 he1' =>
+          obtain ⟨rfl, rfl, rfl, rfl, rfl, hσ'⟩ := five_public hσ
+          rw [hhost.1] at hc0
+          cases hc0.symm.trans hc1
+          rw [hs.cells_public hl0 hl1, hhost.2.1] at hin0
+          exact absurd hin0 (fun h => h.elim hin1 ho1)
+      | hostOpenNone hc0 hb0 hp0 hl0 hin0 ho0 he0' =>
+        cases he1 with
+        | hostOpen hc1 hb1 hp1 hl1 hin1 hd1 he1' =>
+          obtain ⟨rfl, rfl, rfl, rfl, rfl, hσ'⟩ := five_public hσ
+          rw [hhost.1] at hc0
+          cases hc0.symm.trans hc1
+          rw [hs.cells_public hl0 hl1, hhost.2.1] at hin0
+          exact absurd hin1 (fun h => h.elim hin0 ho0)
+        | hostOpenNone hc1 hb1 hp1 hl1 hin1 ho1 he1' =>
+          obtain ⟨rfl, rfl, rfl, rfl, rfl, hσ'⟩ := five_public hσ
+          exact ih _ (by omega) hF ht' he0' he1' (.cons (fun _ => rfl) hσ') hs hp
     | memInit k lm hle ht' =>
       cases he0 with
       | memInit _ _ hb0 hs0 he0' =>
@@ -1587,7 +1641,7 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
           | cons hr hσ' =>
             -- a public reference under a public pc: the same one, to the same kept exception
             have hpe : PresEq C s0 s1 := hp.resolve_right (fun h => absurd h.head (by decide))
-            have hok := hs.2.2.2.2.2.1.2.2 _ (List.mem_of_getElem? h0)
+            have hok := hs.2.2.2.2.2.1.2.2.1 _ (List.mem_of_getElem? h0)
             cases hr rfl
             rw [hs.2.2.2.2.2.1.2.1] at h0
             cases h0.symm.trans h1

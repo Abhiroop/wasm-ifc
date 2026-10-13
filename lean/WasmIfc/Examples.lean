@@ -349,4 +349,30 @@ example (s : State) :
     (.label (fun _ h => nomatch h)))) <|
   .stop (.throwRef (i := 0) rfl (.pastCall .escaped))
 
+/-- Open the file with the empty name in the directory of descriptor 3, making it if need be. -/
+def opener : Func where
+  ty := ⟨[], Lab.L, [Lab.L]⟩
+  extra := []
+  keep := []
+  body := [.const 3, .const 0, .const 0, .const 1, .const 0, .hostOpen]
+
+/--
+The run, from a state where descriptor 3 is to the channel 9 and descriptor 4 is free: the
+status is 0, and descriptor 4 is to the file of that name in that directory.
+-/
+example (s : State) (hdir : s.fdt 3 = some 9) (hfree : s.fdt 4 = none) (hsize : 0 < s.size) :
+    ∃ t, Runs [opener] (Config.entry opener [] s) (.returned [0] t) ∧
+      t.fdt 4 = some (s.file 9 []) := by
+  have hfresh : State.fresh { s with loc := frame [] } 4 :=
+    ⟨by decide, hfree, fun j h1 h2 => by
+      have hj : j = 3 := by omega
+      subst hj
+      simp [hdir]⟩
+  refine ⟨_, .go (.basic (.const 3)) <| .go (.basic (.const 0)) <| .go (.basic (.const 0)) <|
+    .go (.basic (.const 1)) <| .go (.basic (.const 0)) <|
+    .go (.basic (.hostOpen (c := 9) (d := 4) hdir (Nat.zero_le _) hsize
+      (fun x h1 h2 => absurd h2 (by omega)) (.inr rfl) hfresh)) <|
+    .go (.endCall nothingKept) <| .stop .done, ?_⟩
+  simp [State.openAt, State.setMem, State.cells]
+
 end WasmIfc

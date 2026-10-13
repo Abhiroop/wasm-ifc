@@ -5,8 +5,8 @@ typing rules of this repository on a core of WebAssembly: blocks, loops and cond
 parameters and results, `br`, `br_if`, `br_table` and `return`, direct calls, indirect calls,
 calls through a reference and tail calls, direct and indirect, of the module's functions (recursion included), a bounded memory whose bytes carry a level, with loads and stores of several bytes, data segments (`memory.init`, `data.drop`),
 SecWasm's run-time check on loads, `memory.size`, `memory.grow`, `memory.fill` and
-`memory.copy`, a function table with a level, a size and a limit (`table.get`, `table.set`, `table.fill`, `table.copy`, `table.size`, `table.grow`), a host that reads
-from and writes to descriptors with levels, local and global
+`memory.copy`, a function table with a level, a size and a limit (`table.get`, `table.set`, `table.fill`, `table.copy`, `table.size`, `table.grow`), a host that reads from and writes to
+descriptors of channels with levels and opens files in directories (`path_open`), local and global
 variables with `local.tee`, exceptions (`throw`, `throw_ref` and `try_table` with its four kinds
 of clause, so references to exceptions), preserved globals with
 their run-time comparison, and arithmetic on one value type. It has no `sorry`, and its

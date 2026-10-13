@@ -100,6 +100,8 @@ inductive Instr where
   | hostRead
   /-- a host call that writes cells of the memory to a descriptor -/
   | hostWrite
+  /-- a host call that opens a file in a directory, as a new descriptor (`path_open`) -/
+  | hostOpen
   /-- `fill lm`: write one value to a range of cells and label them `lm` -/
   | fill (lm : Lab)
   /-- `copy lm`: copy a range of cells; each keeps its level, raised by `lm` -/
@@ -289,6 +291,15 @@ inductive Typed (C : Ctx) : List STy → List Instr → Pcs → STy → Pcs → 
   | hostWrite {Ls rest Pr st P' st'} :
       Typed C Ls rest (Lab.L :: Pr) st P' st' →
       Typed C Ls (.hostWrite :: rest) (Lab.L :: Pr) (Lab.L :: Lab.L :: Lab.L :: st) P' st'
+  /--
+  Opening a file is a host call: under a public pc, with public arguments (where to put the new
+  descriptor, the open flags, the length and the address of the name, the directory's
+  descriptor). Its status is public. The name's bytes are checked at run time to be public.
+  -/
+  | hostOpen {Ls rest Pr st P' st'} :
+      Typed C Ls rest (Lab.L :: Pr) (Lab.L :: st) P' st' →
+      Typed C Ls (.hostOpen :: rest) (Lab.L :: Pr)
+        (Lab.L :: Lab.L :: Lab.L :: Lab.L :: Lab.L :: st) P' st'
   /-- `memory.init`: as `memory.fill`, with the segment's bytes for the value. A segment is public. -/
   | memInit {Ls rest pc Pr ln lsrc ld st P' st'} (k : Nat) (lm : Lab) :
       Lab.le (pc.join (ln.join (lsrc.join ld))) lm →
@@ -477,16 +488,22 @@ structure State where
   tcap : Nat
   size : Nat
   cap : Nat
-  /-- the level of each descriptor of the host -/
+  /-- the level of each channel of the host: a stream, a directory, a file -/
   chan : Nat → Lab
-  /-- what has been written to each descriptor, the latest first -/
+  /-- what has been written to each channel, the latest first -/
   out : Nat → List Nat
-  /-- what is left to read from each descriptor -/
+  /-- what is left to read from each channel -/
   inp : Nat → List Nat
   /-- the data segments; a dropped one is empty -/
   segs : Nat → List Nat
   /-- the exceptions kept for the references to them: reference `i + 1` is to the `i`-th -/
   exns : List (Nat × List Nat)
+  /-- the descriptor table: the channel each open descriptor is to -/
+  fdt : Nat → Option Nat
+  /-- the names of the files in each directory; a directory is a channel -/
+  names : Nat → List (List Nat)
+  /-- the channel of the file with a name in a directory -/
+  file : Nat → List Nat → Nat
 
 /-- Two states have the same table: its entries, its size and its limit. -/
 def State.sameTable (s t : State) : Prop := s.tbl = t.tbl ∧ s.tsize = t.tsize ∧ s.tcap = t.tcap
@@ -496,6 +513,16 @@ theorem State.sameTable.symm {s t : State} (h : s.sameTable t) : t.sameTable s :
 
 theorem State.sameTable.trans {s t u : State} (h1 : s.sameTable t) (h2 : t.sameTable u) :
     s.sameTable u :=
+  ⟨h1.1.trans h2.1, h1.2.1.trans h2.2.1, h1.2.2.trans h2.2.2⟩
+
+/-- Two states have the same descriptor table and the same names of files in every directory. -/
+def State.sameHost (s t : State) : Prop := s.fdt = t.fdt ∧ s.names = t.names ∧ s.file = t.file
+
+theorem State.sameHost.symm {s t : State} (h : s.sameHost t) : t.sameHost s :=
+  ⟨h.1.symm, h.2.1.symm, h.2.2.symm⟩
+
+theorem State.sameHost.trans {s t u : State} (h1 : s.sameHost t) (h2 : t.sameHost u) :
+    s.sameHost u :=
   ⟨h1.1.trans h2.1, h1.2.1.trans h2.2.1, h1.2.2.trans h2.2.2⟩
 
 /-- The exceptions a state keeps for the references to them carry what their tags say. -/
@@ -573,6 +600,23 @@ def State.cells (s : State) (a k : Nat) : List Nat := (List.range k).map (fun i 
 /-- Write the values `vs` to the descriptor `fd`. -/
 def State.emit (s : State) (fd : Nat) (vs : List Nat) : State :=
   { s with out := fun d => if d = fd then vs ++ s.out d else s.out d }
+
+/-- The status of a host call that found no file of the name it was given. -/
+def noEntry : Nat := 44
+
+/-- The descriptor a newly opened file gets: the least from 3 on that the table does not have. -/
+def State.fresh (s : State) (d : Nat) : Prop :=
+  3 ≤ d ∧ s.fdt d = none ∧ ∀ j, 3 ≤ j → j < d → s.fdt j ≠ none
+
+/--
+Open the file named `x` in the directory `c` as the descriptor `d`. A name that the directory
+does not have is added to it, and its file starts with nothing to read and nothing written.
+-/
+def State.openAt (s : State) (c : Nat) (x : List Nat) (d : Nat) : State :=
+  { s with fdt := fun j => if j = d then some (s.file c x) else s.fdt j,
+           names := fun k => if k = c ∧ x ∉ s.names c then x :: s.names c else s.names k,
+           inp := fun k => if k = s.file c x ∧ x ∉ s.names c then [] else s.inp k,
+           out := fun k => if k = s.file c x ∧ x ∉ s.names c then [] else s.out k }
 
 /-- What `memory.grow` gives when the memory cannot grow. -/
 def growFailed : Nat := 0xFFFFFFFF
@@ -766,20 +810,44 @@ inductive Eval (F : List Func) : Nat → List Nat → List Instr → List Nat �
       Eval F n ls rest σ (s.setTbl c (ofRef v)) o →
       Eval F (n + 1) ls (.tableSet :: rest) (v :: c :: σ) s o
   /--
-  Read at most `k` values from the descriptor `fd` into the cells from `a`, and how many they
-  were into the cell `np`: all of it at the descriptor's level.
+  Read at most `k` values from the channel `c` of the descriptor `fd` into the cells from `a`,
+  and how many they were into the cell `np`: all of it at the channel's level. A descriptor
+  that the table does not have is a trap.
   -/
-  | hostRead {n ls rest np k a fd σ s o} :
-      a + k ≤ s.size → np < s.size →
+  | hostRead {n ls rest np k a fd c σ s o} :
+      s.fdt fd = some c → a + k ≤ s.size → np < s.size →
       Eval F n ls rest σ
-        (((s.put a ((s.inp fd).take k) (s.chan fd)).setMem np ((s.inp fd).take k).length
-          (s.chan fd)).consume fd k) o →
+        (((s.put a ((s.inp c).take k) (s.chan c)).setMem np ((s.inp c).take k).length
+          (s.chan c)).consume c k) o →
       Eval F (n + 1) ls (.hostRead :: rest) (np :: k :: a :: fd :: σ) s o
-  /-- Write the `k` cells from `a` to the descriptor `fd`: a trap if one is more secret than it. -/
-  | hostWrite {n ls rest k a fd σ s o} :
-      a + k ≤ s.size → (∀ x, a ≤ x → x < a + k → Lab.le (s.lab x) (s.chan fd)) →
-      Eval F n ls rest σ (s.emit fd (s.cells a k)) o →
+  /--
+  Write the `k` cells from `a` to the channel `c` of the descriptor `fd`: a trap if one is more
+  secret than it.
+  -/
+  | hostWrite {n ls rest k a fd c σ s o} :
+      s.fdt fd = some c → a + k ≤ s.size →
+      (∀ x, a ≤ x → x < a + k → Lab.le (s.lab x) (s.chan c)) →
+      Eval F n ls rest σ (s.emit c (s.cells a k)) o →
       Eval F (n + 1) ls (.hostWrite :: rest) (k :: a :: fd :: σ) s o
+  /--
+  Open the file whose name is the `k` cells from `a`, in the directory `c` of the descriptor
+  `fd`: a trap if a byte of the name is secret. If the directory has the name, or the flags
+  `o` ask for the file to be made (`O_CREAT`, their lowest bit), the new descriptor is put in
+  the cell `p` as a public value and the status is 0.
+  -/
+  | hostOpen {n ls rest p o k a fd c d σ s out} :
+      s.fdt fd = some c → a + k ≤ s.size → p < s.size →
+      (∀ x, a ≤ x → x < a + k → s.lab x = Lab.L) →
+      (s.cells a k ∈ s.names c ∨ o % 2 = 1) → s.fresh d →
+      Eval F n ls rest (0 :: σ) ((s.openAt c (s.cells a k) d).setMem p d Lab.L) out →
+      Eval F (n + 1) ls (.hostOpen :: rest) (p :: o :: k :: a :: fd :: σ) s out
+  /-- Otherwise nothing is opened, and the status says so. -/
+  | hostOpenNone {n ls rest p o k a fd c σ s out} :
+      s.fdt fd = some c → a + k ≤ s.size → p < s.size →
+      (∀ x, a ≤ x → x < a + k → s.lab x = Lab.L) →
+      s.cells a k ∉ s.names c → o % 2 ≠ 1 →
+      Eval F n ls rest (noEntry :: σ) s out →
+      Eval F (n + 1) ls (.hostOpen :: rest) (p :: o :: k :: a :: fd :: σ) s out
   /-- A trap if the bytes asked for are not in the segment, which is so of any byte of a dropped one. -/
   | memInit {n ls rest c b a σ s o} (k : Nat) (lm : Lab) :
       a + c ≤ s.size → b + c ≤ (s.segs k).length →

@@ -87,6 +87,7 @@ RULES = [
     ("tableGrow", "`ITableGrow`", "tables", ""),
     ("hostRead", "a call of a host import that reads (`HostFunc`), with the driver's labelling", "W-Host", "one call stands for the reading ones"),
     ("hostWrite", "a call of a host import that writes, with the driver's check", "W-Host", "one call stands for the writing ones"),
+    ("hostOpen", "the host function `PathOpen` (`Runtime.Host`), which is not an instruction", "appendix B, Host-Open", "`path_open` with the operands of the paper's `host.open`"),
     ("block", "`IBlock`", "W-Block", "with `Restores`, the comparison of preserved globals"),
     ("loop", "`ILoop`", "W-Loop", "with `Restores`"),
     ("iter", "none: the iterations of a loop's body", "none", "no program contains it; the loop's rule types the body, and this one says the same of its iterations"),
@@ -211,7 +212,8 @@ call through a reference ask that of the type they expect, which is where the pr
 ## 4. States and semantics
 
 `State`, {at("Defs", r"^structure State")}: the locals, the globals, the memory as bytes with a
-level each, its size and limit, the function table with its size and limit, the levels of the host's descriptors, what
+level each, its size and limit, the function table with its size and limit, the levels of the host's channels (a stream, a directory, a file), the descriptor table, the
+names of the files in each directory, what
 was written to each and what is left to read from each, the data segments, and the
 exceptions kept for the references to them.
 
@@ -234,8 +236,9 @@ text:
    An instruction on the table goes on only if the entries it names are within the table.
    An indirect call goes on only if the entry names a function with the expected parameters
    and results whose bound is at least the expected one (line {evaluated["callIndirect"]}).
-   A host write goes on only if every byte it takes flows into the descriptor's level
-   (line {evaluated["hostWrite"]}). These are the paper's hybrid checks.
+   A host write goes on only if every byte it takes flows into the level of the descriptor's
+   channel (line {evaluated["hostWrite"]}), and a file is opened only if every byte of its
+   name is public (line {evaluated["hostOpen"]}). These are the paper's hybrid checks.
 3. **The comparison of preserved globals is a premise too** (`Kept`,
    {at("Defs", r"^def Kept")}): where control comes out of a block, a loop, a conditional or a
    `try_table` by its end or by a branch to its label, and where a call returns, the globals
@@ -264,10 +267,10 @@ text:
 | agree on every public global | second clause |
 | agree on every byte of memory labelled public in both | third clause |
 | memories of the same size | `s.size = t.size`, and the same limit |
-| the same table of descriptors | `s.chan = t.chan`: the descriptors' levels |
+| the same table of descriptors | `s.sameHost t`: the descriptor table (`fdt`), and `s.chan = t.chan`: the channels' levels |
 | the input not yet read from and the output written to every public channel | the clause on `out` and `inp` |
 | every stack position labelled public | none: a call from outside starts on an empty stack |
-| the same names of files in every directory | none: the core's host has no directories |
+| the same names of files in every directory | `s.sameHost t`: `names`, and the function that gives a file its channel (`file`) |
 | (not in the paper) | the function table with its size and limit, if it is public (`State.sameTable`); a data segment that both states still have is the same; the two states keep the same exceptions for the references to them, and these carry as many values as their tags say (`ExnOk`), which holds of a new instance, which keeps none |
 
 `Invoke F f a s e`, {at("Statement", r"^inductive Invoke")}: the function `f` called from
@@ -356,8 +359,8 @@ instruction that compares two references to exceptions.
 
 More than one value type, and so the numeric and vector instructions as such; 64-bit and
 several memories; several tables;
-linking; the WASI calls other than one that reads and one that writes, with directories,
-error codes and sockets; local variables split into webs and the inference of labels, which
+linking; the WASI calls other than one that reads, one that writes and one that opens a file
+in a directory, the error codes but the one for a missing file, and sockets; local variables split into webs and the inference of labels, which
 happen before typing; declassification.
 """
     (HERE / "STATEMENTS.md").write_text(text)
