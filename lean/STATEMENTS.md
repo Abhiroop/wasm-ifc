@@ -4,13 +4,13 @@ For a reviewer who checks the definitions and the statement and leaves the proof
 `lake build` checks every proof, and `#print axioms WasmIfc.machine_noninterference` lists
 `propext`, `Classical.choice` and `Quot.sound` only. So what remains to be checked by a person
 is that the definitions say what the paper says, and that the machine of the last section is
-the implementation's. They are in three files, 1071, 120
-and 588 lines long, of the development's 6,074:
+the implementation's. They are in three files, 1110, 121
+and 593 lines long, of the development's 6,274:
 
 - `WasmIfc/Defs.lean`: the syntax, the typing judgment, the states and the semantics.
 - `WasmIfc/Statement.lean`: low equivalence, a call from outside, and the theorem.
 - `WasmIfc/Machine.lean`: the small-step machine, down to `Config.entry`
-  (`Machine.lean:281`), and the two theorems at its end. What is between
+  (`Machine.lean:286`), and the two theorems at its end. What is between
   is proof.
 
 The other files (`Basic.lean`, `Confinement.lean`, `Noninterference.lean`) are lemmas and
@@ -39,19 +39,19 @@ comment names. Three things are not WebAssembly's syntax:
   instruction (`Restores`), and the compared globals are all the preserved ones.
 - `iter` is not an instruction of any program (section 4 below).
 
-`Func` (`Defs.lean:162`) is a function: its type, the levels of its other
+`Func` (`Defs.lean:166`) is a function: its type, the levels of its other
 locals, the globals compared at its return, and its body. `FuncTy`
-(`Defs.lean:162`) is the paper's labelled function type: parameters, the
+(`Defs.lean:166`) is the paper's labelled function type: parameters, the
 bound on the pc of its callers, results.
 
 ## 3. The typing judgment
 
-`Typed C Ls e P st P' st'`, `Defs.lean:208`, is the paper's judgment of
+`Typed C Ls e P st P' st'`, `Defs.lean:212`, is the paper's judgment of
 appendix B, "The Rules of SecWasm+": under the labels `Ls` (innermost first), the sequence `e` takes the pc
 stack `P` and the current block's segment `st` to `P'` and `st'`. Each rule types one
 instruction followed by the rest of its sequence, so the paper's T+-Seq is built into every
-rule. `Ctx` (`Defs.lean:171`) has the levels of the locals and the globals,
-which globals are preserved, the function types, the level of the table and the tags.
+rule. `Ctx` (`Defs.lean:175`) has the levels of the locals and the globals,
+which globals are preserved, the function types, the level of each table and the tags.
 
 Check each rule against the constructor of `Syntax.Instructions.Instr` and the paper's rule in
 the table. The Lean rules are the lift-free ones: no rule raises the label of a value that was
@@ -59,59 +59,61 @@ on the stack before a branch.
 
 | Lean rule | Line | Semantics (lines) | `Instr` constructor | Paper's rule | Note |
 |---|---:|---|---|---|---|
-| `nil` | 209 | 799 | `INil`, the end of a sequence | T+-Seq |  |
-| `const` | 210 | 800 | `IConst` | T+-Const |  |
-| `binop` | 213 | 802 | `IAdd` and the other operations on two values | T+-Binop | one rule for all of them |
-| `unop` | 216 | 804 | the operations on one value, `IRefIsNull` among them | as T+-Binop |  |
-| `partialBinop` | 220 | 806 | `IDiv`, `IRem` | T+-Binop | the operation is a partial function, and where it is not defined the instruction traps |
-| `partialUnop` | 223 | 809 | `IConvert` with a truncation that traps | as T+-Binop | as `partialBinop` |
-| `dup` | 226 | 812 | `IDuplicate` | none | written by the elaborator for `br_on_null` |
-| `select` | 229 | 814 | `ISelect` | T+-Select |  |
-| `drop` | 232 | 817 | `IDrop` | T+-Drop |  |
-| `nop` | 235 | 819 | `INop` | T+-Nop |  |
-| `relabel` | 238 | 821 | `IRelabelResults` | T+-Relabel-Results | raises labels of the block's whole segment |
-| `localGet` | 242 | 823 | `ILocalGet` | T+-Get-Local |  |
-| `localSet` | 245 | 825 | `ILocalSet` | T+-Set-Local |  |
-| `localTee` | 249 | 827 | `ILocalTee` | as T+-Set-Local |  |
-| `globalGet` | 253 | 830 | `IGlobalGet` | as T+-Get-Local |  |
-| `globalSet` | 256 | 832 | `IGlobalSet` | T+-Set-Global | for a global that is not preserved |
-| `globalSetPreserved` | 264 | 832 | `IGlobalSetPreserved` | T+-Set-Global-Preserved | the same instruction, for a preserved global |
-| `load` | 268 | 834 | `ILoad`, `ILoadN` | T+-Load | the level is the load's declaration; the check is in the semantics |
-| `store` | 271 | 837 | `IStore`, `IStoreN` | T+-Store | the level is at least the join, where the implementation takes the join |
-| `fill` | 276 | 841 | `IMemFill` | T+-Memory-Fill |  |
-| `copy` | 284 | 845 | `IMemCopy` | T+-Memory-Copy |  |
-| `copyTo` | 289 | 849 | `IMemCopy` with two memories | T+-Memory-Copy | from the memory to the second one |
-| `copyFrom` | 293 | 853 | `IMemCopy` with two memories | T+-Memory-Copy | from the second memory |
-| `memInit` | 328 | 905 | `IMemInit` | as T+-Memory-Copy |  |
-| `dataDrop` | 333 | 909 | `IDataDrop` | in the text: no premise |  |
-| `memSize` | 356 | 924 | `IMemSize` | as T+-Const |  |
-| `memGrow` | 360 | 926 | `IMemGrow` | T+-Memory-Grow |  |
-| `tableGet` | 298 | 857 | `ITableGet` | T+-Table-Get | one table |
-| `tableSet` | 302 | 861 | `ITableSet` | T+-Table-Set |  |
-| `tableFill` | 337 | 911 | `ITableFill` | as T+-Table-Set | with the count |
-| `tableCopy` | 342 | 915 | `ITableCopy` | as T+-Table-Set | one table, so the source's level is the table's |
-| `tableSize` | 347 | 919 | `ITableSize` | T+-Table-Size |  |
-| `tableGrow` | 351 | 921 | `ITableGrow` | T+-Table-Grow |  |
-| `hostRead` | 311 | 870 | a call of a host import that reads (`HostFunc`), with the driver's labelling | T+-Call | the paper types a call of a host import by its rule for calls; one instruction stands for the reading ones |
-| `hostWrite` | 315 | 880 | a call of a host import that writes, with the driver's check | T+-Call | one instruction stands for the writing ones |
-| `hostOpen` | 323 | 891, 898 | the host function `PathOpen` (`Runtime.Host`), which is not an instruction | T+-Call | `path_open` |
-| `block` | 365 | 929, 934 | `IBlock` | T+-Block | with `Restores`, the comparison of preserved globals |
-| `loop` | 371 | 938, 944 | `ILoop` | T+-Loop | with `Restores` |
-| `iter` | 381 | 949, 953, 958, 961, 964 | none: the iterations of a loop's body | none | no program contains it; the loop's rule types the body, and this one says the same of its iterations |
-| `ite` | 385 | 967, 973 | `IIf` | T+-If | with `Restores` |
-| `br` | 391 | 977 | `IBr` | T+-Br |  |
-| `brIf` | 395 | 979, 981 | `IBrIf` | T+-Br-If | not taken, the carried values keep their labels |
-| `brTable` | 400 | 983 | `IBrTable` | T+-Br-Table | the repaired rule |
-| `ret` | 405 | 986 | `IReturn` | T+-Return | the branch to the outermost label |
-| `call` | 410 | 990, 1029 | `ICall` | T+-Call |  |
-| `retCall` | 419 | 1004, 1010 | `IReturnCall` | T+-Return-Call |  |
-| `retCallIndirect` | 434 | 1015, 1022 | `IReturnCallIndirect` | T+-Call-Indirect with the premises of T+-Return-Call |  |
-| `callIndirect` | 429 | 996, 1034 | `ICallIndirect` | T+-Call-Indirect | the table's level is in the premise |
-| `callRef` | 443 | 1042, 1049 | `ICallRef` | T+-Call-Ref |  |
-| `unreachable` | 447 | none: a trap | `IUnreachable` | T+-Unreachable |  |
-| `throw` | 450 | 1056 | `IThrow` | T+-Throw | a tag is the number of public values it carries |
-| `throwRef` | 454 | 1058 | `IThrowRef` | T+-Throw-Ref | the reference is to an exception the state keeps |
-| `tryTable` | 460 | 1060, 1066 | `ITryTable` | T+-Try-Table |  |
+| `nil` | 213 | 831 | `INil`, the end of a sequence | T+-Seq |  |
+| `const` | 214 | 832 | `IConst` | T+-Const |  |
+| `binop` | 217 | 834 | `IAdd` and the other operations on two values | T+-Binop | one rule for all of them |
+| `unop` | 220 | 836 | the operations on one value, `IRefIsNull` among them | as T+-Binop |  |
+| `partialBinop` | 224 | 838 | `IDiv`, `IRem` | T+-Binop | the operation is a partial function, and where it is not defined the instruction traps |
+| `partialUnop` | 227 | 841 | `IConvert` with a truncation that traps | as T+-Binop | as `partialBinop` |
+| `dup` | 230 | 844 | `IDuplicate` | none | written by the elaborator for `br_on_null` |
+| `select` | 233 | 846 | `ISelect` | T+-Select |  |
+| `drop` | 236 | 849 | `IDrop` | T+-Drop |  |
+| `nop` | 239 | 851 | `INop` | T+-Nop |  |
+| `relabel` | 242 | 853 | `IRelabelResults` | T+-Relabel-Results | raises labels of the block's whole segment |
+| `localGet` | 246 | 855 | `ILocalGet` | T+-Get-Local |  |
+| `localSet` | 249 | 857 | `ILocalSet` | T+-Set-Local |  |
+| `localTee` | 253 | 859 | `ILocalTee` | as T+-Set-Local |  |
+| `globalGet` | 257 | 862 | `IGlobalGet` | as T+-Get-Local |  |
+| `globalSet` | 260 | 864 | `IGlobalSet` | T+-Set-Global | for a global that is not preserved |
+| `globalSetPreserved` | 268 | 864 | `IGlobalSetPreserved` | T+-Set-Global-Preserved | the same instruction, for a preserved global |
+| `load` | 272 | 866 | `ILoad`, `ILoadN` | T+-Load | the level is the load's declaration; the check is in the semantics |
+| `store` | 275 | 869 | `IStore`, `IStoreN` | T+-Store | the level is at least the join, where the implementation takes the join |
+| `fill` | 280 | 873 | `IMemFill` | T+-Memory-Fill |  |
+| `copy` | 288 | 877 | `IMemCopy` | T+-Memory-Copy |  |
+| `copyTo` | 293 | 881 | `IMemCopy` with two memories | T+-Memory-Copy | from the memory to the second one |
+| `copyFrom` | 297 | 885 | `IMemCopy` with two memories | T+-Memory-Copy | from the second memory |
+| `memInit` | 332 | 937 | `IMemInit` | as T+-Memory-Copy |  |
+| `dataDrop` | 337 | 941 | `IDataDrop` | in the text: no premise |  |
+| `memSize` | 372 | 963 | `IMemSize` | as T+-Const |  |
+| `memGrow` | 376 | 965 | `IMemGrow` | T+-Memory-Grow |  |
+| `tableGet` | 302 | 889 | `ITableGet` | T+-Table-Get | the table is an index, and each table has a level |
+| `tableSet` | 306 | 893 | `ITableSet` | T+-Table-Set |  |
+| `tableFill` | 341 | 943 | `ITableFill` | as T+-Table-Set | with the count |
+| `tableInit` | 363 | 957 | `ITableInit` | as T+-Table-Set | with the count and the place in the element segment, which is public |
+| `elemDrop` | 368 | 961 | `IElemDrop` | none | no premise, as `data.drop` |
+| `tableCopy` | 349 | 947 | `ITableCopy` | as T+-Table-Set | between two tables: the level of the table copied from is in the premise too |
+| `tableSize` | 354 | 951 | `ITableSize` | T+-Table-Size |  |
+| `tableGrow` | 358 | 953 | `ITableGrow` | T+-Table-Grow |  |
+| `hostRead` | 315 | 902 | a call of a host import that reads (`HostFunc`), with the driver's labelling | T+-Call | the paper types a call of a host import by its rule for calls; one instruction stands for the reading ones |
+| `hostWrite` | 319 | 912 | a call of a host import that writes, with the driver's check | T+-Call | one instruction stands for the writing ones |
+| `hostOpen` | 327 | 923, 930 | the host function `PathOpen` (`Runtime.Host`), which is not an instruction | T+-Call | `path_open` |
+| `block` | 381 | 968, 973 | `IBlock` | T+-Block | with `Restores`, the comparison of preserved globals |
+| `loop` | 387 | 977, 983 | `ILoop` | T+-Loop | with `Restores` |
+| `iter` | 397 | 988, 992, 997, 1000, 1003 | none: the iterations of a loop's body | none | no program contains it; the loop's rule types the body, and this one says the same of its iterations |
+| `ite` | 401 | 1006, 1012 | `IIf` | T+-If | with `Restores` |
+| `br` | 407 | 1016 | `IBr` | T+-Br |  |
+| `brIf` | 411 | 1018, 1020 | `IBrIf` | T+-Br-If | not taken, the carried values keep their labels |
+| `brTable` | 416 | 1022 | `IBrTable` | T+-Br-Table | the repaired rule |
+| `ret` | 421 | 1025 | `IReturn` | T+-Return | the branch to the outermost label |
+| `call` | 426 | 1029, 1068 | `ICall` | T+-Call |  |
+| `retCall` | 435 | 1043, 1049 | `IReturnCall` | T+-Return-Call |  |
+| `retCallIndirect` | 450 | 1054, 1061 | `IReturnCallIndirect` | T+-Call-Indirect with the premises of T+-Return-Call |  |
+| `callIndirect` | 445 | 1035, 1073 | `ICallIndirect` | T+-Call-Indirect | the table's level is in the premise |
+| `callRef` | 459 | 1081, 1088 | `ICallRef` | T+-Call-Ref |  |
+| `unreachable` | 463 | none: a trap | `IUnreachable` | T+-Unreachable |  |
+| `throw` | 466 | 1095 | `IThrow` | T+-Throw | a tag is the number of public values it carries |
+| `throwRef` | 470 | 1097 | `IThrowRef` | T+-Throw-Ref | the reference is to an exception the state keeps |
+| `tryTable` | 476 | 1099, 1105 | `ITryTable` | T+-Try-Table |  |
 
 The paper's rules are named T+-Block and so on (its figures `fig:wrules`, `fig:wrules2` and
 `fig:wrules3`). Where the column says "as" a rule, the paper prints no rule for the instruction
@@ -121,10 +123,10 @@ host's part of the call in their rules.
 
 Two side definitions carry premises:
 
-- `Restores C pcEnd after keep` (`Defs.lean:199`): either the pc does not drop
+- `Restores C pcEnd after keep` (`Defs.lean:203`): either the pc does not drop
   where the construct ends (`pcEnd` flows into the first pc of `after`), or `keep` has every
   preserved global. Convince yourself that this is `Validation.Shape.Restores`.
-- `ClauseOk` (`Defs.lean:186`): a clause of a `try_table` names a label whose
+- `ClauseOk` (`Defs.lean:190`): a clause of a `try_table` names a label whose
   type has as many values as its tag carries, or none for a clause that catches everything.
 
 What the Lean rules leave out of the paper's: value types, and with them T+-Relabel, which
@@ -132,7 +134,7 @@ raises the label of one value (`relabel` here is T+-Relabel-Results, on the whol
 The premises that the paper prints in brackets are the witnesses of the Haskell constructors,
 and each is a premise of the Lean rule.
 
-`WellTyped C F` (`Defs.lean:493`) is the paper's rule for functions, for every
+`WellTyped C F` (`Defs.lean:509`) is the paper's rule for functions, for every
 function of the module: its body is typed under the one label of the function, from an empty
 segment, at the function's bound; and either it ends under a public pc or the function
 compares every preserved global at its return (`Validation.Shape.ReturnsWith`). It does not
@@ -142,56 +144,56 @@ call through a reference ask that of the type they expect, which is where the pr
 
 ## 4. States and semantics
 
-`State`, `Defs.lean:503`: the locals, the globals, the memory as bytes with a
-level each, its size and limit, a second memory of a fixed size, the function table with its size and limit, the levels of the host's channels (a stream, a directory, a file), the descriptor table, the
+`State`, `Defs.lean:519`: the locals, the globals, the memory as bytes with a
+level each, its size and limit, a second memory of a fixed size, the tables, each with its size and limit, the element segments, the levels of the host's channels (a stream, a directory, a file), the descriptor table, the
 names of the files in each directory, what
 was written to each and what is left to read from each, the data segments, and the
 exceptions kept for the references to them.
 
-`Eval F n ls e σ s o`, `Defs.lean:798`: in the module `F`, with enclosing
+`Eval F n ls e σ s o`, `Defs.lean:830`: in the module `F`, with enclosing
 labels of arities `ls`, the sequence `e` on the segment `σ` and the state `s` ends as `o`. `n`
 is the size of the derivation and nothing else. An outcome (`Out`,
-`Defs.lean:691`) is the end of the sequence, a branch to an enclosing label
+`Defs.lean:723`) is the end of the sequence, a branch to an enclosing label
 with the values it carries, or an exception that nothing in the sequence caught. A trap is the
 absence of a rule, and so is a run that does not terminate. An operation that traps on some
 operands (`partialBinop`, `partialUnop`) is a partial function, and its rule has the premise
 that the function is defined there.
 
 The paper's evaluation rules are named E+-Load and so on, and its figure `fig:eval` prints
-five: E+-Load is `load` (line 834), E+-Br is `br` (line 977),
-E+-Block is `blockCont` (line 929), E+-Block-Exit is `blockExit` (line
-934), and E+-Call is `call` (line 990). For every other
+five: E+-Load is `load` (line 866), E+-Br is `br` (line 1016),
+E+-Block is `blockCont` (line 968), E+-Block-Exit is `blockExit` (line
+973), and E+-Call is `call` (line 1029). For every other
 instruction, the rules are in the column "Semantics" of the table of section 3. The paper's
-`lands`, `exits` and `kept` are `Out.lands` (`Defs.lean:721`), `Out.exits`
-(`Defs.lean:729`) and `Kept` (`Defs.lean:684`).
+`lands`, `exits` and `kept` are `Out.lands` (`Defs.lean:753`), `Out.exits`
+(`Defs.lean:761`) and `Kept` (`Defs.lean:716`).
 
 Convince yourself of six things, which are where this semantics is not the specification's
 text:
 
 1. **A block's body runs on the block's parameters alone** (`blockCont`,
-   line 929), and what is below them on the stack waits. On validated code
+   line 968), and what is below them on the stack waits. On validated code
    this is what WebAssembly does, since a body cannot reach below its parameters. That the two
    agree is not proved.
 2. **The run-time checks are premises.** A load goes on only if every byte it reads is within
-   the memory and its level flows into the load's declared level (line 834).
+   the memory and its level flows into the load's declared level (line 866).
    An instruction on the table goes on only if the entries it names are within the table.
    An indirect call goes on only if the entry names a function with the expected parameters
-   and results whose bound is at least the expected one (line 996).
+   and results whose bound is at least the expected one (line 1035).
    A host write goes on only if every byte it takes flows into the level of the descriptor's
-   channel (line 880), and a file is opened only if every byte of its
-   name is public (line 891). These are the paper's hybrid checks.
+   channel (line 912), and a file is opened only if every byte of its
+   name is public (line 923). These are the paper's hybrid checks.
 3. **The comparison of preserved globals is a premise too** (`Kept`,
-   `Defs.lean:684`): where control comes out of a block, a loop, a conditional or a
+   `Defs.lean:716`): where control comes out of a block, a loop, a conditional or a
    `try_table` by its end or by a branch to its label, and where a call returns, the globals
    in `keep` hold what they held at the construct's start or at the call. A branch further
    out and an exception skip it.
-4. **A loop runs `iter`** (lines 938 to 961): the body
+4. **A loop runs `iter`** (lines 977 to 1000): the body
    again while it branches to the loop's label. The loop's comparison is therefore with the
    state at its first entry, as in the implementation.
-5. **A call** (line 990) runs the callee's body on an empty segment with a
+5. **A call** (line 1029) runs the callee's body on an empty segment with a
    frame made of the arguments, and gives the caller its own locals back. `return` and a
    branch to the function's label end the callee alike (`Out.lands`).
-6. **A tail call** (line 1004) is written as a call whose results the
+6. **A tail call** (line 1043) is written as a call whose results the
    function returns. The function is gone when its callee runs, so an exception that leaves
    the callee is not offered to the function's own `try_table`s: it is the outcome `tailExn`,
    which every block passes (`Out.caught`, `Out.exits`) and which is an exception again for
@@ -207,10 +209,10 @@ text:
 | (i) every global labelled public | the clause on `glob` |
 | (ii) every byte labelled public in both states | the clause on `mem` and `lab`, and the one on `mem2` and `lab2` for the second memory |
 | (iii) the size and the limit of the memory | `s.size = t.size`, `s.cap = t.cap`; and `s.size2 = t.size2`, the second memory's size, which is fixed |
-| (iv) the table, if its label is public | `C.table = L → s.sameTable t`: the entries, the size and the limit (`Defs.lean:537`) |
-| (v) the descriptors, the labels of the channels, and the names of the files in every directory | `s.chan = t.chan` and `s.sameHost t` (`Defs.lean:547`): the descriptor table `fdt`, the names `names`, and `file`, which gives a file of a directory its channel |
+| (iv) the table, if its label is public | `∀ x, C.table x = L → s.sameTable t x`: for every table, the entries, the size and the limit (`Defs.lean:555`) |
+| (v) the descriptors, the labels of the channels, and the names of the files in every directory | `s.chan = t.chan` and `s.sameHost t` (`Defs.lean:566`): the descriptor table `fdt`, the names `names`, and `file`, which gives a file of a directory its channel |
 | (vi) the output written to and the unread input of every public channel | the clause on `out` and `inp` |
-| (vii) every data segment that neither state has dropped | the clause on `segs` |
+| (vii) every data segment that neither state has dropped | the clause on `segs`, and the one on `elems` for the element segments |
 | (viii) the exceptions held for references | `s.exns = t.exns` |
 
 `LowEq` has two clauses that the paper's definition lacks:
@@ -230,13 +232,13 @@ Clauses (ii) and (iii) speak of "the memory", where the core has two: read them 
 And clause (v) includes `file`, the function from a directory's channel and a name to the
 file's channel, which the paper's wording covers as part of the descriptors' state.
 
-`Invoke F f a s e`, `Statement.lean:61`: the function `f` called from
+`Invoke F f a s e`, `Statement.lean:62`: the function `f` called from
 outside on the arguments `a` in the state `s` ends as `e`, by returning results or by an
 exception. Convince yourself that it is `Eval` of the body as rule `call` runs it, the
 comparison of the function's `keep` included, which the machine makes for the invoked function
 as for a callee.
 
-`noninterference`, `Statement.lean:79`:
+`noninterference`, `Statement.lean:80`:
 
 > For a well-typed module whose preserved globals are public, a function of it, two calls from
 > low-equivalent states with arguments that agree where the parameters are public: if both
@@ -280,9 +282,9 @@ two `Invoke`s of one function from low-equivalent states. Its `ret(r, s')` is
 `Machine.lean` has a small-step machine for the core, written after the implementation's
 `step` (`Interpreter.hs:404`), and proves that `Eval` describes it.
 
-`Step F c nx`, `Machine.lean:192`: one transition, from the configuration
+`Step F c nx`, `Machine.lean:197`: one transition, from the configuration
 `c` to the next one or to the end of the run. `Runs F c e`,
-`Machine.lean:272`: the transitions from `c` to the end `e`. A run that traps
+`Machine.lean:277`: the transitions from `c` to the end `e`. A run that traps
 or does not end has no `Runs`.
 
 | Lean | Where | Haskell | Where | Convince yourself that |
@@ -291,20 +293,20 @@ or does not end has no `Runs`.
 | `Frame.label` | `Machine.lean:32` | `BlockLabel below cont rest`, `HandlerLabel handlers below cont rest` | `Interpreter.hs:270` | a label has the operands below its block and the code after it; a block's label is one with no clauses. `keep` and `recorded` are the `IRequireRestored recorded` that the Haskell puts in front of `cont` (`Interpreter.hs:852`). |
 | `Frame.loop` | `Machine.lean:34` | `LoopLabel below body cont rest` | `Interpreter.hs:288` | it has the body besides. |
 | `Frame.call` | `Machine.lean:36` | `CallBoundary depth below callerLocals cont callerControl` | `Interpreter.hs:299` | it has the caller's locals. `checks` is the comparisons in front of `cont`: one for a call (`Interpreter.hs:843`), and one more for each tail call made in the callee's place. The Lean machine has no bound on the depth of calls. |
-| the empty control stack; `Config.entry` | `Machine.lean:281` | `EntryBoundary`; `startFunction` | `Interpreter.hs:1331` | a call from outside runs the body over a boundary of its own that has the function's comparison. |
+| the empty control stack; `Config.entry` | `Machine.lean:286` | `EntryBoundary`; `startFunction` | `Interpreter.hs:1331` | a call from outside runs the body over a boundary of its own that has the function's comparison. |
 | `Basic`, `Step.basic` | `Machine.lean:70` | the clauses of `stepInstr` that end in `stepped` | `Interpreter.hs:417` | each instruction that is not one of control does to the operands and the state what its `Eval` rule says (section 4), and traps where the rule has a premise that fails. |
-| `Step.block`, `tryTable`, `loop`, `ite` | `Machine.lean:195` | the clauses for `IBlock`, `ITryTable`, `ILoop`, `IIf` | | the body runs on the construct's parameters over a new label. |
-| `Step.endLabel`, `endLoop`, `endCall`, `done` | `Machine.lean:224` | `popControl` | `Interpreter.hs:1040` | at the end of the current block the top of the control stack says what follows, behind its comparisons. |
-| `Unwind`, in `Step.br`, `brIf`, `brTable`, `ret` | `Machine.lean:152` | `unwind`, `unwindTo`, `returnUnwind` | `Interpreter.hs:1062` | a branch drops the labels it passes without their comparisons; a loop's label stays and its body runs again; the function's label is its boundary. |
-| `Step.call`, `callIndirect`, `callRef` | `Machine.lean:235` | `enterCall` | `Interpreter.hs:745` | the callee's body runs on no operands with locals made of the arguments, over a boundary. The checks of an indirect call are premises, as in `Eval`. |
+| `Step.block`, `tryTable`, `loop`, `ite` | `Machine.lean:200` | the clauses for `IBlock`, `ITryTable`, `ILoop`, `IIf` | | the body runs on the construct's parameters over a new label. |
+| `Step.endLabel`, `endLoop`, `endCall`, `done` | `Machine.lean:229` | `popControl` | `Interpreter.hs:1040` | at the end of the current block the top of the control stack says what follows, behind its comparisons. |
+| `Unwind`, in `Step.br`, `brIf`, `brTable`, `ret` | `Machine.lean:157` | `unwind`, `unwindTo`, `returnUnwind` | `Interpreter.hs:1062` | a branch drops the labels it passes without their comparisons; a loop's label stays and its body runs again; the function's label is its boundary. |
+| `Step.call`, `callIndirect`, `callRef` | `Machine.lean:240` | `enterCall` | `Interpreter.hs:745` | the callee's body runs on no operands with locals made of the arguments, over a boundary. The checks of an indirect call are premises, as in `Eval`. |
 | `boundary`, in `Step.retCall`, `retCallIndirect` | `Machine.lean:59` | `tailCall` | `Interpreter.hs:1118` | the labels of the running function are dropped, its clauses with them, and the callee is entered over the function's own boundary, which gets the callee's comparison too. |
-| `Raise`, in `Step.throw` | `Machine.lean:173` | `throwException` | `Interpreter.hs:1168` | an exception passes labels without a clause for it and call boundaries, where the caller's locals are back; the first clause for it is a branch from around the clause's block; below the last boundary it ends the run. |
+| `Raise`, in `Step.throw` | `Machine.lean:178` | `throwException` | `Interpreter.hs:1168` | an exception passes labels without a clause for it and call boundaries, where the caller's locals are back; the first clause for it is a branch from around the clause's block; below the last boundary it ends the run. |
 
-`refinement`, `Machine.lean:556`: a run of the machine from
+`refinement`, `Machine.lean:561`: a run of the machine from
 `Config.entry f a s` to an end `e` is `Invoke F f a s e`. No typing is assumed. This is the
 paper's `lem:refinement`, in the direction the theorem needs.
 
-`machine_noninterference`, `Machine.lean:578`: the statement
+`machine_noninterference`, `Machine.lean:583`: the statement
 of `noninterference` with two runs of the machine for the two `Invoke`s.
 
 What stays by reading is the table above: that the Haskell `step` makes the transitions of
@@ -347,7 +349,7 @@ nothing follows the `br_table` in its block.
 More than one value type, and so the numeric and vector instructions as such (the operations
 that trap are in the core, as partial functions); 64-bit
 memories, more than two memories, and every instruction on the second memory but
-`memory.copy` to and from it; several tables;
+`memory.copy` to and from it;
 linking; the WASI calls other than one that reads, one that writes and one that opens a file
 in a directory, the error codes but the one for a missing file, and sockets; local variables split into webs and the inference of labels, which
 happen before typing; declassification.

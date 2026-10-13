@@ -14,7 +14,7 @@ def leakCtx : Ctx where
   globals := fun _ => Lab.L
   preserved := fun _ => False
   funcs := []
-  table := Lab.L
+  table := fun _ => Lab.L
   tags := []
 
 /-! ### (a) The leak that the printed rule for `br_table` accepts -/
@@ -147,7 +147,7 @@ def callCtx : Ctx where
   globals := fun _ => Lab.L
   preserved := fun _ => False
   funcs := [⟨[Lab.L], Lab.H, []⟩]
-  table := Lab.L
+  table := fun _ => Lab.L
   tags := []
 
 /--
@@ -178,7 +178,7 @@ def branchCtx : Ctx where
   globals := fun _ => Lab.L
   preserved := fun _ => False
   funcs := []
-  table := Lab.L
+  table := fun _ => Lab.L
   tags := []
 
 /--

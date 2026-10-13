@@ -12,7 +12,7 @@ def exampleCtx : Ctx where
   globals := fun _ => Lab.L
   preserved := fun _ => False
   funcs := []
-  table := Lab.L
+  table := fun _ => Lab.L
   tags := []
 
 /--
@@ -141,6 +141,46 @@ example (pc : Lab) (P' : Pcs) (st' : STy) :
           cases pc <;> simpa [Lab.join, exampleCtx] using hle
         exact absurd (hH rfl) (by decide)
 
+/-! ### Two tables -/
+
+/-- Table 0 is public and table 1 is secret. -/
+def tablesCtx : Ctx where
+  locals := fun _ => Lab.L
+  globals := fun _ => Lab.L
+  preserved := fun _ => False
+  funcs := []
+  table := fun x => if x = 0 then Lab.L else Lab.H
+  tags := []
+
+/-- One entry copied from the public table to the secret one is typed. -/
+example : Typed tablesCtx [[]] [.const 0, .const 0, .const 1, .tableCopy 1 0] [Lab.L] [] [Lab.L] [] :=
+  .const 0 (.const 0 (.const 1 (.tableCopy 1 0 (fun _ => rfl) .nil)))
+
+/-- The copy from the secret table to the public one is not typed, at any pc. -/
+example (pc : Lab) (P' : Pcs) (st' : STy) :
+    ¬ Typed tablesCtx [[]] [.const 0, .const 0, .const 1, .tableCopy 0 1] [pc] [] P' st' := by
+  intro h
+  cases h with
+  | const _ h1 =>
+    cases h1 with
+    | const _ h2 =>
+      cases h2 with
+      | const _ h3 =>
+        cases h3 with
+        | tableCopy _ _ hle _ =>
+          have hH : Lab.le Lab.H Lab.L := by
+            cases pc <;> simpa [Lab.join, tablesCtx] using hle
+          exact absurd (hH rfl) (by decide)
+
+/--
+A run: the first reference of element segment 0 goes to entry 0 of table 1, and the segment
+is dropped. It needs the table to have an entry and the segment a reference.
+-/
+example (s : State) (htable : 1 ≤ s.tsize 1) (hsegment : 1 ≤ (s.elems 0).length) :
+    Eval [] 5 [0] [.const 0, .const 0, .const 1, .tableInit 1 0, .elemDrop 0] [] s
+      (.normal [] ((s.initTbl 1 0 0 0 1).dropElem 0)) :=
+  .const 0 (.const 0 (.const 1 (.tableInit 1 0 (by omega) (by omega) (.elemDrop 0 .nil))))
+
 /-! ### A module of two functions -/
 
 /-- Function 0 returns its public parameter; function 1 calls it on a constant. -/
@@ -155,7 +195,7 @@ def moduleCtx : Ctx where
   globals := fun _ => Lab.L
   preserved := fun _ => False
   funcs := [identity.ty, callsIdentity.ty]
-  table := Lab.L
+  table := fun _ => Lab.L
   tags := []
 
 example : WellTyped moduleCtx [identity, callsIdentity] := by
@@ -188,7 +228,7 @@ def frameCtx : Ctx where
   globals := fun _ => Lab.L
   preserved := fun i => i = 0
   funcs := []
-  table := Lab.L
+  table := fun _ => Lab.L
   tags := []
 
 /-- What the secret selects: move the global, and put it back. -/
@@ -267,7 +307,7 @@ def tagCtx : Ctx where
   globals := fun _ => Lab.L
   preserved := fun _ => False
   funcs := []
-  table := Lab.L
+  table := fun _ => Lab.L
   tags := [1]
 
 /-- Throw 5 in a `try_table` whose clause for the tag branches to the function's label. -/

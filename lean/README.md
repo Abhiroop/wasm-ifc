@@ -5,7 +5,7 @@ typing rules of this repository on a core of WebAssembly: blocks, loops and cond
 parameters and results, `br`, `br_if`, `br_table` and `return`, direct calls, indirect calls,
 calls through a reference and tail calls, direct and indirect, of the module's functions (recursion included), a bounded memory whose bytes carry a level, with loads and stores of several bytes, data segments (`memory.init`, `data.drop`),
 SecWasm's run-time check on loads, `memory.size`, `memory.grow`, `memory.fill` and
-`memory.copy`, a second memory with `memory.copy` between the two, a function table with a level, a size and a limit (`table.get`, `table.set`, `table.fill`, `table.copy`, `table.size`, `table.grow`), a host that reads from and writes to
+`memory.copy`, a second memory with `memory.copy` between the two, any number of tables, each with a level, a size and a limit (`table.get`, `table.set`, `table.fill`, `table.copy` between two tables, `table.size`, `table.grow`, `table.init` and `elem.drop` with element segments), a host that reads from and writes to
 descriptors of channels with levels and opens files in directories (`path_open`), local and global
 variables with `local.tee`, exceptions (`throw`, `throw_ref` and `try_table` with its four kinds
 of clause, so references to exceptions), preserved globals with
@@ -76,7 +76,8 @@ type `Syntax.Instructions.Instr` for the instructions above:
   no byte, so two runs that both go on have read the same bytes (`seg_payload`).
 - A call needs the caller's pc to flow into the callee's bound, and the arguments to flow into
   the parameters. The arguments need not be at least the pc (SecWasm's lift raised them).
-- The function table has one level (`Ctx.table`). What `table.get` reads is as secret as the
+- Each table has one level (`Ctx.table`), for its entries and its size. A copy between two
+  tables needs the level of the table copied from to flow into the level of the other. What `table.get` reads is as secret as the
   table, the index and the pc. `table.set` needs the pc, the index and the reference to flow
   into the table's level.
 - An indirect call needs the pc, the level of the table index and the level of the table to
@@ -171,19 +172,19 @@ paper's appendix B.4 has no counterpart here.
 - **The comparison names its globals.** The implementation compares every preserved global of
   the module, which a typed construct cannot leave out. Here a construct lists the globals it
   compares, and the rule asks that the list cover the preserved ones where the pc drops.
-- **The host is two calls.** One reads and one writes, with the checks and the labels of the
-  implementation's rule for the host boundary. WASI's other calls, its error codes, and
-  results on the stack are not modelled.
-- **The core is small.** One value type; two levels; the semantics of a tail call does not model that it
-  runs in constant space. A tag
-  is the number of public values its exceptions carry, a clause catches by tag or catches
-  everything, and there is no reference to an exception (`exnref`, `throw_ref`, and the
-  clauses that hand one out). The function table has no bound and no size, a reference in it is a number (zero for null), and
-the table's instructions trap beyond its size. A value is a natural number, of which a store writes the low bytes. A load
-  or a store outside the memory traps, a load also by the level check, and `unreachable` is
-  the other trap. `memory.grow` fails only if the memory would exceed its limit, which is
-  part of the state and the same in both runs; the implementation's may also fail for want of
-  host memory, which the proof does not model.
+- **The host is three calls.** One reads, one writes and one opens a file in a directory,
+  with the checks and the labels of the implementation's rule for the host boundary. WASI's
+  other calls and its error codes but the one for a missing file are not modelled.
+- **The core is small.** One value type; two levels; the semantics of a tail call does not
+  model that it runs in constant space. A tag is the number of public values its exceptions
+  carry, and a reference to an exception is the number of one that the state keeps. A
+  reference in a table is a number (zero for null), and the instructions on a table trap
+  beyond its size. A value is a natural number, of which a store writes the low bytes. A load
+  or a store outside the memory traps, a load also by the level check, an operation that is
+  not defined on its operands traps (a division by zero), and `unreachable` is the other
+  trap. `memory.grow` and `table.grow` fail only if the memory or the table would exceed its
+  limit, which is part of the state and the same in both runs; the implementation's may also
+  fail for want of host memory, which the proof does not model.
 - **Two relations between states.** `StRel` relates the states of two runs and is not
   transitive, because a cell that is secret in the middle state says nothing. `Conf` relates a
   state to a later one of the same run under a secret pc, in which a public cell may have

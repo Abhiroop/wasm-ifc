@@ -209,16 +209,16 @@ theorem confine : ∀ (n : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P'
         subst hlm
         obtain ⟨h1, h2⟩ := ih _ (by omega) hF ht' (hiUpTo_zero_cons _) (by simpa using hlen) he'
         exact ⟨(Conf.copyFrom_high _ _ _ _ _).trans h1, h2⟩
-    | tableGet _ he' =>
+    | tableGet _ _ he' =>
       cases ht with
-      | tableGet ht' => exact ih _ (by omega) hF ht' hP (by simpa using hlen) he'
-    | tableSet _ he' =>
+      | tableGet _ ht' => exact ih _ (by omega) hF ht' hP (by simpa using hlen) he'
+    | tableSet _ _ he' =>
       cases ht with
-      | tableSet hle ht' =>
+      | tableSet _ hle ht' =>
         have hpc := hP.head
         subst hpc
         obtain ⟨h1, h2⟩ := ih _ (by omega) hF ht' (hiUpTo_zero_cons _) (by simpa using hlen) he'
-        exact ⟨(Conf.setTbl_high _ _ _ (hle (Lab.H_join _))).trans h1, h2⟩
+        exact ⟨(Conf.setTbl_high _ _ _ _ (hle (Lab.H_join _))).trans h1, h2⟩
     | hostRead _ hb hb' he' =>
       cases ht with
       | hostRead _ => exact absurd hP.head (by decide)
@@ -245,30 +245,42 @@ theorem confine : ∀ (n : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P'
       | dataDrop _ ht' =>
         obtain ⟨h1, h2⟩ := ih _ (by omega) hF ht' hP hlen he'
         exact ⟨(Conf.dropSeg _ _ _).trans h1, h2⟩
-    | tableFill _ he' =>
+    | tableFill _ _ he' =>
       cases ht with
-      | tableFill hle ht' =>
+      | tableFill _ hle ht' =>
         have hpc := hP.head
         subst hpc
         obtain ⟨h1, h2⟩ := ih _ (by omega) hF ht' (hiUpTo_zero_cons _) (by simpa using hlen) he'
-        exact ⟨(Conf.tbl_high _ _ _ (hle (Lab.H_join _))).trans h1, h2⟩
-    | tableCopy _ _ he' =>
+        exact ⟨(Conf.withTbl_high _ _ _ (hle (Lab.H_join _))).trans h1, h2⟩
+    | tableCopy _ _ _ _ he' =>
       cases ht with
-      | tableCopy hle ht' =>
+      | tableCopy _ _ hle ht' =>
         have hpc := hP.head
         subst hpc
         obtain ⟨h1, h2⟩ := ih _ (by omega) hF ht' (hiUpTo_zero_cons _) (by simpa using hlen) he'
-        exact ⟨(Conf.tbl_high _ _ _ (hle (Lab.H_join _))).trans h1, h2⟩
-    | tableSize he' =>
+        exact ⟨(Conf.withTbl_high _ _ _ (hle (Lab.H_join _))).trans h1, h2⟩
+    | tableInit _ _ _ _ he' =>
       cases ht with
-      | tableSize ht' => exact ih _ (by omega) hF ht' hP (by simp [hlen]) he'
-    | tableGrow he' =>
-      cases ht with
-      | tableGrow hle ht' =>
+      | tableInit _ _ hle ht' =>
         have hpc := hP.head
         subst hpc
         obtain ⟨h1, h2⟩ := ih _ (by omega) hF ht' (hiUpTo_zero_cons _) (by simpa using hlen) he'
-        exact ⟨(Conf.growTbl_high _ _ _ (hle (Lab.H_join _))).trans h1, h2⟩
+        exact ⟨(Conf.withTbl_high _ _ _ (hle (Lab.H_join _))).trans h1, h2⟩
+    | elemDrop k he' =>
+      cases ht with
+      | elemDrop _ ht' =>
+        obtain ⟨h1, h2⟩ := ih _ (by omega) hF ht' hP hlen he'
+        exact ⟨(Conf.dropElem _ _ _).trans h1, h2⟩
+    | tableSize _ he' =>
+      cases ht with
+      | tableSize _ ht' => exact ih _ (by omega) hF ht' hP (by simp [hlen]) he'
+    | tableGrow _ he' =>
+      cases ht with
+      | tableGrow _ hle ht' =>
+        have hpc := hP.head
+        subst hpc
+        obtain ⟨h1, h2⟩ := ih _ (by omega) hF ht' (hiUpTo_zero_cons _) (by simpa using hlen) he'
+        exact ⟨(Conf.growTbl_high _ _ _ _ (hle (Lab.H_join _))).trans h1, h2⟩
     | memSize he' =>
       cases ht with
       | memSize ht' => exact ih _ (by omega) hF ht' hP (by simp [hlen]) he'

@@ -522,9 +522,9 @@ theorem retCall_inv {n i : Nat} {ls : List Nat} {rest : List Instr} {σ : List N
     exact ⟨_, _, _, _, _, hf, rfl, hargs, by omega, hb, .land hl hk rfl⟩
   | retCallExn hf hargs hb hth => exact ⟨_, _, _, _, _, hf, rfl, hargs, by omega, hb, .exn hth rfl⟩
 
-theorem callIndirect_inv {n : Nat} {ls : List Nat} {ps rs : STy} {b : Lab} {rest : List Instr}
-    {σ : List Nat} {s : State} {o : Out} (h : Eval F n ls (.callIndirect ps b rs :: rest) σ s o) :
-    ∃ c i f args base n1 ob, s.entry c = some i ∧ F[i]? = some f ∧ f.ty.params = ps ∧ f.ty.results = rs ∧
+theorem callIndirect_inv {n : Nat} {ls : List Nat} {x : Nat} {ps rs : STy} {b : Lab} {rest : List Instr}
+    {σ : List Nat} {s : State} {o : Out} (h : Eval F n ls (.callIndirect x ps b rs :: rest) σ s o) :
+    ∃ c i f args base n1 ob, s.entry x c = some i ∧ F[i]? = some f ∧ f.ty.params = ps ∧ f.ty.results = rs ∧
       Lab.le b f.ty.bound ∧ σ = c :: (args ++ base) ∧ args.length = ps.length ∧ n1 < n ∧
       Eval F n1 [rs.length] f.body [] { s with loc := frame args } ob ∧
       CallCont F ls f.keep s rest base ob n o := by
@@ -535,10 +535,10 @@ theorem callIndirect_inv {n : Nat} {ls : List Nat} {ps rs : STy} {b : Lab} {rest
   | callIndirectExn htbl hf hps hrs hbd hargs hb hth =>
     exact ⟨_, _, _, _, _, _, _, htbl, hf, hps, hrs, hbd, rfl, hargs, by omega, hb, .exn hth rfl⟩
 
-theorem retCallIndirect_inv {n : Nat} {ls : List Nat} {ps rs : STy} {b : Lab} {rest : List Instr}
+theorem retCallIndirect_inv {n : Nat} {ls : List Nat} {x : Nat} {ps rs : STy} {b : Lab} {rest : List Instr}
     {σ : List Nat} {s : State} {o : Out}
-    (h : Eval F n ls (.retCallIndirect ps b rs :: rest) σ s o) :
-    ∃ c i f args base n1 ob, s.entry c = some i ∧ F[i]? = some f ∧ f.ty.params = ps ∧ f.ty.results = rs ∧
+    (h : Eval F n ls (.retCallIndirect x ps b rs :: rest) σ s o) :
+    ∃ c i f args base n1 ob, s.entry x c = some i ∧ F[i]? = some f ∧ f.ty.params = ps ∧ f.ty.results = rs ∧
       Lab.le b f.ty.bound ∧ σ = c :: (args ++ base) ∧ args.length = ps.length ∧ n1 < n ∧
       Eval F n1 [rs.length] f.body [] { s with loc := frame args } ob ∧
       TailCont f.keep s (ls.length - 1) ob o := by
@@ -860,22 +860,22 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
                 obtain ⟨hln, hj2⟩ := Lab.join_eq_L hj1
                 obtain ⟨hlb, hld⟩ := Lab.join_eq_L hj2
                 exact ⟨ha hld, hb hlb, hk hln⟩
-    | tableGet ht' =>
+    | tableGet x ht' =>
       cases he0 with
-      | tableGet _ he0' =>
+      | tableGet _ _ he0' =>
         cases he1 with
-        | tableGet _ he1' =>
+        | tableGet _ _ he1' =>
           cases hσ with
           | cons hc hσ' =>
             refine ih _ (by omega) hF ht' he0' he1' (.cons (fun hl => ?_) hσ') hs hp
             obtain ⟨_, hj⟩ := Lab.join_eq_L hl
             obtain ⟨hli, hlt⟩ := Lab.join_eq_L hj
-            rw [hc hli, (hs.2.2.2.1 hlt).1]
-    | tableSet hle ht' =>
+            rw [hc hli, (hs.2.2.2.1 x hlt).1]
+    | tableSet x hle ht' =>
       cases he0 with
-      | tableSet _ he0' =>
+      | tableSet _ _ he0' =>
         cases he1 with
-        | tableSet _ he1' =>
+        | tableSet _ _ he1' =>
           cases hσ with
           | cons hv hσa =>
             cases hσa with
@@ -994,69 +994,94 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
         cases he1 with
         | dataDrop _ he1' =>
           exact ih _ (by omega) hF ht' he0' he1' hσ (hs.dropSeg k) (hp.of_glob rfl rfl)
-    | tableFill hle ht' =>
+    | tableFill x hle ht' =>
       cases he0 with
-      | tableFill _ he0' =>
+      | tableFill _ _ he0' =>
         cases he1 with
-        | tableFill _ he1' =>
+        | tableFill _ _ he1' =>
           cases hσ with
           | cons hk hσa =>
             cases hσa with
             | cons hv hσb =>
               cases hσb with
               | cons hc hσc =>
-                refine ih _ (by omega) hF ht' he0' he1' hσc (hs.tbl rfl rfl (fun hlt => ?_))
+                refine ih _ (by omega) hF ht' he0' he1' hσc (hs.withTbl (fun hlt => ?_))
                   (hp.of_glob rfl rfl)
                 obtain ⟨_, hj1⟩ := Lab.join_eq_L (Lab.eq_L_of_le hle hlt)
                 obtain ⟨hln, hj2⟩ := Lab.join_eq_L hj1
                 obtain ⟨hlv, hli⟩ := Lab.join_eq_L hj2
-                refine ⟨?_, (hs.2.2.2.1 hlt).2⟩
-                simp only [State.fillTbl]
-                rw [hk hln, hv hlv, hc hli, (hs.2.2.2.1 hlt).1]
-    | tableCopy hle ht' =>
+                rw [hk hln, hv hlv, hc hli, (hs.2.2.2.1 x hlt).1]
+    | tableCopy xd xs hle ht' =>
       cases he0 with
-      | tableCopy _ _ he0' =>
+      | tableCopy _ _ _ _ he0' =>
         cases he1 with
-        | tableCopy _ _ he1' =>
+        | tableCopy _ _ _ _ he1' =>
           cases hσ with
           | cons hk hσa =>
             cases hσa with
             | cons hb hσb =>
               cases hσb with
               | cons ha hσc =>
-                refine ih _ (by omega) hF ht' he0' he1' hσc (hs.tbl rfl rfl (fun hlt => ?_))
+                refine ih _ (by omega) hF ht' he0' he1' hσc (hs.withTbl (fun hlt => ?_))
+                  (hp.of_glob rfl rfl)
+                -- a public table is copied to from a public table, at public places
+                obtain ⟨_, hj1⟩ := Lab.join_eq_L (Lab.eq_L_of_le hle hlt)
+                obtain ⟨hln, hj2⟩ := Lab.join_eq_L hj1
+                obtain ⟨hlb, hj3⟩ := Lab.join_eq_L hj2
+                obtain ⟨hld, hlxs⟩ := Lab.join_eq_L hj3
+                rw [hk hln, hb hlb, ha hld, (hs.2.2.2.1 xs hlxs).1, (hs.2.2.2.1 xd hlt).1]
+    | tableInit x k hle ht' =>
+      cases he0 with
+      | tableInit _ _ hb0 hs0 he0' =>
+        cases he1 with
+        | tableInit _ _ hb1 hs1 he1' =>
+          cases hσ with
+          | cons hc hσa =>
+            cases hσa with
+            | cons hb hσb =>
+              cases hσb with
+              | cons ha hσc =>
+                refine ih _ (by omega) hF ht' he0' he1' hσc (hs.withTbl (fun hlt => ?_))
                   (hp.of_glob rfl rfl)
                 obtain ⟨_, hj1⟩ := Lab.join_eq_L (Lab.eq_L_of_le hle hlt)
                 obtain ⟨hln, hj2⟩ := Lab.join_eq_L hj1
                 obtain ⟨hlb, hld⟩ := Lab.join_eq_L hj2
-                refine ⟨?_, (hs.2.2.2.1 hlt).2⟩
-                simp only [State.copyTbl]
-                rw [hk hln, hb hlb, ha hld, (hs.2.2.2.1 hlt).1]
-    | tableSize ht' =>
+                have e1 := ha hld
+                have e2 := hb hlb
+                have e3 := hc hln
+                subst e1 e2 e3
+                exact elem_payload hs hs0 hs1 (hs.2.2.2.1 x hlt).1
+    | elemDrop k ht' =>
       cases he0 with
-      | tableSize he0' =>
+      | elemDrop _ he0' =>
         cases he1 with
-        | tableSize he1' =>
+        | elemDrop _ he1' =>
+          exact ih _ (by omega) hF ht' he0' he1' hσ (hs.dropElem k) (hp.of_glob rfl rfl)
+    | tableSize x ht' =>
+      cases he0 with
+      | tableSize _ he0' =>
+        cases he1 with
+        | tableSize _ he1' =>
           refine ih _ (by omega) hF ht' he0' he1' (.cons (fun hl => ?_) hσ) hs hp
-          exact (hs.2.2.2.1 (Lab.join_eq_L hl).2).2.1
-    | tableGrow hle ht' =>
+          exact (hs.2.2.2.1 x (Lab.join_eq_L hl).2).2.1
+    | tableGrow x hle ht' =>
       cases he0 with
-      | @tableGrow _ _ _ d0 v0 _ _ _ he0' =>
+      | @tableGrow _ _ _ d0 v0 _ _ _ _ he0' =>
         cases he1 with
-        | @tableGrow _ _ _ d1 v1 _ _ _ he1' =>
+        | @tableGrow _ _ _ d1 v1 _ _ _ _ he1' =>
           cases hσ with
           | cons hd hσa =>
             cases hσa with
             | cons hv hσb =>
               -- a public table grows by the same amount with the same reference in both runs
-              have hsame : C.table = Lab.L → d0 = d1 ∧ ofRef v0 = ofRef v1 := fun hlt =>
+              have hsame : C.table x = Lab.L → d0 = d1 ∧ ofRef v0 = ofRef v1 := fun hlt =>
                 have hj := Lab.join_eq_L (Lab.eq_L_of_le hle hlt)
                 have hj2 := Lab.join_eq_L hj.2
                 ⟨hd hj2.1, by rw [hv hj2.2]⟩
               obtain ⟨hs', hres⟩ := StRel.growTbl hsame hs
               exact ih _ (by omega) hF ht' he0' he1'
                 (.cons (fun hl => hres (Lab.join_eq_L hl).2) hσb) hs'
-                (hp.of_glob (State.growTbl_glob _ _ _) (State.growTbl_glob _ _ _))
+                (hp.of_glob (State.growTbl_glob _ _ _ _) (State.growTbl_glob _ _ _ _))
     | memSize ht' =>
       cases he0 with
       | memSize he0' =>
@@ -1414,7 +1439,7 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
             cases ho1.symm.trans hob1
             subst ho1'
             exact .inl (.tailExn htag hlen (StRel.leave hs hst) (fun i hi => hpe i hi))
-    | callIndirect hpc hge hfl hrest =>
+    | @callIndirect _ _ _ _ _ x _ _ _ _ _ _ _ hpc hge hfl hrest =>
       obtain ⟨c0, i0, f0, args0, base0, m0, ob0, htbl0, hf0, hps0, hrs0, hbd0, rfl, hargs0, hm0, hb0, hc0⟩ :=
         callIndirect_inv he0
       obtain ⟨c1, i1, f1, args1, base1, m1, ob1, htbl1, hf1, hps1, hrs1, hbd1, rfl, hargs1, hm1, hb1, hc1⟩ :=
@@ -1427,10 +1452,10 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
         obtain ⟨_, q1, hbody1, hret1⟩ := hF _ _ hf1
         rw [← hrs0] at hb0
         rw [← hrs1] at hb1
-        rcases Lab.table_cases C.table hc with ⟨hcc, hlt⟩ | hsec
+        rcases Lab.table_cases (C.table x) hc with ⟨hcc, hlt⟩ | hsec
         · -- the same entry of a public table: the same function, as for a direct call
           subst hcc
-          simp only [State.entry, (hs.2.2.2.1 hlt).1, (hs.2.2.2.1 hlt).2.1] at htbl0 htbl1
+          simp only [State.entry, (hs.2.2.2.1 x hlt).1, (hs.2.2.2.1 x hlt).2.1] at htbl0 htbl1
           cases htbl0.symm.trans htbl1
           cases hf0.symm.trans hf1
           have hrel := ih _ hm0 (hF.enter _) hbody0 hb0 hb1 .nil
@@ -1588,7 +1613,7 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
               · exact .inl (fun i hi =>
                   ((hk0 i (hcov0 i hi)).trans (he i hi)).trans (hk1 i (hcov1 i hi)).symm)
               · exact .inr hh
-    | retCallIndirect hpc hge hfl hLs hgr hres =>
+    | @retCallIndirect _ _ _ _ _ x _ _ _ _ _ _ _ hpc hge hfl hLs hgr hres =>
       -- the indirect call, then the branch to the function's label with what the callee returned
       obtain ⟨c0, i0, f0, args0, base0, m0, ob0, htbl0, hf0, hps0, hrs0, hbd0, rfl, hargs0, hm0, hb0, hc0⟩ :=
         retCallIndirect_inv he0
@@ -1603,9 +1628,9 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
         rw [← hrs0] at hb0
         rw [← hrs1] at hb1
         simp only [List.length_map] at hc0 hc1
-        rcases Lab.table_cases C.table hc with ⟨hcc, hlt⟩ | hsec
+        rcases Lab.table_cases (C.table x) hc with ⟨hcc, hlt⟩ | hsec
         · subst hcc
-          simp only [State.entry, (hs.2.2.2.1 hlt).1, (hs.2.2.2.1 hlt).2.1] at htbl0 htbl1
+          simp only [State.entry, (hs.2.2.2.1 x hlt).1, (hs.2.2.2.1 x hlt).2.1] at htbl0 htbl1
           cases htbl0.symm.trans htbl1
           cases hf0.symm.trans hf1
           have hrel := ih _ hm0 (hF.enter _) hbody0 hb0 hb1 .nil

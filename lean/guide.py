@@ -82,10 +82,12 @@ RULES = [
     ("dataDrop", "`IDataDrop`", "in the text: no premise", ""),
     ("memSize", "`IMemSize`", "as T+-Const", ""),
     ("memGrow", "`IMemGrow`", "T+-Memory-Grow", ""),
-    ("tableGet", "`ITableGet`", "T+-Table-Get", "one table"),
+    ("tableGet", "`ITableGet`", "T+-Table-Get", "the table is an index, and each table has a level"),
     ("tableSet", "`ITableSet`", "T+-Table-Set", ""),
     ("tableFill", "`ITableFill`", "as T+-Table-Set", "with the count"),
-    ("tableCopy", "`ITableCopy`", "as T+-Table-Set", "one table, so the source's level is the table's"),
+    ("tableInit", "`ITableInit`", "as T+-Table-Set", "with the count and the place in the element segment, which is public"),
+    ("elemDrop", "`IElemDrop`", "none", "no premise, as `data.drop`"),
+    ("tableCopy", "`ITableCopy`", "as T+-Table-Set", "between two tables: the level of the table copied from is in the premise too"),
     ("tableSize", "`ITableSize`", "T+-Table-Size", ""),
     ("tableGrow", "`ITableGrow`", "T+-Table-Grow", ""),
     ("hostRead", "a call of a host import that reads (`HostFunc`), with the driver's labelling", "T+-Call", "the paper types a call of a host import by its rule for calls; one instruction stands for the reading ones"),
@@ -181,7 +183,7 @@ appendix B, "The Rules of SecWasm+": under the labels `Ls` (innermost first), th
 stack `P` and the current block's segment `st` to `P'` and `st'`. Each rule types one
 instruction followed by the rest of its sequence, so the paper's T+-Seq is built into every
 rule. `Ctx` ({at("Defs", r"^structure Ctx")}) has the levels of the locals and the globals,
-which globals are preserved, the function types, the level of the table and the tags.
+which globals are preserved, the function types, the level of each table and the tags.
 
 Check each rule against the constructor of `Syntax.Instructions.Instr` and the paper's rule in
 the table. The Lean rules are the lift-free ones: no rule raises the label of a value that was
@@ -221,7 +223,7 @@ call through a reference ask that of the type they expect, which is where the pr
 ## 4. States and semantics
 
 `State`, {at("Defs", r"^structure State")}: the locals, the globals, the memory as bytes with a
-level each, its size and limit, a second memory of a fixed size, the function table with its size and limit, the levels of the host's channels (a stream, a directory, a file), the descriptor table, the
+level each, its size and limit, a second memory of a fixed size, the tables, each with its size and limit, the element segments, the levels of the host's channels (a stream, a directory, a file), the descriptor table, the
 names of the files in each directory, what
 was written to each and what is left to read from each, the data segments, and the
 exceptions kept for the references to them.
@@ -285,10 +287,10 @@ text:
 | (i) every global labelled public | the clause on `glob` |
 | (ii) every byte labelled public in both states | the clause on `mem` and `lab`, and the one on `mem2` and `lab2` for the second memory |
 | (iii) the size and the limit of the memory | `s.size = t.size`, `s.cap = t.cap`; and `s.size2 = t.size2`, the second memory's size, which is fixed |
-| (iv) the table, if its label is public | `C.table = L → s.sameTable t`: the entries, the size and the limit ({at("Defs", r"^def State.sameTable")}) |
+| (iv) the table, if its label is public | `∀ x, C.table x = L → s.sameTable t x`: for every table, the entries, the size and the limit ({at("Defs", r"^def State.sameTable")}) |
 | (v) the descriptors, the labels of the channels, and the names of the files in every directory | `s.chan = t.chan` and `s.sameHost t` ({at("Defs", r"^def State.sameHost")}): the descriptor table `fdt`, the names `names`, and `file`, which gives a file of a directory its channel |
 | (vi) the output written to and the unread input of every public channel | the clause on `out` and `inp` |
-| (vii) every data segment that neither state has dropped | the clause on `segs` |
+| (vii) every data segment that neither state has dropped | the clause on `segs`, and the one on `elems` for the element segments |
 | (viii) the exceptions held for references | `s.exns = t.exns` |
 
 `LowEq` has two clauses that the paper's definition lacks:
@@ -425,7 +427,7 @@ nothing follows the `br_table` in its block.
 More than one value type, and so the numeric and vector instructions as such (the operations
 that trap are in the core, as partial functions); 64-bit
 memories, more than two memories, and every instruction on the second memory but
-`memory.copy` to and from it; several tables;
+`memory.copy` to and from it;
 linking; the WASI calls other than one that reads, one that writes and one that opens a file
 in a directory, the error codes but the one for a missing file, and sockets; local variables split into webs and the inference of labels, which
 happen before typing; declassification.
