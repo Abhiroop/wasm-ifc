@@ -1576,6 +1576,64 @@ a secret byte in memory 0 and copies it to memory 1 with the level `L` declared:
 is typed, it runs, and the byte of memory 1 is secret afterwards, since the level moved with
 the value.
 
+### Item 8, first: findings in the host (`Runtime.Wasi`), reported before the Lean model
+
+Going through the 46 functions for their shapes, I found that the host does not keep what the
+paper assumes of it. Two of the findings are leaks that I reproduced with compiled C under
+the policy of the paper's own example (`dir /secrets : H`, `dir /log : L`, `stdout : L`): the
+secret file's contents were printed on the public stream, and nothing trapped.
+
+**Leaks (reproduced).**
+
+1. *A rename moves a secret file into a public directory.* `path_rename` checks nothing about
+   the two directories' levels. `rename("/secrets/pw", "/log/x")`, then `open("/log/x")`: the
+   new descriptor has the level of `/log`, so `read` delivers the password as public bytes.
+   `path_link` does the same with a hard link, in both directions: a public file linked into a
+   secret directory takes secret writes that the public name then reads.
+2. *A symbolic link leads out of its directory.* `symlink("../secrets/pw", "/log/l")`, then
+   `open("/log/l")`: the host hands the path to the operating system, which follows the link
+   into `/secrets`, and the descriptor has the level of `/log`. This is also an escape from
+   the directory that `--dir` grants: only the path's text is checked against `..`, not what
+   links on the way resolve to. A link that is already in a granted directory does the same.
+
+Behind both is one missing invariant: a file must be reachable at one level only. The same
+invariant fails, without any call, if two granted directories with different levels contain
+one another (`--dir /data` public and `--dir /data/keys` secret: `keys/k` opens as public
+through the first).
+
+**A public status that depends on a secret.** The paper assumes that the status of a host
+call depends only on its operands and on the public part of the state. Four places break it:
+
+3. *The buffers' list of a read or a write.* `peekIovecs` lets the bytes of the iovec array
+   be as secret as the descriptor. A pointer in it that is out of bounds makes the call return
+   `EFAULT`, a public status, so one bit of a secret pointer shows (`fd_read`, `fd_pread`,
+   `sock_recv`, `fd_write`, `fd_pwrite`, `sock_send`).
+4. *A socket that does not block.* With `O_NONBLOCK`, `sock_accept`, `sock_recv` and `fd_read`
+   return `EAGAIN` when nothing has arrived. On a secret socket that is a fact about the
+   secret channel, and `poll_oneoff` labels the same fact with the socket's level. For
+   `sock_accept` the descriptor table depends on it too.
+5. *A seek relative to the end or to the position.* `fd_seek` returns `EINVAL` if the new
+   position would be negative, which depends on the size or the position of the file, and the
+   host labels both with the descriptor's level elsewhere (`fd_filestat_get`, `fd_tell`).
+6. *The contents of a symbolic link.* `path_symlink` lets them be as secret as the directory,
+   and its own status depends on them (empty, a leading `/`, bytes that are not UTF-8). The
+   calls that follow a link (`path_open`, `path_filestat_get`, `path_filestat_set_times`,
+   `path_link`) then succeed or fail by what the link names, and `path_open` changes the
+   descriptor table by it.
+
+**What the statuses do depend on, as the paper says.** Whether a name exists in a directory,
+and whether it is a file, a directory or a link, decides the status of every `path_` call, in
+a secret directory too. The paper states this ("the label of a directory protects the
+contents of its files but not their names"). `fd_readdir` nevertheless delivers the names at
+the directory's level, which is more careful than the assumption and not consistent with it.
+
+**Not about flows.** An iovec array of length 0 and a `poll_oneoff` with no subscription run
+into `EFAULT` (the count is an unsigned number from which 1 is subtracted), where the first
+should succeed and the second return `EINVAL`.
+
+I am fixing 1 to 6 and the last one now, each by the system's uniform answer: what would leak
+traps, or is refused. The entry after this one says what changed.
+
 ## Where coverage stands (2026-10-12, for the paper's claim)
 
 Supported, with the 3.0 suite passing on all of it: **WebAssembly 3.0 without garbage
