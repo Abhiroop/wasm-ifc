@@ -1997,7 +1997,12 @@ elaborateFuncs ctxS types declassify restrictions (SCons ft fs) ((index, loadDef
         Right (f, localLevels) -> (`Defined` fs') <$> elaborateFunctionIn ctxS types loadDefault declassify restrictions index localLevels ft f
 elaborateFuncs _ _ _ _ _ _ = Left (Malformed "function/signature count mismatch")
 
--- | The failure of every defined function that fails, each elaborated on its own.
+{- | The failures of every defined function that fails, each elaborated on its own. A failure
+  that only a local variable of the function itself repairs is repaired here and the function
+  elaborated again, until it passes or fails for another reason, so the list has every such
+  raise the function needs under the labels of the rest of the module. A local's label
+  concerns no other function, so this spares an elaboration of the whole module per label.
+-}
 functionErrors ::
     SModuleShape shape ->
     [LabelledFuncType] ->
@@ -2010,8 +2015,23 @@ functionErrors ctxS types declassify restrictions (SCons ft fs) ((index, loadDef
     failure ++ functionErrors ctxS types declassify restrictions fs rest
   where
     failure = case entry of
-        Right (f, localLevels) -> either pure (const []) (elaborateFunctionIn ctxS types loadDefault declassify restrictions index localLevels ft f)
+        Right (f, localLevels) -> settledLocally f localLevels
         Left _ -> []
+    settledLocally f levels = case elaborateFunctionIn ctxS types loadDefault declassify restrictions index levels ft f of
+        Right _ -> []
+        Left err@(LevelTooLow raises _)
+            | Just raised <- raiseOwnLocals levels raises -> err : settledLocally f raised
+        Left err -> [err]
+    paramCount = case ft of SLabelledFuncType _ psS _ -> length (fromSing psS)
+    -- The levels with the locals the raises name raised, if every raise names a declared
+    -- local of this function and at least one of them rises.
+    raiseOwnLocals levels raises = do
+        declared <- forM raises ownLocal
+        let raised = [if k `elem` declared then High else l | (k, l) <- zip [0 :: Int ..] levels]
+        if raised == levels then Nothing else Just raised
+    ownLocal raise = case raise of
+        RaiseLocal f i | f == index, fromIntegral i >= paramCount -> Just (fromIntegral i - paramCount)
+        _ -> Nothing
 functionErrors _ _ _ _ _ _ = []
 
 elaborateFunctionIn ::

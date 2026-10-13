@@ -1,0 +1,4 @@
+00:48:48 kernels start (load 0.84 4.13 7.79)
+00:54:14 kernels exit 0 (load 1.08 2.15 5.82)
+00:57:01 programs small exit 0 (load 1.17 1.74 5.06)
+00:57:01 secrets small exit 1 (load 1.17 1.74 5.06)

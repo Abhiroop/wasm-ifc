@@ -58,7 +58,7 @@ module Runtime.MemInst (
 ) where
 
 import Control.Monad (forM_)
-import Data.Bits (shiftL, shiftR, (.|.))
+import Data.Bits (complement, shiftL, shiftR, (.&.), (.|.))
 import Data.IntMap.Strict (IntMap)
 import Data.IntMap.Strict qualified as IntMap
 import Data.Kind (Type)
@@ -79,11 +79,12 @@ import Validation.Shape (MemShape)
   the security level of every byte.
 
   The levels follow SecWasm: memory is labelled per byte, at run time, and a store relabels the
-  bytes it writes. They are kept in a second chunk map with the same layout as the bytes, one
-  level byte per memory byte, and an absent chunk means "all public", just as an absent byte
-  chunk means "all zero". So a memory that never holds a secret has an empty level map,
-  @memory.grow@ labels new pages public for free, and a public store into a chunk without
-  levels costs nothing. A load reports the join of the levels it read ('levelOfRange'); the
+  bytes it writes. They are kept in a second chunk map with the same chunks as the bytes, one
+  bit per memory byte (set for secret), and an absent chunk means "all public", just as an
+  absent byte chunk means "all zero". So a memory that never holds a secret has an empty level
+  map, @memory.grow@ labels new pages public for free, and a public store into a chunk without
+  levels costs nothing. A store whose bytes have its level already writes no levels, and one
+  that changes them copies the chunk's bits, an eighth of what it copies of the bytes. A load reports the join of the levels it read ('levelOfRange'); the
   interpreter compares it with the level the instruction declares and traps when it is higher.
 -}
 type MemInst :: MemShape -> Type
@@ -93,14 +94,11 @@ data MemInst m = MemInst
     , pageCount :: !Word32
     , chunks :: !(IntMap (UV.Vector Word8))
     -- ^ by chunk index; an absent chunk is all zeros, a present one is 'chunkSize' bytes long
-    , levels :: !(IntMap (UV.Vector Word8))
-    -- ^ by chunk index, one 'levelByte' per byte; an absent chunk is all public
+    , levels :: !(IntMap (UV.Vector Word64))
+    {- ^ by chunk index, one bit per byte in 'levelWords' words, set where the byte is secret;
+    an absent chunk is all public
+    -}
     }
-
--- | The byte a level is stored as: public is zero, so untouched memory is public.
-levelByte :: SecLevel -> Word8
-levelByte Low = 0
-levelByte High = 1
 
 -- | Bytes per WebAssembly page.
 pageSize :: Int
@@ -117,6 +115,26 @@ chunkSize = 1024
 -- | A chunk that has never been written.
 zeroChunk :: UV.Vector Word8
 zeroChunk = UV.replicate chunkSize 0
+
+-- | Words of level bits per chunk: byte @i@ of a chunk has bit @i mod 64@ of word @i div 64@.
+levelWords :: Int
+levelWords = chunkSize `div` 64
+
+-- | The levels of a chunk that holds no secret.
+publicChunk :: UV.Vector Word64
+publicChunk = UV.replicate levelWords 0
+
+{- | The bits of word @w@ of a chunk's levels that belong to the bytes from @from@ up to, not
+  including, @to@ of the chunk; the word is one the range reaches.
+-}
+{-# INLINE wordMask #-}
+wordMask :: Int -> Int -> Int -> Word64
+wordMask from to w = upTo .&. complement below
+  where
+    firstBit = max from (w * 64) - w * 64
+    endBit = min to (w * 64 + 64) - w * 64
+    below = (1 `shiftL` firstBit) - 1
+    upTo = if endBit >= 64 then maxBound else (1 `shiftL` endBit) - 1
 
 {- | The most pages a memory may have (the spec's bound for validation): 4 GiB of them with
   32-bit addresses, 2^48 pages with 64-bit ones.
@@ -355,11 +373,17 @@ joinLevel High _ = High
 levelOfRange :: MemInst m -> Int -> Int -> SecLevel
 levelOfRange mem addr count
     | IntMap.null mem.levels = Low
-    | offset + count <= chunkSize = maybe Low (chunkLevel offset) (IntMap.lookup chunkIx mem.levels)
+    | offset + count <= chunkSize = maybe Low chunkLevel (IntMap.lookup chunkIx mem.levels)
     | otherwise = foldl' joinLevel Low [levelOfRange mem a 1 | a <- [addr .. addr + count - 1]]
   where
     (chunkIx, offset) = addr `quotRem` chunkSize
-    chunkLevel from stored = if UV.any (/= 0) (UV.slice from count stored) then High else Low
+    chunkLevel stored = if anySecret stored (offset `shiftR` 6) then High else Low
+    lastWord = (offset + count - 1) `shiftR` 6
+    anySecret :: UV.Vector Word64 -> Int -> Bool
+    anySecret stored !w
+        | w > lastWord = False
+        | fromMaybe 0 (stored UV.!? w) .&. wordMask offset (offset + count) w /= 0 = True
+        | otherwise = anySecret stored (w + 1)
 
 {- | Give @count@ bytes from @addr@ one level without changing them, or 'Nothing' if they are
   out of bounds: how instantiation labels the policy's secret regions.
@@ -378,8 +402,36 @@ setLevels :: SecLevel -> Int -> Int -> MemInst m -> MemInst m
 setLevels level addr count mem
     | Low <- level, IntMap.null mem.levels = mem
     | count <= 0 = mem
-    | otherwise = mem {levels = foldl' mark mem.levels (runsByChunk addr (replicate count (levelByte level)))}
+    | otherwise = setLevelsFrom level addr count mem
+
+-- | 'setLevels' where there is something to do: chunk by chunk.
+setLevelsFrom :: SecLevel -> Int -> Int -> MemInst m -> MemInst m
+setLevelsFrom level addr count mem
+    | count <= 0 = mem
+    | offset + count <= chunkSize = inChunk count
+    | otherwise = setLevelsFrom level (addr + here) (count - here) (inChunk here)
   where
-    mark stored (chunkIx, offset, run) = case (level, IntMap.lookup chunkIx stored) of
-        (Low, Nothing) -> stored
-        (_, current) -> IntMap.insert chunkIx (fromMaybe zeroChunk current UV.// zip [offset ..] run) stored
+    (chunkIx, offset) = addr `quotRem` chunkSize
+    here = chunkSize - offset
+    -- The first @n@ bytes of the range, which are inside this chunk.
+    inChunk n = case IntMap.lookup chunkIx mem.levels of
+        Nothing -> case level of
+            Low -> mem
+            High -> mem {levels = IntMap.insert chunkIx (marked n publicChunk) mem.levels}
+        Just current
+            -- The bytes are at this level already: nothing to write. Once a region holds
+            -- secrets this is most stores into it, and such a store copies no levels.
+            | unchanged n current (offset `shiftR` 6) -> mem
+            | otherwise -> mem {levels = IntMap.insert chunkIx (marked n current) mem.levels}
+    lastWordOf n = (offset + n - 1) `shiftR` 6
+    unchanged :: Int -> UV.Vector Word64 -> Int -> Bool
+    unchanged n current !w
+        | w > lastWordOf n = True
+        | otherwise =
+            let mask = wordMask offset (offset + n) w
+                bits = fromMaybe 0 (current UV.!? w) .&. mask
+             in (case level of High -> bits == mask; Low -> bits == 0) && unchanged n current (w + 1)
+    marked n = UV.modify $ \slots ->
+        forM_ [offset `shiftR` 6 .. lastWordOf n] $ \w ->
+            let mask = wordMask offset (offset + n) w
+             in MV.modify slots (\bits -> case level of High -> bits .|. mask; Low -> bits .&. complement mask) w

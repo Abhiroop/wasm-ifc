@@ -27,7 +27,7 @@ start and the end of the sweep is recorded with the results for that reason.
 
 from __future__ import annotations
 
-import argparse, fnmatch, json, platform, re, resource, subprocess, sys, tempfile, time
+import argparse, fnmatch, json, os, platform, re, resource, subprocess, sys, tempfile, time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent

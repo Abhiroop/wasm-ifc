@@ -609,7 +609,7 @@ implemented since e87e76a.
 
 ## Lean: noninterference on a core with control flow, calls and memory (item 12, 2026-10-12)
 
-- **Where:** `lean/` (Lean 4.35.0, no dependencies; `cd lean && lake build`). 3,440 lines in
+- **Where:** `lean/` (Lean 4.35.0, no dependencies; `cd lean && lake build`). 3,459 lines in
   five files; `lean/README.md` states what is proved and what differs from the paper.
 - **What is proved** (`WasmIfc.tini`, from `WasmIfc.ni`): termination-insensitive
   noninterference for a function of a well-typed module, under the lift-free rules, on a core
@@ -703,7 +703,7 @@ implemented since e87e76a.
        skips its epilogue, but it can only be called where no secret has decided the control
        flow, and there the stack pointer is the same in both runs.
     Not modelled: references to exceptions (`exnref`, `throw_ref`, `catch_ref`).
-  - *The host boundary* (the same day; 3,440 lines): descriptors with levels, a read and a
+  - *The host boundary* (the same day; 3,459 lines): descriptors with levels, a read and a
     write. A write traps unless every cell it takes flows into the descriptor's level, and a
     read stores its data and its count at that level, as the implementation does. The
     attacker of `tini` now also sees what was written to a public descriptor and what is left
