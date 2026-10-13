@@ -706,6 +706,42 @@ theorem StRel.openAt {C : Ctx} {s t : State} (c : Nat) (x : List Nat) (d : Nat)
     · simp only [hnew, ite_false]
       exact hio k hk
 
+/-! ### The host's status, its changes to the descriptor table, and polls -/
+
+/-- Two runs' states give a host call with the same operands the same status. -/
+theorem StRel.status {C : Ctx} {s t : State} (h : StRel C s t) (call : Nat) (args : List Nat) :
+    s.status call args = t.status call args := by
+  unfold State.status
+  rw [h.host.1, h.host.2.1, h.host.2.2, h.2.2.2.2.2.2.1, h.2.2.2.2.1]
+
+/-- The same change to the descriptor table, the directories and a position, in two runs. -/
+theorem StRel.control {C : Ctx} {s t : State} (fd : Nat) (args : List Nat) (h : StRel C s t) :
+    StRel C (s.control fd args) (t.control fd args) := by
+  obtain ⟨h1, h2, h3, h4, h5, ⟨hcap, hex, hok, hfdt, hnames, hfile⟩, hc, hio, hseg⟩ := h
+  refine ⟨h1, h2, h3, h4, h5, ⟨hcap, hex, hok, ?_, ?_, ?_⟩, hc, fun d hd => ⟨(hio d hd).1, ?_⟩, hseg⟩
+  · simp only [State.control, hfdt, hnames, hfile]
+  · simp only [State.control, hfdt, hnames, hfile]
+  · simp only [State.control, hfdt, hnames, hfile]
+  · simp only [State.control, hfdt]
+    rw [(hio d hd).1, (hio d hd).2]
+
+/--
+Two runs poll the same descriptors: what they report has the same level, and if that level is
+public they report the same, since every channel polled is then public.
+-/
+theorem StRel.events {C : Ctx} {s t : State} (h : StRel C s t) (fds : List Nat) :
+    s.pollLevel fds = t.pollLevel fds ∧ (s.pollLevel fds = Lab.L → s.events fds = t.events fds) := by
+  have hfdt := h.host.1
+  have hchan := h.2.2.2.2.2.2.1
+  refine ⟨by unfold State.pollLevel State.polled; rw [hfdt, hchan], fun hl => ?_⟩
+  have hall : ∀ c, c ∈ s.polled fds → s.chan c = Lab.L := by
+    by_cases hp : ∀ c, c ∈ s.polled fds → s.chan c = Lab.L
+    · exact hp
+    · simp [State.pollLevel, hp] at hl
+  simp only [State.events, State.polled, hfdt] at hall ⊢
+  congr 1
+  exact List.map_congr_left (fun c hc => (h.2.2.2.2.2.2.2.1 c (hall c hc)).2)
+
 /-! ### Data segments and element segments -/
 
 theorem StRel.dropSeg {C : Ctx} {s t : State} (k : Nat) (h : StRel C s t) :
@@ -1069,6 +1105,9 @@ theorem rise {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : Pcs} {st st' : S
   | hostRead _ ih => exact ih
   | hostWrite _ ih => exact ih
   | hostOpen _ ih => exact ih
+  | hostGet _ ih => exact ih
+  | hostCtl _ ih => exact ih
+  | hostPoll _ ih => exact ih
   | memInit _ _ _ _ _ ih => exact ih
   | dataDrop _ _ ih => exact ih
   | tableFill _ _ _ ih => exact ih

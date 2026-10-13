@@ -141,6 +141,34 @@ example (pc : Lab) (P' : Pcs) (st' : STy) :
           cases pc <;> simpa [Lab.join, exampleCtx] using hle
         exact absurd (hH rfl) (by decide)
 
+/-! ### A host call and its status -/
+
+/-- A call that changes the descriptor table, with three public operands, is typed under a public pc. -/
+example : Typed exampleCtx [[]] [.const 3, .const 2, .const 1, .hostCtl, .drop] [Lab.L] [] [Lab.L] [] :=
+  .const 3 (.const 2 (.const 1 (.hostCtl (.drop .nil))))
+
+/-- If the host refuses it, the call leaves the state as it was and returns its status. -/
+example (s : State) (h : s.status 4 [1, 2, 3] ≠ 0) :
+    Eval [] 4 [0] [.const 3, .const 2, .const 1, .hostCtl] [] s (.normal [s.status 4 [1, 2, 3]] s) :=
+  .const 3 (.const 2 (.const 1 (.hostCtlFail h .nil)))
+
+/-- Under a secret pc no host call is typed: here after a branch on the secret local. -/
+example (P' : Pcs) (st' : STy) :
+    ¬ Typed exampleCtx [[]] [.localGet 0, .brIf 0, .const 3, .const 2, .const 1, .hostCtl]
+      [Lab.L] [] P' st' := by
+  intro h
+  cases h with
+  | localGet _ h1 =>
+    obtain ⟨_, _, _, _, hP, hst, h2⟩ := brIf_typed_inv h1
+    cases hP
+    cases hst
+    cases h2 with
+    | const _ h3 =>
+      cases h3 with
+      | const _ h4 =>
+        cases h4 with
+        | const _ h5 => cases h5
+
 /-! ### Two memories -/
 
 /--

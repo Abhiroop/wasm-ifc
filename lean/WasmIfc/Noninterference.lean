@@ -465,6 +465,27 @@ theorem carried_rel {carried rs st : STy} {σ0 σ1 : List Nat} (hfl : SFlows car
 
 /-! ### Noninterference -/
 
+/-- Three public operands are the same in two runs. -/
+theorem three_public {st : STy} {x0 y0 z0 x1 y1 z1 : Nat} {σa σb : List Nat}
+    (h : StkRel (Lab.L :: Lab.L :: Lab.L :: st) (x0 :: y0 :: z0 :: σa) (x1 :: y1 :: z1 :: σb)) :
+    x0 = x1 ∧ y0 = y1 ∧ z0 = z1 ∧ StkRel st σa σb := by
+  cases h with
+  | cons hx h =>
+    cases h with
+    | cons hy h =>
+      cases h with
+      | cons hz h => exact ⟨hx rfl, hy rfl, hz rfl, h⟩
+
+/-- Four public operands are the same in two runs. -/
+theorem four_public {st : STy} {w0 x0 y0 z0 w1 x1 y1 z1 : Nat} {σa σb : List Nat}
+    (h : StkRel (Lab.L :: Lab.L :: Lab.L :: Lab.L :: st) (w0 :: x0 :: y0 :: z0 :: σa)
+      (w1 :: x1 :: y1 :: z1 :: σb)) :
+    w0 = w1 ∧ x0 = x1 ∧ y0 = y1 ∧ z0 = z1 ∧ StkRel st σa σb := by
+  cases h with
+  | cons hw h =>
+    obtain ⟨hx, hy, hz, h⟩ := three_public h
+    exact ⟨hw rfl, hx, hy, hz, h⟩
+
 /-- Five public operands are the same in two runs. -/
 theorem five_public {st : STy} {p0 o0 k0 a0 fd0 p1 o1 k1 a1 fd1 : Nat} {σa σb : List Nat}
     (h : StkRel (Lab.L :: Lab.L :: Lab.L :: Lab.L :: Lab.L :: st)
@@ -853,53 +874,126 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
               exact ⟨hc hli, by rw [hv hlv]⟩
     | hostRead ht' =>
       cases he0 with
-      | hostRead hc0 hb0 hn0 he0' =>
+      | hostRead hst0 hc0 hb0 hn0 he0' =>
         cases he1 with
-        | hostRead hc1 hb1 hn1 he1' =>
-          cases hσ with
-          | cons hnp hσa =>
-            cases hσa with
-            | cons hk hσb =>
-              cases hσb with
-              | cons ha hσc =>
-                cases hσc with
-                | cons hfd hσd =>
-                  -- the arguments are public: the same descriptor, amount and addresses
-                  have e1 := hnp rfl
-                  have e2 := hk rfl
-                  have e3 := ha rfl
-                  have e4 := hfd rfl
-                  subst e1 e2 e3 e4
-                  -- the same descriptor table: the same channel
-                  rw [hs.host.1] at hc0
-                  cases hc0.symm.trans hc1
-                  have hchan := hs.2.2.2.2.2.2.1
-                  refine ih _ (by omega) hF ht' he0' he1' hσd ?_ (hp.of_glob rfl rfl)
-                  rw [← hchan]
-                  -- what a public descriptor has left to read is the same in both runs
-                  have hin : ∀ d, s0.chan d = Lab.L → s0.inp d = s1.inp d :=
-                    fun d hl => (hs.2.2.2.2.2.2.2.1 d hl).2
-                  exact ((hs.put (fun hl => ⟨rfl, by rw [hin _ hl]⟩)).setMem
-                    (fun hl => ⟨rfl, by rw [hin _ hl]⟩)).consume _ _
+        | hostRead hst1 hc1 hb1 hn1 he1' =>
+          -- the arguments are public: the same descriptor, amount and addresses
+          obtain ⟨rfl, rfl, rfl, rfl, hσd⟩ := four_public hσ
+          -- the same descriptor table: the same channel
+          rw [hs.host.1] at hc0
+          cases hc0.symm.trans hc1
+          have hchan := hs.2.2.2.2.2.2.1
+          refine ih _ (by omega) hF ht' he0' he1' (.cons (fun _ => rfl) hσd) ?_ (hp.of_glob rfl rfl)
+          rw [← hchan]
+          -- what a public descriptor has left to read is the same in both runs
+          have hin : ∀ d, s0.chan d = Lab.L → s0.inp d = s1.inp d :=
+            fun d hl => (hs.2.2.2.2.2.2.2.1 d hl).2
+          exact ((hs.put (fun hl => ⟨rfl, by rw [hin _ hl]⟩)).setMem
+            (fun hl => ⟨rfl, by rw [hin _ hl]⟩)).consume _ _
+        | hostReadFail hne1 he1' =>
+          -- the status is the same in both runs: both succeed or both fail
+          obtain ⟨rfl, rfl, rfl, rfl, hσd⟩ := four_public hσ
+          exact absurd ((hs.status _ _).symm.trans hst0) hne1
+      | hostReadFail hne0 he0' =>
+        cases he1 with
+        | hostRead hst1 hc1 hb1 hn1 he1' =>
+          obtain ⟨rfl, rfl, rfl, rfl, hσd⟩ := four_public hσ
+          exact absurd ((hs.status _ _).trans hst1) hne0
+        | hostReadFail hne1 he1' =>
+          obtain ⟨rfl, rfl, rfl, rfl, hσd⟩ := four_public hσ
+          rw [hs.status] at he0'
+          exact ih _ (by omega) hF ht' he0' he1' (.cons (fun _ => rfl) hσd) hs hp
     | hostWrite ht' =>
       cases he0 with
-      | hostWrite hc0 hb0 hchk0 he0' =>
+      | hostWrite hst0 hc0 hb0 hchk0 he0' =>
         cases he1 with
-        | hostWrite hc1 hb1 hchk1 he1' =>
-          cases hσ with
-          | cons hk hσa =>
-            cases hσa with
-            | cons ha hσb =>
-              cases hσb with
-              | cons hfd hσc =>
-                have e1 := hk rfl
-                have e2 := ha rfl
-                have e3 := hfd rfl
-                subst e1 e2 e3
-                rw [hs.host.1] at hc0
-                cases hc0.symm.trans hc1
-                exact ih _ (by omega) hF ht' he0' he1' hσc (hs.emit hchk0 hchk1)
-                  (hp.of_glob rfl rfl)
+        | hostWrite hst1 hc1 hb1 hchk1 he1' =>
+          obtain ⟨rfl, rfl, rfl, hσc⟩ := three_public hσ
+          rw [hs.host.1] at hc0
+          cases hc0.symm.trans hc1
+          exact ih _ (by omega) hF ht' he0' he1' (.cons (fun _ => rfl) hσc) (hs.emit hchk0 hchk1)
+            (hp.of_glob rfl rfl)
+        | hostWriteFail hne1 he1' =>
+          obtain ⟨rfl, rfl, rfl, hσc⟩ := three_public hσ
+          exact absurd ((hs.status _ _).symm.trans hst0) hne1
+      | hostWriteFail hne0 he0' =>
+        cases he1 with
+        | hostWrite hst1 hc1 hb1 hchk1 he1' =>
+          obtain ⟨rfl, rfl, rfl, hσc⟩ := three_public hσ
+          exact absurd ((hs.status _ _).trans hst1) hne0
+        | hostWriteFail hne1 he1' =>
+          obtain ⟨rfl, rfl, rfl, hσc⟩ := three_public hσ
+          rw [hs.status] at he0'
+          exact ih _ (by omega) hF ht' he0' he1' (.cons (fun _ => rfl) hσc) hs hp
+    | hostGet ht' =>
+      cases he0 with
+      | hostGet hst0 hq0 hb0 hn0 he0' =>
+        cases he1 with
+        | hostGet hst1 hq1 hb1 hn1 he1' =>
+          obtain ⟨rfl, rfl, rfl, rfl, hσd⟩ := four_public hσ
+          -- the source is a public channel: what it has left is the same in both runs
+          have hin : s0.inp _ = s1.inp _ := (hs.2.2.2.2.2.2.2.1 _ hq0).2
+          refine ih _ (by omega) hF ht' he0' he1' (.cons (fun _ => rfl) hσd) ?_ (hp.of_glob rfl rfl)
+          exact ((hs.put (fun _ => ⟨rfl, by rw [hin]⟩)).setMem
+            (fun _ => ⟨rfl, by rw [hin]⟩)).consume _ _
+        | hostGetFail hne1 he1' =>
+          obtain ⟨rfl, rfl, rfl, rfl, hσd⟩ := four_public hσ
+          exact absurd ((hs.status _ _).symm.trans hst0) hne1
+      | hostGetFail hne0 he0' =>
+        cases he1 with
+        | hostGet hst1 hq1 hb1 hn1 he1' =>
+          obtain ⟨rfl, rfl, rfl, rfl, hσd⟩ := four_public hσ
+          exact absurd ((hs.status _ _).trans hst1) hne0
+        | hostGetFail hne1 he1' =>
+          obtain ⟨rfl, rfl, rfl, rfl, hσd⟩ := four_public hσ
+          rw [hs.status] at he0'
+          exact ih _ (by omega) hF ht' he0' he1' (.cons (fun _ => rfl) hσd) hs hp
+    | hostCtl ht' =>
+      cases he0 with
+      | hostCtl hst0 he0' =>
+        cases he1 with
+        | hostCtl hst1 he1' =>
+          obtain ⟨rfl, rfl, rfl, hσc⟩ := three_public hσ
+          exact ih _ (by omega) hF ht' he0' he1' (.cons (fun _ => rfl) hσc) (hs.control _ _)
+            (hp.of_glob rfl rfl)
+        | hostCtlFail hne1 he1' =>
+          obtain ⟨rfl, rfl, rfl, hσc⟩ := three_public hσ
+          exact absurd ((hs.status _ _).symm.trans hst0) hne1
+      | hostCtlFail hne0 he0' =>
+        cases he1 with
+        | hostCtl hst1 he1' =>
+          obtain ⟨rfl, rfl, rfl, hσc⟩ := three_public hσ
+          exact absurd ((hs.status _ _).trans hst1) hne0
+        | hostCtlFail hne1 he1' =>
+          obtain ⟨rfl, rfl, rfl, hσc⟩ := three_public hσ
+          rw [hs.status] at he0'
+          exact ih _ (by omega) hF ht' he0' he1' (.cons (fun _ => rfl) hσc) hs hp
+    | hostPoll ht' =>
+      cases he0 with
+      | hostPoll hst0 hb0 hl0 hbe0 hn0 he0' =>
+        cases he1 with
+        | hostPoll hst1 hb1 hl1 hbe1 hn1 he1' =>
+          obtain ⟨rfl, rfl, rfl, rfl, hσd⟩ := four_public hσ
+          -- the list of descriptors is public in both runs, by the check: the same list
+          have hx := hs.cells_public hl0 hl1
+          obtain ⟨hlevel, hevents⟩ := hs.events (s1.cells _ _)
+          refine ih _ (by omega) hF ht' he0' he1' (.cons (fun _ => rfl) hσd) ?_ (hp.of_glob rfl rfl)
+          rw [hx, hlevel]
+          -- at a public level every channel polled is public, and the two runs report the same
+          exact (hs.put (fun hl => ⟨rfl, hevents (hlevel.trans hl)⟩)).setMem
+            (fun hl => ⟨rfl, by rw [hevents (hlevel.trans hl)]⟩)
+        | hostPollFail hne1 he1' =>
+          obtain ⟨rfl, rfl, rfl, rfl, hσd⟩ := four_public hσ
+          exact absurd ((hs.status _ _).symm.trans hst0) hne1
+      | hostPollFail hne0 he0' =>
+        cases he1 with
+        | hostPoll hst1 hb1 hl1 hbe1 hn1 he1' =>
+          obtain ⟨rfl, rfl, rfl, rfl, hσd⟩ := four_public hσ
+          exact absurd ((hs.status _ _).trans hst1) hne0
+        | hostPollFail hne1 he1' =>
+          obtain ⟨rfl, rfl, rfl, rfl, hσd⟩ := four_public hσ
+          rw [hs.status] at he0'
+          exact ih _ (by omega) hF ht' he0' he1' (.cons (fun _ => rfl) hσd) hs hp
     | hostOpen ht' =>
       -- the arguments are public, and so are the name's bytes in both runs, by the check:
       -- the two runs look the same name up in the same directory

@@ -113,14 +113,47 @@ inductive Basic : Instr → List Nat → State → List Nat → State → Prop w
       Basic (.tableInit x k) (c :: b :: a :: σ) s σ (s.initTbl x k a b c)
   | elemDrop {σ s} (k : Nat) : Basic (.elemDrop k) σ s σ (s.dropElem k)
   | hostRead {np k a fd c σ s} :
+      s.status 0 [np, k, a, fd] = 0 →
       s.fdt fd = some c → a + k ≤ s.size 0 → np < s.size 0 →
-      Basic .hostRead (np :: k :: a :: fd :: σ) s σ
+      Basic .hostRead (np :: k :: a :: fd :: σ) s (0 :: σ)
         (((s.put 0 a ((s.inp c).take k) (s.chan c)).setMem 0 np ((s.inp c).take k).length
           (s.chan c)).consume c k)
+  | hostReadFail {np k a fd σ s} :
+      s.status 0 [np, k, a, fd] ≠ 0 →
+      Basic .hostRead (np :: k :: a :: fd :: σ) s (s.status 0 [np, k, a, fd] :: σ) s
   | hostWrite {k a fd c σ s} :
+      s.status 1 [k, a, fd] = 0 →
       s.fdt fd = some c → a + k ≤ s.size 0 →
       (∀ x, a ≤ x → x < a + k → Lab.le (s.lab 0 x) (s.chan c)) →
-      Basic .hostWrite (k :: a :: fd :: σ) s σ (s.emit c (s.cells a k))
+      Basic .hostWrite (k :: a :: fd :: σ) s (0 :: σ) (s.emit c (s.cells a k))
+  | hostWriteFail {k a fd σ s} :
+      s.status 1 [k, a, fd] ≠ 0 →
+      Basic .hostWrite (k :: a :: fd :: σ) s (s.status 1 [k, a, fd] :: σ) s
+  | hostGet {np k a q σ s} :
+      s.status 3 [np, k, a, q] = 0 →
+      s.chan q = Lab.L → a + k ≤ s.size 0 → np < s.size 0 →
+      Basic .hostGet (np :: k :: a :: q :: σ) s (0 :: σ)
+        (((s.put 0 a ((s.inp q).take k) Lab.L).setMem 0 np ((s.inp q).take k).length
+          Lab.L).consume q k)
+  | hostGetFail {np k a q σ s} :
+      s.status 3 [np, k, a, q] ≠ 0 →
+      Basic .hostGet (np :: k :: a :: q :: σ) s (s.status 3 [np, k, a, q] :: σ) s
+  | hostCtl {x y fd σ s} :
+      s.status 4 [x, y, fd] = 0 →
+      Basic .hostCtl (x :: y :: fd :: σ) s (0 :: σ) (s.control fd [x, y, fd])
+  | hostCtlFail {x y fd σ s} :
+      s.status 4 [x, y, fd] ≠ 0 →
+      Basic .hostCtl (x :: y :: fd :: σ) s (s.status 4 [x, y, fd] :: σ) s
+  | hostPoll {np b k a σ s} :
+      s.status 5 [np, b, k, a] = 0 →
+      a + k ≤ s.size 0 → (∀ x, a ≤ x → x < a + k → s.lab 0 x = Lab.L) →
+      b + (s.events (s.cells a k)).length ≤ s.size 0 → np < s.size 0 →
+      Basic .hostPoll (np :: b :: k :: a :: σ) s (0 :: σ)
+        ((s.put 0 b (s.events (s.cells a k)) (s.pollLevel (s.cells a k))).setMem 0 np
+          (s.events (s.cells a k)).length (s.pollLevel (s.cells a k)))
+  | hostPollFail {np b k a σ s} :
+      s.status 5 [np, b, k, a] ≠ 0 →
+      Basic .hostPoll (np :: b :: k :: a :: σ) s (s.status 5 [np, b, k, a] :: σ) s
   | hostOpen {p o k a fd c d σ s} :
       s.fdt fd = some c → a + k ≤ s.size 0 → p < s.size 0 →
       (∀ x, a ≤ x → x < a + k → s.lab 0 x = Lab.L) →
@@ -288,6 +321,16 @@ theorem Basic.eval {F : List Func} {n : Nat} {ls : List Nat} {i : Instr} {rest :
   cases h with
   | hostOpen h1 h2 h3 h4 h5 h6 => exact .hostOpen h1 h2 h3 h4 h5 h6 he
   | hostOpenNone h1 h2 h3 h4 h5 h6 => exact .hostOpenNone h1 h2 h3 h4 h5 h6 he
+  | hostRead h1 h2 h3 h4 => exact .hostRead h1 h2 h3 h4 he
+  | hostReadFail h => exact .hostReadFail h he
+  | hostWrite h1 h2 h3 h4 => exact .hostWrite h1 h2 h3 h4 he
+  | hostWriteFail h => exact .hostWriteFail h he
+  | hostGet h1 h2 h3 h4 => exact .hostGet h1 h2 h3 h4 he
+  | hostGetFail h => exact .hostGetFail h he
+  | hostCtl h => exact .hostCtl h he
+  | hostCtlFail h => exact .hostCtlFail h he
+  | hostPoll h1 h2 h3 h4 h5 => exact .hostPoll h1 h2 h3 h4 h5 he
+  | hostPollFail h => exact .hostPollFail h he
   | _ => constructor <;> assumption
 
 theorem caught_nil (o : Out) : o.caught [] = o := by

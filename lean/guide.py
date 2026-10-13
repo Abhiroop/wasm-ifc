@@ -15,6 +15,67 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 SOURCES = {name: (HERE / "WasmIfc" / f"{name}.lean").read_text().splitlines() for name in ("Defs", "Basic", "Statement", "Noninterference", "Confinement", "Machine", "Findings", "SecWasmPrinted")}
 INTERPRETER = (HERE.parent / "src" / "Runtime" / "Interpreter.hs").read_text().splitlines()
+WASI = (HERE.parent / "src" / "Runtime" / "Wasi.hs").read_text().splitlines()
+
+
+def wasi(pattern: str) -> str:
+    """Where the host has something, as a line of `src/Runtime/Wasi.hs`."""
+    for number, line in enumerate(WASI, 1):
+        if re.search(pattern, line):
+            return f"`Wasi.hs:{number}`"
+    raise SystemExit(f"Wasi.hs: nothing matches {pattern!r}")
+
+
+# The functions of WASI Preview 1 (sockets included), each with the constructor of its case in
+# `runWasiCall`, the Lean primitive of its shape, and what in `Runtime.Wasi` makes it so.
+HOST = [
+    ("fd_read", "FdRead", "hostRead", "what is read and its count are stored at the descriptor's level (`readInto`, `pokeWord32At`)"),
+    ("fd_pread", "FdPread", "hostRead", "as `fd_read`, at an offset that is an operand"),
+    ("sock_recv", "SockRecv", "hostRead", "as `fd_read`; the flags it stores are at the connection's level too"),
+    ("fd_readdir", "FdReaddir", "hostRead", "the entries and their size are stored at the directory's level"),
+    ("path_readlink", "PathReadlink", "hostRead", "the link's contents are stored at the directory's level"),
+    ("fd_filestat_get", "FdFilestatGet", "hostRead", "the attributes are stored at the descriptor's level (`pokeStat`)"),
+    ("path_filestat_get", "PathFilestatGet", "hostRead", "the attributes are stored at the directory's level"),
+    ("fd_tell", "FdTell", "hostRead", "the position is stored at the descriptor's level"),
+    ("fd_write", "FdWrite", "hostWrite", "every byte taken must flow into the descriptor's level, or the run traps (`gather`)"),
+    ("fd_pwrite", "FdPwrite", "hostWrite", "as `fd_write`"),
+    ("sock_send", "SockSend", "hostWrite", "as `fd_write`"),
+    ("path_open", "PathOpen", "hostOpen", "the new descriptor has the directory's level and a public number (`openPath`, `insertFd`); the path is public (`peekPath`) and stays in the directory (`confine`)"),
+    ("sock_accept", "SockAccept", "hostOpen", "the connection has the listening socket's level and a public number; in the model the connections of a socket are one channel, its file of the empty name"),
+    ("args_get", "ArgsGet", "hostGet", "public bytes from the run's configuration"),
+    ("args_sizes_get", "ArgsSizesGet", "hostGet", "as `args_get`"),
+    ("environ_get", "EnvironGet", "hostGet", "as `args_get`"),
+    ("environ_sizes_get", "EnvironSizesGet", "hostGet", "as `args_get`"),
+    ("clock_res_get", "ClockResGet", "hostGet", "a public constant"),
+    ("clock_time_get", "ClockTimeGet", "hostGet", "the time, stored as public: a public input of the run"),
+    ("random_get", "RandomGet", "hostGet", "random bytes, stored as public: a public input of the run"),
+    ("fd_prestat_get", "FdPrestatGet", "hostGet", "the length of a granted directory's name, from the descriptor table"),
+    ("fd_prestat_dir_name", "FdPrestatDirName", "hostGet", "a granted directory's name, from the descriptor table"),
+    ("fd_fdstat_get", "FdFdstatGet", "hostGet", "the kind, the flags and the rights of a descriptor, from the descriptor table, stored as public (`pokeFdstat`)"),
+    ("fd_close", "FdClose", "hostCtl", "removes a descriptor"),
+    ("fd_renumber", "FdRenumber", "hostCtl", "moves a descriptor, with its level"),
+    ("fd_fdstat_set_flags", "FdFdstatSetFlags", "hostCtl", "changes a descriptor's flags"),
+    ("fd_fdstat_set_rights", "FdFdstatSetRights", "hostCtl", "narrows a descriptor's rights"),
+    ("fd_seek", "FdSeek", "hostCtl", "moves the position; the new position is stored at the descriptor's level, as `fd_tell` stores it; a failure that the file's size or position decides traps on a secret file"),
+    ("fd_advise", "FdAdvise", "hostCtl", "changes nothing"),
+    ("fd_allocate", "FdAllocate", "hostCtl", "not supported: a status and nothing else"),
+    ("fd_datasync", "FdDatasync", "hostCtl", "changes nothing that a program sees"),
+    ("fd_sync", "FdSync", "hostCtl", "as `fd_datasync`"),
+    ("fd_filestat_set_size", "FdFilestatSetSize", "hostCtl", "cuts or extends the file by an operand: what is left to read changes"),
+    ("fd_filestat_set_times", "FdFilestatSetTimes", "hostCtl", "sets times that are operands"),
+    ("path_create_directory", "PathCreateDirectory", "hostCtl", "adds a name to a directory"),
+    ("path_filestat_set_times", "PathFilestatSetTimes", "hostCtl", "sets times that are operands"),
+    ("path_link", "PathLink", "hostCtl", "adds a name; the two directories must have one level, or the run traps (`requireSameLevel`)"),
+    ("path_remove_directory", "PathRemoveDirectory", "hostCtl", "removes a name"),
+    ("path_rename", "PathRename", "hostCtl", "moves a name; the two directories must have one level, or the run traps (`requireSameLevel`)"),
+    ("path_symlink", "PathSymlink", "hostCtl", "adds a name; the link's contents are a path and so public"),
+    ("path_unlink_file", "PathUnlinkFile", "hostCtl", "removes a name"),
+    ("sock_shutdown", "SockShutdown", "hostCtl", "closes a direction of a connection"),
+    ("sched_yield", "SchedYield", "hostCtl", "changes nothing"),
+    ("proc_raise", "ProcRaise", "hostCtl", "not supported: a status and nothing else"),
+    ("poll_oneoff", "PollOneoff", "hostPoll", "the events and their number are stored at the join of the levels of the sockets polled (`pollOneoff`); the subscriptions are public"),
+    ("proc_exit", "ProcExit", "none", "ends the run; the core has no rule for it, so a run that exits is as one that traps, and the theorem says nothing of it"),
+]
 
 
 def hs(pattern: str) -> str:
@@ -55,31 +116,31 @@ def constructors(source: str, inductive: str) -> dict[str, int]:
 # Each typing rule: the constructor of `Syntax.Instructions.Instr` it stands for, the rule of the
 # paper's appendix B ("The Rules of SecWasm+"), or the rule it is typed like, and what differs.
 RULES = [
-    ("nil", "`INil`, the end of a sequence", "T+-Seq", ""),
-    ("const", "`IConst`", "T+-Const", ""),
-    ("binop", "`IAdd` and the other operations on two values", "T+-Binop", "one rule for all of them"),
-    ("unop", "the operations on one value, `IRefIsNull` among them", "as T+-Binop", ""),
-    ("partialBinop", "`IDiv`, `IRem`", "T+-Binop", "the operation is a partial function, and where it is not defined the instruction traps"),
-    ("partialUnop", "`IConvert` with a truncation that traps", "as T+-Binop", "as `partialBinop`"),
+    ("nil", "`INil`, the end of a sequence", "T-Seq (SecWasm)", ""),
+    ("const", "`IConst`", "T-Const (SecWasm)", ""),
+    ("binop", "`IAdd` and the other operations on two values", "T-Binop (SecWasm)", "one rule for all of them"),
+    ("unop", "the operations on one value, `IRefIsNull` among them", "T-Unop (SecWasm)", ""),
+    ("partialBinop", "`IDiv`, `IRem`", "T-Binop (SecWasm)", "the operation is a partial function, and where it is not defined the instruction traps"),
+    ("partialUnop", "`IConvert` with a truncation that traps", "T-Unop (SecWasm)", "as `partialBinop`"),
     ("dup", "`IDuplicate`", "none", "written by the elaborator for `br_on_null`"),
-    ("select", "`ISelect`", "T+-Select", ""),
-    ("drop", "`IDrop`", "T+-Drop", ""),
-    ("nop", "`INop`", "T+-Nop", ""),
+    ("select", "`ISelect`", "T-Select (SecWasm)", ""),
+    ("drop", "`IDrop`", "T-Drop (SecWasm)", ""),
+    ("nop", "`INop`", "T-Nop (SecWasm)", ""),
     ("relabel", "`IRelabelResults`", "T+-Relabel-Results", "raises labels of the block's whole segment"),
-    ("localGet", "`ILocalGet`", "T+-Get-Local", ""),
-    ("localSet", "`ILocalSet`", "T+-Set-Local", ""),
-    ("localTee", "`ILocalTee`", "as T+-Set-Local", ""),
-    ("globalGet", "`IGlobalGet`", "as T+-Get-Local", ""),
-    ("globalSet", "`IGlobalSet`", "T+-Set-Global", "for a global that is not preserved"),
+    ("localGet", "`ILocalGet`", "T-Get-Local (SecWasm)", ""),
+    ("localSet", "`ILocalSet`", "T-Set-Local (SecWasm)", ""),
+    ("localTee", "`ILocalTee`", "T-Tee-Local (SecWasm)", ""),
+    ("globalGet", "`IGlobalGet`", "T-Get-Global (SecWasm)", ""),
+    ("globalSet", "`IGlobalSet`", "T-Set-Global (SecWasm)", "for a global that is not preserved"),
     ("globalSetPreserved", "`IGlobalSetPreserved`", "T+-Set-Global-Preserved", "the same instruction, for a preserved global"),
-    ("load", "`ILoad`, `ILoadN`", "T+-Load", "the level is the load's declaration; the check is in the semantics"),
-    ("store", "`IStore`, `IStoreN`", "T+-Store", "the level is at least the join, where the implementation takes the join"),
+    ("load", "`ILoad`, `ILoadN`", "T-Load (SecWasm)", "the level is the load's declaration; the check is in the semantics"),
+    ("store", "`IStore`, `IStoreN`", "T-Store (SecWasm)", "the level is at least the join, where the implementation takes the join"),
     ("fill", "`IMemFill`", "T+-Memory-Fill", ""),
     ("copy", "`IMemCopy`", "T+-Memory-Copy", "within a memory or between two; the rule does not depend on which"),
     ("memInit", "`IMemInit`", "as T+-Memory-Copy", ""),
     ("dataDrop", "`IDataDrop`", "in the text: no premise", ""),
-    ("memSize", "`IMemSize`", "as T+-Const", ""),
-    ("memGrow", "`IMemGrow`", "T+-Memory-Grow", ""),
+    ("memSize", "`IMemSize`", "T-Memory-Size (SecWasm)", ""),
+    ("memGrow", "`IMemGrow`", "T-Memory-Grow (SecWasm)", ""),
     ("tableGet", "`ITableGet`", "T+-Table-Get", "the table is an index, and each table has a level"),
     ("tableSet", "`ITableSet`", "T+-Table-Set", ""),
     ("tableFill", "`ITableFill`", "as T+-Table-Set", "with the count"),
@@ -88,8 +149,11 @@ RULES = [
     ("tableCopy", "`ITableCopy`", "as T+-Table-Set", "between two tables: the level of the table copied from is in the premise too"),
     ("tableSize", "`ITableSize`", "T+-Table-Size", ""),
     ("tableGrow", "`ITableGrow`", "T+-Table-Grow", ""),
-    ("hostRead", "a call of a host import that reads (`HostFunc`), with the driver's labelling", "T+-Call", "the paper types a call of a host import by its rule for calls; one instruction stands for the reading ones"),
+    ("hostRead", "a call of a host import that reads (`HostFunc`), with the driver's labelling", "T+-Call", "the paper types a call of a host import by its rule for calls; one instruction stands for the reading ones (section 8)"),
     ("hostWrite", "a call of a host import that writes, with the driver's check", "T+-Call", "one instruction stands for the writing ones"),
+    ("hostGet", "a call of a host import that stores public data from no descriptor", "T+-Call", "the arguments, the environment, the clocks, random numbers"),
+    ("hostCtl", "a call of a host import that changes the descriptor table, a directory or a position", "T+-Call", "`fd_close`, `fd_seek`, `path_rename` and the like"),
+    ("hostPoll", "the host function `PollOneoff`", "T+-Call", "what it reports is at the join of the levels of the descriptors polled"),
     ("hostOpen", "the host function `PathOpen` (`Runtime.Host`), which is not an instruction", "T+-Call", "`path_open`"),
     ("block", "`IBlock`", "T+-Block", "with `Restores`, the comparison of preserved globals"),
     ("loop", "`ILoop`", "T+-Loop", "with `Restores`"),
@@ -124,6 +188,9 @@ def main() -> None:
                 break
     semantics["tryTable"] = [evaluated["tryCont"], evaluated["tryExit"]]
     semantics["globalSetPreserved"] = [evaluated["globalSet"]]
+    host_rows = "\n".join(
+        f"| `{name}` | {wasi(rf'^    [(]{constructor},')} | {'`' + primitive + '`' if primitive != 'none' else 'none'} | {note} |" for name, constructor, primitive, note in HOST
+    )
     rule_rows = "\n".join(
         f"| `{name}` | {typed[name]} | {', '.join(map(str, semantics.get(name, []))) or 'none: a trap'} | {constructor} | {paper} | {note} |" for name, constructor, paper, note in RULES
     )
@@ -179,7 +246,7 @@ bound on the pc of its callers, results.
 `Typed C Ls e P st P' st'`, {at("Defs", r"^inductive Typed")}, is the paper's judgment of
 appendix B, "The Rules of SecWasm+": under the labels `Ls` (innermost first), the sequence `e` takes the pc
 stack `P` and the current block's segment `st` to `P'` and `st'`. Each rule types one
-instruction followed by the rest of its sequence, so the paper's T+-Seq is built into every
+instruction followed by the rest of its sequence, so SecWasm's T-Seq is built into every
 rule. `Ctx` ({at("Defs", r"^structure Ctx")}) has the levels of the locals and the globals,
 which globals are preserved, the function types, the level of each table and the tags.
 
@@ -191,10 +258,12 @@ on the stack before a branch.
 |---|---:|---|---|---|---|
 {rule_rows}
 
-The paper's rules are named T+-Block and so on (its figures `fig:wrules`, `fig:wrules2` and
-`fig:wrules3`). Where the column says "as" a rule, the paper prints no rule for the instruction
-and says in the text of the appendix that it follows that one. The paper types a call of a
-host import by T+-Call; the core's three host instructions stand for such calls, with the
+The paper cites sixteen rules from SecWasm under their own names, T-Const and so on (Fig. 13
+of SecWasm's full version): the column marks them "(SecWasm)". Its own rules are named
+T+-Block and so on (its figures of rules in the appendix). Where the column says "as" a rule,
+the paper prints no rule for the instruction and says in the text of the appendix that it
+follows that one. The paper types a call of a
+host import by T+-Call; the core's six host instructions stand for such calls (section 8), with the
 host's part of the call in their rules.
 
 Two side definitions carry premises:
@@ -389,7 +458,7 @@ of `noninterference` with two runs of the machine for the two `Invoke`s.
 What stays by reading is the table above: that the Haskell `step` makes the transitions of
 `Step`. Four differences are known. The Haskell machine bounds the depth of calls and traps
 beyond it. It suspends at a call of the host and is resumed with the results, where the
-core's two host calls are instructions. Its typed instructions carry coercions between
+core's host calls are instructions. Its typed instructions carry coercions between
 segments (`relabelStack`), which do nothing to the values. And a clause by reference that
 catches an exception thrown by `throw_ref` gets the reference it was thrown from, where the
 Lean machine keeps the exception once more and hands out a new reference; WebAssembly has no
@@ -421,13 +490,68 @@ so the `m` of the printed rule is `ts.length + 1`. And the code after a `br_tabl
 from the rule's output, as T-Seq does, where `WasmIfc.Typed` does not type it. In `leak`
 nothing follows the `br_table` in its block.
 
+## 8. The host
+
+The paper's one assumption about the host is that the status of a host call depends only on
+its operands and on the public part of the state. In the core this is a definition and no
+hypothesis: `hostStatus` ({at("Defs", r"^opaque hostStatus")}) is a function of the call, its
+operands, the descriptor table, the names of the files in every directory, the channel of each
+file, the levels of the channels and the size of the first memory, and of nothing else.
+`State.status` applies it to a state. The proof uses the assumption in one lemma,
+`StRel.status` ({at("Basic", r"^theorem StRel.status")}): two runs' states give a call with the
+same operands the same status. Each host primitive has a rule for status 0, which does what the
+call does, and one for any other status, which leaves the state as it was. Both push the status.
+What a public pointer among the operands points to (a path, the subscriptions of a poll)
+counts as an operand: the host checks those bytes to be public before it uses them.
+
+There are six primitives, one for each shape of rule:
+
+| Primitive | Rule | What it does on success |
+|---|---|---|
+| `hostRead` | line {evaluated["hostRead"]} | stores what it reads from a descriptor's channel, and how much, at the channel's level |
+| `hostWrite` | line {evaluated["hostWrite"]} | sends cells to a descriptor's channel, and traps if one is more secret than the channel |
+| `hostOpen` | line {evaluated["hostOpen"]} | makes a descriptor, with a public number, for a file of a directory; the name's bytes must be public |
+| `hostGet` | line {evaluated["hostGet"]} | stores public data of a public source that has no descriptor |
+| `hostCtl` | line {evaluated["hostCtl"]} | changes the descriptor table, the directories and the position of a descriptor, by functions of the operands and of what the table and the directories were (`State.control`, {at("Defs", r"^def State.control")}) |
+| `hostPoll` | line {evaluated["hostPoll"]} | stores a report on several descriptors at the join of their channels' levels (`State.pollLevel`, {at("Defs", r"^def State.pollLevel")}); the report is a function of what those channels have left to read |
+
+Each function of WASI Preview 1, with the case of `runWasiCall` ({wasi(r"^runWasiCall ::")})
+that serves it:
+
+| WASI function | Where | Shape | What in `Runtime.Wasi` makes it so |
+|---|---|---|---|
+{host_rows}
+
+Convince yourself of three things that the table rests on:
+
+- **A file has one level.** A file gets the level of the directory it is opened in
+  (`openPath`, {wasi(r"^openPath ::")}). So a path must stay in its directory once symbolic
+  links are followed (`confine`, {wasi(r"^confine ::")}), no call moves or links a file between
+  directories of different levels (`requireSameLevel`, {wasi(r"^requireSameLevel ::")}), and
+  the host refuses to start if a directory contains another of a different level
+  (`newHost`, {wasi(r"^newHost ::")}). That the granted directories share no file by a hard
+  link made outside the run is assumed.
+- **What decides a public status is public.** Paths, the contents of a symbolic link and the
+  subscriptions of a poll must be public bytes (`peekPath`, `requireAtMost`). The list of
+  buffers of a read or a write may be as secret as the descriptor, and then a failure of the
+  call traps and is no status (`usingBuffers`, {wasi(r"^usingBuffers ::")}). Whether a name exists in a directory and what
+  kind of entry it is decide the status of the `path_` calls, in a secret directory too: the
+  model has the names in `sameHost`, as public. A read from a secret socket that does not
+  block, and a seek on a secret file that would land before its start, trap in place of a
+  status (`unlessWouldBlock`, the case of `FdSeek`).
+- **What the model leaves out.** A failure of the operating system on a secret file or
+  connection (a full disk, a connection that the peer closed) is a status that the model does
+  not have. `proc_exit` has no rule. `hostWrite` does not store how much it wrote, which the
+  host stores at the descriptor's level. `fd_seek` is a `hostCtl` that also stores the new
+  position, as `fd_tell` would.
+
 ### Outside the core
 
 More than one value type, and so the numeric and vector instructions as such (the operations
 that trap are in the core, as partial functions); 64-bit
 memories and tables;
-linking; the WASI calls other than one that reads, one that writes and one that opens a file
-in a directory, the error codes but the one for a missing file, and sockets; local variables split into webs and the inference of labels, which
+linking; `proc_exit`, and the failures of the operating system on a secret file or connection
+(section 8); local variables split into webs and the inference of labels, which
 happen before typing; declassification.
 """
     (HERE / "STATEMENTS.md").write_text(text)

@@ -110,6 +110,12 @@ inductive Instr where
   | hostWrite
   /-- a host call that opens a file in a directory, as a new descriptor (`path_open`) -/
   | hostOpen
+  /-- a host call that stores public data that comes from no descriptor: an argument, a clock -/
+  | hostGet
+  /-- a host call that changes the descriptor table, a directory or a position (`fd_close`, `fd_seek`) -/
+  | hostCtl
+  /-- a host call that reports on several descriptors at once (`poll_oneoff`) -/
+  | hostPoll
   /-- `fill m lm`: write one value to a range of cells of the memory `m` and label them `lm` -/
   | fill (m : Nat) (lm : Lab)
   /--
@@ -301,15 +307,25 @@ inductive Typed (C : Ctx) : List STy → List Instr → Pcs → STy → Pcs → 
   /--
   A host call is made under a public pc with public arguments: where to put what is read, how
   much at most, the descriptor, and where to put how much was read. What it stores is labelled
-  at run time, with the descriptor's level.
+  at run time, with the descriptor's level. Its result is its status, which is public.
   -/
   | hostRead {Ls rest Pr st P' st'} :
-      Typed C Ls rest (Lab.L :: Pr) st P' st' →
+      Typed C Ls rest (Lab.L :: Pr) (Lab.L :: st) P' st' →
       Typed C Ls (.hostRead :: rest) (Lab.L :: Pr) (Lab.L :: Lab.L :: Lab.L :: Lab.L :: st) P' st'
   /-- The cells a host call takes are checked at run time against the descriptor's level. -/
   | hostWrite {Ls rest Pr st P' st'} :
-      Typed C Ls rest (Lab.L :: Pr) st P' st' →
+      Typed C Ls rest (Lab.L :: Pr) (Lab.L :: st) P' st' →
       Typed C Ls (.hostWrite :: rest) (Lab.L :: Pr) (Lab.L :: Lab.L :: Lab.L :: st) P' st'
+  /-- Every host call is typed alike: a public pc, public operands, and a public status. -/
+  | hostGet {Ls rest Pr st P' st'} :
+      Typed C Ls rest (Lab.L :: Pr) (Lab.L :: st) P' st' →
+      Typed C Ls (.hostGet :: rest) (Lab.L :: Pr) (Lab.L :: Lab.L :: Lab.L :: Lab.L :: st) P' st'
+  | hostCtl {Ls rest Pr st P' st'} :
+      Typed C Ls rest (Lab.L :: Pr) (Lab.L :: st) P' st' →
+      Typed C Ls (.hostCtl :: rest) (Lab.L :: Pr) (Lab.L :: Lab.L :: Lab.L :: st) P' st'
+  | hostPoll {Ls rest Pr st P' st'} :
+      Typed C Ls rest (Lab.L :: Pr) (Lab.L :: st) P' st' →
+      Typed C Ls (.hostPoll :: rest) (Lab.L :: Pr) (Lab.L :: Lab.L :: Lab.L :: Lab.L :: st) P' st'
   /--
   Opening a file is a host call: under a public pc, with public arguments (where to put the new
   descriptor, the open flags, the length and the address of the name, the directory's
@@ -696,6 +712,65 @@ def State.growTbl (s : State) (x d : Nat) (e : Option Nat) : Nat × State :=
                                          else s.tbl y })
   else (growFailed, s)
 
+/-! ### The host -/
+
+/--
+The status of a host call: a function of which call it is, of its operands, and of the public
+part of the state as the host sees it, which is the descriptor table, the names of the files in
+every directory, the channel of each file, the levels of the channels, and the size of the
+first memory. Nothing else is known of it. That a status depends on nothing secret is this
+type, and the proof uses it in one place (`StRel.status`). Status 0 is success.
+-/
+opaque hostStatus : (Nat → Option Nat) → (Nat → List (List Nat)) → (Nat → List Nat → Nat) →
+    (Nat → Lab) → Nat → Nat → List Nat → Nat
+
+def State.status (s : State) (call : Nat) (args : List Nat) : Nat :=
+  hostStatus s.fdt s.names s.file s.chan (s.size 0) call args
+
+/--
+What a call that changes the descriptor table or a directory makes of them (`fd_close`,
+`fd_renumber`, `path_rename`, `path_unlink_file`): functions of the operands and of the table,
+the names and the files' channels as they were.
+-/
+opaque ctlFdt : (Nat → Option Nat) → (Nat → List (List Nat)) → (Nat → List Nat → Nat) →
+    List Nat → (Nat → Option Nat)
+
+opaque ctlNames : (Nat → Option Nat) → (Nat → List (List Nat)) → (Nat → List Nat → Nat) →
+    List Nat → (Nat → List (List Nat))
+
+opaque ctlFile : (Nat → Option Nat) → (Nat → List (List Nat)) → (Nat → List Nat → Nat) →
+    List Nat → (Nat → List Nat → Nat)
+
+/--
+What a call that moves the position of a descriptor leaves to read from its channel
+(`fd_seek`): a function of the operands and of what the channel had left and has had written.
+-/
+opaque reposition : List Nat → List Nat → List Nat → List Nat
+
+/--
+The state after a call that changes the descriptor table, a directory, or the position of the
+descriptor `fd`. Of a channel it changes only what is left to read, and only for the channel
+of `fd`.
+-/
+def State.control (s : State) (fd : Nat) (args : List Nat) : State :=
+  { s with fdt := ctlFdt s.fdt s.names s.file args,
+           names := ctlNames s.fdt s.names s.file args,
+           file := ctlFile s.fdt s.names s.file args,
+           inp := fun d => if s.fdt fd = some d then reposition (s.inp d) (s.out d) args else s.inp d }
+
+/-- The channels of the descriptors listed, for those the table has. -/
+def State.polled (s : State) (fds : List Nat) : List Nat := fds.filterMap s.fdt
+
+/-- The level of what a poll of these descriptors reports: secret if one of their channels is. -/
+def State.pollLevel (s : State) (fds : List Nat) : Lab :=
+  if ∀ c, c ∈ s.polled fds → s.chan c = Lab.L then Lab.L else Lab.H
+
+/-- What a poll reports: a function of the descriptors and of what each of their channels has left to read. -/
+opaque pollEvents : List Nat → List (List Nat) → List Nat
+
+def State.events (s : State) (fds : List Nat) : List Nat :=
+  pollEvents fds ((s.polled fds).map s.inp)
+
 /-- `Kept keep s t`: the globals `keep` hold in `t` what they held in `s`. -/
 def Kept (keep : List Nat) (s t : State) : Prop := ∀ i, i ∈ keep → t.glob i = s.glob i
 
@@ -872,24 +947,81 @@ inductive Eval (F : List Func) : Nat → List Nat → List Instr → List Nat �
       Eval F (n + 1) ls (.tableSet x :: rest) (v :: c :: σ) s o
   /--
   Read at most `k` values from the channel `c` of the descriptor `fd` into the cells from `a`,
-  and how many they were into the cell `np`: all of it at the channel's level. A descriptor
-  that the table does not have is a trap.
+  and how many they were into the cell `np`: all of it at the channel's level. The call's
+  result is its status, 0. A descriptor that the table does not have is a trap here.
   -/
   | hostRead {n ls rest np k a fd c σ s o} :
+      s.status 0 [np, k, a, fd] = 0 →
       s.fdt fd = some c → a + k ≤ s.size 0 → np < s.size 0 →
-      Eval F n ls rest σ
+      Eval F n ls rest (0 :: σ)
         (((s.put 0 a ((s.inp c).take k) (s.chan c)).setMem 0 np ((s.inp c).take k).length
           (s.chan c)).consume c k) o →
+      Eval F (n + 1) ls (.hostRead :: rest) (np :: k :: a :: fd :: σ) s o
+  /-- A host call that fails does nothing and returns its status. -/
+  | hostReadFail {n ls rest np k a fd σ s o} :
+      s.status 0 [np, k, a, fd] ≠ 0 →
+      Eval F n ls rest (s.status 0 [np, k, a, fd] :: σ) s o →
       Eval F (n + 1) ls (.hostRead :: rest) (np :: k :: a :: fd :: σ) s o
   /--
   Write the `k` cells from `a` to the channel `c` of the descriptor `fd`: a trap if one is more
   secret than it.
   -/
   | hostWrite {n ls rest k a fd c σ s o} :
+      s.status 1 [k, a, fd] = 0 →
       s.fdt fd = some c → a + k ≤ s.size 0 →
       (∀ x, a ≤ x → x < a + k → Lab.le (s.lab 0 x) (s.chan c)) →
-      Eval F n ls rest σ (s.emit c (s.cells a k)) o →
+      Eval F n ls rest (0 :: σ) (s.emit c (s.cells a k)) o →
       Eval F (n + 1) ls (.hostWrite :: rest) (k :: a :: fd :: σ) s o
+  | hostWriteFail {n ls rest k a fd σ s o} :
+      s.status 1 [k, a, fd] ≠ 0 →
+      Eval F n ls rest (s.status 1 [k, a, fd] :: σ) s o →
+      Eval F (n + 1) ls (.hostWrite :: rest) (k :: a :: fd :: σ) s o
+  /--
+  Store public data that comes from no descriptor (the arguments, the environment, a clock,
+  random numbers): at most `k` values of the source `q`, which is a public channel, into the
+  cells from `a`, and how many into the cell `np`, all of it public.
+  -/
+  | hostGet {n ls rest np k a q σ s o} :
+      s.status 3 [np, k, a, q] = 0 →
+      s.chan q = Lab.L → a + k ≤ s.size 0 → np < s.size 0 →
+      Eval F n ls rest (0 :: σ)
+        (((s.put 0 a ((s.inp q).take k) Lab.L).setMem 0 np ((s.inp q).take k).length
+          Lab.L).consume q k) o →
+      Eval F (n + 1) ls (.hostGet :: rest) (np :: k :: a :: q :: σ) s o
+  | hostGetFail {n ls rest np k a q σ s o} :
+      s.status 3 [np, k, a, q] ≠ 0 →
+      Eval F n ls rest (s.status 3 [np, k, a, q] :: σ) s o →
+      Eval F (n + 1) ls (.hostGet :: rest) (np :: k :: a :: q :: σ) s o
+  /--
+  Change the descriptor table, a directory, or the position of the descriptor `fd`
+  (`State.control`), by the operands and by what the table and the directories were.
+  -/
+  | hostCtl {n ls rest x y fd σ s o} :
+      s.status 4 [x, y, fd] = 0 →
+      Eval F n ls rest (0 :: σ) (s.control fd [x, y, fd]) o →
+      Eval F (n + 1) ls (.hostCtl :: rest) (x :: y :: fd :: σ) s o
+  | hostCtlFail {n ls rest x y fd σ s o} :
+      s.status 4 [x, y, fd] ≠ 0 →
+      Eval F n ls rest (s.status 4 [x, y, fd] :: σ) s o →
+      Eval F (n + 1) ls (.hostCtl :: rest) (x :: y :: fd :: σ) s o
+  /--
+  Report on the descriptors that the `k` cells from `a` list, which must be public cells: the
+  events go to the cells from `b` and their number to the cell `np`, at the join of the levels
+  of the descriptors' channels (`State.pollLevel`). The events are a function of what those
+  channels have left to read.
+  -/
+  | hostPoll {n ls rest np b k a σ s o} :
+      s.status 5 [np, b, k, a] = 0 →
+      a + k ≤ s.size 0 → (∀ x, a ≤ x → x < a + k → s.lab 0 x = Lab.L) →
+      b + (s.events (s.cells a k)).length ≤ s.size 0 → np < s.size 0 →
+      Eval F n ls rest (0 :: σ)
+        ((s.put 0 b (s.events (s.cells a k)) (s.pollLevel (s.cells a k))).setMem 0 np
+          (s.events (s.cells a k)).length (s.pollLevel (s.cells a k))) o →
+      Eval F (n + 1) ls (.hostPoll :: rest) (np :: b :: k :: a :: σ) s o
+  | hostPollFail {n ls rest np b k a σ s o} :
+      s.status 5 [np, b, k, a] ≠ 0 →
+      Eval F n ls rest (s.status 5 [np, b, k, a] :: σ) s o →
+      Eval F (n + 1) ls (.hostPoll :: rest) (np :: b :: k :: a :: σ) s o
   /--
   Open the file whose name is the `k` cells from `a`, in the directory `c` of the descriptor
   `fd`: a trap if a byte of the name is secret. If the directory has the name, or the flags
