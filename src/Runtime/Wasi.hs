@@ -109,7 +109,7 @@ import System.Posix.Unistd (fileSynchronise)
 import System.Timeout qualified as Timeout
 
 import Runtime.Bytes (bytesOfWord32, bytesOfWord64, word32OfBytes, word64OfBytes)
-import Runtime.Host (WasiFunc (..))
+import Runtime.Host (WasiFunc (..), wasiFuncName)
 import Runtime.Interpreter (HostRequest (..), currentMem, resumeWith, storeMem)
 import Runtime.MemInst (MemInst, levelOfRange, readBytes, writeBytes, writeBytesAt)
 import Runtime.Module (Invocation (..), RunError (..), SomeHostRequest (..), SomeModuleInst, Value, continueWith, invokeExport, targetNames)
@@ -1218,6 +1218,8 @@ runWithWasi cfg wasmModule name args = do
             outcome <- runWasiCall host wasiFunc callArgs (currentMem store)
             case outcome of
                 WasiExit code -> pure (Right (Exited code))
+                -- (The boundary's check failed in this call: the trap says which.)
+                WasiTrap InformationFlowViolation -> pure (Left (Trapped (SecretToHost (wasiFuncName wasiFunc))))
                 WasiTrap trap -> pure (Left (Trapped trap))
                 WasiReturn results mem' ->
                     serve (continueWith shapeS funcs exports rsS (resumeWith (storeMem mem' store) (retagStack resultsAgree results) suspended))

@@ -785,7 +785,7 @@ spec = do
             let body = [Const SI32 0, Const SI32 7, Annotated High (Store SI32 (MemArg 0 0 0)), Const SI32 8, Const SI32 0, Store SI32 (MemArg 0 0 0), Const SI32 12, Const SI32 4, Store SI32 (MemArg 0 0 0), Const SI32 1, Const SI32 8, Const SI32 1, Const SI32 16, Call (FunctionIdx 0)]
                 program = either (error . show) id (load (wasiModule fdWriteImport body [I32]))
             leaked <- runWithWasi noHost program "f" []
-            fmap describeCompletion leaked `shouldBe` Left (Trapped InformationFlowViolation)
+            fmap describeCompletion leaked `shouldBe` Left (Trapped (SecretToHost "fd_write"))
             allowed <- runWithWasi noHost {descriptorLevels = publicDescriptors {standardOutput = High}} program "f" []
             fmap describeCompletion allowed `shouldBe` Right "returned [I32Value 0]"
         it "an iovec array with a secret byte cannot direct a write to a public descriptor" $ do
@@ -793,7 +793,7 @@ spec = do
             let body = [Const SI32 8, Const SI32 0, Annotated High (Store SI32 (MemArg 0 0 0)), Const SI32 12, Const SI32 4, Store SI32 (MemArg 0 0 0), Const SI32 1, Const SI32 8, Const SI32 1, Const SI32 16, Call (FunctionIdx 0)]
                 program = either (error . show) id (load (wasiModule fdWriteImport body [I32]))
             leaked <- runWithWasi noHost program "f" []
-            fmap describeCompletion leaked `shouldBe` Left (Trapped InformationFlowViolation)
+            fmap describeCompletion leaked `shouldBe` Left (Trapped (SecretToHost "fd_write"))
             allowed <- runWithWasi noHost {descriptorLevels = publicDescriptors {standardOutput = High}} program "f" []
             fmap describeCompletion allowed `shouldBe` Right "returned [I32Value 0]"
         it "the byte count of a read from a secret descriptor is secret" $ do
@@ -821,7 +821,7 @@ spec = do
             (address', port') <- freeAddress
             leaked <- serving (secretSocket address') printsFourBytes
             _ <- exchange port' "ping" 0
-            leaked `shouldReturn` Left (Trapped InformationFlowViolation)
+            leaked `shouldReturn` Left (Trapped (SecretToHost "fd_write"))
         it "the byte count of a read from a secret connection is secret" $ do
             (address, port) <- freeAddress
             let cfg = noHost {listeners = [address], descriptorLevels = DescriptorLevels Low Low Low Map.empty (Map.singleton address High)}
@@ -858,7 +858,7 @@ spec = do
                 cfg = WasiConfig [] [] [Preopen "/" "test"] [] publicDescriptors
                 name = [Const SI32 0, Const SI32 0x7A]
             secret <- runWithWasi cfg (program (name ++ [Annotated High (StoreN SI32 1 (MemArg 0 0 0))])) "f" []
-            fmap describeCompletion secret `shouldBe` Left (Trapped InformationFlowViolation)
+            fmap describeCompletion secret `shouldBe` Left (Trapped (SecretToHost "path_open"))
             public <- runWithWasi cfg (program (name ++ [StoreN SI32 1 (MemArg 0 0 0)])) "f" []
             fmap describeCompletion public `shouldBe` Right "returned [I32Value 44]"
         it "args_sizes_get reports the argument count and buffer size" $ do

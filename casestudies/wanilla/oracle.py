@@ -15,8 +15,19 @@ a policy, validate the module under it, and compare:
 WANILLA's lattice has an integrity dimension; we keep confidentiality (ST, SU -> H; PT, PU -> L).
 A specification is not expressible, and reported as such, when it queries integrity only,
 labels a global differently on entry and on exit, gives an imported function a secret
-parameter or context (a host import must be public here), or queries memory, whose attacker
-observes every byte where ours observes the bytes labelled public.
+parameter, result or context (a host import must be public here) or lets it write the module's
+state, or asks about areas of the memory or about a table.
+
+Two kinds of query are translated since 2026-10-13 (the verdicts without them are recorded
+too, as `verdict_narrow`, which is the translation of the results before that date):
+
+  * What flows into an imported function whose parameters, results and context are public.
+    That is our default for an import: a secret argument or a call under a secret pc is
+    rejected.
+  * The data of the memory, when the attacker observes it at the end (`memory_data`, `memory`
+    with public data on exit). Our attacker observes the bytes labelled public, so the policy
+    declares every store of the module public (`store-default func i : L`): a store of a
+    secret is then rejected, every byte stays public, and the two attackers observe the same.
 
     casestudies/wanilla/oracle.py [ARTIFACT_DIR]   # default ~/.local/wasm-bench-tools/src/wanilla
 """
@@ -59,18 +70,30 @@ def exports_of(wat):
     return names
 
 
-def translate(spec, wat):
-    """Our policy for a specification, or the reason it is not expressible."""
+def public_import(imported):
+    """Whether an imported function is what our default makes of an import: public parameters, results and context, and no state of the module written."""
+    labels = [imported.get("context", "PT")] + imported.get("param", []) + imported.get("result", [])
+    writes = any(key in imported for key in ("table_in", "table_out", "memory_out", "global_out"))
+    return not writes and all(SECRET.get(label, "L") == "L" for label in labels)
+
+
+def translate(spec, wat, wide=True):
+    """Our policy for a specification, or the reason it is not expressible. `wide` translates the queries on imports and on the memory's data too."""
     queries = spec.get("queries", {})
-    if set(queries) - {"result", "global", "memory_size"}:
-        return None, "queries memory, tables or imports"
+    beyond = set(queries) - {"result", "global", "memory_size"}
+    observed_memory = False
+    if beyond:
+        if not wide or not beyond <= {"memory_data", "memory", "imported_function"}:
+            return None, "queries memory, tables or imports"
+        observed_memory = bool(beyond & {"memory_data", "memory"}) and SECRET.get(spec.get("memory_out", {}).get("data", "PT"), "L") == "L"
     if all(label in ("PT", "ST") for label in spec.get("param", [])) is False and "integrity" in spec.get("comment", ""):
         return None, "integrity"
     if spec.get("imported_function"):
-        for imported in spec["imported_function"]:
-            if SECRET.get(imported.get("context", "PT")) == "H" or any(SECRET.get(p) == "H" for p in imported.get("param", [])):
-                return None, "an import with a secret parameter or context"
-        return None, "imports a function the host does not provide"
+        if not wide or not all(public_import(imported) for imported in spec["imported_function"]):
+            for imported in spec["imported_function"]:
+                if SECRET.get(imported.get("context", "PT")) == "H" or any(SECRET.get(p) == "H" for p in imported.get("param", [])):
+                    return None, "an import with a secret parameter or context"
+            return None, "imports a function the host does not provide" if not wide else "an import with a secret result, or that writes the module's state"
     global_in, global_out = spec.get("global_in", []), spec.get("global_out", [])
     if global_out and any(SECRET[a] != SECRET[b] for a, b in zip(global_in, global_out)):
         return None, "a global labelled differently on entry and exit"
@@ -89,7 +112,25 @@ def translate(spec, wat):
     memory = spec.get("memory_in")
     if memory and SECRET[memory["data"]] == "H":
         lines.append("load-default : H")
+    if observed_memory:
+        lines += [f"store-default func {i} : L" for i in range(len(re.findall(r"\(func\b", wat)))]
     return "\n".join(lines) + "\n", None
+
+
+def verdict_of(wasm_ifc, scratch, wasm, expected, policy, reason):
+    """The comparison's verdict for one translation of a specification."""
+    if policy is None:
+        return {"verdict": "not expressible", "reason": reason}
+    policy_file = Path(scratch) / "policy"
+    policy_file.write_text(policy)
+    checked = run([wasm_ifc, "check", "--policy", str(policy_file), str(wasm)])
+    accepted = checked.returncode == 0
+    error = checked.stderr.strip()
+    if not accepted and ("Decode error" in error or "BadPolicy" in error):
+        return {"verdict": "not expressible", "reason": error}
+    if expected == "SAT":
+        return {"verdict": "missed" if accepted else "caught statically", "error": error or None, "policy": policy}
+    return {"verdict": "precise" if accepted else "precision loss", "error": error or None, "policy": policy}
 
 
 def main():
@@ -106,37 +147,24 @@ def main():
                     if spec.get("ignore"):
                         continue
                     queries = spec.get("queries", {})
-                    expected = "SAT" if any(v == "SAT" for v in queries.values() if isinstance(v, str)) else "UNSAT"
+                    expected = "SAT" if '"SAT"' in json.dumps(queries) else "UNSAT"
                     row = {"module": f"{directory}/{spec_file.stem}", "test_id": spec.get("test_id"), "expected": expected}
                     if directory == "integrity":
-                        row.update(verdict="not expressible", reason="integrity")
+                        row.update(verdict="not expressible", reason="integrity", verdict_narrow="not expressible")
                         rows.append(row)
                         continue
-                    policy, reason = translate(spec, wat)
-                    if policy is None:
-                        row.update(verdict="not expressible", reason=reason)
-                        rows.append(row)
-                        continue
-                    policy_file = Path(scratch) / "policy"
-                    policy_file.write_text(policy)
-                    checked = run([wasm_ifc, "check", "--policy", str(policy_file), str(wasm)])
-                    accepted = checked.returncode == 0
-                    error = checked.stderr.strip()
-                    if not accepted and ("Decode error" in error or "BadPolicy" in error):
-                        row.update(verdict="not expressible", reason=error)
-                    elif expected == "SAT":
-                        row.update(verdict="missed" if accepted else "caught statically", error=error or None)
-                    else:
-                        row.update(verdict="precise" if accepted else "precision loss", error=error or None)
-                    row["policy"] = policy
+                    row.update(verdict_of(wasm_ifc, scratch, wasm, expected, *translate(spec, wat)))
+                    row["verdict_narrow"] = verdict_of(wasm_ifc, scratch, wasm, expected, *translate(spec, wat, wide=False))["verdict"]
                     rows.append(row)
     counts = collections.Counter(r["verdict"] for r in rows)
     reasons = collections.Counter(r.get("reason") for r in rows if r["verdict"] == "not expressible")
     commit = run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT).stdout.strip()
     out = ROOT / "casestudies/results" / f"{datetime.date.today().isoformat()}-{commit}-wanilla.json"
-    out.write_text(json.dumps({"commit": commit, "counts": counts, "not_expressible": reasons, "specifications": rows}, indent=2) + "\n")
+    narrow = collections.Counter(r["verdict_narrow"] for r in rows)
+    out.write_text(json.dumps({"commit": commit, "counts": counts, "counts_narrow": narrow, "not_expressible": reasons, "specifications": rows}, indent=2) + "\n")
     print(dict(counts))
     print(dict(reasons))
+    print("without the queries on imports and memory data:", dict(narrow))
     print(f"wrote {out.relative_to(ROOT)}")
 
 

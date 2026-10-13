@@ -1,0 +1,118 @@
+{
+  "clang 23, C (wasi-testsuite)": {
+    "modules": 14,
+    "analysed": 14,
+    "not_analysed": [],
+    "instructions": {
+      "functions": 831,
+      "instructions": 134566,
+      "branches": 10284,
+      "unreachable (all)": 222,
+      "br_table": 54,
+      "table > blocks": 15,
+      "unreachable": 19
+    },
+    "modules_with": {
+      "table > blocks": 14,
+      "any": 14,
+      "unreachable": 8
+    }
+  },
+  "rustc, Rust (wasi-testsuite)": {
+    "modules": 46,
+    "analysed": 46,
+    "not_analysed": [],
+    "instructions": {
+      "functions": 15320,
+      "instructions": 1367561,
+      "branches": 87670,
+      "unreachable (all)": 7575,
+      "unreachable": 354,
+      "br_table": 859,
+      "table > blocks": 230
+    },
+    "modules_with": {
+      "table > blocks": 46,
+      "unreachable": 46,
+      "any": 46
+    }
+  },
+  "AssemblyScript (wasi-testsuite)": {
+    "modules": 12,
+    "analysed": 12,
+    "not_analysed": [],
+    "instructions": {
+      "instructions": 17189,
+      "functions": 337,
+      "branches": 206,
+      "unreachable (all)": 189,
+      "br_table": 12,
+      "unreachable": 12
+    },
+    "modules_with": {
+      "unreachable": 10,
+      "any": 10
+    }
+  },
+  "clang 23, C (our case studies)": {
+    "modules": 33,
+    "analysed": 33,
+    "not_analysed": [],
+    "instructions": {
+      "functions": 1587,
+      "instructions": 243653,
+      "unreachable (all)": 429,
+      "unreachable": 60,
+      "branches": 17761,
+      "br_table": 43,
+      "table > blocks": 10
+    },
+    "modules_with": {
+      "unreachable": 30,
+      "any": 30,
+      "table > blocks": 10
+    }
+  },
+  "clang 23, C (CoreMark, PolyBench)": {
+    "modules": 62,
+    "analysed": 62,
+    "not_analysed": [],
+    "instructions": {
+      "functions": 4376,
+      "instructions": 788564,
+      "branches": 58756,
+      "unreachable (all)": 1050,
+      "br_table": 194,
+      "unreachable": 124,
+      "table > blocks": 62
+    },
+    "modules_with": {
+      "table > blocks": 62,
+      "unreachable": 62,
+      "any": 62
+    }
+  },
+  "written by hand (SecWasm's examples, the findings)": {
+    "modules": 18,
+    "analysed": 18,
+    "not_analysed": [],
+    "instructions": {
+      "instructions": 161,
+      "functions": 19,
+      "branches": 17,
+      "br_table": 3,
+      "unreachable (all)": 1,
+      "unreachable": 1,
+      "table, below": 1,
+      "table > blocks": 1,
+      "branch to body": 1
+    },
+    "modules_with": {
+      "any": 4,
+      "unreachable": 1,
+      "table, below": 1,
+      "table > blocks": 1,
+      "branch to body": 1
+    }
+  }
+}

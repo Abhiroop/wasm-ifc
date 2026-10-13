@@ -10,6 +10,7 @@ module Runtime.Trap (
     Trap (..),
 ) where
 
+import Data.Text (Text)
 import Syntax.Immediates (AccessSite)
 
 data Trap
@@ -39,10 +40,15 @@ data Trap
       load's, as a policy would declare it.
       -}
       SecretRead AccessSite
-    | {- | a host call was handed a byte more secret than the descriptor it writes to, or the
-      module entered an @ifc@ ghost import (which the policy stage rewrites away)
+    | {- | the module entered an @ifc@ ghost import (which the policy stage rewrites away), or a
+      call out of the module would have carried a secret
       -}
       InformationFlowViolation
+    | {- | a host call was handed a byte more secret than the descriptor it concerns: the check
+      at the host boundary, made before anything leaves the module. The call is named as the
+      module imports it (@fd_write@).
+      -}
+      SecretToHost Text
     | {- | @call_indirect@ through a function whose bound is below the one the instruction
       expects, so the callee may not run in the context the call allows: SecWasm's other
       run-time check
