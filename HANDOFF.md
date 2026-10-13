@@ -601,7 +601,7 @@ implemented since e87e76a.
   construct and every call the exception leaves is left under a public pc, and whatever ran
   under a secret pc before the throw had ended, and was compared, by then. The clause's branch
   goes through the same code as a `br`, so the construct it lands behind compares as usual.
-  This is my argument, not a proof; the paper track should check it against section 6.6.
+  This was my argument; since 2026-10-13 it is proved in Lean on the core (see "Lean" below).
 - **Spec suite:** 62,137 passed, 0 failed, 3,065 skipped (62,081 and 3,121 before);
   `throw.wast` and `throw_ref.wast` pass in full. (The main module of `try_table.wast` imports
   a tag; it passes since tags are imported, see "State shared between modules".) Four unit
@@ -609,7 +609,7 @@ implemented since e87e76a.
 
 ## Lean: noninterference on a core with control flow, calls and memory (item 12, 2026-10-12)
 
-- **Where:** `lean/` (Lean 4.35.0, no dependencies; `cd lean && lake build`). 2,516 lines in
+- **Where:** `lean/` (Lean 4.35.0, no dependencies; `cd lean && lake build`). 2,911 lines in
   five files; `lean/README.md` states what is proved and what differs from the paper.
 - **What is proved** (`WasmIfc.tini`, from `WasmIfc.ni`): termination-insensitive
   noninterference for a function of a well-typed module, under the lift-free rules, on a core
@@ -687,8 +687,23 @@ implemented since e87e76a.
     under a public pc with a public amount. 2,516 lines. One thing the proof does not model:
     the implementation's `memory.grow` may also fail when the host has no memory left, which
     is outside the program's state. In the proof it fails only by the memory's declared limit.
-  - *Not covered.* Exceptions and tail calls are not in the core, so that an exception cannot
-    skip a comparison is still my argument and not a proof. For a tail call I re-read the
+  - *Exceptions* (the same day; 2,911 lines). The core has `throw` and `try_table`, with the
+    rules of `IThrow` and `ITryTable`: an exception is thrown only under a public pc with
+    public values, a `try_table` is typed only under a public pc, and a clause's branch raises
+    no pc. The proof settles the two points that were open:
+    1. *Typing them under a public pc only is sound.* Whether a run throws, and what, is
+       public: a run under a secret pc does not end by an exception, so two runs throw
+       together or not at all, the same tag with the same values, and the same clause catches
+       it. `tini` now says: if both calls end, either both return or both end by the same
+       exception with the same values.
+    2. *An exception cannot harmfully skip a comparison of the preserved globals.* It does
+       skip the comparisons of the blocks and calls it leaves. But it is thrown under a public
+       pc, where the two runs agree on the preserved globals, and nothing changes the state
+       between the throw and the clause. In C terms: `longjmp` out of the middle of a function
+       skips its epilogue, but it can only be called where no secret has decided the control
+       flow, and there the stack pointer is the same in both runs.
+    Not modelled: references to exceptions (`exnref`, `throw_ref`, `catch_ref`).
+  - *Not covered.* Tail calls are not in the core. For a tail call I re-read the
     machine: the callee's comparison is made in the place of the caller's, and the caller's
     own stays in the continuation it returns to (`tailCall`, `startFunction`).
 

@@ -209,6 +209,24 @@ theorem StkRel.of_allH : ∀ {st : STy} {a b : List Nat}, AllGe Lab.H st →
   | _ :: _, [], _, _, ha, _ => by simp at ha
   | _ :: _, _ :: _, [], _, _, hb => by simp at hb
 
+/-- Values at public types agree in two related stacks. -/
+theorem StkRel.take_public : ∀ {args st : STy} {a b : List Nat},
+    (∀ l, l ∈ args → l = Lab.L) → StkRel (args ++ st) a b →
+    a.take args.length = b.take args.length
+  | [], _, _, _, _, _ => by simp
+  | l :: args, _, _, _, hall, h => by
+      cases h with
+      | cons hv h' =>
+        have ih := StkRel.take_public (fun l' hl' => hall l' (List.mem_cons_of_mem _ hl')) h'
+        simp [hv (hall l List.mem_cons_self), ih]
+
+/-- A stack is related to itself at any type of its shape. -/
+theorem StkRel.same : ∀ {st : STy} {w : List Nat}, w.length = st.length → StkRel st w w
+  | [], [], _ => .nil
+  | _ :: _, _ :: _, h => .cons (fun _ => rfl) (StkRel.same (by simpa using h))
+  | [], _ :: _, h => by simp at h
+  | _ :: _, [], h => by simp at h
+
 /-! ### Two states that agree where public, and one state after a run under a secret pc -/
 
 /--
@@ -473,6 +491,7 @@ values as that type has, and the pcs of the blocks it leaves are secret.
 def Info (Ls : List STy) (P : Pcs) (st : STy) : Out → Prop
   | .normal σ _ => σ.length = st.length
   | .br i w _ => ∃ rs, Ls[i]? = some rs ∧ AllGe Lab.H rs ∧ w.length = rs.length ∧ HiUpTo i P
+  | .exn _ _ _ => False
 
 theorem Info.mono {Ls : List STy} {P P' : Pcs} {st : STy} {o : Out} (hf : SFlows P P')
     (h : Info Ls P st o) : Info Ls P' st o := by
@@ -481,6 +500,7 @@ theorem Info.mono {Ls : List STy} {P P' : Pcs} {st : STy} {o : Out} (hf : SFlows
   | br i w s =>
     obtain ⟨rs, h1, h2, h3, h4⟩ := h
     exact ⟨rs, h1, h2, h3, HiUpTo.sflows hf h4⟩
+  | exn t w s => exact h
 
 /--
 The two runs ended the same way, with segments or carried values that agree where public. They
@@ -494,12 +514,17 @@ inductive Sync (C : Ctx) (Ls : List STy) (P : Pcs) (st : STy) : Out → Out → 
   | br {i : Nat} {rs : STy} {w0 w1 : List Nat} {s0 s1 : State} :
       Ls[i]? = some rs → StkRel rs w0 w1 → StRel C s0 s1 → PresOr C i P s0 s1 →
       Sync C Ls P st (.br i w0 s0) (.br i w1 s1)
+  /-- The same exception with the same values, thrown under a public pc. -/
+  | exn {t k : Nat} {w : List Nat} {s0 s1 : State} :
+      C.tags[t]? = some k → w.length = k → StRel C s0 s1 → PresEq C s0 s1 →
+      Sync C Ls P st (.exn t w s0) (.exn t w s1)
 
 theorem Sync.mono {C : Ctx} {Ls : List STy} {P P' : Pcs} {st : STy} {o0 o1 : Out}
     (hf : SFlows P P') (h : Sync C Ls P st o0 o1) : Sync C Ls P' st o0 o1 := by
   cases h with
   | normal h1 h2 h3 => exact .normal h1 h2 (h3.mono hf)
   | br h0 h1 h2 h3 => exact .br h0 h1 h2 (h3.mono hf)
+  | exn h0 h1 h2 h3 => exact .exn h0 h1 h2 h3
 
 /-- The two runs took different paths under a secret pc: their states agree, and each is as `Info` says. -/
 def Loose (C : Ctx) (Ls : List STy) (P : Pcs) (st : STy) (o0 o1 : Out) : Prop :=
@@ -549,5 +574,7 @@ theorem rise {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : Pcs} {st st' : S
   | call _ _ _ _ ih => exact ih
   | callIndirect _ _ _ _ ih => exact ih
   | unreachable => exact SFlows.refl _
+  | throw _ _ _ => exact SFlows.refl _
+  | tryTable _ _ _ _ _ ihb ihr => exact SFlows.trans ihb.tail ihr
 
 end WasmIfc

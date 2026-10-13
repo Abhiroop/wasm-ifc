@@ -12,6 +12,7 @@ def exampleCtx : Ctx where
   globals := fun _ => Lab.L
   preserved := fun _ => False
   funcs := []
+  tags := []
 
 /--
 A constant, then a block that a `br_if` leaves if the secret local is not zero, then a write of
@@ -129,6 +130,7 @@ def moduleCtx : Ctx where
   globals := fun _ => Lab.L
   preserved := fun _ => False
   funcs := [identity.ty, callsIdentity.ty]
+  tags := []
 
 example : WellTyped moduleCtx [identity, callsIdentity] := by
   intro i f hf
@@ -160,6 +162,7 @@ def frameCtx : Ctx where
   globals := fun _ => Lab.L
   preserved := fun i => i = 0
   funcs := []
+  tags := []
 
 /-- What the secret selects: move the global, and put it back. -/
 def moves : List Instr := [.globalGet 0, .const 16, .globalSet 0, .globalSet 0]
@@ -228,5 +231,43 @@ example (P' : Pcs) (st' : STy) : ¬ Typed frameCtx [[]] (moveAndRestore []) [Lab
     rcases hres with hr | hc
     · exact absurd (hr Lab.L rfl rfl) (by decide)
     · exact absurd (hc 0 rfl) (by simp)
+
+/-! ### Exceptions -/
+
+/-- Tag 0 carries one value; local 0 is secret. -/
+def tagCtx : Ctx where
+  locals := fun i => if i = 0 then Lab.H else Lab.L
+  globals := fun _ => Lab.L
+  preserved := fun _ => False
+  funcs := []
+  tags := [1]
+
+/-- Throw 5 in a `try_table` whose clause for the tag branches to the function's label. -/
+def throwsAndCatches : List Instr :=
+  [.tryTable [] [] [] [(some 0, 0)] [.const 5, .throw 0 1], .const 9]
+
+example : Typed tagCtx [[Lab.L]] throwsAndCatches [Lab.L] [] [Lab.L] [Lab.L] := by
+  refine Typed.tryTable (tin := []) (st := []) (p := Lab.L) (P1 := [Lab.L]) .nil
+    (.inl (fun _ _ h => nomatch h)) (fun c hc => ?_) ?_ (.const 9 .nil)
+  · simp at hc
+    subst hc
+    exact ⟨1, [Lab.L], rfl, rfl, rfl⟩
+  · exact .const 5 (Typed.throw (args := [Lab.L]) (st := []) rfl rfl (by simp))
+
+/-- The run: the exception is caught, and the function returns the value it carried. -/
+example (s : State) : Eval [] 3 [1] throwsAndCatches [] s (.br 0 [5] s) :=
+  Eval.tryExit (vs := []) (base := []) (ob := .exn 0 [5] s) rfl (.const 5 .throw) rfl
+
+/-- An exception thrown where a secret decided is not typed: the pc there is secret. -/
+example (P' : Pcs) (st' : STy) :
+    ¬ Typed tagCtx [[]] [.localGet 0, .ite [] [] [] [.const 5, .throw 0 1] []] [Lab.L] [] P' st' := by
+  intro h
+  cases h with
+  | localGet _ h1 =>
+    obtain ⟨pc, Pr, l, st1, p1, P1, p2, P2, hP, hst, _, hthn, _⟩ := ite_typed_inv h1
+    cases hP
+    cases hst
+    cases hthn with
+    | const _ a => cases a
 
 end WasmIfc

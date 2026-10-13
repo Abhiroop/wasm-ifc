@@ -102,6 +102,13 @@ inductive Instr where
   /-- `callIndirect ps b rs`: call the function a table entry names, expected at the type `ps -[b]-> rs` -/
   | callIndirect (ps : STy) (b : Lab) (rs : STy)
   | unreachable
+  /-- `throw t k`: throw an exception of tag `t`, which carries `k` values -/
+  | throw (t k : Nat)
+  /--
+  `tryTable keep ps rs clauses body`: a block that catches exceptions. A clause is a tag, or
+  none for every exception, with the label of the context around the block that it branches to.
+  -/
+  | tryTable (keep : List Nat) (ps rs : STy) (clauses : List (Option Nat × Nat)) (body : List Instr)
 
 /-- A function type: the parameters, the bound on the pc of its callers, and the results. -/
 structure FuncTy where
@@ -119,6 +126,13 @@ structure Ctx where
   /-- the globals the policy declares preserved (public ones, as the stack pointer of compiled C) -/
   preserved : Nat → Prop
   funcs : List FuncTy
+  /-- how many values an exception of each tag carries; they are public -/
+  tags : List Nat
+
+/-- A clause is typed if its label takes what it catches: the public values of its tag, or nothing. -/
+def ClauseOk (C : Ctx) (Ls : List STy) : Option Nat × Nat → Prop
+  | (some t, j) => ∃ k target, C.tags[t]? = some k ∧ Ls[j]? = some target ∧ target.length = k
+  | (none, j) => Ls[j]? = some []
 
 /--
 `Restores C pcEnd after keep`: whether control coming out of a block, a loop or a conditional has
@@ -259,6 +273,19 @@ inductive Typed (C : Ctx) : List STy → List Instr → Pcs → STy → Pcs → 
       Typed C Ls (.callIndirect ps b rs :: rest) (pc :: Pr) (l :: (targs ++ st)) P' st'
   | unreachable {Ls rest P st stAny} :
       Typed C Ls (.unreachable :: rest) P st P stAny
+  /-- An exception is thrown only under a public pc, and carries public values. -/
+  | throw {Ls rest Pr t k args st stAny} :
+      C.tags[t]? = some k → args.length = k → (∀ l, l ∈ args → l = Lab.L) →
+      Typed C Ls (.throw t k :: rest) (Lab.L :: Pr) (args ++ st) (Lab.L :: Pr) stAny
+  /--
+  A `try_table` is typed only under a public pc, and otherwise as a block. A clause branches
+  under that pc, so it raises none.
+  -/
+  | tryTable {Ls rest Pr tin keep ps rs clauses body p P1 st P' st'} :
+      SFlows tin ps → Restores C p P1 keep → (∀ c, c ∈ clauses → ClauseOk C Ls c) →
+      Typed C (rs :: Ls) body (Lab.L :: Lab.L :: Pr) ps (p :: P1) rs →
+      Typed C Ls rest P1 (rs ++ st) P' st' →
+      Typed C Ls (.tryTable keep ps rs clauses body :: rest) (Lab.L :: Pr) (tin ++ st) P' st'
 
 /--
 A function: its type, the levels of its local variables that are not parameters, the globals
@@ -336,31 +363,57 @@ def State.grow (s : State) (d : Nat) : Nat × State :=
 def Kept (keep : List Nat) (s t : State) : Prop := ∀ i, i ∈ keep → t.glob i = s.glob i
 
 /--
-How a sequence ends: at its end, with the current segment of the stack, or by a branch to the
-`i`-th enclosing label with the values the branch carries.
+How a sequence ends: at its end, with the current segment of the stack, by a branch to the
+`i`-th enclosing label with the values the branch carries, or by an exception of tag `t` with
+the values it carries, which nothing in the sequence caught.
 -/
 inductive Out where
   | normal (σ : List Nat) (s : State)
   | br (i : Nat) (w : List Nat) (s : State)
+  | exn (t : Nat) (w : List Nat) (s : State)
 
 def Out.state : Out → State
   | .normal _ s => s
   | .br _ _ s => s
+  | .exn _ _ s => s
 
 def Out.isBr : Out → Prop
   | .normal _ _ => False
   | .br _ _ _ => True
+  | .exn _ _ _ => False
 
 /-- What a block continues with after its body: the body's results, or the values of a branch to its own label. -/
 def Out.lands : Out → Option (List Nat × State)
   | .normal σ s => some (σ, s)
   | .br 0 w s => some (w, s)
   | .br (_ + 1) _ _ => none
+  | .exn _ _ _ => none
 
-/-- A branch past the block, as the block's own outcome. -/
+/-- A branch past the block, as the block's own outcome; an exception passes a block as it is. -/
 def Out.exits : Out → Option Out
   | .br (i + 1) w s => some (.br i w s)
+  | .exn t w s => some (.exn t w s)
   | _ => none
+
+/--
+The first clause for an exception of tag `t`: the label it branches to, and whether the branch
+carries the exception's values.
+-/
+def catches : List (Option Nat × Nat) → Nat → Option (Nat × Bool)
+  | [], _ => none
+  | (some t', j) :: cs, t => if t' = t then some (j, true) else catches cs t
+  | (none, j) :: _, _ => some (j, false)
+
+/--
+A body's outcome as its `try_table` sees it: an exception that a clause catches is a branch to
+the clause's label, counted from inside the block.
+-/
+def Out.caught (cs : List (Option Nat × Nat)) : Out → Out
+  | .exn t w s =>
+    match catches cs t with
+    | some (j, carry) => .br (j + 1) (if carry then w else []) s
+    | none => .exn t w s
+  | o => o
 
 /-- The target a `br_table` selects. -/
 def tableTarget (ts : List Nat) (d c : Nat) : Nat := (ts[c]?).getD d
@@ -381,6 +434,10 @@ indirect call only if the table entry names a function of exactly the expected t
 a loop and a conditional go on only if the globals they name hold what they held at the
 construct's start (`Kept`), and so does a call for the globals its callee names. A branch
 further out skips the comparison of the constructs it leaves.
+
+An exception leaves the blocks and the calls it passes without their comparisons, and the
+caller's local variables are its own again. A `try_table` is a block whose body's outcome is
+first looked up in its clauses (`Out.caught`).
 
 A loop runs the iterations of its body (`iter`) as a block runs its body, so the state it
 compares with is the one at its first entry. The iterations are evaluated under the labels of
@@ -456,6 +513,9 @@ inductive Eval (F : List Func) : Nat → List Nat → List Instr → List Nat �
   | iterExit {n ls rest ps rs body vs s i w s1} :
       Eval F n (ps.length :: ls.tail) body vs s (.br (i + 1) w s1) →
       Eval F (n + 1) ls (.iter ps rs body :: rest) vs s (.br (i + 1) w s1)
+  | iterExn {n ls rest ps rs body vs s t w s1} :
+      Eval F n (ps.length :: ls.tail) body vs s (.exn t w s1) →
+      Eval F (n + 1) ls (.iter ps rs body :: rest) vs s (.exn t w s1)
   | iteCont {n1 n2 ls rest keep ps rs thn els c vs base s ob σ1 s1 o} :
       vs.length = ps.length →
       Eval F n1 (rs.length :: ls) (if c = 0 then els else thn) vs s ob → ob.lands = some (σ1, s1) →
@@ -491,5 +551,25 @@ inductive Eval (F : List Func) : Nat → List Nat → List Instr → List Nat �
       ob.lands = some (r, t) → Kept f.keep s t →
       Eval F n2 ls rest (r ++ base) { t with loc := s.loc } o →
       Eval F (n1 + n2 + 1) ls (.callIndirect ps b rs :: rest) (c :: (args ++ base)) s o
+  | callExn {n1 ls rest i f args base s t w u} :
+      F[i]? = some f → args.length = f.ty.params.length →
+      Eval F n1 [f.ty.results.length] f.body [] { s with loc := frame args } (.exn t w u) →
+      Eval F (n1 + 1) ls (.call i :: rest) (args ++ base) s (.exn t w { u with loc := s.loc })
+  | callIndirectExn {n1 ls rest ps b rs c i f args base s t w u} :
+      s.tbl c = some i → F[i]? = some f → f.ty = ⟨ps, b, rs⟩ → args.length = ps.length →
+      Eval F n1 [rs.length] f.body [] { s with loc := frame args } (.exn t w u) →
+      Eval F (n1 + 1) ls (.callIndirect ps b rs :: rest) (c :: (args ++ base)) s
+        (.exn t w { u with loc := s.loc })
+  | throw {ls rest t k σ s} : Eval F 1 ls (.throw t k :: rest) σ s (.exn t (σ.take k) s)
+  | tryCont {n1 n2 ls rest keep ps rs clauses body vs base s ob σ1 s1 o} :
+      vs.length = ps.length →
+      Eval F n1 (rs.length :: ls) body vs s ob → (ob.caught clauses).lands = some (σ1, s1) →
+      Kept keep s s1 →
+      Eval F n2 ls rest (σ1 ++ base) s1 o →
+      Eval F (n1 + n2 + 1) ls (.tryTable keep ps rs clauses body :: rest) (vs ++ base) s o
+  | tryExit {n1 ls rest keep ps rs clauses body vs base s ob o} :
+      vs.length = ps.length →
+      Eval F n1 (rs.length :: ls) body vs s ob → (ob.caught clauses).exits = some o →
+      Eval F (n1 + 1) ls (.tryTable keep ps rs clauses body :: rest) (vs ++ base) s o
 
 end WasmIfc

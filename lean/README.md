@@ -5,7 +5,7 @@ typing rules of this repository on a core of WebAssembly: blocks, loops and cond
 parameters and results, `br`, `br_if`, `br_table` and `return`, direct and indirect calls of
 the module's functions (recursion included), a bounded memory whose cells carry a level, with
 SecWasm's run-time check on loads, `memory.size` and `memory.grow`, local and global
-variables with `local.tee`, preserved globals with
+variables with `local.tee`, exceptions (`throw` and `try_table`), preserved globals with
 their run-time comparison, and arithmetic on one value type. It has no `sorry`, and its
 theorems depend on Lean's three standard axioms only (`propext`, `Classical.choice`,
 `Quot.sound`).
@@ -22,9 +22,11 @@ cd lean && lake build        # Lean 4.35.0, no dependencies; elan reads lean-too
 | `confine` | `Confinement.lean` | A typed sequence that starts under a secret pc leaves the public variables unchanged, except the preserved globals, and changes no public memory cell except to make it secret (`Conf`). If it leaves by a branch, the label's type is all secret and the pcs of the blocks it leaves are secret (`Info`). |
 | `pres_after`, `pres_after_call` | `Basic.lean` | Where two runs come out of a block, a loop, a conditional or a call, they agree on the preserved globals unless the pc there is secret. |
 | `ni` | `Noninterference.lean` | Two runs of a typed sequence from stacks and states that agree where public, and on the preserved globals unless the pc is secret, end in related outcomes (`OutRel`). |
-| `tini` | `Noninterference.lean` | For a function of a well-typed module: two calls with arguments that agree where the parameters are public, from states that agree where public, if both return, return results that agree where the result type is public and leave states that agree where public. They agree on the preserved globals too if both pass the comparison made at the function's return. |
+| `tini` | `Noninterference.lean` | For a function of a well-typed module: two calls with arguments that agree where the parameters are public, from states that agree where public, if both end, either both return or both end by the same exception with the same values, and they leave states that agree where public. If they return, their results agree where the result type is public, and they agree on the preserved globals too if both pass the comparison made at the function's return. |
 
-`Examples.lean` has a program that the rules type, with two runs of it, a program with an
+`Examples.lean` also has a `try_table` that catches what its body throws, with its typing and
+its run, and a throw under a secret pc with a proof that no typing of it exists. Besides, it
+has a program that the rules type, with two runs of it, a program with an
 implicit flow and a store of a secret into a public cell, each with a proof that no typing of
 it exists, a well-typed module of two functions, and a conditional on a secret that moves a
 preserved global and puts it back: it is typed if it compares the global, a run of it passes
@@ -49,6 +51,8 @@ type `Syntax.Instructions.Instr` for the instructions above:
 - An indirect call needs the pc and the level of the table index to flow into the bound of the
   expected type, and that type to be well formed: its results are at least its bound. At run
   time it traps unless the table entry names a function of exactly the expected type.
+- An exception is thrown only under a public pc and carries public values, and a `try_table`
+  is typed only under a public pc. A clause's branch raises no pc.
 - The size of the memory is public: `memory.size` gives a value at the pc, and `memory.grow`
   is typed only under a public pc with a public amount.
 - A module is well typed if every function body is typed as the paper's rule for functions
@@ -88,6 +92,14 @@ the two runs agreed then and agree now (`pres_after`, `pres_after_call`). A bran
 skips the comparison of the blocks it leaves, and raises their pcs, so the pc has not dropped
 until the branch lands.
 
+Whether a run throws, and what, is public. A run under a secret pc does not end by an
+exception (`confine`, where `Info` of such an outcome is false), so two runs that have gone
+apart do not throw until they meet again, and two runs in step throw together, under a public
+pc, where they agree on the preserved globals. An exception leaves blocks and calls without
+their comparisons of the preserved globals. Nothing is lost: the state does not change on the
+way to the clause, and the two runs agreed where the exception was thrown (`Sync.exn`). The
+same clause catches it in both runs, with the same values (`caught_rel`).
+
 A block's body runs on the block's parameters alone (see below), so a value that a block has
 abandoned never has to be related to anything. The relation "up to abandoned entries" of the
 paper's appendix B.4 has no counterpart here.
@@ -113,8 +125,10 @@ paper's appendix B.4 has no counterpart here.
 - **The comparison names its globals.** The implementation compares every preserved global of
   the module, which a typed construct cannot leave out. Here a construct lists the globals it
   compares, and the rule asks that the list cover the preserved ones where the pc drops.
-- **The core is small.** One value type; two levels; no bulk memory, no exceptions and no
-  tail calls. The function table is public and no instruction writes it, and an indirect call
+- **The core is small.** One value type; two levels; no bulk memory and no tail calls. A tag
+  is the number of public values its exceptions carry, a clause catches by tag or catches
+  everything, and there is no reference to an exception (`exnref`, `throw_ref`, and the
+  clauses that hand one out). The function table is public and no instruction writes it, and an indirect call
   asks the callee's type to equal the expected one, where the implementation compares the
   bounds by the order of the levels. The memory's cells hold whole values, not bytes. A load
   or a store outside the memory traps, a load also by the level check, and `unreachable` is

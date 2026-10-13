@@ -45,6 +45,7 @@ theorem Info.hiUpTo_zero {Ls : List STy} {P : Pcs} {st : STy} {o : Out} (h : Inf
   | br i w s =>
     obtain ⟨_, _, _, _, h4⟩ := h
     exact h4.mono (Nat.zero_le _)
+  | exn t w s => exact False.elim hbr
 
 theorem OutRel.mono {C : Ctx} {Ls : List STy} {P P' : Pcs} {st : STy} {o0 o1 : Out}
     (hf : SFlows P P') (h : OutRel C Ls P st o0 o1) : OutRel C Ls P' st o0 o1 :=
@@ -105,6 +106,7 @@ theorem allH_of_lands {Ls : List STy} {rs : STy} {P : Pcs} {ob : Out} {x : List 
       subst h1
       exact h2
     | succ i => simp [Out.lands] at hl
+  | exn t w s => exact False.elim hbr
 
 /-- Both runs go on after the block: their stacks agree where public. -/
 theorem join_land_land {C : Ctx} {Ls : List STy} {rs st : STy} {p : Lab} {P1 : Pcs}
@@ -131,6 +133,7 @@ theorem join_land_land {C : Ctx} {Ls : List STy} {rs st : STy} {p : Lab} {P1 : P
         subst hLs
         exact ⟨hσ.append hb, hss, pres_after hres hentry hk0 hk1 hpp⟩
       | succ i => simp [Out.lands] at hl0
+    | exn _ _ _ _ => simp [Out.lands] at hl0
   · obtain ⟨hlen0, hst0⟩ := lands_info hi0 hl0
     obtain ⟨hlen1, hst1⟩ := lands_info hi1 hl1
     have hall : AllGe Lab.H rs := by
@@ -157,6 +160,10 @@ theorem join_exit_exit {C : Ctx} {Ls : List STy} {rs : STy} {p : Lab} {P1 : Pcs}
         simp [Out.exits] at hx0 hx1
         subst hx0 hx1
         exact .inl (.br (by simpa using hLs) hσ hss (hpp.imp id HiUpTo.tail))
+    | exn h0 h1 h2 h3 =>
+      simp [Out.exits] at hx0 hx1
+      subst hx0 hx1
+      exact .inl (.exn h0 h1 h2 h3)
   · obtain ⟨hs0, hb0, hinfo0⟩ := exits_info hi0 hx0
     obtain ⟨hs1, _, hinfo1⟩ := exits_info hi1 hx1
     refine .inr ⟨⟨?_, hinfo0 st, hinfo1 st⟩, .inl hb0⟩
@@ -175,6 +182,7 @@ theorem join_land_exit {C : Ctx} {Ls : List STy} {rs : STy} {p : Lab} {P1 : Pcs}
       cases i with
       | zero => simp [Out.exits] at hx1
       | succ i => simp [Out.lands] at hl0
+    | exn _ _ _ _ => simp [Out.lands] at hl0
   · obtain ⟨hlen0, hst0⟩ := lands_info hi0 hl0
     obtain ⟨hs1, hb1, hinfo1⟩ := exits_info hi1 hx1
     refine ⟨hlen0, ?_, hb1, hinfo1⟩
@@ -193,6 +201,7 @@ theorem join_exit_land {C : Ctx} {Ls : List STy} {rs : STy} {p : Lab} {P1 : Pcs}
       cases i with
       | zero => simp [Out.exits] at hx0
       | succ i => simp [Out.lands] at hl1
+    | exn _ _ _ _ => simp [Out.lands] at hl1
   · obtain ⟨hlen1, hst1⟩ := lands_info hi1 hl1
     obtain ⟨hs0, hb0, hinfo0⟩ := exits_info hi0 hx0
     refine ⟨hlen1, ?_, hb0, hinfo0⟩
@@ -238,6 +247,68 @@ theorem ite_inv {n : Nat} {ls keep : List Nat} {ps rs : STy} {thn els rest : Lis
   | iteCont hvs hb hl hk hr =>
     exact ⟨_, _, _, _, _, rfl, hvs, by omega, hb, .land hl hk (by omega) hr⟩
   | iteExit hvs hb hx => exact ⟨_, _, _, _, _, rfl, hvs, by omega, hb, .exit hx⟩
+
+/-- A `try_table` is a block whose body's outcome is first looked up in its clauses. -/
+theorem try_inv {n : Nat} {ls keep : List Nat} {ps rs : STy} {cs : List (Option Nat × Nat)}
+    {body rest : List Instr} {σ : List Nat} {s : State} {o : Out}
+    (h : Eval F n ls (.tryTable keep ps rs cs body :: rest) σ s o) :
+    ∃ vs base n1 ob, σ = vs ++ base ∧ vs.length = ps.length ∧ n1 < n ∧
+      Eval F n1 (rs.length :: ls) body vs s ob ∧ Cont F ls keep s rest base (ob.caught cs) n o := by
+  cases h with
+  | tryCont hvs hb hl hk hr =>
+    exact ⟨_, _, _, _, rfl, hvs, by omega, hb, .land hl hk (by omega) hr⟩
+  | tryExit hvs hb hx => exact ⟨_, _, _, _, rfl, hvs, by omega, hb, .exit hx⟩
+
+/-- The label of the clause that catches an exception takes what the branch to it carries. -/
+theorem catches_ok {C : Ctx} {Ls : List STy} : ∀ {cs : List (Option Nat × Nat)} {t k j : Nat}
+    {carry : Bool} {w : List Nat}, (∀ c, c ∈ cs → ClauseOk C Ls c) →
+    catches cs t = some (j, carry) → C.tags[t]? = some k → w.length = k →
+    ∃ target, Ls[j]? = some target ∧ (if carry then w else []).length = target.length
+  | [], _, _, _, _, _, _, h, _, _ => by simp [catches] at h
+  | (some t', j') :: cs, t, k, j, carry, w, hcl, h, htag, hlen => by
+      by_cases ht : t' = t
+      · simp [catches, ht] at h
+        obtain ⟨rfl, rfl⟩ := h
+        subst ht
+        have hc : ClauseOk C Ls (some t', j') := hcl _ List.mem_cons_self
+        obtain ⟨k', target, h1, h2, h3⟩ := hc
+        rw [htag] at h1
+        cases h1
+        exact ⟨target, h2, by simp [hlen, h3]⟩
+      · simp [catches, ht] at h
+        exact catches_ok (fun c hc => hcl c (List.mem_cons_of_mem _ hc)) h htag hlen
+  | (none, j') :: cs, t, k, j, carry, w, hcl, h, _, _ => by
+      simp [catches] at h
+      obtain ⟨rfl, rfl⟩ := h
+      have hc : ClauseOk C Ls (none, j') := hcl _ List.mem_cons_self
+      exact ⟨[], hc, by simp⟩
+
+/--
+The outcomes of two runs of a `try_table`'s body, after its clauses. The two runs throw the
+same exception or none, since one is thrown only under a public pc, so the same clause catches
+it in both, with the same values.
+-/
+theorem caught_rel {C : Ctx} {Ls : List STy} {rs : STy} {P : Pcs} {cs : List (Option Nat × Nat)}
+    {ob0 ob1 : Out} (hcl : ∀ c, c ∈ cs → ClauseOk C Ls c)
+    (h : OutRel C (rs :: Ls) P rs ob0 ob1) : BodyRel C Ls rs P (ob0.caught cs) (ob1.caught cs) := by
+  rcases h with hs | ⟨hl, hbr⟩
+  · cases hs with
+    | normal h1 h2 h3 => exact .inl (.normal h1 h2 h3)
+    | br h0 h1 h2 h3 => exact .inl (.br h0 h1 h2 h3)
+    | @exn t k w s0 s1 htag hlen hst hpe =>
+      simp only [Out.caught]
+      cases hcat : catches cs t with
+      | none => exact .inl (.exn htag hlen hst hpe)
+      | some jc =>
+        obtain ⟨j, carry⟩ := jc
+        obtain ⟨target, hj, hpay⟩ := catches_ok hcl hcat htag hlen
+        exact .inl (.br (by simpa using hj) (StkRel.same hpay) hst (.inl hpe))
+  · have e0 : ob0.caught cs = ob0 := by
+      cases ob0 <;> first | rfl | exact False.elim hl.2.1
+    have e1 : ob1.caught cs = ob1 := by
+      cases ob1 <;> first | rfl | exact False.elim hl.2.2
+    rw [e0, e1]
+    exact OutRel.toBody (.inr ⟨hl, hbr⟩)
 
 /--
 The two runs after the body of a block, of a conditional or of a loop (whose body is its
@@ -292,6 +363,8 @@ inductive IterCont (F : List Func) (ls : List Nat) (ps rs : STy) (body rest : Li
       IterCont F ls ps rs body rest ob n o
   | exit {i : Nat} {w : List Nat} {s1 : State} :
       ob = .br (i + 1) w s1 → o = .br (i + 1) w s1 → IterCont F ls ps rs body rest ob n o
+  | exn {t : Nat} {w : List Nat} {s1 : State} :
+      ob = .exn t w s1 → o = .exn t w s1 → IterCont F ls ps rs body rest ob n o
 
 theorem iter_inv {n k : Nat} {ls : List Nat} {ps rs : STy} {body rest : List Instr}
     {σ : List Nat} {s : State} {o : Out} (h : Eval F n (k :: ls) (.iter ps rs body :: rest) σ s o) :
@@ -301,6 +374,7 @@ theorem iter_inv {n k : Nat} {ls : List Nat} {ps rs : STy} {body rest : List Ins
   | iterDone hb => exact ⟨_, _, by omega, hb, .done rfl rfl⟩
   | iterAgain hb hr => exact ⟨_, _, by omega, hb, .again rfl (by omega) hr⟩
   | iterExit hb => exact ⟨_, _, by omega, hb, .exit rfl rfl⟩
+  | iterExn hb => exact ⟨_, _, by omega, hb, .exn rfl rfl⟩
 
 /--
 A run that is on its own after one run of a loop's body under a secret pc: whatever the
@@ -327,6 +401,9 @@ theorem iter_alone {C : Ctx} {Ls : List STy} {l0 ps rs : STy} {body rest : List 
     obtain ⟨rs', h1, h2, h3, h4⟩ := hi
     exact ⟨Conf.refl _ _, rs', by simpa using h1, h2, h3,
       HiUpTo.sflows (.cons (Lab.le_H p) (SFlows.refl _)) h4⟩
+  | exn hob ho =>
+    subst hob
+    exact False.elim hi
 
 /--
 Two runs that went apart under a secret pc, where the type they end at is all secret: if both
@@ -338,9 +415,11 @@ theorem loose_to_out {C : Ctx} {Ls : List STy} {P : Pcs} {st : STy} {o0 o1 : Out
   obtain ⟨hst, hi0, hi1⟩ := h
   cases o0 with
   | br i w s => exact .inr ⟨⟨hst, hi0, hi1⟩, .inl trivial⟩
+  | exn t w s => exact False.elim hi0
   | normal σ0 s0 =>
     cases o1 with
     | br i w s => exact .inr ⟨⟨hst, hi0, hi1⟩, .inr trivial⟩
+    | exn t w s => exact False.elim hi1
     | normal σ1 s1 => exact .inl (.normal (StkRel.of_allH hall hi0 hi1) hst (.inr hP))
 
 /-- The values a branch carries agree where the label's type is public. -/
@@ -354,25 +433,63 @@ theorem carried_rel {carried rs st : STy} {σ0 σ1 : List Nat} (hfl : SFlows car
 /-! ### Noninterference -/
 
 /--
-Two related outcomes of a function body: both leave it, with results and states that agree
-where public, and with the preserved globals equal unless the pc they end under is secret.
+What a call does after the callee's body: the rest of the caller's sequence, if the globals the
+callee names hold what they held at the call, or the exception that left the callee.
+-/
+inductive CallCont (F : List Func) (ls : List Nat) (keep : List Nat) (s : State) (rest : List Instr)
+    (base : List Nat) (ob : Out) (n : Nat) (o : Out) : Prop where
+  | land {m : Nat} {r : List Nat} {t : State} :
+      ob.lands = some (r, t) → Kept keep s t → m < n →
+      Eval F m ls rest (r ++ base) { t with loc := s.loc } o → CallCont F ls keep s rest base ob n o
+  | exn {t : Nat} {w : List Nat} {u : State} :
+      ob = .exn t w u → o = .exn t w { u with loc := s.loc } → CallCont F ls keep s rest base ob n o
+
+theorem call_inv {n i : Nat} {ls : List Nat} {rest : List Instr} {σ : List Nat} {s : State}
+    {o : Out} (h : Eval F n ls (.call i :: rest) σ s o) :
+    ∃ f args base n1 ob, F[i]? = some f ∧ σ = args ++ base ∧ args.length = f.ty.params.length ∧
+      n1 < n ∧ Eval F n1 [f.ty.results.length] f.body [] { s with loc := frame args } ob ∧
+      CallCont F ls f.keep s rest base ob n o := by
+  cases h with
+  | call hf hargs hb hl hk hr =>
+    exact ⟨_, _, _, _, _, hf, rfl, hargs, by omega, hb, .land hl hk (by omega) hr⟩
+  | callExn hf hargs hb => exact ⟨_, _, _, _, _, hf, rfl, hargs, by omega, hb, .exn rfl rfl⟩
+
+theorem callIndirect_inv {n : Nat} {ls : List Nat} {ps rs : STy} {b : Lab} {rest : List Instr}
+    {σ : List Nat} {s : State} {o : Out} (h : Eval F n ls (.callIndirect ps b rs :: rest) σ s o) :
+    ∃ c i f args base n1 ob, s.tbl c = some i ∧ F[i]? = some f ∧ f.ty = ⟨ps, b, rs⟩ ∧
+      σ = c :: (args ++ base) ∧ args.length = ps.length ∧ n1 < n ∧
+      Eval F n1 [rs.length] f.body [] { s with loc := frame args } ob ∧
+      CallCont F ls f.keep s rest base ob n o := by
+  cases h with
+  | callIndirect htbl hf hty hargs hb hl hk hr =>
+    exact ⟨_, _, _, _, _, _, _, htbl, hf, hty, rfl, hargs, by omega, hb, .land hl hk (by omega) hr⟩
+  | callIndirectExn htbl hf hty hargs hb =>
+    exact ⟨_, _, _, _, _, _, _, htbl, hf, hty, rfl, hargs, by omega, hb, .exn rfl rfl⟩
+
+/--
+Two related outcomes of a function body. Either both leave it, with results and states that
+agree where public, and with the preserved globals equal unless the pc they end under is
+secret; or both end by the same exception with the same values.
 -/
 theorem fun_result {C : Ctx} {rs : STy} {P : Pcs} {o0 o1 : Out} (h : OutRel C [rs] P rs o0 o1) :
-    ∃ r0 t0 r1 t1, o0.lands = some (r0, t0) ∧ o1.lands = some (r1, t1) ∧
-      StkRel rs r0 r1 ∧ StRel C t0 t1 ∧ PresOr C 0 P t0 t1 := by
+    (∃ r0 t0 r1 t1, o0.lands = some (r0, t0) ∧ o1.lands = some (r1, t1) ∧
+      StkRel rs r0 r1 ∧ StRel C t0 t1 ∧ PresOr C 0 P t0 t1) ∨
+    (∃ t k w u0 u1, o0 = .exn t w u0 ∧ o1 = .exn t w u1 ∧ C.tags[t]? = some k ∧ w.length = k ∧
+      StRel C u0 u1 ∧ PresEq C u0 u1) := by
   rcases h with hsync | ⟨⟨hst, hi0, hi1⟩, hbr⟩
   · cases hsync with
-    | normal hσ hss hpp => exact ⟨_, _, _, _, rfl, rfl, hσ, hss, hpp⟩
+    | normal hσ hss hpp => exact .inl ⟨_, _, _, _, rfl, rfl, hσ, hss, hpp⟩
     | @br i rs' w0 w1 u0 u1 hLs hσ hss hpp =>
       cases i with
       | zero =>
         simp at hLs
         subst hLs
-        exact ⟨_, _, _, _, rfl, rfl, hσ, hss, hpp⟩
+        exact .inl ⟨_, _, _, _, rfl, rfl, hσ, hss, hpp⟩
       | succ i => simp at hLs
+    | exn h0 h1 h2 h3 => exact .inr ⟨_, _, _, _, _, rfl, rfl, h0, h1, h2, h3⟩
   · obtain ⟨r0, t0, hl0, hlen0, hst0, hall0⟩ := top_lands hi0
     obtain ⟨r1, t1, hl1, hlen1, hst1, hall1⟩ := top_lands hi1
-    refine ⟨r0, t0, r1, t1, hl0, hl1, StkRel.of_allH (hbr.elim hall0 hall1) hlen0 hlen1, ?_,
+    refine .inl ⟨r0, t0, r1, t1, hl0, hl1, StkRel.of_allH (hbr.elim hall0 hall1) hlen0 hlen1, ?_,
       .inr (hbr.elim hi0.hiUpTo_zero hi1.hiUpTo_zero)⟩
     rw [← hst0, ← hst1]
     exact hst
@@ -593,8 +710,27 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
               exact .inl (.normal hσb hsb (hpb.mono (.cons hpl (SFlows.refl _))))
             | again hob1 _ _ => cases hob1
             | exit hob1 _ => cases hob1
+            | exn hob1 _ => cases hob1
           | again hob0 _ _ => cases hob0
           | exit hob0 _ => cases hob0
+          | exn hob0 _ => cases hob0
+        | exn htag hlen hsb hpe =>
+          -- both bodies throw the same exception, which leaves the loop
+          cases hc0 with
+          | done hob0 _ => cases hob0
+          | again hob0 _ _ => cases hob0
+          | exit hob0 _ => cases hob0
+          | exn hob0 ho0 =>
+            cases hob0
+            subst ho0
+            cases hc1 with
+            | done hob1 _ => cases hob1
+            | again hob1 _ _ => cases hob1
+            | exit hob1 _ => cases hob1
+            | exn hob1 ho1 =>
+              cases hob1
+              subst ho1
+              exact .inl (.exn htag hlen hsb hpe)
         | @br i rs' w0 w1 u0 u1 hLs hσb hsb hpb =>
           cases i with
           | zero =>
@@ -616,7 +752,9 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
                   subst hH
                   exact .inr (hiUpTo_zero_cons _)
               | exit hob1 _ => cases hob1
+              | exn hob1 _ => cases hob1
             | exit hob0 _ => cases hob0
+            | exn hob0 _ => cases hob0
           | succ i =>
             -- both branch past the loop
             cases hc0 with
@@ -632,6 +770,8 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
                 cases hob1
                 subst ho1
                 exact .inl (.br (by simpa using hLs) hσb hsb (hpb.mono (.cons hpl (SFlows.refl _))))
+              | exn hob1 _ => cases hob1
+            | exn hob0 _ => cases hob0
       · -- the runs went apart in the body, under a secret pc: each iterates on its own
         obtain ⟨hst, hi0, hi1⟩ := hloose
         have hpH := hbr.elim (fun h => (hi0.hiUpTo_zero h).head) (fun h => (hi1.hiUpTo_zero h).head)
@@ -767,70 +907,113 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
           subst e0 e1
           exact .inl (.br hLs (carried_rel hfl hσ) hs (hp.br (Nat.le_refl _) (Lab.le_refl _)))
     | call hft hpc hfl hrest =>
-      cases he0 with
-      | call hf0 hargs0 hb0 hl0 hk0 hr0 =>
-        cases he1 with
-        | call hf1 hargs1 hb1 hl1 hk1 hr1 =>
-          cases hf0.symm.trans hf1
-          obtain ⟨hty, q, hbodyT, hret⟩ := hF _ _ hf0
-          cases hft.symm.trans hty
-          obtain ⟨hargs, hbase⟩ := StkRel.split hσ (hargs0.trans hfl.length_eq.symm)
-            (hargs1.trans hfl.length_eq.symm)
-          have hrel := ih _ (by omega) (hF.enter _) hbodyT hb0 hb1 .nil
-            (StRel.enter (hargs.mono hfl) hs) (hp.call hpc)
-          obtain ⟨r0, t0, r1, t1, hl0', hl1', hres, hst, hpt⟩ := fun_result hrel
-          rw [hl0] at hl0'
-          cases hl0'
-          rw [hl1] at hl1'
-          cases hl1'
-          exact ih _ (by omega) hF hrest hr0 hr1 (hres.append hbase) (StRel.leave hs hst)
-            (PresOr.of_glob rfl rfl
-              (pres_after_call hret hp hk0 hk1 (hpt.imp (fun h i hi => h i hi) id)))
+      obtain ⟨f0, args0, base0, m0, ob0, hf0, rfl, hargs0, hm0, hb0, hc0⟩ := call_inv he0
+      obtain ⟨f1, args1, base1, m1, ob1, hf1, rfl, hargs1, hm1, hb1, hc1⟩ := call_inv he1
+      cases hf0.symm.trans hf1
+      obtain ⟨hty, q, hbodyT, hret⟩ := hF _ _ hf0
+      cases hft.symm.trans hty
+      obtain ⟨hargs, hbase⟩ := StkRel.split hσ (hargs0.trans hfl.length_eq.symm)
+        (hargs1.trans hfl.length_eq.symm)
+      have hrel := ih _ hm0 (hF.enter _) hbodyT hb0 hb1 .nil
+        (StRel.enter (hargs.mono hfl) hs) (hp.call hpc)
+      rcases fun_result hrel with ⟨r0, t0, r1, t1, hl0', hl1', hres, hst, hpt⟩ |
+        ⟨t, k, w, u0, u1, ho0, ho1, htag, hlen, hst, hpe⟩
+      · cases hc0 with
+        | land hl0 hk0 hmr0 hr0 =>
+          cases hc1 with
+          | land hl1 hk1 hmr1 hr1 =>
+            rw [hl0] at hl0'
+            cases hl0'
+            rw [hl1] at hl1'
+            cases hl1'
+            exact ih _ hmr0 hF hrest hr0 hr1 (hres.append hbase) (StRel.leave hs hst)
+              (PresOr.of_glob rfl rfl
+                (pres_after_call hret hp hk0 hk1 (hpt.imp (fun h i hi => h i hi) id)))
+          | exn hob1 _ => subst hob1; simp [Out.lands] at hl1'
+        | exn hob0 _ => subst hob0; simp [Out.lands] at hl0'
+      · -- both callees end by the same exception, which leaves both callers
+        subst ho0 ho1
+        cases hc0 with
+        | land hl0 _ _ _ => simp [Out.lands] at hl0
+        | exn hob0 ho0 =>
+          cases hob0
+          subst ho0
+          cases hc1 with
+          | land hl1 _ _ _ => simp [Out.lands] at hl1
+          | exn hob1 ho1 =>
+            cases hob1
+            subst ho1
+            exact .inl (.exn htag hlen (StRel.leave hs hst) (fun i hi => hpe i hi))
     | callIndirect hpc hge hfl hrest =>
-      cases he0 with
-      | callIndirect htbl0 hf0 hty0 hargs0 hb0 hl0 hk0 hr0 =>
-        cases he1 with
-        | callIndirect htbl1 hf1 hty1 hargs1 hb1 hl1 hk1 hr1 =>
-          cases hσ with
-          | cons hc hσ' =>
-            obtain ⟨hargs, hbase⟩ := StkRel.split hσ' (hargs0.trans hfl.length_eq.symm)
-              (hargs1.trans hfl.length_eq.symm)
-            obtain ⟨_, q0, hbody0, hret0⟩ := hF _ _ hf0
-            obtain ⟨_, q1, hbody1, hret1⟩ := hF _ _ hf1
-            rw [hty0] at hbody0
-            rw [hty1] at hbody1
-            rcases cond_cases hc with hcc | hlH
-            · -- the same table entry: the same function, as for a direct call
-              subst hcc
-              rw [hs.2.2.2.1] at htbl0
-              cases htbl0.symm.trans htbl1
-              cases hf0.symm.trans hf1
-              have hrel := ih _ (by omega) (hF.enter _) hbody0 hb0 hb1 .nil
-                (StRel.enter (hty0 ▸ hargs.mono hfl) hs)
-                (hp.call (Lab.le_trans (Lab.le_join_left _ _) hpc))
-              obtain ⟨r0, t0, r1, t1, hl0', hl1', hres, hst, hpt⟩ := fun_result hrel
+      obtain ⟨c0, i0, f0, args0, base0, m0, ob0, htbl0, hf0, hty0, rfl, hargs0, hm0, hb0, hc0⟩ :=
+        callIndirect_inv he0
+      obtain ⟨c1, i1, f1, args1, base1, m1, ob1, htbl1, hf1, hty1, rfl, hargs1, hm1, hb1, hc1⟩ :=
+        callIndirect_inv he1
+      cases hσ with
+      | cons hc hσ' =>
+        obtain ⟨hargs, hbase⟩ := StkRel.split hσ' (hargs0.trans hfl.length_eq.symm)
+          (hargs1.trans hfl.length_eq.symm)
+        obtain ⟨_, q0, hbody0, hret0⟩ := hF _ _ hf0
+        obtain ⟨_, q1, hbody1, hret1⟩ := hF _ _ hf1
+        rw [hty0] at hbody0
+        rw [hty1] at hbody1
+        rcases cond_cases hc with hcc | hlH
+        · -- the same table entry: the same function, as for a direct call
+          subst hcc
+          rw [hs.2.2.2.1] at htbl0
+          cases htbl0.symm.trans htbl1
+          cases hf0.symm.trans hf1
+          have hrel := ih _ hm0 (hF.enter _) hbody0 hb0 hb1 .nil
+            (StRel.enter (hty0 ▸ hargs.mono hfl) hs)
+            (hp.call (Lab.le_trans (Lab.le_join_left _ _) hpc))
+          rcases fun_result hrel with ⟨r0, t0, r1, t1, hl0', hl1', hres, hst, hpt⟩ |
+            ⟨t, k, w, u0, u1, ho0, ho1, htag, hlen, hst, hpe⟩
+          · cases hc0 with
+            | land hl0 hk0 hmr0 hr0 =>
+              cases hc1 with
+              | land hl1 hk1 hmr1 hr1 =>
+                rw [hl0] at hl0'
+                cases hl0'
+                rw [hl1] at hl1'
+                cases hl1'
+                exact ih _ hmr0 hF hrest hr0 hr1 (hres.append hbase) (StRel.leave hs hst)
+                  (PresOr.of_glob rfl rfl
+                    (pres_after_call hret0 hp hk0 hk1 (hpt.imp (fun h i hi => h i hi) id)))
+              | exn hob1 _ => subst hob1; simp [Out.lands] at hl1'
+            | exn hob0 _ => subst hob0; simp [Out.lands] at hl0'
+          · subst ho0 ho1
+            cases hc0 with
+            | land hl0 _ _ _ => simp [Out.lands] at hl0
+            | exn hob0 ho0 =>
+              cases hob0
+              subst ho0
+              cases hc1 with
+              | land hl1 _ _ _ => simp [Out.lands] at hl1
+              | exn hob1 ho1 =>
+                cases hob1
+                subst ho1
+                exact .inl (.exn htag hlen (StRel.leave hs hst) (fun i hi => hpe i hi))
+        · -- a secret index: two functions of the expected type, each run under a secret pc
+          subst hlH
+          have hbound := hpc (Lab.join_H _)
+          subst hbound
+          obtain ⟨hcf0, hi0⟩ := confine _ (hF.enter _) hbody0 (hiUpTo_zero_cons _) rfl hb0
+          obtain ⟨hcf1, hi1⟩ := confine _ (hF.enter _) hbody1 (hiUpTo_zero_cons _) rfl hb1
+          obtain ⟨r0, t0, hl0', hlen0, hst0, _⟩ := top_lands hi0
+          obtain ⟨r1, t1, hl1', hlen1, hst1, _⟩ := top_lands hi1
+          cases hc0 with
+          | exn hob0 _ => subst hob0; exact False.elim hi0
+          | land hl0 hk0 hmr0 hr0 =>
+            cases hc1 with
+            | exn hob1 _ => subst hob1; exact False.elim hi1
+            | land hl1 hk1 hmr1 hr1 =>
               rw [hl0] at hl0'
               cases hl0'
               rw [hl1] at hl1'
               cases hl1'
-              exact ih _ (by omega) hF hrest hr0 hr1 (hres.append hbase) (StRel.leave hs hst)
-                (PresOr.of_glob rfl rfl
-                  (pres_after_call hret0 hp hk0 hk1 (hpt.imp (fun h i hi => h i hi) id)))
-            · -- a secret index: two functions of the expected type, each run under a secret pc
-              subst hlH
-              have hbound := hpc (Lab.join_H _)
-              subst hbound
-              obtain ⟨hc0, hi0⟩ := confine _ (hF.enter _) hbody0 (hiUpTo_zero_cons _) rfl hb0
-              obtain ⟨hc1, hi1⟩ := confine _ (hF.enter _) hbody1 (hiUpTo_zero_cons _) rfl hb1
-              obtain ⟨r0, t0, hl0', hlen0, hst0, _⟩ := top_lands hi0
-              obtain ⟨r1, t1, hl1', hlen1, hst1, _⟩ := top_lands hi1
-              rw [hl0] at hl0'
-              cases hl0'
-              rw [hl1] at hl1'
-              cases hl1'
-              refine ih _ (by omega) hF hrest hr0 hr1
+              refine ih _ hmr0 hF hrest hr0 hr1
                 ((StkRel.of_allH hge hlen0 hlen1).append hbase)
-                ((hs.conf_left (Conf.call (hst0 ▸ hc0))).conf_right (Conf.call (hst1 ▸ hc1)))
+                ((hs.conf_left (Conf.call (hst0 ▸ hcf0))).conf_right (Conf.call (hst1 ▸ hcf1)))
                 (PresOr.of_glob rfl rfl ?_)
               -- Each callee ends under a secret pc, so each compared the preserved globals
               -- with their values at the call.
@@ -842,6 +1025,31 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
               · exact .inl (fun i hi =>
                   ((hk0 i (hcov0 i hi)).trans (he i hi)).trans (hk1 i (hcov1 i hi)).symm)
               · exact .inr hh
+    | throw htag hlen hall =>
+      cases he0 with
+      | throw =>
+        cases he1 with
+        | throw =>
+          -- under a public pc the two runs agree on the preserved globals, and the values are public
+          have hpe : PresEq C s0 s1 := hp.resolve_right (fun h => absurd h.head (by decide))
+          have htake := StkRel.take_public hall hσ
+          rw [hlen] at htake
+          rw [htake]
+          refine .inl (.exn htag ?_ hs hpe)
+          have h1 := hσ.length_right
+          simp only [List.length_append] at h1
+          simp only [List.length_take]
+          omega
+    | tryTable hfl hres hcl hbody hrest =>
+      obtain ⟨vs0, base0, m0, ob0, rfl, hvs0, hm0, hb0, hc0⟩ := try_inv he0
+      obtain ⟨vs1, base1, m1, ob1, rfl, hvs1, hm1, hb1, hc1⟩ := try_inv he1
+      obtain ⟨hvs, hbase⟩ := StkRel.split hσ (hvs0.trans hfl.length_eq.symm)
+        (hvs1.trans hfl.length_eq.symm)
+      have hrel := caught_rel hcl
+        (ih _ hm0 hF hbody hb0 hb1 (hvs.mono hfl) hs (hp.enter (Lab.le_refl _)))
+      exact after_body hF
+        (fun m hm σ0 s0 o0 m1 σ1 s1 o1 h0 h1 hσ hs hp => ih m hm hF hrest h0 h1 hσ hs hp)
+        hrest hrel hbase hres (hp.mono (rise hbody).tail) hc0 hc1
     | unreachable => cases he0
 
 /-! ### A function of a well-typed module -/
@@ -850,29 +1058,34 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
 Termination-insensitive noninterference for a function of a well-typed module. Take two calls
 of the function, from states that agree where public (the global variables, the preserved ones
 included, and the memory cells that are public in both), with arguments that agree where the
-function's parameters are public. If both return, their results agree where the result type is
-public, and the states they leave agree where public. They agree on the preserved globals too
-if both runs pass the comparison that the function's return makes, as a callee's does: a run
-that fails it traps. A call returns at the end of the body or by a branch to the function's
-label, which is what `return` is; a call that traps or runs forever does not return. The
-function may call the module's functions, itself included.
+function's parameters are public. If both end, then either both return or both end by the same
+exception with the same values, and the states they leave agree where public. If they return,
+their results agree where the result type is public, and they agree on the preserved globals
+too if both runs pass the comparison that the function's return makes, as a callee's does: a
+run that fails it traps. If they end by an exception, they agree on the preserved globals. A
+call returns at the end of the body or by a branch to the function's label, which is what
+`return` is; a call that traps or runs forever does not end. The function may call the module's
+functions, itself included.
 -/
 theorem tini {C : Ctx} (hF : WellTyped C F) {i : Nat} {f : Func} (hf : F[i]? = some f)
     {a0 a1 : List Nat} {s0 s1 : State} {n0 n1 : Nat} {o0 o1 : Out}
     (h0 : Eval F n0 [f.ty.results.length] f.body [] { s0 with loc := frame a0 } o0)
     (h1 : Eval F n1 [f.ty.results.length] f.body [] { s1 with loc := frame a1 } o1)
     (ha : StkRel f.ty.params a0 a1) (hs : StRel C s0 s1) (hp : PresEq C s0 s1) :
-    ∃ r0 t0 r1 t1, o0.lands = some (r0, t0) ∧ o1.lands = some (r1, t1) ∧
+    (∃ r0 t0 r1 t1, o0.lands = some (r0, t0) ∧ o1.lands = some (r1, t1) ∧
       StkRel f.ty.results r0 r1 ∧ StRel C { t0 with loc := s0.loc } { t1 with loc := s1.loc } ∧
-      (Kept f.keep s0 t0 → Kept f.keep s1 t1 → PresEq C t0 t1) := by
+      (Kept f.keep s0 t0 → Kept f.keep s1 t1 → PresEq C t0 t1)) ∨
+    (∃ t w u0 u1, o0 = .exn t w u0 ∧ o1 = .exn t w u1 ∧
+      StRel C { u0 with loc := s0.loc } { u1 with loc := s1.loc } ∧ PresEq C u0 u1) := by
   obtain ⟨_, q, hbody, hret⟩ := hF _ _ hf
-  obtain ⟨r0, t0, r1, t1, hl0, hl1, hres, hst, hpt⟩ :=
-    fun_result (ni n0 (hF.enter f) hbody h0 h1 .nil (StRel.enter ha hs)
-      (.inl (fun i hi => hp i hi)))
-  refine ⟨r0, t0, r1, t1, hl0, hl1, hres, StRel.leave hs hst, fun hk0 hk1 => ?_⟩
-  rcases pres_after_call (P := [Lab.L]) hret (.inl hp) hk0 hk1
-    (hpt.imp (fun h i hi => h i hi) id) with h | h
-  · exact h
-  · exact absurd h.head (by decide)
+  rcases fun_result (ni n0 (hF.enter f) hbody h0 h1 .nil (StRel.enter ha hs)
+      (.inl (fun i hi => hp i hi))) with
+    ⟨r0, t0, r1, t1, hl0, hl1, hres, hst, hpt⟩ | ⟨t, k, w, u0, u1, ho0, ho1, _, _, hst, hpe⟩
+  · refine .inl ⟨r0, t0, r1, t1, hl0, hl1, hres, StRel.leave hs hst, fun hk0 hk1 => ?_⟩
+    rcases pres_after_call (P := [Lab.L]) hret (.inl hp) hk0 hk1
+      (hpt.imp (fun h i hi => h i hi) id) with h | h
+    · exact h
+    · exact absurd h.head (by decide)
+  · exact .inr ⟨t, w, u0, u1, ho0, ho1, StRel.leave hs hst, fun i hi => hpe i hi⟩
 
 end WasmIfc
