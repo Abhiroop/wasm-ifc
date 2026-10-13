@@ -10,6 +10,7 @@ namespace WasmIfc
 def exampleCtx : Ctx where
   locals := fun i => if i = 0 then Lab.H else Lab.L
   globals := fun _ => Lab.L
+  preserved := fun _ => False
   funcs := []
 
 /--
@@ -17,21 +18,21 @@ A constant, then a block that a `br_if` leaves if the secret local is not zero, 
 the constant to a public global. The write follows the block, so it happens in every run.
 -/
 def writeAfterBlock : List Instr :=
-  [.const 7, .block [] [] [.localGet 0, .brIf 0, .nop], .globalSet 0]
+  [.const 7, .block [] [] [] [.localGet 0, .brIf 0, .nop], .globalSet 0]
 
 /-- It is typed under a public pc: after the block the pc is public again. -/
 example : Typed exampleCtx [[]] writeAfterBlock [Lab.L] [] [Lab.L] [] := by
   refine .const 7 (Typed.block (tin := []) (st := [Lab.L]) (p := Lab.H) (P1 := [Lab.L]) .nil
-    (fun _ h => nomatch h) ?_ ?_)
+    (fun _ h => nomatch h) (.inr (fun _ h => nomatch h)) ?_ ?_)
   · refine .localGet 0 (Typed.brIf (rs := []) (carried := []) (st := []) rfl
       (fun _ h => nomatch h) .nil (.nop .nil))
-  · exact .globalSet 0 (fun h => nomatch h) (fun h => nomatch h) .nil
+  · exact .globalSet 0 (fun h => h) (fun h => nomatch h) (fun h => nomatch h) .nil
 
 /-- A run in which the branch is taken, and one in which it is not: both write 7. -/
 example (s : State) (h : s.loc 0 = 5) :
     Eval [] 5 [0] writeAfterBlock [] s (.normal [] (s.setGlob 0 7)) := by
   refine .const 7 (Eval.blockCont (n1 := 2) (n2 := 1) (vs := []) (base := [7])
-    (ob := .br 0 [] s) (σ1 := []) (s1 := s) rfl ?_ rfl (.globalSet 0 .nil))
+    (ob := .br 0 [] s) (σ1 := []) (s1 := s) rfl ?_ rfl (fun _ h => nomatch h) (.globalSet 0 .nil))
   refine .localGet 0 ?_
   rw [h]
   exact Eval.brIfTaken (ls := [0, 0]) (i := 0) (n := 0) (c := 5) (σ := []) (by decide) rfl
@@ -39,21 +40,22 @@ example (s : State) (h : s.loc 0 = 5) :
 example (s : State) (h : s.loc 0 = 0) :
     Eval [] 6 [0] writeAfterBlock [] s (.normal [] (s.setGlob 0 7)) := by
   refine .const 7 (Eval.blockCont (n1 := 3) (n2 := 1) (vs := []) (base := [7])
-    (ob := .normal [] s) (σ1 := []) (s1 := s) rfl ?_ rfl (.globalSet 0 .nil))
+    (ob := .normal [] s) (σ1 := []) (s1 := s) rfl ?_ rfl (fun _ h => nomatch h) (.globalSet 0 .nil))
   refine .localGet 0 ?_
   rw [h]
   exact .brIfNot (.nop .nil)
 
 /-- The same write inside the block, after the branch, depends on the secret. -/
 def writeInsideBlock : List Instr :=
-  [.block [] [] [.localGet 0, .brIf 0, .const 7, .globalSet 0]]
+  [.block [] [] [] [.localGet 0, .brIf 0, .const 7, .globalSet 0]]
 
 /-- What a typing of a block says, with the segment's type as a variable. -/
-theorem block_typed_inv {C : Ctx} {Ls : List STy} {ps rs : STy} {body rest : List Instr}
-    {P P' : Pcs} {st st' : STy} (h : Typed C Ls (.block ps rs body :: rest) P st P' st') :
+theorem block_typed_inv {C : Ctx} {Ls : List STy} {keep : List Nat} {ps rs : STy}
+    {body rest : List Instr} {P P' : Pcs} {st st' : STy}
+    (h : Typed C Ls (.block keep ps rs body :: rest) P st P' st') :
     ∃ pc Pr p P1, P = pc :: Pr ∧ Typed C (rs :: Ls) body (pc :: pc :: Pr) ps (p :: P1) rs := by
   cases h with
-  | block _ _ hbody _ => exact ⟨_, _, _, _, rfl, hbody⟩
+  | block _ _ _ hbody _ => exact ⟨_, _, _, _, rfl, hbody⟩
 
 /-- What a typing of a `br_if` says of the code after it. -/
 theorem brIf_typed_inv {C : Ctx} {Ls : List STy} {i : Nat} {rest : List Instr}
@@ -78,10 +80,11 @@ example (pc : Lab) (P' : Pcs) (st st' : STy) :
     cases h2 with
     | const _ h3 =>
       cases h3 with
-      | globalSet _ hpc _ _ =>
+      | globalSet _ _ hpc _ _ =>
         have hH : Lab.le Lab.H Lab.L := by
           cases pc <;> simpa [Lab.join, exampleCtx] using hpc
         exact absurd (hH rfl) (by decide)
+      | globalSetPreserved _ hpi _ _ => exact hpi
 
 /-! ### Memory -/
 
@@ -115,14 +118,16 @@ example (pc : Lab) (P' : Pcs) (st' : STy) :
 /-! ### A module of two functions -/
 
 /-- Function 0 returns its public parameter; function 1 calls it on a constant. -/
-def identity : Func := { ty := ⟨[Lab.L], Lab.L, [Lab.L]⟩, extra := [], body := [.localGet 0] }
+def identity : Func :=
+  { ty := ⟨[Lab.L], Lab.L, [Lab.L]⟩, extra := [], keep := [], body := [.localGet 0] }
 
 def callsIdentity : Func :=
-  { ty := ⟨[], Lab.L, [Lab.L]⟩, extra := [], body := [.const 3, .call 0] }
+  { ty := ⟨[], Lab.L, [Lab.L]⟩, extra := [], keep := [], body := [.const 3, .call 0] }
 
 def moduleCtx : Ctx where
   locals := fun _ => Lab.L
   globals := fun _ => Lab.L
+  preserved := fun _ => False
   funcs := [identity.ty, callsIdentity.ty]
 
 example : WellTyped moduleCtx [identity, callsIdentity] := by
@@ -130,11 +135,98 @@ example : WellTyped moduleCtx [identity, callsIdentity] := by
   match i, hf with
   | 0, hf =>
     cases hf
-    exact ⟨rfl, _, .localGet 0 .nil⟩
+    exact ⟨rfl, _, .localGet 0 .nil, .inl rfl⟩
   | 1, hf =>
     cases hf
     exact ⟨rfl, _, .const 3 (Typed.call (ft := identity.ty) (targs := [Lab.L]) (st := []) rfl
-      (Lab.le_refl _) (SFlows.refl _) .nil)⟩
+      (Lab.le_refl _) (SFlows.refl _) .nil), .inl rfl⟩
   | i + 2, hf => simp at hf
+
+/-- A function body that keeps a copy of its result in a local and returns. -/
+example : Typed moduleCtx [[Lab.L]] [.const 3, .localTee 0, .ret] [Lab.L] [] [Lab.L] [Lab.L] :=
+  .const 3 (.localTee 0 (fun h => nomatch h) (fun h => nomatch h)
+    (Typed.ret (rs := [Lab.L]) (carried := [Lab.L]) (st := []) rfl (fun _ _ h => nomatch h)
+      (SFlows.refl _)))
+
+example (s : State) :
+    Eval [] 3 [1] [.const 3, .localTee 0, .ret] [] s (.br 0 [3] (s.setLoc 0 3)) :=
+  .const 3 (.localTee 0 (Eval.ret (n := 1) rfl))
+
+/-! ### A preserved global -/
+
+/-- Global 0 is preserved, as the stack pointer of compiled C is; local 0 is secret. -/
+def frameCtx : Ctx where
+  locals := fun i => if i = 0 then Lab.H else Lab.L
+  globals := fun _ => Lab.L
+  preserved := fun i => i = 0
+  funcs := []
+
+/-- What the secret selects: move the global, and put it back. -/
+def moves : List Instr := [.globalGet 0, .const 16, .globalSet 0, .globalSet 0]
+
+/--
+If the secret local is not zero, move the global and put it back, as the prologue and the
+epilogue of a function called there do. The conditional compares global 0.
+-/
+def moveAndRestore (keep : List Nat) : List Instr := [.localGet 0, .ite keep [] [] moves []]
+
+/-- It is typed: the writes are under a secret pc, and the conditional compares the global. -/
+example : Typed frameCtx [[]] (moveAndRestore [0]) [Lab.L] [] [Lab.L] [] := by
+  refine .localGet 0 (Typed.ite (tin := []) (st := []) (p1 := Lab.H) (P1 := [Lab.L])
+    (p2 := Lab.H) (P2 := [Lab.L]) .nil (fun _ h => nomatch h)
+    (.inr (fun i (hi : i = 0) => by simp [hi])) ?_ .nil .nil)
+  exact .globalGet 0 (.const 16 (.globalSetPreserved 0 rfl (fun _ => rfl)
+    (.globalSetPreserved 0 rfl (fun _ => rfl) .nil)))
+
+/-- A run that takes the branch: the global is moved and restored, and the comparison passes. -/
+example (s : State) (h : s.loc 0 = 5) :
+    Eval [] 6 [0] (moveAndRestore [0]) [] s
+      (.normal [] ((s.setGlob 0 16).setGlob 0 (s.glob 0))) := by
+  refine .localGet 0 ?_
+  rw [h]
+  refine Eval.iteCont (n1 := 4) (n2 := 0) (vs := []) (base := [])
+    (ob := .normal [] ((s.setGlob 0 16).setGlob 0 (s.glob 0))) rfl ?_ rfl ?_ .nil
+  · exact .globalGet 0 (.const 16 (.globalSet 0 (.globalSet 0 .nil)))
+  · intro i hi
+    simp at hi
+    subst hi
+    simp [State.setGlob]
+
+/-- What a typing of a conditional says, with the segment's type as a variable. -/
+theorem ite_typed_inv {C : Ctx} {Ls : List STy} {keep : List Nat} {ps rs : STy}
+    {thn els rest : List Instr} {P P' : Pcs} {st st' : STy}
+    (h : Typed C Ls (.ite keep ps rs thn els :: rest) P st P' st') :
+    ∃ pc Pr l st1 p1 P1 p2 P2, P = pc :: Pr ∧ st = l :: st1 ∧
+      Restores C (p1.join p2) (joinEach P1 P2) keep ∧
+      Typed C (rs :: Ls) thn (pc.join l :: pc :: Pr) ps (p1 :: P1) rs ∧
+      Typed C (rs :: Ls) els (pc.join l :: pc :: Pr) ps (p2 :: P2) rs := by
+  cases h with
+  | ite _ _ hres h1 h2 _ => exact ⟨_, _, _, _, _, _, _, _, rfl, rfl, hres, h1, h2⟩
+
+/-- Without the comparison it is not typed: the pc drops after the conditional. -/
+example (P' : Pcs) (st' : STy) : ¬ Typed frameCtx [[]] (moveAndRestore []) [Lab.L] [] P' st' := by
+  intro h
+  cases h with
+  | localGet _ h1 =>
+    obtain ⟨pc, Pr, l, st1, p1, P1, p2, P2, hP, hst, hres, hthn, hels⟩ := ite_typed_inv h1
+    cases hP
+    cases hst
+    cases hels
+    have hp1 : p1 = Lab.H := (rise hthn).head rfl
+    have hP1 : P1 = [Lab.L] := by
+      cases hthn with
+      | globalGet _ a =>
+        cases a with
+        | const _ b =>
+          cases b with
+          | globalSet _ hnp _ _ _ => exact absurd rfl hnp
+          | globalSetPreserved _ _ _ c =>
+            cases c with
+            | globalSet _ hnp _ _ _ => exact absurd rfl hnp
+            | globalSetPreserved _ _ _ d => cases d; rfl
+    subst hp1 hP1
+    rcases hres with hr | hc
+    · exact absurd (hr Lab.L rfl rfl) (by decide)
+    · exact absurd (hc 0 rfl) (by simp)
 
 end WasmIfc

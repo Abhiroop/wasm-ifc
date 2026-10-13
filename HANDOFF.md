@@ -609,7 +609,7 @@ implemented since e87e76a.
 
 ## Lean: noninterference on a core with control flow, calls and memory (item 12, 2026-10-12)
 
-- **Where:** `lean/` (Lean 4.35.0, no dependencies; `cd lean && lake build`). 2,015 lines in
+- **Where:** `lean/` (Lean 4.35.0, no dependencies; `cd lean && lake build`). 2,425 lines in
   five files; `lean/README.md` states what is proved and what differs from the paper.
 - **What is proved** (`WasmIfc.tini`, from `WasmIfc.ni`): termination-insensitive
   noninterference for a function of a well-typed module, under the lift-free rules, on a core
@@ -620,8 +620,7 @@ implemented since e87e76a.
   depend on `propext`, `Classical.choice` and `Quot.sound` only** (`#print axioms`).
 - **Against the plan's steps (a) to (f):** (a) in part. The rules are the W-rules themselves,
   so for this core there is no erasure and no inclusion to prove, and the theorem is the main
-  theorem's statement for the typed program. Not covered: `return` (it is a
-  branch to the function's label), `local.tee`, `memory.grow`, a bounded memory of bytes, more
+  theorem's statement for the typed program. Not covered: `memory.grow`, a bounded memory of bytes, more
   than one value type, more than two levels, bulk memory, WASI, the features of 3.0, and
   the correspondence with SecWasm's flat-stack semantics (the Lean semantics evaluates a
   block's body on the block's parameters alone). (b) to (f): not done.
@@ -645,6 +644,48 @@ implemented since e87e76a.
      premise. The implementation checks it in the policy stage for every function type
      (`PolicyResultsBelowBound`), as the paper says.
 - **Toolchain:** elan and Lean are installed under `~/.elan` (3 GB, user space).
+- **Preserved globals, `return` and `local.tee` (added 2026-10-13).** The core now has the
+  rule for a preserved global and its run-time comparison, so the plan's item "preserved
+  globals in the proofs" has a proof case and is no longer an assumption of the theorem.
+  2,425 lines, no `sorry`, the same three axioms.
+  - *What is modelled.* `Ctx.preserved` says which globals are preserved. A write to one has
+    the rule of `IGlobalSetPreserved` (no premise on the pc; the value at most as secret as
+    the pc). A block, a loop and a conditional carry the premise `Restores pcEnd after keep`,
+    with the same `pcEnd` and `after` as the witnesses of `IBlock`, `ILoop` and `IIf`; a
+    function carries what `ReturnsWith` says. The semantics goes on after a construct, or a
+    call, only if the compared globals hold what they held at its start, or at the call.
+  - *What is proved.* `tini` as before, for states that also agree on the preserved globals:
+    the two runs agree on them again at the return, if both pass the comparison made there
+    (a run that fails it traps). Inside, the two runs agree on the preserved globals wherever
+    the pc is public (`PresOr`).
+  - *The argument*, which the appendix can use. In C terms, take
+    `if (secret) { sp -= 16; f(); sp += 16; }`. Inside the conditional the pc is secret, and the
+    two runs may hold different values of `sp`; the proof says nothing of `sp` there. After the
+    conditional the pc is public again, so it drops, and the rule makes the conditional compare
+    `sp` with its value before the `if`. Both runs passed that comparison, or one trapped. The
+    pc before the `if` was public, so the two runs agreed on `sp` there, and therefore they
+    agree after it.
+  - *Finding 1: the pc before the construct is public whenever the comparison is needed.* The
+    pc after a construct is at least the pc before it (`rise`), so where the pc after it is
+    public the pc before it was too. This is what makes "its value at the construct's start"
+    a value the two runs share. No extra premise is needed for it.
+  - *Finding 2: a loop must compare with the values at its first entry.* The implementation
+    does (it records once, in `restoring`). Comparing with the start of the last iteration
+    would be unsound: the first iteration writes the global under a secret pc, the second
+    leaves it alone and ends the loop, and the comparison passes with two different values.
+    To state the right comparison in a big-step semantics, a loop now evaluates the
+    iterations of its body as one unit (`iter`, an instruction no program contains). The
+    proof for a loop became the proof for a block around that unit, and the separate lemma
+    for a loop that runs alone (`loop_alone`) is gone.
+  - *Finding 3: a call on a secret table index needs the callee's comparison.* Two different
+    functions run, each under a secret pc from its start, so each ends under a secret pc and
+    the rule for functions makes each compare the preserved globals at its return. Without
+    that premise the caller, whose pc may be public, would go on with globals the two runs
+    disagree on.
+  - *Not covered.* Exceptions and tail calls are not in the core, so that an exception cannot
+    skip a comparison is still my argument and not a proof. For a tail call I re-read the
+    machine: the callee's comparison is made in the place of the caller's, and the caller's
+    own stays in the continuation it returns to (`tailCall`, `startFunction`).
 
 ## WASI sockets (item 14, 2026-10-12)
 

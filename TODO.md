@@ -50,8 +50,13 @@ are summarised here, not repeated.
   version of each libc wrapper per calling context. **decision**, after the deadline.
 - [ ] **P3** Inference is monomorphic: one label per parameter joins every call site's (a
   precision loss against WANILLA, `casestudies/README.md`).
-- [ ] **P3** A noninterference proof (Lean, delta 6). `Formalisation/` holds earlier Agda and
-  Lean models of the untyped core only.
+- [ ] **P3** The noninterference proof in Lean (`lean/`, delta 6) covers a core: control flow
+  with `return`, direct and indirect calls, a memory with levels, local and global variables,
+  preserved globals. Not in it: `memory.grow` and a bounded memory of bytes, bulk memory,
+  tables that are written, exceptions, tail calls, the host boundary, more than one value
+  type. Its semantics evaluates a block's body on the block's parameters alone; that this
+  agrees with the flat stack is not proved. `Formalisation/` holds earlier Agda and Lean
+  models of the untyped core only.
 
 ## WebAssembly coverage
 

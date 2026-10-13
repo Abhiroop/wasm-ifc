@@ -4,7 +4,9 @@ The lift-free typing rules on a core of WebAssembly, and a big-step semantics fo
 The core has one value type (a number), local and global variables, and the structured
 control flow that the rules are about: blocks, loops and conditionals with parameters and
 results, `br`, `br_if` and `br_table`, calls of the module's functions, and a memory whose
-cells carry a level, with SecWasm's run-time check on loads.
+cells carry a level, with SecWasm's run-time check on loads. A global may be declared
+preserved: it may then be written under a secret pc, and the construct in which the pc became
+secret must leave it as it found it, which is checked at run time.
 
 The typing judgment is the paper's `Ls ⊢ e : P | st ⇒ P' | st'` (appendix B, "The Rules"):
 `Ls` lists the types of the enclosing labels, innermost first, `P` is the pc stack, and `st`
@@ -69,19 +71,31 @@ inductive Instr where
   | relabel
   | localGet (i : Nat)
   | localSet (i : Nat)
+  | localTee (i : Nat)
   | globalGet (i : Nat)
   | globalSet (i : Nat)
   /-- `load lm`: read a cell, which must be labelled at most `lm` -/
   | load (lm : Lab)
   /-- `store lm`: write a cell and label it `lm` -/
   | store (lm : Lab)
-  | block (ps rs : STy) (body : List Instr)
-  | loop (ps rs : STy) (body : List Instr)
-  | ite (ps rs : STy) (thn els : List Instr)
+  /--
+  `block keep ps rs body`: where control comes out of the block, by its end or by a branch to
+  its label, the globals `keep` must hold what they held at its start, or the run traps
+  -/
+  | block (keep : List Nat) (ps rs : STy) (body : List Instr)
+  | loop (keep : List Nat) (ps rs : STy) (body : List Instr)
+  | ite (keep : List Nat) (ps rs : STy) (thn els : List Instr)
+  /--
+  The iterations of a loop's body. No program contains this instruction: a loop runs it, so that
+  what the loop compares is what the globals held when it was first entered.
+  -/
+  | iter (ps rs : STy) (body : List Instr)
   | br (i : Nat)
   | brIf (i : Nat)
   /-- `brTable ts d`: the targets, and the default one -/
   | brTable (ts : List Nat) (d : Nat)
+  /-- `return`: a branch to the function's label, the outermost one -/
+  | ret
   | call (i : Nat)
   /-- `callIndirect ps b rs`: call the function a table entry names, expected at the type `ps -[b]-> rs` -/
   | callIndirect (ps : STy) (b : Lab) (rs : STy)
@@ -100,12 +114,23 @@ and the types of the module's functions.
 structure Ctx where
   locals : Nat → Lab
   globals : Nat → Lab
+  /-- the globals the policy declares preserved (public ones, as the stack pointer of compiled C) -/
+  preserved : Nat → Prop
   funcs : List FuncTy
+
+/--
+`Restores C pcEnd after keep`: whether control coming out of a block, a loop or a conditional has
+to find the preserved globals as they were at its start. It has to if the pc drops there:
+`pcEnd` is the most secret pc of the construct's own entry of the pc stack, and `after` the pc
+stack in force after it. Otherwise every preserved global is among those the construct compares.
+-/
+def Restores (C : Ctx) (pcEnd : Lab) (after : Pcs) (keep : List Nat) : Prop :=
+  (∀ q, after.head? = some q → Lab.le pcEnd q) ∨ ∀ i, C.preserved i → i ∈ keep
 
 /--
 `Typed C Ls e P st P' st'`: under the labels `Ls`, the sequence `e` takes the pc stack `P` and
 the segment `st` to `P'` and `st'`. Each rule types an instruction followed by the rest of its
-sequence. The code after a transfer (`br`, `br_table`, `unreachable`) is not typed, as the
+sequence. The code after a transfer (`br`, `br_table`, `return`, `unreachable`) is not typed, as the
 elaborator does not build its typed form.
 -/
 inductive Typed (C : Ctx) : List STy → List Instr → Pcs → STy → Pcs → STy → Prop where
@@ -136,11 +161,23 @@ inductive Typed (C : Ctx) : List STy → List Instr → Pcs → STy → Pcs → 
       Lab.le pc (C.locals i) → Lab.le l (C.locals i) →
       Typed C Ls rest (pc :: Pr) st P' st' →
       Typed C Ls (.localSet i :: rest) (pc :: Pr) (l :: st) P' st'
+  | localTee {Ls rest pc Pr l st P' st'} (i : Nat) :
+      Lab.le pc (C.locals i) → Lab.le l (C.locals i) →
+      Typed C Ls rest (pc :: Pr) (l :: st) P' st' →
+      Typed C Ls (.localTee i :: rest) (pc :: Pr) (l :: st) P' st'
   | globalGet {Ls rest pc Pr st P' st'} (i : Nat) :
       Typed C Ls rest (pc :: Pr) (((C.globals i).join pc) :: st) P' st' →
       Typed C Ls (.globalGet i :: rest) (pc :: Pr) st P' st'
   | globalSet {Ls rest pc Pr l st P' st'} (i : Nat) :
-      Lab.le pc (C.globals i) → Lab.le l (C.globals i) →
+      ¬ C.preserved i → Lab.le pc (C.globals i) → Lab.le l (C.globals i) →
+      Typed C Ls rest (pc :: Pr) st P' st' →
+      Typed C Ls (.globalSet i :: rest) (pc :: Pr) (l :: st) P' st'
+  /--
+  A write to a preserved global: the pc need not flow into the global, and the value may be as
+  secret as the pc. Under a public pc this is the ordinary rule.
+  -/
+  | globalSetPreserved {Ls rest pc Pr l st P' st'} (i : Nat) :
+      C.preserved i → Lab.le l pc →
       Typed C Ls rest (pc :: Pr) st P' st' →
       Typed C Ls (.globalSet i :: rest) (pc :: Pr) (l :: st) P' st'
   | load {Ls rest pc Pr la st P' st'} (lm : Lab) :
@@ -151,23 +188,32 @@ inductive Typed (C : Ctx) : List STy → List Instr → Pcs → STy → Pcs → 
       Typed C Ls rest (pc :: Pr) st P' st' →
       Typed C Ls (.store lm :: rest) (pc :: Pr) (lv :: la :: st) P' st'
   /-- The results are at least the pc at which the body starts (the paper's Property (E)). -/
-  | block {Ls rest pc Pr tin ps rs body p P1 st P' st'} :
-      SFlows tin ps → AllGe pc rs →
+  | block {Ls rest pc Pr tin keep ps rs body p P1 st P' st'} :
+      SFlows tin ps → AllGe pc rs → Restores C p P1 keep →
       Typed C (rs :: Ls) body (pc :: pc :: Pr) ps (p :: P1) rs →
       Typed C Ls rest P1 (rs ++ st) P' st' →
-      Typed C Ls (.block ps rs body :: rest) (pc :: Pr) (tin ++ st) P' st'
+      Typed C Ls (.block keep ps rs body :: rest) (pc :: Pr) (tin ++ st) P' st'
   /-- The body starts at a pc `pcL` of the rule's choice, and must end at most there. -/
-  | loop {Ls rest pc Pr pcL tin ps rs body p P1 st P' st'} :
-      Lab.le pc pcL → Lab.le p pcL → SFlows tin ps → AllGe pcL rs →
+  | loop {Ls rest pc Pr pcL tin keep ps rs body p P1 st P' st'} :
+      Lab.le pc pcL → Lab.le p pcL → SFlows tin ps → AllGe pcL rs → Restores C pcL P1 keep →
       Typed C (ps :: Ls) body (pcL :: pc :: Pr) ps (p :: P1) rs →
       Typed C Ls rest P1 (rs ++ st) P' st' →
-      Typed C Ls (.loop ps rs body :: rest) (pc :: Pr) (tin ++ st) P' st'
-  | ite {Ls rest pc Pr l tin ps rs thn els p1 P1 p2 P2 st P' st'} :
-      SFlows tin ps → AllGe (pc.join l) rs →
+      Typed C Ls (.loop keep ps rs body :: rest) (pc :: Pr) (tin ++ st) P' st'
+  /--
+  The iterations of a loop's body, as the loop's rule types them: the body is typed under the
+  loop's label, and the iterations stand where a block's body would, under a label that
+  nothing branches to. The code after them is not typed.
+  -/
+  | iter {Ls l0 rest pcL Pb ps rs body p P1} :
+      Lab.le p pcL → AllGe pcL rs →
+      Typed C (ps :: Ls) body (pcL :: Pb) ps (p :: P1) rs →
+      Typed C (l0 :: Ls) (.iter ps rs body :: rest) (pcL :: Pb) ps (pcL :: P1) rs
+  | ite {Ls rest pc Pr l tin keep ps rs thn els p1 P1 p2 P2 st P' st'} :
+      SFlows tin ps → AllGe (pc.join l) rs → Restores C (p1.join p2) (joinEach P1 P2) keep →
       Typed C (rs :: Ls) thn (pc.join l :: pc :: Pr) ps (p1 :: P1) rs →
       Typed C (rs :: Ls) els (pc.join l :: pc :: Pr) ps (p2 :: P2) rs →
       Typed C Ls rest (joinEach P1 P2) (rs ++ st) P' st' →
-      Typed C Ls (.ite ps rs thn els :: rest) (pc :: Pr) (l :: (tin ++ st)) P' st'
+      Typed C Ls (.ite keep ps rs thn els :: rest) (pc :: Pr) (l :: (tin ++ st)) P' st'
   | br {Ls rest pc Pr i rs carried st stAny} :
       Ls[i]? = some rs → AllGe pc rs → SFlows carried rs →
       Typed C Ls (.br i :: rest) (pc :: Pr) (carried ++ st) (raise pc (pc :: Pr) i) stAny
@@ -181,6 +227,11 @@ inductive Typed (C : Ctx) : List STy → List Instr → Pcs → STy → Pcs → 
       (∀ t, t ∈ d :: ts → Ls[t]? = some rs ∧ t ≤ k) → AllGe (pc.join l) rs → SFlows carried rs →
       Typed C Ls (.brTable ts d :: rest) (pc :: Pr) (l :: (carried ++ st))
         (raise (pc.join l) (pc :: Pr) k) stAny
+  /-- `return` is typed as the branch to the outermost label, which raises every pc. -/
+  | ret {Ls rest pc Pr rs carried st stAny} :
+      Ls[Ls.length - 1]? = some rs → AllGe pc rs → SFlows carried rs →
+      Typed C Ls (.ret :: rest) (pc :: Pr) (carried ++ st)
+        (raise pc (pc :: Pr) (Ls.length - 1)) stAny
   /-- The caller's pc flows into the callee's bound. The arguments keep their own labels, below the parameters'. -/
   | call {Ls rest pc Pr i ft targs st P' st'} :
       C.funcs[i]? = some ft → Lab.le pc ft.bound → SFlows targs ft.params →
@@ -198,10 +249,14 @@ inductive Typed (C : Ctx) : List STy → List Instr → Pcs → STy → Pcs → 
   | unreachable {Ls rest P st stAny} :
       Typed C Ls (.unreachable :: rest) P st P stAny
 
-/-- A function: its type, the levels of its local variables that are not parameters, and its body. -/
+/--
+A function: its type, the levels of its local variables that are not parameters, the globals
+that must hold at its return what they held at the call, and its body.
+-/
 structure Func where
   ty : FuncTy
   extra : List Lab
+  keep : List Nat
   body : List Instr
 
 /--
@@ -218,12 +273,14 @@ def Ctx.enter (C : Ctx) (f : Func) : Ctx := { C with locals := f.locals }
 /--
 A module is well typed if each function has the type the context gives it and its body is
 typed as the paper's rule for functions says: under the one label of the function, whose type
-is the result type, from the empty segment, at the function's bound.
+is the result type, from the empty segment, at the function's bound. If the pc may be secret
+when the function returns, every preserved global is among those compared at the return.
 -/
 def WellTyped (C : Ctx) (F : List Func) : Prop :=
   ∀ (i : Nat) (f : Func), F[i]? = some f →
     C.funcs[i]? = some f.ty ∧
-      ∃ P', Typed (C.enter f) [f.ty.results] f.body [f.ty.bound] [] P' f.ty.results
+      ∃ p, Typed (C.enter f) [f.ty.results] f.body [f.ty.bound] [] [p] f.ty.results ∧
+        (p = Lab.L ∨ ∀ j, C.preserved j → j ∈ f.keep)
 
 /-- The values of the local and of the global variables, and the memory: each cell's value and level. -/
 structure State where
@@ -244,6 +301,9 @@ def State.setGlob (s : State) (i v : Nat) : State :=
 def State.setMem (s : State) (a v : Nat) (l : Lab) : State :=
   { s with mem := fun x => if x = a then v else s.mem x,
            lab := fun x => if x = a then l else s.lab x }
+
+/-- `Kept keep s t`: the globals `keep` hold in `t` what they held in `s`. -/
+def Kept (keep : List Nat) (s t : State) : Prop := ∀ i, i ∈ keep → t.glob i = s.glob i
 
 /--
 How a sequence ends: at its end, with the current segment of the stack, or by a branch to the
@@ -286,7 +346,15 @@ below them on the stack waits for the body's results. A call runs the callee's b
 empty segment with its own local variables, and the caller's are as before when it returns.
 A trap is the absence of a rule: `unreachable` has none, and a `load` has one only if the
 cell's level flows into the level the load declares (SecWasm's run-time check), and an
-indirect call only if the table entry names a function of exactly the expected type.
+indirect call only if the table entry names a function of exactly the expected type. A block,
+a loop and a conditional go on only if the globals they name hold what they held at the
+construct's start (`Kept`), and so does a call for the globals its callee names. A branch
+further out skips the comparison of the constructs it leaves.
+
+A loop runs the iterations of its body (`iter`) as a block runs its body, so the state it
+compares with is the one at its first entry. The iterations are evaluated under the labels of
+the loop's place, with one in front that nothing branches to; the body sees the loop's label
+there instead.
 -/
 inductive Eval (F : List Func) : Nat → List Nat → List Instr → List Nat → State → Out → Prop where
   | nil {ls σ s} : Eval F 0 ls [] σ s (.normal σ s)
@@ -307,6 +375,9 @@ inductive Eval (F : List Func) : Nat → List Nat → List Instr → List Nat �
       Eval F n ls rest (s.loc i :: σ) s o → Eval F (n + 1) ls (.localGet i :: rest) σ s o
   | localSet {n ls rest v σ s o} (i : Nat) :
       Eval F n ls rest σ (s.setLoc i v) o → Eval F (n + 1) ls (.localSet i :: rest) (v :: σ) s o
+  | localTee {n ls rest v σ s o} (i : Nat) :
+      Eval F n ls rest (v :: σ) (s.setLoc i v) o →
+      Eval F (n + 1) ls (.localTee i :: rest) (v :: σ) s o
   | globalGet {n ls rest σ s o} (i : Nat) :
       Eval F n ls rest (s.glob i :: σ) s o → Eval F (n + 1) ls (.globalGet i :: rest) σ s o
   | globalSet {n ls rest v σ s o} (i : Nat) :
@@ -316,38 +387,48 @@ inductive Eval (F : List Func) : Nat → List Nat → List Instr → List Nat �
       Eval F n ls rest (s.mem a :: σ) s o → Eval F (n + 1) ls (.load lm :: rest) (a :: σ) s o
   | store {n ls rest v a σ s o} (lm : Lab) :
       Eval F n ls rest σ (s.setMem a v lm) o → Eval F (n + 1) ls (.store lm :: rest) (v :: a :: σ) s o
-  | blockCont {n1 n2 ls rest ps rs body vs base s ob σ1 s1 o} :
+  | blockCont {n1 n2 ls rest keep ps rs body vs base s ob σ1 s1 o} :
       vs.length = ps.length →
-      Eval F n1 (rs.length :: ls) body vs s ob → ob.lands = some (σ1, s1) →
+      Eval F n1 (rs.length :: ls) body vs s ob → ob.lands = some (σ1, s1) → Kept keep s s1 →
       Eval F n2 ls rest (σ1 ++ base) s1 o →
-      Eval F (n1 + n2 + 1) ls (.block ps rs body :: rest) (vs ++ base) s o
-  | blockExit {n1 ls rest ps rs body vs base s ob o} :
+      Eval F (n1 + n2 + 1) ls (.block keep ps rs body :: rest) (vs ++ base) s o
+  | blockExit {n1 ls rest keep ps rs body vs base s ob o} :
       vs.length = ps.length →
       Eval F n1 (rs.length :: ls) body vs s ob → ob.exits = some o →
-      Eval F (n1 + 1) ls (.block ps rs body :: rest) (vs ++ base) s o
-  | loopDone {n1 n2 ls rest ps rs body vs base s σ1 s1 o} :
+      Eval F (n1 + 1) ls (.block keep ps rs body :: rest) (vs ++ base) s o
+  | loopCont {n1 n2 ls rest keep ps rs body vs base s ob σ1 s1 o} :
       vs.length = ps.length →
-      Eval F n1 (ps.length :: ls) body vs s (.normal σ1 s1) →
+      Eval F n1 (rs.length :: ls) [.iter ps rs body] vs s ob → ob.lands = some (σ1, s1) →
+      Kept keep s s1 →
       Eval F n2 ls rest (σ1 ++ base) s1 o →
-      Eval F (n1 + n2 + 1) ls (.loop ps rs body :: rest) (vs ++ base) s o
-  | loopAgain {n1 n2 ls rest ps rs body vs base s w s1 o} :
+      Eval F (n1 + n2 + 1) ls (.loop keep ps rs body :: rest) (vs ++ base) s o
+  | loopExit {n1 ls rest keep ps rs body vs base s ob o} :
       vs.length = ps.length →
-      Eval F n1 (ps.length :: ls) body vs s (.br 0 w s1) →
-      Eval F n2 ls (.loop ps rs body :: rest) (w ++ base) s1 o →
-      Eval F (n1 + n2 + 1) ls (.loop ps rs body :: rest) (vs ++ base) s o
-  | loopExit {n1 ls rest ps rs body vs base s ob o} :
-      vs.length = ps.length →
-      Eval F n1 (ps.length :: ls) body vs s ob → ob.exits = some o →
-      Eval F (n1 + 1) ls (.loop ps rs body :: rest) (vs ++ base) s o
-  | iteCont {n1 n2 ls rest ps rs thn els c vs base s ob σ1 s1 o} :
+      Eval F n1 (rs.length :: ls) [.iter ps rs body] vs s ob → ob.exits = some o →
+      Eval F (n1 + 1) ls (.loop keep ps rs body :: rest) (vs ++ base) s o
+  /-- The body ends: the loop is done. -/
+  | iterDone {n ls rest ps rs body vs s σ1 s1} :
+      Eval F n (ps.length :: ls.tail) body vs s (.normal σ1 s1) →
+      Eval F (n + 1) ls (.iter ps rs body :: rest) vs s (.normal σ1 s1)
+  /-- The body branches to the loop's label: another iteration. -/
+  | iterAgain {n1 n2 ls rest ps rs body vs s w s1 o} :
+      Eval F n1 (ps.length :: ls.tail) body vs s (.br 0 w s1) →
+      Eval F n2 ls (.iter ps rs body :: rest) w s1 o →
+      Eval F (n1 + n2 + 1) ls (.iter ps rs body :: rest) vs s o
+  /-- The body branches past the loop. -/
+  | iterExit {n ls rest ps rs body vs s i w s1} :
+      Eval F n (ps.length :: ls.tail) body vs s (.br (i + 1) w s1) →
+      Eval F (n + 1) ls (.iter ps rs body :: rest) vs s (.br (i + 1) w s1)
+  | iteCont {n1 n2 ls rest keep ps rs thn els c vs base s ob σ1 s1 o} :
       vs.length = ps.length →
       Eval F n1 (rs.length :: ls) (if c = 0 then els else thn) vs s ob → ob.lands = some (σ1, s1) →
+      Kept keep s s1 →
       Eval F n2 ls rest (σ1 ++ base) s1 o →
-      Eval F (n1 + n2 + 1) ls (.ite ps rs thn els :: rest) (c :: (vs ++ base)) s o
-  | iteExit {n1 ls rest ps rs thn els c vs base s ob o} :
+      Eval F (n1 + n2 + 1) ls (.ite keep ps rs thn els :: rest) (c :: (vs ++ base)) s o
+  | iteExit {n1 ls rest keep ps rs thn els c vs base s ob o} :
       vs.length = ps.length →
       Eval F n1 (rs.length :: ls) (if c = 0 then els else thn) vs s ob → ob.exits = some o →
-      Eval F (n1 + 1) ls (.ite ps rs thn els :: rest) (c :: (vs ++ base)) s o
+      Eval F (n1 + 1) ls (.ite keep ps rs thn els :: rest) (c :: (vs ++ base)) s o
   | br {ls rest i n σ s} :
       ls[i]? = some n → Eval F 1 ls (.br i :: rest) σ s (.br i (σ.take n) s)
   | brIfTaken {ls rest i n c σ s} :
@@ -357,17 +438,20 @@ inductive Eval (F : List Func) : Nat → List Nat → List Instr → List Nat �
   | brTable {ls rest ts d c n σ s} :
       ls[tableTarget ts d c]? = some n →
       Eval F 1 ls (.brTable ts d :: rest) (c :: σ) s (.br (tableTarget ts d c) (σ.take n) s)
+  | ret {ls rest n σ s} :
+      ls[ls.length - 1]? = some n →
+      Eval F 1 ls (.ret :: rest) σ s (.br (ls.length - 1) (σ.take n) s)
   /-- The callee ends at the end of its body or by a branch to its label (a `return`). -/
   | call {n1 n2 ls rest i f args base s ob r t o} :
       F[i]? = some f → args.length = f.ty.params.length →
       Eval F n1 [f.ty.results.length] f.body [] { s with loc := frame args } ob →
-      ob.lands = some (r, t) →
+      ob.lands = some (r, t) → Kept f.keep s t →
       Eval F n2 ls rest (r ++ base) { t with loc := s.loc } o →
       Eval F (n1 + n2 + 1) ls (.call i :: rest) (args ++ base) s o
   | callIndirect {n1 n2 ls rest ps b rs c i f args base s ob r t o} :
       s.tbl c = some i → F[i]? = some f → f.ty = ⟨ps, b, rs⟩ → args.length = ps.length →
       Eval F n1 [rs.length] f.body [] { s with loc := frame args } ob →
-      ob.lands = some (r, t) →
+      ob.lands = some (r, t) → Kept f.keep s t →
       Eval F n2 ls rest (r ++ base) { t with loc := s.loc } o →
       Eval F (n1 + n2 + 1) ls (.callIndirect ps b rs :: rest) (c :: (args ++ base)) s o
 

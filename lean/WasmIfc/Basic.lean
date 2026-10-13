@@ -131,6 +131,14 @@ theorem hiUpTo_raise : ∀ (P : Pcs) (i j : Nat), i ≤ j → HiUpTo i (raise La
 theorem raise_cons (a p : Lab) (P : Pcs) (i : Nat) : ∃ P', raise a (p :: P) i = a.join p :: P' := by
   cases i <;> exact ⟨_, rfl⟩
 
+/-- If the pc does not drop after a construct that ends under a secret pc, the pc after it is secret. -/
+theorem hiUpTo_of_noDrop {pcEnd : Lab} {after : Pcs}
+    (h : ∀ q, after.head? = some q → Lab.le pcEnd q) (hp : pcEnd = Lab.H) : HiUpTo 0 after := by
+  intro k p hk hkp
+  have hk0 : k = 0 := by omega
+  subst hk0
+  exact h p (by rw [List.head?_eq_getElem?]; exact hkp) hp
+
 /-! ### Two stacks that agree where the type is public -/
 
 /-- `StkRel st σ0 σ1`: the stacks have the shape of `st` and hold equal values at its public positions. -/
@@ -206,39 +214,77 @@ theorem StkRel.of_allH : ∀ {st : STy} {a b : List Nat}, AllGe Lab.H st →
 /--
 `StRel C s t`: two runs' states agree on the public variables and on the memory cells that are
 public in both. A cell that is secret in one of them is not compared: a load that declares it
-public traps in that run.
+public traps in that run. The preserved globals are not compared here: they agree only where
+the pc is public (`PresOr`).
 -/
 def StRel (C : Ctx) (s t : State) : Prop :=
   (∀ i, C.locals i = Lab.L → s.loc i = t.loc i) ∧
-    (∀ i, C.globals i = Lab.L → s.glob i = t.glob i) ∧
+    (∀ i, C.globals i = Lab.L → ¬ C.preserved i → s.glob i = t.glob i) ∧
     (∀ a, s.lab a = Lab.L → t.lab a = Lab.L → s.mem a = t.mem a) ∧ s.tbl = t.tbl
 
 theorem StRel.symm {C : Ctx} {s t : State} (h : StRel C s t) : StRel C t s :=
-  ⟨fun i hi => (h.1 i hi).symm, fun i hi => (h.2.1 i hi).symm,
+  ⟨fun i hi => (h.1 i hi).symm, fun i hi hn => (h.2.1 i hi hn).symm,
     fun a ha hb => (h.2.2.1 a hb ha).symm, h.2.2.2.symm⟩
+
+/-- The two runs' states agree on the preserved globals. -/
+def PresEq (C : Ctx) (s t : State) : Prop := ∀ i, C.preserved i → s.glob i = t.glob i
+
+/--
+`PresOr C i P s t`: the two runs' states agree on the preserved globals, unless the entries `0`
+to `i` of the pc stack are secret. Under a secret pc a run may have written a preserved global.
+-/
+def PresOr (C : Ctx) (i : Nat) (P : Pcs) (s t : State) : Prop := PresEq C s t ∨ HiUpTo i P
+
+theorem PresOr.mono {C : Ctx} {i : Nat} {P P' : Pcs} {s t : State} (hf : SFlows P P')
+    (h : PresOr C i P s t) : PresOr C i P' s t :=
+  h.imp id (HiUpTo.sflows hf)
+
+/-- States with the same globals as two related ones. -/
+theorem PresOr.of_glob {C : Ctx} {i : Nat} {P : Pcs} {s t s' t' : State} (hs : s'.glob = s.glob)
+    (ht : t'.glob = t.glob) (h : PresOr C i P s t) : PresOr C i P s' t' :=
+  h.imp (fun hp j hj => by rw [hs, ht]; exact hp j hj) id
+
+/-- A branch under the pc `pc` raises the pcs it leaves by at least `pc`. -/
+theorem PresOr.br {C : Ctx} {pc a : Lab} {Pr : Pcs} {s t : State} {i k : Nat} (hik : i ≤ k)
+    (ha : Lab.le pc a) (h : PresOr C 0 (pc :: Pr) s t) : PresOr C i (raise a (pc :: Pr) k) s t := by
+  rcases h with h | h
+  · exact .inl h
+  · have hpc := h.head
+    subst hpc
+    have haH := ha rfl
+    subst haH
+    exact .inr (hiUpTo_raise _ _ _ hik)
+
+theorem PresEq.setGlob {C : Ctx} {s t : State} {i v0 v1 : Nat} (hv : C.preserved i → v0 = v1)
+    (h : PresEq C s t) : PresEq C (s.setGlob i v0) (t.setGlob i v1) := by
+  intro j hj
+  by_cases hji : j = i
+  · subst hji; simp [State.setGlob, hv hj]
+  · simp [State.setGlob, hji, h j hj]
 
 /--
 `Conf C s t`: `t` is what a run under a secret pc may make of `s`. The public variables are as
-they were. A cell that is public in `t` was public in `s` and has its value; a cell may have
-become secret. (SecWasm's Definition 6, with the convention (C5) of the paper's appendix.)
+they were, except the preserved globals, which it may have written. A cell that is public in
+`t` was public in `s` and has its value; a cell may have become secret. (SecWasm's Definition 6, with the convention (C5) of the paper's appendix.)
 -/
 def Conf (C : Ctx) (s t : State) : Prop :=
   (∀ i, C.locals i = Lab.L → s.loc i = t.loc i) ∧
-    (∀ i, C.globals i = Lab.L → s.glob i = t.glob i) ∧
+    (∀ i, C.globals i = Lab.L → ¬ C.preserved i → s.glob i = t.glob i) ∧
     (∀ a, t.lab a = Lab.L → s.lab a = Lab.L ∧ s.mem a = t.mem a) ∧ s.tbl = t.tbl
 
 theorem Conf.refl (C : Ctx) (s : State) : Conf C s s :=
-  ⟨fun _ _ => rfl, fun _ _ => rfl, fun _ h => ⟨h, rfl⟩, rfl⟩
+  ⟨fun _ _ => rfl, fun _ _ _ => rfl, fun _ h => ⟨h, rfl⟩, rfl⟩
 
 theorem Conf.trans {C : Ctx} {s t u : State} (h1 : Conf C s t) (h2 : Conf C t u) : Conf C s u :=
-  ⟨fun i hi => (h1.1 i hi).trans (h2.1 i hi), fun i hi => (h1.2.1 i hi).trans (h2.2.1 i hi),
+  ⟨fun i hi => (h1.1 i hi).trans (h2.1 i hi), fun i hi hn => (h1.2.1 i hi hn).trans (h2.2.1 i hi hn),
     fun a ha => ⟨(h1.2.2.1 a (h2.2.2.1 a ha).1).1,
       ((h1.2.2.1 a (h2.2.2.1 a ha).1).2).trans (h2.2.2.1 a ha).2⟩, h1.2.2.2.trans h2.2.2.2⟩
 
 /-- The first run goes on alone under a secret pc: the two still agree. -/
 theorem StRel.conf_left {C : Ctx} {s s' t : State} (h : StRel C s t) (hc : Conf C s s') :
     StRel C s' t :=
-  ⟨fun i hi => (hc.1 i hi).symm.trans (h.1 i hi), fun i hi => (hc.2.1 i hi).symm.trans (h.2.1 i hi),
+  ⟨fun i hi => (hc.1 i hi).symm.trans (h.1 i hi),
+    fun i hi hn => (hc.2.1 i hi hn).symm.trans (h.2.1 i hi hn),
     fun a ha hb => (hc.2.2.1 a ha).2.symm.trans (h.2.2.1 a (hc.2.2.1 a ha).1 hb),
     hc.2.2.2.symm.trans h.2.2.2⟩
 
@@ -256,10 +302,18 @@ theorem StRel.setLoc {C : Ctx} {s t : State} {i v0 v1 : Nat} (hv : C.locals i = 
 
 theorem StRel.setGlob {C : Ctx} {s t : State} {i v0 v1 : Nat} (hv : C.globals i = Lab.L → v0 = v1)
     (h : StRel C s t) : StRel C (s.setGlob i v0) (t.setGlob i v1) := by
-  refine ⟨h.1, fun j hj => ?_, h.2.2⟩
+  refine ⟨h.1, fun j hj hn => ?_, h.2.2⟩
   by_cases hji : j = i
   · subst hji; simp [State.setGlob, hv hj]
-  · simp [State.setGlob, hji, h.2.1 j hj]
+  · simp [State.setGlob, hji, h.2.1 j hj hn]
+
+/-- Two writes to a preserved global: the states are compared elsewhere than there. -/
+theorem StRel.setGlob_preserved {C : Ctx} {s t : State} {i : Nat} (v0 v1 : Nat)
+    (hi : C.preserved i) (h : StRel C s t) : StRel C (s.setGlob i v0) (t.setGlob i v1) := by
+  refine ⟨h.1, fun j hj hn => ?_, h.2.2⟩
+  by_cases hji : j = i
+  · subst hji; exact absurd hi hn
+  · simp [State.setGlob, hji, h.2.1 j hj hn]
 
 /--
 Two stores at the same level. At a public level the addresses and the values agree. At a
@@ -287,21 +341,29 @@ theorem StRel.setMem {C : Ctx} {s t : State} {a0 a1 v0 v1 : Nat} {lm : Lab}
 /-- A write to a secret local variable leaves the state as the attacker sees it. -/
 theorem Conf.setLoc_high {C : Ctx} (s : State) {i : Nat} (v : Nat) (hi : C.locals i = Lab.H) :
     Conf C s (s.setLoc i v) := by
-  refine ⟨fun j hj => ?_, fun _ _ => rfl, fun _ h => ⟨h, rfl⟩, rfl⟩
+  refine ⟨fun j hj => ?_, fun _ _ _ => rfl, fun _ h => ⟨h, rfl⟩, rfl⟩
   by_cases hji : j = i
   · subst hji; rw [hi] at hj; cases hj
   · simp [State.setLoc, hji]
 
 theorem Conf.setGlob_high {C : Ctx} (s : State) {i : Nat} (v : Nat) (hi : C.globals i = Lab.H) :
     Conf C s (s.setGlob i v) := by
-  refine ⟨fun _ _ => rfl, fun j hj => ?_, fun _ h => ⟨h, rfl⟩, rfl⟩
+  refine ⟨fun _ _ => rfl, fun j hj _ => ?_, fun _ h => ⟨h, rfl⟩, rfl⟩
   by_cases hji : j = i
   · subst hji; rw [hi] at hj; cases hj
   · simp [State.setGlob, hji]
 
+/-- A write to a preserved global is one a run under a secret pc may make. -/
+theorem Conf.setGlob_preserved {C : Ctx} (s : State) {i : Nat} (v : Nat) (hi : C.preserved i) :
+    Conf C s (s.setGlob i v) := by
+  refine ⟨fun _ _ => rfl, fun j _ hn => ?_, fun _ h => ⟨h, rfl⟩, rfl⟩
+  by_cases hji : j = i
+  · subst hji; exact absurd hi hn
+  · simp [State.setGlob, hji]
+
 /-- A store at a secret level makes its cell secret and touches no other. -/
 theorem Conf.setMem_high (C : Ctx) (s : State) (a v : Nat) : Conf C s (s.setMem a v Lab.H) := by
-  refine ⟨fun _ _ => rfl, fun _ _ => rfl, fun x hx => ?_, rfl⟩
+  refine ⟨fun _ _ => rfl, fun _ _ _ => rfl, fun x hx => ?_, rfl⟩
   by_cases hxa : x = a
   · simp [State.setMem, hxa] at hx
   · simp only [State.setMem, hxa, ite_false] at hx ⊢
@@ -341,6 +403,42 @@ theorem Conf.call {C : Ctx} {f : Func} {args : List Nat} {s t : State}
 theorem WellTyped.enter {C : Ctx} {F : List Func} (h : WellTyped C F) (g : Func) :
     WellTyped (C.enter g) F := fun i f hf => h i f hf
 
+/-! ### Preserved globals where control comes out of a construct -/
+
+/--
+The preserved globals after a block, a loop or a conditional that both runs come out of. The
+runs agreed on them at its start unless the pc after it is secret (`hentry`), and at its end
+unless its own pc was secret (`hend`). If its pc was secret and the pc after it is not, the pc
+drops, so the construct compared them with their values at its start, in both runs.
+-/
+theorem pres_after {C : Ctx} {p : Lab} {P1 : Pcs} {keep : List Nat} {e0 e1 t0 t1 : State}
+    (hres : Restores C p P1 keep) (hentry : PresOr C 0 P1 e0 e1) (hk0 : Kept keep e0 t0)
+    (hk1 : Kept keep e1 t1) (hend : PresOr C 0 (p :: P1) t0 t1) : PresOr C 0 P1 t0 t1 := by
+  rcases hend with h | h
+  · exact .inl h
+  · rcases hres with hr | hc
+    · exact .inr (hiUpTo_of_noDrop hr h.head)
+    · rcases hentry with he | he
+      · exact .inl (fun i hi =>
+          ((hk0 i (hc i hi)).trans (he i hi)).trans (hk1 i (hc i hi)).symm)
+      · exact .inr he
+
+/--
+The preserved globals after a call that both runs return from, for a callee that ends under the
+pc `p`: it returns under a public pc, or it compared them with their values at the call.
+-/
+theorem pres_after_call {C : Ctx} {p : Lab} {P : Pcs} {keep : List Nat} {e0 e1 t0 t1 : State}
+    (hret : p = Lab.L ∨ ∀ j, C.preserved j → j ∈ keep) (hentry : PresOr C 0 P e0 e1)
+    (hk0 : Kept keep e0 t0) (hk1 : Kept keep e1 t1) (hend : PresOr C 0 [p] t0 t1) :
+    PresOr C 0 P t0 t1 := by
+  rcases hentry with he | he
+  · rcases hret with hp | hc
+    · rcases hend with h | h
+      · exact .inl h
+      · rw [hp] at h; exact absurd h.head (by decide)
+    · exact .inl (fun i hi => ((hk0 i (hc i hi)).trans (he i hi)).trans (hk1 i (hc i hi)).symm)
+  · exact .inr he
+
 /-! ### What is known of one run's outcome, and how two outcomes relate -/
 
 /--
@@ -360,12 +458,24 @@ theorem Info.mono {Ls : List STy} {P P' : Pcs} {st : STy} {o : Out} (hf : SFlows
     obtain ⟨rs, h1, h2, h3, h4⟩ := h
     exact ⟨rs, h1, h2, h3, HiUpTo.sflows hf h4⟩
 
-/-- The two runs ended the same way, with segments or carried values that agree where public. -/
-inductive Sync (C : Ctx) (Ls : List STy) (st : STy) : Out → Out → Prop where
+/--
+The two runs ended the same way, with segments or carried values that agree where public. They
+agree on the preserved globals too, unless the pc they end under is secret: after a branch,
+that is the pcs of the blocks it leaves.
+-/
+inductive Sync (C : Ctx) (Ls : List STy) (P : Pcs) (st : STy) : Out → Out → Prop where
   | normal {σ0 σ1 : List Nat} {s0 s1 : State} :
-      StkRel st σ0 σ1 → StRel C s0 s1 → Sync C Ls st (.normal σ0 s0) (.normal σ1 s1)
+      StkRel st σ0 σ1 → StRel C s0 s1 → PresOr C 0 P s0 s1 →
+      Sync C Ls P st (.normal σ0 s0) (.normal σ1 s1)
   | br {i : Nat} {rs : STy} {w0 w1 : List Nat} {s0 s1 : State} :
-      Ls[i]? = some rs → StkRel rs w0 w1 → StRel C s0 s1 → Sync C Ls st (.br i w0 s0) (.br i w1 s1)
+      Ls[i]? = some rs → StkRel rs w0 w1 → StRel C s0 s1 → PresOr C i P s0 s1 →
+      Sync C Ls P st (.br i w0 s0) (.br i w1 s1)
+
+theorem Sync.mono {C : Ctx} {Ls : List STy} {P P' : Pcs} {st : STy} {o0 o1 : Out}
+    (hf : SFlows P P') (h : Sync C Ls P st o0 o1) : Sync C Ls P' st o0 o1 := by
+  cases h with
+  | normal h1 h2 h3 => exact .normal h1 h2 (h3.mono hf)
+  | br h0 h1 h2 h3 => exact .br h0 h1 h2 (h3.mono hf)
 
 /-- The two runs took different paths under a secret pc: their states agree, and each is as `Info` says. -/
 def Loose (C : Ctx) (Ls : List STy) (P : Pcs) (st : STy) (o0 o1 : Out) : Prop :=
@@ -376,7 +486,7 @@ The relation between the outcomes of two runs of a typed sequence from related i
 or apart with at least one of them on its way out of a block.
 -/
 def OutRel (C : Ctx) (Ls : List STy) (P : Pcs) (st : STy) (o0 o1 : Out) : Prop :=
-  Sync C Ls st o0 o1 ∨ (Loose C Ls P st o0 o1 ∧ (o0.isBr ∨ o1.isBr))
+  Sync C Ls P st o0 o1 ∨ (Loose C Ls P st o0 o1 ∧ (o0.isBr ∨ o1.isBr))
 
 theorem Loose.mono {C : Ctx} {Ls : List STy} {P P' : Pcs} {st : STy} {o0 o1 : Out}
     (hf : SFlows P P') (h : Loose C Ls P st o0 o1) : Loose C Ls P' st o0 o1 :=
@@ -396,16 +506,20 @@ theorem rise {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : Pcs} {st st' : S
   | relabel _ _ ih => exact ih
   | localGet _ _ ih => exact ih
   | localSet _ _ _ _ ih => exact ih
+  | localTee _ _ _ _ ih => exact ih
   | globalGet _ _ ih => exact ih
-  | globalSet _ _ _ _ ih => exact ih
+  | globalSet _ _ _ _ _ ih => exact ih
+  | globalSetPreserved _ _ _ _ ih => exact ih
   | load _ _ ih => exact ih
   | store _ _ _ ih => exact ih
-  | block _ _ _ _ ihb ihr => exact SFlows.trans ihb.tail ihr
-  | loop _ _ _ _ _ _ ihb ihr => exact SFlows.trans ihb.tail ihr
-  | ite _ _ _ _ _ ih1 ih2 ihr => exact SFlows.trans (sflows_joinEach ih1.tail ih2.tail).2.2 ihr
+  | block _ _ _ _ _ ihb ihr => exact SFlows.trans ihb.tail ihr
+  | loop _ _ _ _ _ _ _ ihb ihr => exact SFlows.trans ihb.tail ihr
+  | iter _ _ _ ih => exact .cons (Lab.le_refl _) ih.tail
+  | ite _ _ _ _ _ _ ih1 ih2 ihr => exact SFlows.trans (sflows_joinEach ih1.tail ih2.tail).2.2 ihr
   | br _ _ _ => exact sflows_raise _ _ _
   | brIf _ _ _ _ ih => exact SFlows.trans (sflows_raise _ _ _) ih
   | brTable _ _ _ => exact sflows_raise _ _ _
+  | ret _ _ _ => exact sflows_raise _ _ _
   | call _ _ _ _ ih => exact ih
   | callIndirect _ _ _ _ ih => exact ih
   | unreachable => exact SFlows.refl _

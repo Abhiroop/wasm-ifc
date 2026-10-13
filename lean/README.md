@@ -2,10 +2,12 @@
 
 A Lean 4 development that proves termination-insensitive noninterference for the labelled
 typing rules of this repository on a core of WebAssembly: blocks, loops and conditionals with
-parameters and results, `br`, `br_if` and `br_table`, direct and indirect calls of the
-module's functions (recursion included), a memory whose cells carry a level with SecWasm's run-time check on
-loads, local and global variables, and arithmetic on one value type. It has no `sorry`, and its theorems depend on Lean's three
-standard axioms only (`propext`, `Classical.choice`, `Quot.sound`).
+parameters and results, `br`, `br_if`, `br_table` and `return`, direct and indirect calls of
+the module's functions (recursion included), a memory whose cells carry a level with SecWasm's
+run-time check on loads, local and global variables with `local.tee`, preserved globals with
+their run-time comparison, and arithmetic on one value type. It has no `sorry`, and its
+theorems depend on Lean's three standard axioms only (`propext`, `Classical.choice`,
+`Quot.sound`).
 
 ```
 cd lean && lake build        # Lean 4.35.0, no dependencies; elan reads lean-toolchain
@@ -16,14 +18,16 @@ cd lean && lake build        # Lean 4.35.0, no dependencies; elan reads lean-too
 | Theorem | File | Statement |
 |---|---|---|
 | `rise` | `Basic.lean` | A typed sequence ends with a pc stack that is entrywise at least the one it started with (the paper's `lem:rise`). |
-| `confine` | `Confinement.lean` | A typed sequence that starts under a secret pc leaves the public variables unchanged and changes no public memory cell except to make it secret (`Conf`), and if it leaves by a branch, the target's type is all secret and the pcs of the blocks it leaves are secret. |
-| `loop_alone` | `Confinement.lean` | The same for a loop whose body is typed under a secret pc, from any iteration on. |
-| `ni` | `Noninterference.lean` | Two runs of a typed sequence from stacks and states that agree where public end in related outcomes (`OutRel`). |
-| `tini` | `Noninterference.lean` | For a function of a well-typed module: two calls with arguments that agree where the parameters are public, from states that agree where public, if both return, return results that agree where the result type is public and leave states that agree where public. Two states agree where public (`StRel`) if they have the same public variables and the same value in every memory cell that is public in both. |
+| `confine` | `Confinement.lean` | A typed sequence that starts under a secret pc leaves the public variables unchanged, except the preserved globals, and changes no public memory cell except to make it secret (`Conf`). If it leaves by a branch, the label's type is all secret and the pcs of the blocks it leaves are secret (`Info`). |
+| `pres_after`, `pres_after_call` | `Basic.lean` | Where two runs come out of a block, a loop, a conditional or a call, they agree on the preserved globals unless the pc there is secret. |
+| `ni` | `Noninterference.lean` | Two runs of a typed sequence from stacks and states that agree where public, and on the preserved globals unless the pc is secret, end in related outcomes (`OutRel`). |
+| `tini` | `Noninterference.lean` | For a function of a well-typed module: two calls with arguments that agree where the parameters are public, from states that agree where public, if both return, return results that agree where the result type is public and leave states that agree where public. They agree on the preserved globals too if both pass the comparison made at the function's return. |
 
 `Examples.lean` has a program that the rules type, with two runs of it, a program with an
 implicit flow and a store of a secret into a public cell, each with a proof that no typing of
-it exists, and a well-typed module of two functions.
+it exists, a well-typed module of two functions, and a conditional on a secret that moves a
+preserved global and puts it back: it is typed if it compares the global, a run of it passes
+the comparison, and without the comparison no typing of it exists.
 
 ## The rules
 
@@ -49,7 +53,17 @@ type `Syntax.Instructions.Instr` for the instructions above:
   part of `WellTyped`: the proof uses it in one place, an indirect call on a secret index,
   where two different functions run and their results must be secret. The rule for the
   indirect call asks it there.
-- The code after `br`, `br_table` and `unreachable` is not typed.
+- `return` is the branch to the outermost label, and raises every pc.
+- A global may be declared preserved (`Ctx.preserved`), as the policy does for the stack
+  pointer of compiled C. A write to it needs no premise on the pc, and the value written is at
+  most as secret as the pc: under a public pc this is the ordinary rule, and under a secret pc
+  anything may be written. A read is the ordinary one.
+- A block, a loop and a conditional name the globals they compare (`keep`). Either the pc does
+  not drop where the construct ends, or every preserved global is among them (`Restores`). At
+  run time the construct goes on only if those globals hold what they held at its start. The
+  same holds of a function and of a call: either the function's body ends under a public pc,
+  or the call compares every preserved global with its value at the call.
+- The code after `br`, `br_table`, `return` and `unreachable` is not typed.
 
 ## How the proof goes
 
@@ -61,6 +75,15 @@ left by a branch. A branch under a secret pc, or on a secret condition, goes to 
 type is all secret, so the block's results are secret in both runs and need not agree. Property
 (E) gives the same where the runs took the two arms of a conditional on a secret, and where one
 run iterates a loop longer than the other.
+
+The preserved globals are apart from the other public variables. Two runs agree on them only
+where the pc is public (`PresOr`), and a run under a secret pc may write them (`Conf` does not
+constrain them). Where the pc drops again, at the end of a block, a loop, a conditional or a
+call, both runs have passed the construct's comparison, so each holds what it held at the
+construct's start; the pc there was public, since it is at most the pc after the construct, so
+the two runs agreed then and agree now (`pres_after`, `pres_after_call`). A branch further out
+skips the comparison of the blocks it leaves, and raises their pcs, so the pc has not dropped
+until the branch lands.
 
 A block's body runs on the block's parameters alone (see below), so a value that a block has
 abandoned never has to be related to anything. The relation "up to abandoned entries" of the
@@ -77,9 +100,18 @@ paper's appendix B.4 has no counterpart here.
   them on the stack is put back under the body's results. SecWasm evaluates on one stack that
   holds the labels. On validated code the two agree, because a body never reaches below its
   parameters; this agreement is not proved here.
-- **The core is small.** One value type; two levels; no `return` (a branch to the function's
-  label leaves the function, and the semantics of a call treats it so); no `local.tee`, no
-  `memory.grow`, no bulk memory. The function table is public and no instruction writes it,
+- **A loop runs its iterations as a block runs its body.** The semantics has an instruction
+  that no program contains, `iter`, for the iterations of a loop's body: the body again while
+  it branches to the loop's label. A loop evaluates it once, as a block evaluates its body,
+  and then compares the globals it names with the state at its start. So the comparison is
+  with the values at the loop's first entry, as in the implementation, which records them
+  once. Comparing with the values at the start of the last iteration would not be sound: one
+  iteration could write a preserved global and the next one leave it.
+- **The comparison names its globals.** The implementation compares every preserved global of
+  the module, which a typed construct cannot leave out. Here a construct lists the globals it
+  compares, and the rule asks that the list cover the preserved ones where the pc drops.
+- **The core is small.** One value type; two levels; no `memory.grow`, no bulk memory, no
+  exceptions and no tail calls. The function table is public and no instruction writes it,
   and an indirect call asks the callee's type to equal the expected one, where the
   implementation compares the bounds by the order of the levels. The memory is unbounded and its cells
   hold whole values, so a load traps only by the level check. `unreachable` is the other trap.

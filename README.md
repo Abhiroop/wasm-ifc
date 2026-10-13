@@ -144,7 +144,8 @@ in that module, and a tag has one name among all instances, so a clause for it c
 exception whichever module threw it. A module that imports one memory, table or writable
 global twice has its uses of the second index rewritten to the first before it is validated
 (`Runtime.Link.unaliased`), since an instance holds each index's object by itself. Not
-supported: garbage collection. The Lean proof of noninterference (`lean/`) covers a core, not the whole.
+supported: garbage collection. The Lean proof of noninterference (`lean/`) covers a core, not
+the whole: control flow, calls, a memory with levels and preserved globals.
 
 A reference to a function type (WebAssembly 3.0) is a `funcref` in the typed program. What a
 module writes beyond that, whether a reference may be null and of which function type it is,
