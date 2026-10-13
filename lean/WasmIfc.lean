@@ -4,3 +4,4 @@ import WasmIfc.Confinement
 import WasmIfc.Noninterference
 import WasmIfc.Examples
 import WasmIfc.Statement
+import WasmIfc.Machine

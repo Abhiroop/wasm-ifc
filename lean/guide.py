@@ -4,7 +4,8 @@
   cd lean && ./guide.py
 
 The guide's text is here; the line of each definition and rule is looked up in the sources, so
-run this again after a change to `WasmIfc/Defs.lean`, `Basic.lean` or `Statement.lean`.
+run this again after a change to `WasmIfc/Defs.lean`, `Basic.lean`, `Statement.lean` or
+`Machine.lean`, or to `src/Runtime/Interpreter.hs`.
 """
 
 from __future__ import annotations
@@ -13,7 +14,16 @@ import re
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-SOURCES = {name: (HERE / "WasmIfc" / f"{name}.lean").read_text().splitlines() for name in ("Defs", "Basic", "Statement", "Noninterference", "Confinement")}
+SOURCES = {name: (HERE / "WasmIfc" / f"{name}.lean").read_text().splitlines() for name in ("Defs", "Basic", "Statement", "Noninterference", "Confinement", "Machine")}
+INTERPRETER = (HERE.parent / "src" / "Runtime" / "Interpreter.hs").read_text().splitlines()
+
+
+def hs(pattern: str) -> str:
+    """Where the Haskell machine has something, as a line of `src/Runtime/Interpreter.hs`."""
+    for number, line in enumerate(INTERPRETER, 1):
+        if re.search(pattern, line):
+            return f"`Interpreter.hs:{number}`"
+    raise SystemExit(f"Interpreter.hs: nothing matches {pattern!r}")
 
 
 def line_of(source: str, pattern: str) -> int:
@@ -114,13 +124,17 @@ def main() -> None:
     text = f"""# Reading the Lean development: what to check
 
 For a reviewer who checks the definitions and the statement and leaves the proofs to Lean.
-`lake build` checks every proof, and `#print axioms WasmIfc.noninterference` lists `propext`,
-`Classical.choice` and `Quot.sound` only. So what remains to be checked by a person is that
-the definitions say what the paper says. They are in two files, {len(SOURCES["Defs"])} and
-{len(SOURCES["Statement"])} lines long, of the development's {total:,}:
+`lake build` checks every proof, and `#print axioms WasmIfc.machine_noninterference` lists
+`propext`, `Classical.choice` and `Quot.sound` only. So what remains to be checked by a person
+is that the definitions say what the paper says, and that the machine of the last section is
+the implementation's. They are in three files, {len(SOURCES["Defs"])}, {len(SOURCES["Statement"])}
+and {len(SOURCES["Machine"])} lines long, of the development's {total:,}:
 
 - `WasmIfc/Defs.lean`: the syntax, the typing judgment, the states and the semantics.
 - `WasmIfc/Statement.lean`: low equivalence, a call from outside, and the theorem.
+- `WasmIfc/Machine.lean`: the small-step machine, down to `Config.entry`
+  ({at("Machine", r"^def Config.entry")}), and the two theorems at its end. What is between
+  is proof.
 
 The other files (`Basic.lean`, `Confinement.lean`, `Noninterference.lean`) are lemmas and
 proofs, and `Examples.lean` has small programs with their typings and runs. This file is
@@ -204,7 +218,7 @@ is the size of the derivation and nothing else. An outcome (`Out`,
 with the values it carries, or an exception that nothing in the sequence caught. A trap is the
 absence of a rule, and so is a run that does not terminate.
 
-Convince yourself of five things, which are where this semantics is not the specification's
+Convince yourself of six things, which are where this semantics is not the specification's
 text:
 
 1. **A block's body runs on the block's parameters alone** (`blockCont`,
@@ -228,6 +242,11 @@ text:
 5. **A call** (line {evaluated["call"]}) runs the callee's body on an empty segment with a
    frame made of the arguments, and gives the caller its own locals back. `return` and a
    branch to the function's label end the callee alike (`Out.lands`).
+6. **A tail call** (line {evaluated["retCall"]}) is written as a call whose results the
+   function returns. The function is gone when its callee runs, so an exception that leaves
+   the callee is not offered to the function's own `try_table`s: it is the outcome `tailExn`,
+   which every block passes (`Out.caught`, `Out.exits`) and which is an exception again for
+   the function's caller (`Out.thrown`, in the rules `callExn` and `retCallExn`).
 
 ## 5. Low equivalence and the theorem
 
@@ -278,13 +297,52 @@ the results.
 ### Where the statement differs from the paper's
 
 - The paper's theorem is about the implementation's `step`, through an erasure, a typing
-  inclusion and a refinement. The Lean theorem is about the typed program directly, under a
-  big-step semantics. The correspondence between the Lean rules and the Haskell constructors,
-  and between `Eval` and `step`, is by reading, with the table of section 3.
+  inclusion and a refinement. `noninterference` is about the typed program directly, under
+  the big-step semantics, and section 6 carries it to a small-step machine in Lean. The
+  correspondence between the Lean rules and the Haskell constructors (the table of section
+  3), and between the Lean machine and `step` (the table of section 6), is by reading.
 - It concludes more than the paper states: whether a call ends by an exception, and which, is
   public.
 - `tini` in `Noninterference.lean` is the same theorem in the terms of the proof (`StRel` and
   `PresEq`, which together are `LowEq`: `LowEq.split`, `LowEq.join`).
+
+## 6. The machine, and refinement
+
+`Machine.lean` has a small-step machine for the core, written after the implementation's
+`step` ({hs(r"^step ::")}), and proves that `Eval` describes it.
+
+`Step F c nx`, {at("Machine", r"^inductive Step")}: one transition, from the configuration
+`c` to the next one or to the end of the run. `Runs F c e`,
+{at("Machine", r"^inductive Runs")}: the transitions from `c` to the end `e`. A run that traps
+or does not end has no `Runs`.
+
+| Lean | Where | Haskell | Where | Convince yourself that |
+|---|---|---|---|---|
+| `Config`: `s`, `σ`, `e`, `K` | {at("Machine", r"^structure Config")} | `Config store locals stack code control` | {hs(r"^data Config ")} | the fields are the same; the Lean state has the local variables in it (`s.loc`). |
+| `Frame.label` | {at("Machine", r"^  [|] label ")} | `BlockLabel below cont rest`, `HandlerLabel handlers below cont rest` | {hs(r"^    BlockLabel ::")} | a label has the operands below its block and the code after it; a block's label is one with no clauses. `keep` and `recorded` are the `IRequireRestored recorded` that the Haskell puts in front of `cont` ({hs(r"^comparingAfter ::")}). |
+| `Frame.loop` | {at("Machine", r"^  [|] loop ")} | `LoopLabel below body cont rest` | {hs(r"^    LoopLabel ::")} | it has the body besides. |
+| `Frame.call` | {at("Machine", r"^  [|] call ")} | `CallBoundary depth below callerLocals cont callerControl` | {hs(r"^    CallBoundary ::")} | it has the caller's locals. `checks` is the comparisons in front of `cont`: one for a call ({hs(r"^restoringOnReturn ::")}), and one more for each tail call made in the callee's place. The Lean machine has no bound on the depth of calls. |
+| the empty control stack; `Config.entry` | {at("Machine", r"^def Config.entry")} | `EntryBoundary`; `startFunction` | {hs(r"^startFunction ::")} | a call from outside runs the body over a boundary of its own that has the function's comparison. |
+| `Basic`, `Step.basic` | {at("Machine", r"^inductive Basic")} | the clauses of `stepInstr` that end in `stepped` | {hs(r"^stepInstr ::")} | each instruction that is not one of control does to the operands and the state what its `Eval` rule says (section 4), and traps where the rule has a premise that fails. |
+| `Step.block`, `tryTable`, `loop`, `ite` | {at("Machine", r"^  [|] block ")} | the clauses for `IBlock`, `ITryTable`, `ILoop`, `IIf` | | the body runs on the construct's parameters over a new label. |
+| `Step.endLabel`, `endLoop`, `endCall`, `done` | {at("Machine", r"^  [|] endLabel ")} | `popControl` | {hs(r"^popControl ::")} | at the end of the current block the top of the control stack says what follows, behind its comparisons. |
+| `Unwind`, in `Step.br`, `brIf`, `brTable`, `ret` | {at("Machine", r"^inductive Unwind")} | `unwind`, `unwindTo`, `returnUnwind` | {hs(r"^unwind ::")} | a branch drops the labels it passes without their comparisons; a loop's label stays and its body runs again; the function's label is its boundary. |
+| `Step.call`, `callIndirect`, `callRef` | {at("Machine", r"^  [|] call [{]i f")} | `enterCall` | {hs(r"^enterCall ::")} | the callee's body runs on no operands with locals made of the arguments, over a boundary. The checks of an indirect call are premises, as in `Eval`. |
+| `boundary`, in `Step.retCall`, `retCallIndirect` | {at("Machine", r"^def boundary")} | `tailCall` | {hs(r"^tailCall ::")} | the labels of the running function are dropped, its clauses with them, and the callee is entered over the function's own boundary, which gets the callee's comparison too. |
+| `Raise`, in `Step.throw` | {at("Machine", r"^inductive Raise")} | `throwException` | {hs(r"^throwException ::")} | an exception passes labels without a clause for it and call boundaries, where the caller's locals are back; the first clause for it is a branch from around the clause's block; below the last boundary it ends the run. |
+
+`refinement`, {at("Machine", r"^theorem refinement")}: a run of the machine from
+`Config.entry f a s` to an end `e` is `Invoke F f a s e`. No typing is assumed. This is the
+paper's `lem:refinement`, in the direction the theorem needs.
+
+`machine_noninterference`, {at("Machine", r"^theorem machine_noninterference")}: the statement
+of `noninterference` with two runs of the machine for the two `Invoke`s.
+
+What stays by reading is the table above: that the Haskell `step` makes the transitions of
+`Step`. Three differences are known. The Haskell machine bounds the depth of calls and traps
+beyond it. It suspends at a call of the host and is resumed with the results, where the
+core's two host calls are instructions. And its typed instructions carry coercions between
+segments (`relabelStack`), which do nothing to the values.
 
 ### Outside the core
 

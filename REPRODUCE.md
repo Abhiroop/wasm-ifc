@@ -87,4 +87,5 @@ and copy the binary; then `git apply bench/pre-ifc-opt.patch` there and build ag
 | Claim | Command | Time |
 |---|---|---|
 | noninterference on the core, without `sorry` | `cd lean && lake build` (Lean 4.35.0, which `elan` installs from `lean-toolchain`) | 30 s |
-| the axioms it depends on | `#print axioms WasmIfc.tini` in a file run with `lake env lean` | 10 s |
+| the same for two runs of the small-step machine, and that a run of the machine is a derivation of the semantics the proof is about | the same build: `WasmIfc.machine_noninterference`, `WasmIfc.refinement` | |
+| the axioms it depends on | `#print axioms WasmIfc.machine_noninterference` in a file run with `lake env lean` | 10 s |

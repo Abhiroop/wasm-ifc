@@ -2,7 +2,7 @@
 Two programs, to see that the judgments are inhabited as intended: one that the rules type and
 that runs, and one with an implicit flow that they reject.
 -/
-import WasmIfc.Noninterference
+import WasmIfc.Machine
 
 namespace WasmIfc
 
@@ -273,5 +273,58 @@ example (P' : Pcs) (st' : STy) :
     cases hst
     cases hthn with
     | const _ a => cases a
+
+/-! ### Runs of the machine -/
+
+/-- The function with the body above: no parameters, one public result. -/
+def catcher : Func where
+  ty := ⟨[], Lab.L, [Lab.L]⟩
+  extra := []
+  keep := []
+  body := throwsAndCatches
+
+/-- The comparison of a function that names no global. -/
+theorem nothingKept {s t : State} : ∀ c, c ∈ [(([] : List Nat), s)] → Kept c.1 c.2 t := by
+  intro c hc i hi
+  cases List.mem_singleton.1 hc
+  cases hi
+
+/-- The machine's run of it, in four transitions: the clause's branch is the function's return. -/
+example (s : State) : Runs [catcher] (Config.entry catcher [] s) (.returned [5] s) :=
+  .go (.tryTable (vs := []) (base := []) rfl) <|
+  .go (.basic (.const 5)) <|
+  .go (.throw (.caught (j := 0) (carry := true) rfl (.call nothingKept))) <|
+  .stop .done
+
+/-- So the big-step semantics has the same end for the call. -/
+example (s : State) : Invoke [catcher] catcher [] s (.returned [5] s) :=
+  refinement (.go (.tryTable (vs := []) (base := []) rfl) <|
+    .go (.basic (.const 5)) <|
+    .go (.throw (.caught (j := 0) (carry := true) rfl (.call nothingKept))) <|
+    .stop .done)
+
+/-- A function that throws 5. -/
+def thrower : Func where
+  ty := ⟨[], Lab.L, [Lab.L]⟩
+  extra := []
+  keep := []
+  body := [.const 5, .throw 0 1]
+
+/-- A tail call of it in a `try_table` that catches every exception. -/
+def tailCaller : Func where
+  ty := ⟨[], Lab.L, [Lab.L]⟩
+  extra := []
+  keep := []
+  body := [.tryTable [] [] [] [(none, 0)] [.retCall 0], .const 9]
+
+/--
+The exception leaves the call: the tail call replaced the function that had the `try_table`,
+so nothing catches it.
+-/
+example (s : State) : Runs [thrower, tailCaller] (Config.entry tailCaller [] s) (.threw 0 [5] s) :=
+  .go (.tryTable (vs := []) (base := []) rfl) <|
+  .go (.retCall (args := []) (base := []) (f := thrower) rfl rfl rfl) <|
+  .go (.basic (.const 5)) <|
+  .stop (.throw (.pastCall .escaped))
 
 end WasmIfc

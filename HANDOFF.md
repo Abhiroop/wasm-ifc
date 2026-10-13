@@ -609,8 +609,8 @@ implemented since e87e76a.
 
 ## Lean: noninterference on a core with control flow, calls and memory (item 12, 2026-10-12)
 
-- **Where:** `lean/` (Lean 4.35.0, no dependencies; `cd lean && lake build`). 4,193 lines in
-  six files; `lean/README.md` states what is proved and what differs from the paper.
+- **Where:** `lean/` (Lean 4.35.0, no dependencies; `cd lean && lake build`). 4,893 lines in
+  seven files; `lean/README.md` states what is proved and what differs from the paper.
 - **What is proved** (`WasmIfc.tini`, from `WasmIfc.ni`): termination-insensitive
   noninterference for a function of a well-typed module, under the lift-free rules, on a core
   with blocks, loops and conditionals (with parameters and results), `br`, `br_if`, the
@@ -724,6 +724,27 @@ implemented since e87e76a.
       directories (the core's host has none). One hypothesis is new and explicit: a preserved
       global is public, which the policy ensures.
     3,945 lines; `noninterference` depends on the three standard axioms.
+  - *A machine and refinement* (the plan's list of 2026-10-14, item 2).
+    `lean/WasmIfc/Machine.lean` has a small-step machine for the whole core, shaped like
+    `Runtime.Interpreter.step`: a state, the current block's operands, the rest of the block,
+    and a control stack of labels and call boundaries (`Frame`); `Step` is one transition and
+    `Runs` a run to its end. `refinement`: a run from `Config.entry f a s` to an end `e` is
+    `Invoke F f a s e`. It needs no typing, and holds for every instruction of the core, so
+    nothing of the paper's `lem:refinement` is left on paper for the core.
+    `machine_noninterference` is `noninterference` for two runs of the machine. Both have no
+    `sorry`; `refinement` depends on `propext` and `Quot.sound`, the other on the three
+    standard axioms. Section 6 of `lean/STATEMENTS.md` puts each part of the Lean machine
+    beside the Haskell one with both lines; that correspondence is the paper's Assumption (M),
+    and it lists three known differences (the bound on the depth of calls, the suspension at
+    host calls, the coercions between segments).
+    - **The proof found an error in the Lean semantics, now fixed** (`e75d54a`). `Eval` ran a
+      tail call as a call inside the function, so a `try_table` around a `return_call`
+      caught an exception of the callee. The Haskell machine drops the function's labels and
+      their clauses at the tail call (`tailCall`), as WebAssembly says, and the exception
+      passes. `Eval` now has an outcome of its own for such an exception (`Out.tailExn`),
+      which the function's blocks pass and which is an exception again for the function's
+      caller. `ni` has the case; the theorem's statement is unchanged, but `Invoke.threw` is
+      now stated with `Out.thrown`. The implementation was right; no Haskell changed.
   - *More of the table, and the indirect tail call* (the same list, item 6): `table.fill`,
     `table.copy` and `return_call_indirect`, with the rules of `ITableFill`, `ITableCopy` and
     `IReturnCallIndirect`. 4,193 lines. Not done: `table.size` and `table.grow`, for

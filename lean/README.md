@@ -29,7 +29,17 @@ implementation and the rule of the paper it stands for, and what is assumed.
 | `pres_after`, `pres_after_call` | `Basic.lean` | Where two runs come out of a block, a loop, a conditional or a call, they agree on the preserved globals unless the pc there is secret. |
 | `ni` | `Noninterference.lean` | Two runs of a typed sequence from stacks and states that agree where public, and on the preserved globals unless the pc is secret, end in related outcomes (`OutRel`). |
 | `noninterference` | `Statement.lean` | The theorem in the paper's terms: two calls of a function from low-equivalent states (`LowEq`, the paper's definition of the attacker), if both end, end alike and in low-equivalent states. It is `tini` with the two relations of the proof put together. |
+| `refinement` | `Machine.lean` | A run of the small-step machine from the call of a function to its end is a derivation of the big-step semantics with the same end (the paper's `lem:refinement`). No typing is assumed. |
+| `machine_noninterference` | `Machine.lean` | `noninterference` for two runs of the machine. |
 | `tini` | `Noninterference.lean` | For a function of a well-typed module: two calls with arguments that agree where the parameters are public, from states that agree where public, if both end, either both return or both end by the same exception with the same values, and they leave states that agree where public. If they return, their results agree where the result type is public, and they agree on the preserved globals too if both pass the comparison made at the function's return. |
+
+`Machine.lean` has a small-step machine written after the implementation's `step`: a
+configuration with a state, the operands of the current block, the rest of the block and a
+control stack of labels and call boundaries, and one transition for each instruction.
+`STATEMENTS.md` puts its parts beside those of `src/Runtime/Interpreter.hs`; that the two are
+the same machine is what remains by reading. `Examples.lean` has two runs of it: an exception
+caught in the function that throws it, and one that leaves a tail call's callee and is not
+caught by the `try_table` around the tail call.
 
 `Examples.lean` also has a `try_table` that catches what its body throws, with its typing and
 its run, and a throw under a secret pc with a proof that no typing of it exists. Besides, it
