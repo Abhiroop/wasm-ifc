@@ -75,7 +75,7 @@ import Data.IntMap.Strict (IntMap)
 import Data.IntMap.Strict qualified as IntMap
 import Data.Kind (Type)
 import Data.Word (Word64)
-import GHC.Exts (ByteArray#, Int (I#), andI#, copyByteArray#, indexWord64Array#, newByteArray#, setByteArray#, unsafeFreezeByteArray#, writeWord64Array#)
+import GHC.Exts (ByteArray#, Int (I#), SmallArray#, andI#, copyByteArray#, indexSmallArray#, indexWord64Array#, newByteArray#, newSmallArray#, setByteArray#, thawSmallArray#, uncheckedIShiftRL#, unsafeFreezeByteArray#, unsafeFreezeSmallArray#, writeSmallArray#, writeWord64Array#)
 import GHC.Float (castDoubleToWord64, castFloatToWord32, castWord32ToFloat, castWord64ToDouble)
 import GHC.ST (ST (ST))
 import GHC.Word (Word64 (W64#))
@@ -174,22 +174,15 @@ withSlotAt (I# place) (W64# word) (Slots old) =
         )
 
 {- | The words of a frame, in groups of eight. A frame of at most 8 words is one group, and
-  one of at most 64 is eight groups held side by side: a read finds its group by a jump, and a
+  one of at most 64 is an array of eight groups: a read finds its group by an index, and a
   write copies that group and the eight pointers. A larger frame is eight frames of an eighth
   of its size, and so on: a write copies one group and eight pointers for each level. The
   parts that were never written are one shared group of zeros.
 -}
 data Frame
     = OneGroup {-# UNPACK #-} !Slots
-    | EightGroups
-        {-# UNPACK #-} !Slots
-        {-# UNPACK #-} !Slots
-        {-# UNPACK #-} !Slots
-        {-# UNPACK #-} !Slots
-        {-# UNPACK #-} !Slots
-        {-# UNPACK #-} !Slots
-        {-# UNPACK #-} !Slots
-        {-# UNPACK #-} !Slots
+    | -- | an array of exactly eight groups
+      EightGroups (SmallArray# ByteArray#)
     | -- | eight frames of @2 ^ shift@ words each
       EightFrames !Int !Frame !Frame !Frame !Frame !Frame !Frame !Frame !Frame
 
@@ -206,23 +199,49 @@ zeroFrame size
         | otherwise = eightOf (shift + 3) whole
       where
         whole = case part of
-            OneGroup _ -> EightGroups zeroSlots zeroSlots zeroSlots zeroSlots zeroSlots zeroSlots zeroSlots zeroSlots
+            OneGroup _ -> eightZeroGroups
             _ -> EightFrames shift part part part part part part part part
+
+-- | Eight groups of zeros, which are one group eight times.
+{-# NOINLINE eightZeroGroups #-}
+eightZeroGroups :: Frame
+eightZeroGroups = case zeroSlots of
+    Slots zeros ->
+        runST
+            ( ST
+                ( \s0 -> case newSmallArray# 8# zeros s0 of
+                    (# s1, new #) -> case unsafeFreezeSmallArray# new s1 of
+                        (# s2, frozen #) -> (# s2, EightGroups frozen #)
+                )
+            )
+
+{- | The group of a place among eight. As in a group, the index is three bits of the place (the
+  next three), so it is inside the array of eight whatever the place is.
+-}
+{-# INLINE groupAt #-}
+groupAt :: SmallArray# ByteArray# -> Int -> Slots
+groupAt groups (I# place) = case indexSmallArray# groups ((place `uncheckedIShiftRL#` 3#) `andI#` 7#) of
+    (# group #) -> Slots group
+
+-- | A copy of the eight groups with the one of a place replaced.
+{-# INLINE withGroupAt #-}
+withGroupAt :: Int -> Slots -> SmallArray# ByteArray# -> Frame
+withGroupAt (I# place) (Slots group) groups =
+    runST
+        ( ST
+            ( \s0 -> case thawSmallArray# groups 0# 8# s0 of
+                (# s1, new #) -> case writeSmallArray# new ((place `uncheckedIShiftRL#` 3#) `andI#` 7#) group s1 of
+                    s2 -> case unsafeFreezeSmallArray# new s2 of
+                        (# s3, frozen #) -> (# s3, EightGroups frozen #)
+            )
+        )
 
 -- | The word at a place of a frame that has it.
 {-# INLINE frameSlot #-}
 frameSlot :: Frame -> Int -> Word64
 frameSlot frame place = case frame of
     OneGroup only -> slotAt only place
-    EightGroups g0 g1 g2 g3 g4 g5 g6 g7 -> case (place `shiftR` 3) .&. 7 of
-        0 -> slotAt g0 place
-        1 -> slotAt g1 place
-        2 -> slotAt g2 place
-        3 -> slotAt g3 place
-        4 -> slotAt g4 place
-        5 -> slotAt g5 place
-        6 -> slotAt g6 place
-        _ -> slotAt g7 place
+    EightGroups groups -> slotAt (groupAt groups place) place
     EightFrames {} -> slotOfLargeFrame frame place
 
 -- | 'frameSlot' for a frame of more than 64 words.
@@ -243,15 +262,7 @@ slotOfLargeFrame frame place = case frame of
 withFrameSlot :: Int -> Word64 -> Frame -> Frame
 withFrameSlot !place !word !frame = case frame of
     OneGroup only -> OneGroup (withSlotAt place word only)
-    EightGroups g0 g1 g2 g3 g4 g5 g6 g7 -> case (place `shiftR` 3) .&. 7 of
-        0 -> EightGroups (withSlotAt place word g0) g1 g2 g3 g4 g5 g6 g7
-        1 -> EightGroups g0 (withSlotAt place word g1) g2 g3 g4 g5 g6 g7
-        2 -> EightGroups g0 g1 (withSlotAt place word g2) g3 g4 g5 g6 g7
-        3 -> EightGroups g0 g1 g2 (withSlotAt place word g3) g4 g5 g6 g7
-        4 -> EightGroups g0 g1 g2 g3 (withSlotAt place word g4) g5 g6 g7
-        5 -> EightGroups g0 g1 g2 g3 g4 (withSlotAt place word g5) g6 g7
-        6 -> EightGroups g0 g1 g2 g3 g4 g5 (withSlotAt place word g6) g7
-        _ -> EightGroups g0 g1 g2 g3 g4 g5 g6 (withSlotAt place word g7)
+    EightGroups groups -> withGroupAt place (withSlotAt place word (groupAt groups place)) groups
     EightFrames shift f0 f1 f2 f3 f4 f5 f6 f7 -> case (place `shiftR` shift) .&. 7 of
         0 -> EightFrames shift (withFrameSlot place word f0) f1 f2 f3 f4 f5 f6 f7
         1 -> EightFrames shift f0 (withFrameSlot place word f1) f2 f3 f4 f5 f6 f7
