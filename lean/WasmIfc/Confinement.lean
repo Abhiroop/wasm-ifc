@@ -186,6 +186,12 @@ theorem confine : ∀ (n : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P'
         subst hpc
         obtain ⟨h1, h2⟩ := ih _ (by omega) hF ht' (hiUpTo_zero_cons _) (by simpa using hlen) he'
         exact ⟨(Conf.setTbl_high _ _ _ (hle (Lab.H_join _))).trans h1, h2⟩
+    | hostRead hb hb' he' =>
+      cases ht with
+      | hostRead _ => exact absurd hP.head (by decide)
+    | hostWrite hb hchk he' =>
+      cases ht with
+      | hostWrite _ => exact absurd hP.head (by decide)
     | memSize he' =>
       cases ht with
       | memSize ht' => exact ih _ (by omega) hF ht' hP (by simp [hlen]) he'

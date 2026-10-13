@@ -5,7 +5,8 @@ typing rules of this repository on a core of WebAssembly: blocks, loops and cond
 parameters and results, `br`, `br_if`, `br_table` and `return`, direct calls, indirect calls
 and tail calls of the module's functions (recursion included), a bounded memory whose cells carry a level, with
 SecWasm's run-time check on loads, `memory.size`, `memory.grow`, `memory.fill` and
-`memory.copy`, a function table with a level (`table.get`, `table.set`), local and global
+`memory.copy`, a function table with a level (`table.get`, `table.set`), a host that reads
+from and writes to descriptors with levels, local and global
 variables with `local.tee`, exceptions (`throw` and `try_table`), preserved globals with
 their run-time comparison, and arithmetic on one value type. It has no `sorry`, and its
 theorems depend on Lean's three standard axioms only (`propext`, `Classical.choice`,
@@ -61,6 +62,11 @@ type `Syntax.Instructions.Instr` for the instructions above:
 - `memory.fill` labels the cells it writes at a level that is at least the pc's and those of
   its three operands. `memory.copy` makes no check: each cell it copies keeps its own level,
   raised by one that is at least the pc's and those of the count and the two addresses.
+- A host call is made under a public pc with public arguments. The host's descriptors have
+  levels, which are part of the state. A write to a descriptor traps unless every cell it
+  takes flows into the descriptor's level; a read stores what it read, and how much, at the
+  descriptor's level. The attacker sees what was written to a public descriptor and what is
+  left to read from one (`IoRel`).
 - The size of the memory is public: `memory.size` gives a value at the pc, and `memory.grow`
   is typed only under a public pc with a public amount.
 - A module is well typed if every function body is typed as the paper's rule for functions
@@ -134,6 +140,9 @@ paper's appendix B.4 has no counterpart here.
 - **The comparison names its globals.** The implementation compares every preserved global of
   the module, which a typed construct cannot leave out. Here a construct lists the globals it
   compares, and the rule asks that the list cover the preserved ones where the pc drops.
+- **The host is two calls.** One reads and one writes, with the checks and the labels of the
+  implementation's rule for the host boundary. WASI's other calls, its error codes, and
+  results on the stack are not modelled.
 - **The core is small.** One value type; two levels; no data segments (`memory.init`,
   `data.drop`); a tail call names its
   callee (`return_call`, not the indirect forms), and the semantics does not model that it

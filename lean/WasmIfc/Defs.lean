@@ -84,6 +84,10 @@ inductive Instr where
   | tableGet
   /-- write a reference to an entry of the function table -/
   | tableSet
+  /-- a host call that reads from a descriptor into the memory -/
+  | hostRead
+  /-- a host call that writes cells of the memory to a descriptor -/
+  | hostWrite
   /-- `fill lm`: write one value to a range of cells and label them `lm` -/
   | fill (lm : Lab)
   /-- `copy lm`: copy a range of cells; each keeps its level, raised by `lm` -/
@@ -237,6 +241,18 @@ inductive Typed (C : Ctx) : List STy → List Instr → Pcs → STy → Pcs → 
       Lab.le (pc.join (li.join lv)) C.table →
       Typed C Ls rest (pc :: Pr) st P' st' →
       Typed C Ls (.tableSet :: rest) (pc :: Pr) (lv :: li :: st) P' st'
+  /--
+  A host call is made under a public pc with public arguments: where to put what is read, how
+  much at most, the descriptor, and where to put how much was read. What it stores is labelled
+  at run time, with the descriptor's level.
+  -/
+  | hostRead {Ls rest Pr st P' st'} :
+      Typed C Ls rest (Lab.L :: Pr) st P' st' →
+      Typed C Ls (.hostRead :: rest) (Lab.L :: Pr) (Lab.L :: Lab.L :: Lab.L :: Lab.L :: st) P' st'
+  /-- The cells a host call takes are checked at run time against the descriptor's level. -/
+  | hostWrite {Ls rest Pr st P' st'} :
+      Typed C Ls rest (Lab.L :: Pr) st P' st' →
+      Typed C Ls (.hostWrite :: rest) (Lab.L :: Pr) (Lab.L :: Lab.L :: Lab.L :: st) P' st'
   /-- The size of the memory is public. -/
   | memSize {Ls rest pc Pr st P' st'} :
       Typed C Ls rest (pc :: Pr) (pc :: st) P' st' →
@@ -377,6 +393,12 @@ structure State where
   tbl : Nat → Option Nat
   size : Nat
   cap : Nat
+  /-- the level of each descriptor of the host -/
+  chan : Nat → Lab
+  /-- what has been written to each descriptor, the latest first -/
+  out : Nat → List Nat
+  /-- what is left to read from each descriptor -/
+  inp : Nat → List Nat
 
 def State.setLoc (s : State) (i v : Nat) : State :=
   { s with loc := fun j => if j = i then v else s.loc j }
@@ -410,6 +432,22 @@ def State.fill (s : State) (a v n : Nat) (l : Lab) : State :=
 def State.copy (s : State) (d a n : Nat) (l : Lab) : State :=
   { s with mem := fun x => if d ≤ x ∧ x < d + n then s.mem (a + (x - d)) else s.mem x,
            lab := fun x => if d ≤ x ∧ x < d + n then l.join (s.lab (a + (x - d))) else s.lab x }
+
+/-- Write the values `vs` to the cells from `a`, and give them the level `l`. -/
+def State.put (s : State) (a : Nat) (vs : List Nat) (l : Lab) : State :=
+  { s with mem := fun x => if a ≤ x ∧ x < a + vs.length then (vs[x - a]?).getD 0 else s.mem x,
+           lab := fun x => if a ≤ x ∧ x < a + vs.length then l else s.lab x }
+
+/-- Take `k` values off what is left to read from the descriptor `fd`. -/
+def State.consume (s : State) (fd k : Nat) : State :=
+  { s with inp := fun d => if d = fd then (s.inp fd).drop k else s.inp d }
+
+/-- The `k` cells from `a`. -/
+def State.cells (s : State) (a k : Nat) : List Nat := (List.range k).map (fun i => s.mem (a + i))
+
+/-- Write the values `vs` to the descriptor `fd`. -/
+def State.emit (s : State) (fd : Nat) (vs : List Nat) : State :=
+  { s with out := fun d => if d = fd then vs ++ s.out d else s.out d }
 
 /-- What `memory.grow` gives when the memory cannot grow. -/
 def growFailed : Nat := 0xFFFFFFFF
@@ -556,6 +594,21 @@ inductive Eval (F : List Func) : Nat → List Nat → List Instr → List Nat �
   | tableSet {n ls rest v c σ s o} :
       Eval F n ls rest σ (s.setTbl c (ofRef v)) o →
       Eval F (n + 1) ls (.tableSet :: rest) (v :: c :: σ) s o
+  /--
+  Read at most `k` values from the descriptor `fd` into the cells from `a`, and how many they
+  were into the cell `np`: all of it at the descriptor's level.
+  -/
+  | hostRead {n ls rest np k a fd σ s o} :
+      a + k ≤ s.size → np < s.size →
+      Eval F n ls rest σ
+        (((s.put a ((s.inp fd).take k) (s.chan fd)).setMem np ((s.inp fd).take k).length
+          (s.chan fd)).consume fd k) o →
+      Eval F (n + 1) ls (.hostRead :: rest) (np :: k :: a :: fd :: σ) s o
+  /-- Write the `k` cells from `a` to the descriptor `fd`: a trap if one is more secret than it. -/
+  | hostWrite {n ls rest k a fd σ s o} :
+      a + k ≤ s.size → (∀ x, a ≤ x → x < a + k → Lab.le (s.lab x) (s.chan fd)) →
+      Eval F n ls rest σ (s.emit fd (s.cells a k)) o →
+      Eval F (n + 1) ls (.hostWrite :: rest) (k :: a :: fd :: σ) s o
   | memSize {n ls rest σ s o} :
       Eval F n ls rest (s.size :: σ) s o → Eval F (n + 1) ls (.memSize :: rest) σ s o
   | memGrow {n ls rest d σ s o} :

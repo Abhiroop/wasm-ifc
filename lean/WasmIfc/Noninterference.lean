@@ -730,6 +730,50 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
               obtain ⟨_, hj⟩ := Lab.join_eq_L (Lab.eq_L_of_le hle hlt)
               obtain ⟨hli, hlv⟩ := Lab.join_eq_L hj
               exact ⟨hc hli, by rw [hv hlv]⟩
+    | hostRead ht' =>
+      cases he0 with
+      | hostRead hb0 hn0 he0' =>
+        cases he1 with
+        | hostRead hb1 hn1 he1' =>
+          cases hσ with
+          | cons hnp hσa =>
+            cases hσa with
+            | cons hk hσb =>
+              cases hσb with
+              | cons ha hσc =>
+                cases hσc with
+                | cons hfd hσd =>
+                  -- the arguments are public: the same descriptor, amount and addresses
+                  have e1 := hnp rfl
+                  have e2 := hk rfl
+                  have e3 := ha rfl
+                  have e4 := hfd rfl
+                  subst e1 e2 e3 e4
+                  have hchan := hs.2.2.2.2.2.2.1
+                  refine ih _ (by omega) hF ht' he0' he1' hσd ?_ (hp.of_glob rfl rfl)
+                  rw [← hchan]
+                  -- what a public descriptor has left to read is the same in both runs
+                  have hin : ∀ d, s0.chan d = Lab.L → s0.inp d = s1.inp d :=
+                    fun d hl => (hs.2.2.2.2.2.2.2 d hl).2
+                  exact ((hs.put (fun hl => ⟨rfl, by rw [hin _ hl]⟩)).setMem
+                    (fun hl => ⟨rfl, by rw [hin _ hl]⟩)).consume _ _
+    | hostWrite ht' =>
+      cases he0 with
+      | hostWrite hb0 hchk0 he0' =>
+        cases he1 with
+        | hostWrite hb1 hchk1 he1' =>
+          cases hσ with
+          | cons hk hσa =>
+            cases hσa with
+            | cons ha hσb =>
+              cases hσb with
+              | cons hfd hσc =>
+                have e1 := hk rfl
+                have e2 := ha rfl
+                have e3 := hfd rfl
+                subst e1 e2 e3
+                exact ih _ (by omega) hF ht' he0' he1' hσc (hs.emit hchk0 hchk1)
+                  (hp.of_glob rfl rfl)
     | memSize ht' =>
       cases he0 with
       | memSize he0' =>
