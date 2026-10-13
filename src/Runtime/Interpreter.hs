@@ -1,5 +1,4 @@
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE KindSignatures #-}
@@ -1052,7 +1051,9 @@ popControl store _ vs (CallBoundary _ below cl cont cf) = resume store cl vs bel
 
 {- | Unwind to the @ix@-th enclosing label, carrying that label's values. A block/if label
   resumes after the construct; a loop label restarts the body; the function's own label
-  returns from it.
+  returns from it. A target past the function's own label has no clause and needs none: the
+  witness of such a target does not exist, and since its fields are strict GHC's coverage
+  check knows it.
 -}
 unwind ::
     Store mod ->
@@ -1070,8 +1071,6 @@ unwind store _ TargetHere vs (CallBoundary _ below cl cont cf) = resume store cl
 unwind store locals (TargetThere ix') vs (BlockLabel _ _ rest) = unwind store locals ix' vs rest
 unwind store locals (TargetThere ix') vs (HandlerLabel _ _ _ rest) = unwind store locals ix' vs rest
 unwind store locals (TargetThere ix') vs (LoopLabel _ _ _ rest) = unwind store locals ix' vs rest
-unwind _ _ (TargetThere ix') _ (CallBoundary {}) = case ix' of {}
-unwind _ _ (TargetThere ix') _ EntryBoundary = case ix' of {}
 
 -- | 'unwind' for @br_table@, whose targets are plain label indices.
 unwindTo ::
@@ -1090,8 +1089,6 @@ unwindTo store _ Here vs (CallBoundary _ below cl cont cf) = resume store cl vs 
 unwindTo store locals (There ix') vs (BlockLabel _ _ rest) = unwindTo store locals ix' vs rest
 unwindTo store locals (There ix') vs (HandlerLabel _ _ _ rest) = unwindTo store locals ix' vs rest
 unwindTo store locals (There ix') vs (LoopLabel _ _ _ rest) = unwindTo store locals ix' vs rest
-unwindTo _ _ (There ix') _ (CallBoundary {}) = case ix' of {}
-unwindTo _ _ (There ix') _ EntryBoundary = case ix' of {}
 
 {- | A tail call: enter the callee from where the running function was called. The control
   stack is unwound to the function's call boundary, as for @return@, and the call is then made
@@ -1226,18 +1223,22 @@ run funcs config = case runKeeping funcs config of
   that keeps the instance goes on from there.
 -}
 runKeeping :: FuncSpaceInst mod (ModuleFuncs mod) -> Config mod res -> Either (Trap, Store mod) (Halt mod res)
-runKeeping funcs (Config store locals stack code control) = case code of
-    INil -> case popControl store locals stack control of
-        Done store' vs -> Right (Finished store' vs)
-        HostCall _ request -> Right (AwaitingHost request)
-        Stepped _ next -> runKeeping funcs next
-        Escaped store' exception -> Right (Threw store' exception)
-    instr :. rest -> case stepInstr funcs store locals stack instr rest control of
-        Left t -> Left (t, store)
-        Right (Done store' vs) -> Right (Finished store' vs)
-        Right (HostCall _ request) -> Right (AwaitingHost request)
-        Right (Stepped _ next) -> runKeeping funcs next
-        Right (Escaped store' exception) -> Right (Threw store' exception)
+runKeeping funcs = loop
+  where
+    -- The functions are the same at every step, so the loop does not pass them: its five
+    -- arguments are then all in registers.
+    loop (Config store locals stack code control) = case code of
+        INil -> case popControl store locals stack control of
+            Done store' vs -> Right (Finished store' vs)
+            HostCall _ request -> Right (AwaitingHost request)
+            Stepped _ next -> loop next
+            Escaped store' exception -> Right (Threw store' exception)
+        instr :. rest -> case stepInstr funcs store locals stack instr rest control of
+            Left t -> Left (t, store)
+            Right (Done store' vs) -> Right (Finished store' vs)
+            Right (HostCall _ request) -> Right (AwaitingHost request)
+            Right (Stepped _ next) -> loop next
+            Right (Escaped store' exception) -> Right (Threw store' exception)
 
 {- | Resume an activation that waits for a call by throwing an exception where the call was:
   the function it called ended with one. The nearest clause that catches it gets it, as if an

@@ -37,7 +37,6 @@
 -}
 module Main (main) where
 
-import Control.Monad.ST (ST)
 import Data.Bifunctor (first)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
@@ -49,8 +48,6 @@ import Data.Maybe (fromMaybe)
 import Data.Singletons.Base.TH (SList (SCons, SNil), Sing, fromSing)
 import Data.Text (Text)
 import Data.Text qualified as T
-import Data.Vector.Unboxed qualified as UV
-import Data.Vector.Unboxed.Mutable qualified as MV
 import Data.Word (Word32, Word64)
 import GHC.Exts (Any)
 import GHC.Float (castDoubleToWord64, castFloatToWord32, castWord32ToFloat, castWord64ToDouble)
@@ -82,9 +79,9 @@ import Runtime.Interpreter (
     numRem,
     storedWord,
  )
-import Runtime.MemInst (MemInst, copyWithin, fillBytes, growMemory, loadWordUnchecked, memoryPages, modifiedCopy, storeWord, writeBytes)
+import Runtime.MemInst (MemInst, copyWithin, fillBytes, growMemory, loadWordUnchecked, memoryPages, storeWord, writeBytes)
 import Runtime.Module (SomeModuleInst (..))
-import Runtime.Stack (DataSpaceInst (..), GlobalSpaceInst (..), MemSpaceInst (..), TableInsts (..), TableSpaceInst (..))
+import Runtime.Stack (DataSpaceInst (..), Frame, GlobalSpaceInst (..), MemSpaceInst (..), TableInsts (..), TableSpaceInst (..), frameSlot, withFrameSlot, zeroFrame)
 import Runtime.TableInst (tableEntryUnchecked, tableSize)
 import Runtime.Trap (Trap (..))
 import Syntax.Functions (Function (..))
@@ -119,9 +116,20 @@ data SomeConvert where
 data SomeNarrow where
     SomeNarrow :: !(IsInt t) -> !(NarrowWidth t) -> SomeNarrow
 
+-- | A sequence of instructions, strict in its cells like 'Syntax.Instructions.Expr'.
+data Code = NoMore | !Instruction :- !Code
+
+infixr 5 :-
+
+-- The six most frequent first, as in 'Syntax.Instructions.Instr', for the same reason: their
+-- clauses are reached by one jump on the pointer's tag bits.
 data Instruction
-    = EConst !Value
+    = ELocalGet !Int !ValType
+    | EConst !Value
+    | ELocalSet !Int !ValType
+    | ELocalTee !Int !ValType
     | EAdd !ValType
+    | ELoad !ValType !MemArg
     | ESub !ValType
     | EMul !ValType
     | EDiv !ValType !Signedness
@@ -148,18 +156,14 @@ data Instruction
     | EDataDrop !Nat
     | EDrop
     | ESelect
-    | ELocalGet !Int !ValType
-    | ELocalSet !Int !ValType
-    | ELocalTee !Int !ValType
     | EGlobalGet !Nat
     | EGlobalSet !Nat
-    | ELoad !ValType !MemArg
     | EStore !ValType !MemArg
     | ECall !Nat !Nat
     | ECallIndirect !Nat !FuncType
-    | EBlock !Nat [Instruction]
-    | ELoop !Nat [Instruction]
-    | EIf !Nat [Instruction] [Instruction]
+    | EBlock !Nat !Code
+    | ELoop !Nat !Code
+    | EIf !Nat !Code !Code
     | EBr !Nat !Nat
     | EBrIf !Nat !Nat
     | EBrTable !Nat [Nat] !Nat
@@ -171,7 +175,7 @@ data Instruction
 
 -- *** Runtime state, strict where the typed machine's is ***
 
-data Func = WasmFunction ![ValType] [Instruction] | HostFunction
+data Func = WasmFunction ![ValType] Code | HostFunction
 
 -- | The function index space; lazy, like 'FuncSpaceInst'.
 data Funcs = NoFuncs | FuncCons Func Funcs
@@ -194,9 +198,9 @@ data Store m = Store
 
 data Control
     = EntryBoundary
-    | BlockLabel !Values ![Instruction] !Control
-    | LoopLabel !Values ![Instruction] ![Instruction] !Control
-    | CallBoundary !Word !Values !Frame ![Instruction] !Control
+    | BlockLabel !Values !Code !Control
+    | LoopLabel !Values !Code !Code !Control
+    | CallBoundary !Word !Values !Frame !Code !Control
 
 #ifdef EXISTENTIAL_CONFIG
 -- The control experiment for E1's last allocation gap (built with -DEXISTENTIAL_CONFIG): the
@@ -205,9 +209,9 @@ data Control
 -- existential type variables into a worker's arguments. If that is what keeps the typed machine
 -- building a configuration per step, this build allocates like the typed machine does.
 data Config m where
-    Config :: forall m (unused :: Type). !(Store m) -> !Frame -> !Values -> ![Instruction] -> !Control -> Config m
+    Config :: forall m (unused :: Type). !(Store m) -> !Frame -> !Values -> !Code -> !Control -> Config m
 #else
-data Config m = Config !(Store m) !Frame !Values ![Instruction] !Control
+data Config m = Config !(Store m) !Frame !Values !Code !Control
 #endif
 
 data StepResult m = Stepped !(Config m) | Done !(Store m) !Values | Wedged
@@ -223,8 +227,8 @@ data Failure = Trapped Trap | Stuck | HostCallUnsupported | ReferencesUnsupporte
 {-# INLINE step #-}
 step :: Funcs -> Config m -> Either Failure (StepResult m)
 step funcs (Config store locals stack code control) = case code of
-    [] -> Right (popControl store locals stack control)
-    instr : rest -> case instr of
+    NoMore -> Right (popControl store locals stack control)
+    instr :- rest -> case instr of
         {- Constants & numeric -}
         EConst v -> stepped store locals (v :> stack) rest control
         EAdd ty -> arithmetic store locals stack rest control ty (`numBinary` (+))
@@ -391,7 +395,7 @@ step funcs (Config store locals stack code control) = case code of
         ENotModelled -> Left ReferencesUnsupported
         EUnreachable -> Left (Trapped UnreachableExecuted)
 
-enterCall :: Funcs -> Store m -> Frame -> Nat -> Nat -> Values -> [Instruction] -> Control -> Either Failure (StepResult m)
+enterCall :: Funcs -> Store m -> Frame -> Nat -> Nat -> Values -> Code -> Control -> Either Failure (StepResult m)
 enterCall funcs store locals width ix stack rest control = case functionAt ix funcs of
     WasmFunction declared body
         | depth > callDepthBound -> Left (Trapped CallStackExhausted)
@@ -410,19 +414,19 @@ activationDepth control = case control of
     BlockLabel _ _ rest -> activationDepth rest
     LoopLabel _ _ _ rest -> activationDepth rest
 
-stepped :: Store m -> Frame -> Values -> [Instruction] -> Control -> Either Failure (StepResult m)
+stepped :: Store m -> Frame -> Values -> Code -> Control -> Either Failure (StepResult m)
 stepped store locals stack code control = Right (Stepped (Config store locals stack code control))
 
 {- | Push a result that may have trapped, tagging it on the way (no intermediate 'Either' is
   built: the typed machine cases on the helper's result directly, and so does this).
 -}
-trapping :: Store m -> Frame -> [Instruction] -> Control -> (a -> Value) -> Either Trap a -> Values -> Either Failure (StepResult m)
+trapping :: Store m -> Frame -> Code -> Control -> (a -> Value) -> Either Trap a -> Values -> Either Failure (StepResult m)
 trapping store locals rest control tag result r = case result of
     Right v -> stepped store locals (tag v :> r) rest control
     Left t -> Left (Trapped t)
 
 -- | Continue with a memory a write produced, or trap if it was out of bounds.
-written :: Store m -> Frame -> [Instruction] -> Control -> Maybe (MemInst m) -> Values -> Either Failure (StepResult m)
+written :: Store m -> Frame -> Code -> Control -> Maybe (MemInst m) -> Values -> Either Failure (StepResult m)
 written store locals rest control result r = case result of
     Just mem' -> stepped (withMemory mem' store) locals r rest control
     Nothing -> Left (Trapped OutOfBoundsMemoryAccess)
@@ -430,7 +434,7 @@ written store locals rest control result r = case result of
 type Arithmetic = forall t. IsNum t -> HostType t -> HostType t -> HostType t
 
 {-# INLINE arithmetic #-}
-arithmetic :: Store m -> Frame -> Values -> [Instruction] -> Control -> ValType -> Arithmetic -> Either Failure (StepResult m)
+arithmetic :: Store m -> Frame -> Values -> Code -> Control -> ValType -> Arithmetic -> Either Failure (StepResult m)
 arithmetic store locals stack rest control ty op = case (ty, stack) of
     (I32, VI32 b :> VI32 a :> r) -> stepped store locals (VI32 (op I32IsNum a b) :> r) rest control
     (I64, VI64 b :> VI64 a :> r) -> stepped store locals (VI64 (op I64IsNum a b) :> r) rest control
@@ -441,7 +445,7 @@ arithmetic store locals stack rest control ty op = case (ty, stack) of
 type Equality = forall t. IsNum t -> HostType t -> HostType t -> Word32
 
 {-# INLINE equality #-}
-equality :: Store m -> Frame -> Values -> [Instruction] -> Control -> ValType -> Equality -> Either Failure (StepResult m)
+equality :: Store m -> Frame -> Values -> Code -> Control -> ValType -> Equality -> Either Failure (StepResult m)
 equality store locals stack rest control ty op = case (ty, stack) of
     (I32, VI32 b :> VI32 a :> r) -> stepped store locals (VI32 (op I32IsNum a b) :> r) rest control
     (I64, VI64 b :> VI64 a :> r) -> stepped store locals (VI32 (op I64IsNum a b) :> r) rest control
@@ -452,7 +456,7 @@ equality store locals stack rest control ty op = case (ty, stack) of
 type Ordering' = forall t. NumWithSign t -> HostType t -> HostType t -> Word32
 
 {-# INLINE ordering #-}
-ordering :: Store m -> Frame -> Values -> [Instruction] -> Control -> ValType -> Signedness -> Ordering' -> Either Failure (StepResult m)
+ordering :: Store m -> Frame -> Values -> Code -> Control -> ValType -> Signedness -> Ordering' -> Either Failure (StepResult m)
 ordering store locals stack rest control ty sign op = case (ty, stack) of
     (I32, VI32 b :> VI32 a :> r) -> stepped store locals (VI32 (op (i32WithSign sign) a b) :> r) rest control
     (I64, VI64 b :> VI64 a :> r) -> stepped store locals (VI32 (op (i64WithSign sign) a b) :> r) rest control
@@ -561,30 +565,24 @@ splitValues Z vs = (Empty, vs)
 splitValues (S w) (x :> vs) = let (upper, lower) = splitValues w vs in (x :> upper, lower)
 splitValues (S _) Empty = (Empty, Empty)
 
--- | A frame: one packed word per local, as "Runtime.Stack.LocalSpaceInst" keeps it (E2b).
-type Frame = UV.Vector Word64
-
 {- | The erasure of 'Runtime.Stack.seedLocals': the arguments written from the last parameter's
-  slot downwards, the declared locals at zero, in one allocation.
+  slot downwards, the declared locals at zero. The frame is the typed machine's own
+  ('Runtime.Stack.Frame'), words in groups of eight.
 -}
 seedFrame :: Int -> Values -> [ValType] -> Frame
-seedFrame arity args declared = UV.create frame
+seedFrame arity args declared = write (arity - 1) args (zeroFrame (arity + length declared))
   where
-    frame :: ST s (MV.MVector s Word64)
-    frame = do
-        slots <- MV.replicate (arity + length declared) 0
-        let write _ Empty = pure ()
-            write slot (v :> vs) = MV.unsafeWrite slots slot (packTagged v) >> write (slot - 1) vs
-        write (arity - 1) args
-        pure slots
+    write :: Int -> Values -> Frame -> Frame
+    write _ Empty !frame = frame
+    write slot (v :> vs) !frame = write (slot - 1) vs (withFrameSlot slot (packTagged v) frame)
 
 -- | The erasure of 'Runtime.Stack.getLocal': the word at the position, read at the type.
 frameGet :: Int -> ValType -> Frame -> Value
-frameGet position ty frame = unpackAs ty (UV.unsafeIndex frame position)
+frameGet position ty frame = unpackAs ty (frameSlot frame position)
 
--- | The erasure of 'Runtime.Stack.setLocal': a copy of the frame with one word replaced.
+-- | The erasure of 'Runtime.Stack.setLocal': the frame with one word replaced.
 frameSet :: Int -> Value -> Frame -> Frame
-frameSet position v = modifiedCopy (\slots -> MV.unsafeWrite slots position (packTagged v))
+frameSet position v = withFrameSlot position (packTagged v)
 
 packTagged :: Value -> Word64
 packTagged v = case v of
@@ -615,7 +613,7 @@ arityOf = go 0
 
 -- *** Leaving frames ***
 
-resume :: Store m -> Frame -> Values -> Values -> [Instruction] -> Control -> StepResult m
+resume :: Store m -> Frame -> Values -> Values -> Code -> Control -> StepResult m
 resume store locals vs below cont rest = Stepped (Config store locals (appendValues vs below) cont rest)
 
 popControl :: Store m -> Frame -> Values -> Control -> StepResult m
@@ -642,17 +640,20 @@ returnUnwind store locals vs (BlockLabel _ _ rest) = returnUnwind store locals v
 returnUnwind store locals vs (LoopLabel _ _ _ rest) = returnUnwind store locals vs rest
 
 run :: Funcs -> Config m -> Either Failure Values
-run funcs config = case step funcs config of
-    Left failure -> Left failure
-    Right (Done _ vs) -> Right vs
-    Right Wedged -> Left Stuck
-    Right (Stepped next) -> run funcs next
+run funcs = loop
+  where
+    -- As in 'Runtime.Interpreter.runKeeping': the functions are not an argument of the loop.
+    loop config = case step funcs config of
+        Left failure -> Left failure
+        Right (Done _ vs) -> Right vs
+        Right Wedged -> Left Stuck
+        Right (Stepped next) -> loop next
 
 -- *** Erasure ***
 
-eraseExpr :: Expr m f l p q s o -> [Instruction]
-eraseExpr INil = []
-eraseExpr (instr :. rest) = eraseInstr instr : eraseExpr rest
+eraseExpr :: Expr m f l p q s o -> Code
+eraseExpr INil = NoMore
+eraseExpr (instr :. rest) = eraseInstr instr :- eraseExpr rest
 
 -- | Whether a memory is the first of its module with 32-bit addresses: the one the twin has.
 first32 :: MemoryRef at ms -> Bool
@@ -829,7 +830,8 @@ forced funcs = go funcs `seq` funcs
     go NoFuncs = ()
     go (FuncCons (WasmFunction declared body) rest) = length declared `seq` body' body `seq` go rest
     go (FuncCons HostFunction rest) = go rest
-    body' = foldr (\i acc -> instruction i `seq` acc) ()
+    body' NoMore = ()
+    body' (i :- more) = instruction i `seq` body' more
     instruction i = case i of
         EBlock _ b -> body' b
         ELoop _ b -> body' b

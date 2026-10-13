@@ -4,6 +4,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StrictData #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
 
@@ -15,6 +16,13 @@
     'Expr' is a sequence of them.
 
 The @Raw@ prefix is the only thing distinguishing the two.
+
+Every field in this module is strict (@StrictData@), and so are the fields of the witnesses an
+instruction carries ("Validation.Shape", "Syntax.TypesIFC"). A typed instruction therefore
+exists only with its witnesses built: one cannot be made with an undefined proof and then run
+by a machine that never looks at the proof. It is also what the machine's speed asks for: it
+takes an instruction apart without first checking whether each field has been evaluated,
+which was a sixth of the instructions it executed.
 -}
 module Syntax.Instructions (
     -- * Untyped (decoded) AST
@@ -389,12 +397,35 @@ data
         (stackIn :: [LabelledValType])
         (stackOut :: [LabelledValType])
     where
-    {- Constants. The level @lv@ is free: whoever builds the instruction says how secret the
-       literal is, and the validator says 'Low. -}
+    {- The six instructions that compiled code runs most come first: GHC puts the first six
+       constructors of a type in the tag bits of a pointer, and the machine reaches their
+       clauses by one jump on those bits; the others cost a read of the constructor's number
+       and a second jump. Their rules are described with their groups below: locals, constants,
+       numeric instructions and memory. -}
+    ILocalGet :: LocalRef (t ':~ lv) (FrameLocals f) -> Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck s ((t ':~ Join pc lv) ': s)
     IConst :: forall lv t m f l pc pcs s. IsNum t -> HostType t -> Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck s ((t ':~ Join pc lv) ': s)
-    {- Numeric: both operands and the result share the value type, and the result is as secret
-       as the more secret operand (and the pc). -}
+    ILocalSet ::
+        FlowsInto pc lvar ->
+        FlowsInto lv lvar ->
+        LocalRef (t ':~ lvar) (FrameLocals f) ->
+        Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck ((t ':~ lv) ': s) s
+    ILocalTee ::
+        FlowsInto pc lvar ->
+        FlowsInto lv lvar ->
+        LocalRef (t ':~ lvar) (FrameLocals f) ->
+        Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck ((t ':~ lv) ': s) ((t ':~ lv) ': s)
     IAdd :: IsNum t -> Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck ((t ':~ lv) ': (t ':~ lv') ': s) ((t ':~ Join pc (Join lv lv')) ': s)
+    ILoad ::
+        Sing (level :: SecLevel) ->
+        AccessSite ->
+        IsNum t ->
+        MemArg ->
+        MemoryRef at (ModuleMems m) ->
+        Instr m f l (pc ': pcs) (pc ': pcs) ('BytesBelow level) ((AddrVal at ':~ la) ': s) ((t ':~ Join pc (Join la level)) ': s)
+    {- Constants. The level @lv@ is free: whoever builds the instruction says how secret the
+       literal is, and the validator says 'Low ('IConst', above). -}
+    {- Numeric: both operands and the result share the value type, and the result is as secret
+       as the more secret operand (and the pc). 'IAdd' is above. -}
     ISub :: IsNum t -> Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck ((t ':~ lv) ': (t ':~ lv') ': s) ((t ':~ Join pc (Join lv lv')) ': s)
     IMul :: IsNum t -> Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck ((t ':~ lv) ': (t ':~ lv') ': s) ((t ':~ Join pc (Join lv lv')) ': s)
     IDiv :: NumWithSign t -> Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck ((t ':~ lv) ': (t ':~ lv') ': s) ((t ':~ Join pc (Join lv lv')) ': s)
@@ -567,18 +598,8 @@ data
         Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck (('I32 ':~ lc) ': (t ':~ l1) ': (t ':~ l2) ': s) ((t ':~ Join pc (Join lc (Join l1 l2))) ': s)
     {- Locals (from the @frame@) & globals (from the @mod@). A variable has one level, declared
        with it and fixed for good. A read yields a value at that level (and the pc). A write
-       takes two witnesses: the pc flows into the variable's level, and so does the value. -}
-    ILocalGet :: LocalRef (t ':~ lv) (FrameLocals f) -> Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck s ((t ':~ Join pc lv) ': s)
-    ILocalSet ::
-        FlowsInto pc lvar ->
-        FlowsInto lv lvar ->
-        LocalRef (t ':~ lvar) (FrameLocals f) ->
-        Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck ((t ':~ lv) ': s) s
-    ILocalTee ::
-        FlowsInto pc lvar ->
-        FlowsInto lv lvar ->
-        LocalRef (t ':~ lvar) (FrameLocals f) ->
-        Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck ((t ':~ lv) ': s) ((t ':~ lv) ': s)
+       takes two witnesses: the pc flows into the variable's level, and so does the value.
+       'ILocalGet', 'ILocalSet' and 'ILocalTee' are above. -}
     IGlobalGet :: Elem ('GlobalType mut (t ':~ lv)) (ModuleGlobals m) -> Instr m f l (pc ': pcs) (pc ': pcs) 'NoDynamicCheck s ((t ':~ Join pc lv) ': s)
     IGlobalSet ::
         FlowsInto pc lvar ->
@@ -598,14 +619,8 @@ data
        instruction: the machine puts it in front of what follows a construct that has to
        restore them, with the values it recorded at the construct's start. -}
     IRequireRestored :: RecordedGlobals (ModuleGlobals m) -> Instr m f l p p 'NoDynamicCheck s s
-    {- Memory (a memory of the module, named by a 'MemoryRef'): the same rules as the narrow forms. -}
-    ILoad ::
-        Sing (level :: SecLevel) ->
-        AccessSite ->
-        IsNum t ->
-        MemArg ->
-        MemoryRef at (ModuleMems m) ->
-        Instr m f l (pc ': pcs) (pc ': pcs) ('BytesBelow level) ((AddrVal at ':~ la) ': s) ((t ':~ Join pc (Join la level)) ': s)
+    {- Memory (a memory of the module, named by a 'MemoryRef'): the same rules as the narrow
+       forms. 'ILoad' is above. -}
     IStore ::
         Sing (level :: SecLevel) ->
         FlowsInto (Join pc (Join la lv)) level ->
@@ -839,8 +854,8 @@ data
     where
     INil :: Expr m f l p p s s
     (:.) ::
-        Instr m f l p1 p2 check s1 s2 ->
-        Expr m f l p2 p3 s2 s3 ->
+        !(Instr m f l p1 p2 check s1 s2) ->
+        !(Expr m f l p2 p3 s2 s3) ->
         Expr m f l p1 p3 s1 s3
 
 infixr 5 :.

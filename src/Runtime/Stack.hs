@@ -1,12 +1,14 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE MagicHash #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeAbstractions #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UnboxedTuples #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 {- | Type-indexed runtime structures for the intrinsically-typed interpreter: the value
@@ -24,6 +26,12 @@ module Runtime.Stack (
     ValueStack (..),
     LocalSpaceInst,
     noLocals,
+
+    -- * A frame's words, for the benchmarks' erased copy of the machine
+    Frame,
+    zeroFrame,
+    frameSlot,
+    withFrameSlot,
     GlobalSpaceInst (..),
     MemSpaceInst (..),
     TableSpaceInst (..),
@@ -60,19 +68,21 @@ module Runtime.Stack (
     setFirstMem,
 ) where
 
-import Control.Monad.ST (ST)
+import Control.Monad.ST (runST)
+import Data.Bits (shiftL, shiftR, (.&.))
 import Data.ByteString (ByteString)
 import Data.IntMap.Strict (IntMap)
 import Data.IntMap.Strict qualified as IntMap
 import Data.Kind (Type)
-import Data.Vector.Unboxed qualified as UV
-import Data.Vector.Unboxed.Mutable qualified as MV
 import Data.Word (Word64)
+import GHC.Exts (ByteArray#, Int (I#), andI#, copyByteArray#, indexWord64Array#, newByteArray#, setByteArray#, unsafeFreezeByteArray#, writeWord64Array#)
 import GHC.Float (castDoubleToWord64, castFloatToWord32, castWord32ToFloat, castWord64ToDouble)
+import GHC.ST (ST (ST))
+import GHC.Word (Word64 (W64#))
 
 import Data.List.Singletons (type (++))
 import Data.Singletons.Base.TH (SList (SCons, SNil), Sing)
-import Runtime.MemInst (MemInst, modifiedCopy)
+import Runtime.MemInst (MemInst)
 import Runtime.TableInst (FunctionDirectory, TableInst, functionDirectory)
 import Syntax.Immediates (HostType, Reference (..), Vector128 (..), referenceTo, referent)
 import Syntax.Types
@@ -101,23 +111,156 @@ infixr 5 :#
 {- | The instance of a function activation's local index space: its locals' current values,
   indexed by their types.
 
-  Stored flat in an unboxed vector of machine words, one per local and two for a 128-bit
-  vector, and reached through a 'Validation.Ref.LocalRef' that elaboration resolved from the
-  local's witness: its place, and its type, which says how to read the words back. Every other
-  WebAssembly value fits in 64 bits, so the word /is/ the value, bit for bit (a float's NaN
-  payload survives the round trip). A cons list indexed by the witness itself, the obvious
-  typed encoding, makes every access walk to its local and every @local.set@ rebuild the cells
-  in front of it (TODO.md §I, E2, E2b).
+  Stored as machine words, one per local and two for a 128-bit vector, and reached through a
+  'Validation.Ref.LocalRef' that elaboration resolved from the local's witness: its place, and
+  its type, which says how to read the words back. Every other WebAssembly value fits in 64
+  bits, so the word /is/ the value, bit for bit (a float's NaN payload survives the round
+  trip). A cons list indexed by the witness itself, the obvious typed encoding, makes every
+  access walk to its local and every @local.set@ rebuild the cells in front of it (TODO.md §I,
+  E2, E2b).
 
-  The type is abstract, with one invariant: the vector holds exactly the words the types of
+  The words are kept eight to a group ('Frame'), and a write copies the group it writes into
+  and nothing else. Kept in one vector, the whole frame was copied by every @local.set@ and
+  @local.tee@, which was most of the 220 machine instructions that either cost.
+
+  The type is abstract, with one invariant: the frame has room for the words the types of
   @ls@ take ('wordsIn'). 'defaultLocals' and 'seedLocals' establish it and 'setLocal' preserves
   it, being the only ways to make or change a frame; and a reference's place, with the words
-  of its type, is below that length because its witness proves the local exists and
-  'Validation.Ref.resolveLocal' counts the words before it the same way. The two together
-  license the unchecked read and write.
+  of its type, is below that number because its witness proves the local exists and
+  'Validation.Ref.resolveLocal' counts the words before it the same way.
 -}
 type LocalSpaceInst :: [LabelledValType] -> Type
-newtype LocalSpaceInst ls = LocalSpaceInst (UV.Vector Word64)
+newtype LocalSpaceInst ls = LocalSpaceInst Frame
+
+{- | Eight words of a frame, in 64 bytes. The size is a constant, so GHC allocates a group
+  where it is made, by moving the heap pointer, and copies one with eight moves; an array of
+  a size known only at run time is allocated and copied by calls into the runtime system.
+
+  The primitive reads and writes below check no index. They take the low three bits of the
+  place they are given, so they stay inside the 64 bytes whatever the place is.
+-}
+data Slots = Slots ByteArray#
+
+-- | Eight words of zero: how every local that is not a parameter starts, and shared by all frames.
+{-# NOINLINE zeroSlots #-}
+zeroSlots :: Slots
+zeroSlots =
+    runST
+        ( ST
+            ( \s0 -> case newByteArray# 64# s0 of
+                (# s1, new #) -> case setByteArray# new 0# 64# 0# s1 of
+                    s2 -> case unsafeFreezeByteArray# new s2 of
+                        (# s3, frozen #) -> (# s3, Slots frozen #)
+            )
+        )
+
+-- | The word at a place, which is counted within the frame: its low three bits say which of the eight.
+{-# INLINE slotAt #-}
+slotAt :: Slots -> Int -> Word64
+slotAt (Slots held) (I# place) = W64# (indexWord64Array# held (place `andI#` 7#))
+
+-- | A copy of the eight words with one replaced.
+{-# INLINE withSlotAt #-}
+withSlotAt :: Int -> Word64 -> Slots -> Slots
+withSlotAt (I# place) (W64# word) (Slots old) =
+    runST
+        ( ST
+            ( \s0 -> case newByteArray# 64# s0 of
+                (# s1, new #) -> case copyByteArray# old 0# new 0# 64# s1 of
+                    s2 -> case writeWord64Array# new (place `andI#` 7#) word s2 of
+                        s3 -> case unsafeFreezeByteArray# new s3 of
+                            (# s4, frozen #) -> (# s4, Slots frozen #)
+            )
+        )
+
+{- | The words of a frame, in groups of eight. A frame of at most 8 words is one group, and
+  one of at most 64 is eight groups held side by side: a read finds its group by a jump, and a
+  write copies that group and the eight pointers. A larger frame is eight frames of an eighth
+  of its size, and so on: a write copies one group and eight pointers for each level. The
+  parts that were never written are one shared group of zeros.
+-}
+data Frame
+    = OneGroup {-# UNPACK #-} !Slots
+    | EightGroups
+        {-# UNPACK #-} !Slots
+        {-# UNPACK #-} !Slots
+        {-# UNPACK #-} !Slots
+        {-# UNPACK #-} !Slots
+        {-# UNPACK #-} !Slots
+        {-# UNPACK #-} !Slots
+        {-# UNPACK #-} !Slots
+        {-# UNPACK #-} !Slots
+    | -- | eight frames of @2 ^ shift@ words each
+      EightFrames !Int !Frame !Frame !Frame !Frame !Frame !Frame !Frame !Frame
+
+-- | A frame of so many words, all zero.
+zeroFrame :: Int -> Frame
+zeroFrame size
+    | size <= 8 = OneGroup zeroSlots
+    | otherwise = eightOf 3 (OneGroup zeroSlots)
+  where
+    -- Eight of a part that has @2 ^ shift@ words, and eight of that, until the size is reached.
+    eightOf :: Int -> Frame -> Frame
+    eightOf shift part
+        | size <= 8 `shiftL` shift = whole
+        | otherwise = eightOf (shift + 3) whole
+      where
+        whole = case part of
+            OneGroup _ -> EightGroups zeroSlots zeroSlots zeroSlots zeroSlots zeroSlots zeroSlots zeroSlots zeroSlots
+            _ -> EightFrames shift part part part part part part part part
+
+-- | The word at a place of a frame that has it.
+{-# INLINE frameSlot #-}
+frameSlot :: Frame -> Int -> Word64
+frameSlot frame place = case frame of
+    OneGroup only -> slotAt only place
+    EightGroups g0 g1 g2 g3 g4 g5 g6 g7 -> case (place `shiftR` 3) .&. 7 of
+        0 -> slotAt g0 place
+        1 -> slotAt g1 place
+        2 -> slotAt g2 place
+        3 -> slotAt g3 place
+        4 -> slotAt g4 place
+        5 -> slotAt g5 place
+        6 -> slotAt g6 place
+        _ -> slotAt g7 place
+    EightFrames {} -> slotOfLargeFrame frame place
+
+-- | 'frameSlot' for a frame of more than 64 words.
+slotOfLargeFrame :: Frame -> Int -> Word64
+slotOfLargeFrame frame place = case frame of
+    EightFrames shift f0 f1 f2 f3 f4 f5 f6 f7 -> case (place `shiftR` shift) .&. 7 of
+        0 -> slotOfLargeFrame f0 place
+        1 -> slotOfLargeFrame f1 place
+        2 -> slotOfLargeFrame f2 place
+        3 -> slotOfLargeFrame f3 place
+        4 -> slotOfLargeFrame f4 place
+        5 -> slotOfLargeFrame f5 place
+        6 -> slotOfLargeFrame f6 place
+        _ -> slotOfLargeFrame f7 place
+    _ -> frameSlot frame place
+
+-- | A frame with the word at one of its places replaced.
+withFrameSlot :: Int -> Word64 -> Frame -> Frame
+withFrameSlot !place !word !frame = case frame of
+    OneGroup only -> OneGroup (withSlotAt place word only)
+    EightGroups g0 g1 g2 g3 g4 g5 g6 g7 -> case (place `shiftR` 3) .&. 7 of
+        0 -> EightGroups (withSlotAt place word g0) g1 g2 g3 g4 g5 g6 g7
+        1 -> EightGroups g0 (withSlotAt place word g1) g2 g3 g4 g5 g6 g7
+        2 -> EightGroups g0 g1 (withSlotAt place word g2) g3 g4 g5 g6 g7
+        3 -> EightGroups g0 g1 g2 (withSlotAt place word g3) g4 g5 g6 g7
+        4 -> EightGroups g0 g1 g2 g3 (withSlotAt place word g4) g5 g6 g7
+        5 -> EightGroups g0 g1 g2 g3 g4 (withSlotAt place word g5) g6 g7
+        6 -> EightGroups g0 g1 g2 g3 g4 g5 (withSlotAt place word g6) g7
+        _ -> EightGroups g0 g1 g2 g3 g4 g5 g6 (withSlotAt place word g7)
+    EightFrames shift f0 f1 f2 f3 f4 f5 f6 f7 -> case (place `shiftR` shift) .&. 7 of
+        0 -> EightFrames shift (withFrameSlot place word f0) f1 f2 f3 f4 f5 f6 f7
+        1 -> EightFrames shift f0 (withFrameSlot place word f1) f2 f3 f4 f5 f6 f7
+        2 -> EightFrames shift f0 f1 (withFrameSlot place word f2) f3 f4 f5 f6 f7
+        3 -> EightFrames shift f0 f1 f2 (withFrameSlot place word f3) f4 f5 f6 f7
+        4 -> EightFrames shift f0 f1 f2 f3 (withFrameSlot place word f4) f5 f6 f7
+        5 -> EightFrames shift f0 f1 f2 f3 f4 (withFrameSlot place word f5) f6 f7
+        6 -> EightFrames shift f0 f1 f2 f3 f4 f5 (withFrameSlot place word f6) f7
+        _ -> EightFrames shift f0 f1 f2 f3 f4 f5 f6 (withFrameSlot place word f7)
 
 -- | The instance of a module's global index space: the globals' current values, by type.
 type GlobalSpaceInst :: [LabelledGlobalType] -> Type
@@ -170,62 +313,53 @@ splitStack (ACons w) (x :# vs) = case splitStack w vs of (upper, lower) -> (x :#
 -}
 seedLocals :: SegmentFlows args ps -> Sing ps -> Sing declared -> ValueStack args -> LocalSpaceInst (ReverseOnto ps declared)
 seedLocals flows paramTypes declaredTypes args =
-    LocalSpaceInst (UV.create frame)
+    LocalSpaceInst (withArguments arity flows paramTypes args (zeroFrame (arity + wordsIn declaredTypes)))
   where
     arity = wordsIn paramTypes
-    frame :: ST s (MV.MVector s Word64)
-    frame = do
-        slots <- MV.replicate (arity + wordsIn declaredTypes) 0
-        writeArguments slots arity flows paramTypes args
-        pure slots
 
-{- | Write a stack's values into consecutive slots, the top one ending just below @end@ and
-  each deeper one just below it; a vector takes two slots, its low word first. The arguments
-  arrive at the levels the caller had ('SegmentFlows' says they may flow into the
+{- | A frame with a stack's values written into consecutive places, the top one ending just
+  below @end@ and each deeper one just below it; a vector takes two places, its low word first.
+  The arguments arrive at the levels the caller had ('SegmentFlows' says they may flow into the
   parameters'); a level is nothing at run time, so the words go in as they are.
 -}
-writeArguments :: MV.MVector s Word64 -> Int -> SegmentFlows args ps -> Sing (ps :: [LabelledValType]) -> ValueStack args -> ST s ()
-writeArguments _ _ NoValuesFlow SNil VNil = pure ()
-writeArguments _ _ SegmentAsItIs SNil VNil = pure ()
-writeArguments slots end flows@(ValueFlows _ _) types@(SCons _ _) stack@(_ :# _) = writeArgument slots end (flowsOfRest flows) types stack
-writeArguments slots end SegmentAsItIs types@(SCons _ _) stack@(_ :# _) = writeArgument slots end SegmentAsItIs types stack
+withArguments :: Int -> SegmentFlows args ps -> Sing (ps :: [LabelledValType]) -> ValueStack args -> Frame -> Frame
+withArguments _ NoValuesFlow SNil VNil frame = frame
+withArguments _ SegmentAsItIs SNil VNil frame = frame
+withArguments end flows@(ValueFlows _ _) types@(SCons _ _) stack@(_ :# _) frame = withArgument end (flowsOfRest flows) types stack frame
+withArguments end SegmentAsItIs types@(SCons _ _) stack@(_ :# _) frame = withArgument end SegmentAsItIs types stack frame
 
--- | 'writeArguments' for a segment that has a first value: that value, then the rest.
-writeArgument :: MV.MVector s Word64 -> Int -> SegmentFlows args ps -> Sing ((t ':~ lp) ': ps) -> ValueStack ((t ':~ la) ': args) -> ST s ()
-writeArgument slots end flows (SCons (st :%~ _) rest) (x :# xs) = case st of
+-- | 'withArguments' for a segment that has a first value: that value, then the rest.
+withArgument :: Int -> SegmentFlows args ps -> Sing ((t ':~ lp) ': ps) -> ValueStack ((t ':~ la) ': args) -> Frame -> Frame
+withArgument end flows (SCons (st :%~ _) rest) (x :# xs) !frame = case st of
     SV128 -> case x of
-        Vector128 low high -> do
-            MV.unsafeWrite slots (end - 2) low
-            MV.unsafeWrite slots (end - 1) high
-            writeArguments slots (end - 2) flows rest xs
-    _ -> do
-        MV.unsafeWrite slots (end - 1) (packValue st x)
-        writeArguments slots (end - 1) flows rest xs
+        Vector128 low high -> withArguments (end - 2) flows rest xs (withFrameSlot (end - 1) high (withFrameSlot (end - 2) low frame))
+    _ -> withArguments (end - 1) flows rest xs (withFrameSlot (end - 1) (packValue st x) frame)
 
 {- | A locals frame of the given shape, every slot zero (how declared locals start a call).
   Zero is the all-zero word at every value type, the floats' @+0.0@ included.
 -}
 defaultLocals :: Sing (ls :: [LabelledValType]) -> LocalSpaceInst ls
-defaultLocals types = LocalSpaceInst (UV.replicate (wordsIn types) 0)
+defaultLocals types = LocalSpaceInst (zeroFrame (wordsIn types))
 
 -- | The frame of a function with neither parameters nor declared locals.
 noLocals :: LocalSpaceInst '[]
 noLocals = defaultLocals SNil
 
 -- | Read a local: its reference says where it is and how to read the word (or two) found there.
+{-# INLINE getLocal #-}
 getLocal :: LocalRef (t ':~ l) ls -> LocalSpaceInst ls -> HostType t
-getLocal ref (LocalSpaceInst values) = case localType ref of
-    SV128 -> Vector128 (UV.unsafeIndex values at) (UV.unsafeIndex values (at + 1))
-    ty -> unpackValue ty (UV.unsafeIndex values at)
+getLocal ref (LocalSpaceInst frame) = case localType ref of
+    SV128 -> Vector128 (frameSlot frame at) (frameSlot frame (at + 1))
+    ty -> unpackValue ty (frameSlot frame at)
   where
     at = localPosition ref
 
--- | Write a local: a copy of the frame with its word (or two) replaced, so of the same length.
+-- | Write a local: the frame with its word (or two) replaced.
 setLocal :: LocalRef (t ':~ l) ls -> HostType t -> LocalSpaceInst ls -> LocalSpaceInst ls
-setLocal ref v (LocalSpaceInst values) = case localType ref of
+setLocal ref v (LocalSpaceInst frame) = case localType ref of
     SV128 -> case v of
-        Vector128 low high -> LocalSpaceInst (modifiedCopy (\slots -> MV.unsafeWrite slots at low >> MV.unsafeWrite slots (at + 1) high) values)
-    ty -> LocalSpaceInst (modifiedCopy (\slots -> MV.unsafeWrite slots at (packValue ty v)) values)
+        Vector128 low high -> LocalSpaceInst (withFrameSlot (at + 1) high (withFrameSlot at low frame))
+    ty -> LocalSpaceInst (withFrameSlot at (packValue ty v) frame)
   where
     at = localPosition ref
 
@@ -306,13 +440,25 @@ data MemSpaceInst ms where
     MNil :: MemSpaceInst '[]
     MCons :: !(MemInst m) -> !(MemSpaceInst ms) -> MemSpaceInst (m ': ms)
 
+-- The first memory, which is the one almost every load and store names, is found where it is
+-- asked for, without a call.
+{-# INLINE getMem #-}
 getMem :: Elem m ms -> MemSpaceInst ms -> MemInst m
 getMem Here (MCons mem _) = mem
-getMem (There ix) (MCons _ rest) = getMem ix rest
+getMem (There ix) (MCons _ rest) = getLaterMem ix rest
 
+getLaterMem :: Elem m ms -> MemSpaceInst ms -> MemInst m
+getLaterMem Here (MCons mem _) = mem
+getLaterMem (There ix) (MCons _ rest) = getLaterMem ix rest
+
+{-# INLINE setMem #-}
 setMem :: Elem m ms -> MemInst m -> MemSpaceInst ms -> MemSpaceInst ms
 setMem Here mem (MCons _ rest) = MCons mem rest
-setMem (There ix) mem (MCons other rest) = MCons other (setMem ix mem rest)
+setMem (There ix) mem (MCons other rest) = MCons other (setLaterMem ix mem rest)
+
+setLaterMem :: Elem m ms -> MemInst m -> MemSpaceInst ms -> MemSpaceInst ms
+setLaterMem Here mem (MCons _ rest) = MCons mem rest
+setLaterMem (There ix) mem (MCons other rest) = MCons other (setLaterMem ix mem rest)
 
 firstMem :: MemSpaceInst (m ': ms) -> MemInst m
 firstMem (MCons mem _) = mem

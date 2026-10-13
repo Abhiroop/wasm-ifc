@@ -1,11 +1,11 @@
 # Bytes allocated by each tripwire workload; written by bench/tripwire.py --record.
-# build: 71cedde-dirty, 2026-10-13
-fib 1874268776
-loop-arith 544303008
-locals-16 768274176
-call-indirect 596344200
-labels-16 556354432
-memory-random 1124608256
-coremark-100 5682977392
-pb-2mm-small 965427024
-pb-seidel-2d-small 2933658880
+# build: 48ac063-dirty, 2026-10-13
+fib 1895808432
+loop-arith 576302256
+locals-16 704274200
+call-indirect 632343176
+labels-16 588353448
+memory-random 1198179632
+coremark-100 5380902600
+pb-2mm-small 926613696
+pb-seidel-2d-small 2797993952

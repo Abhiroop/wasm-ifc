@@ -272,12 +272,23 @@ wordInBounds mem addr count
     | otherwise = foldr (.|.) 0 [fromIntegral b `shiftL` (8 * i) | (i, b) <- zip [0 ..] (bytesAt mem addr count)]
   where
     (chunkIx, offset) = addr `quotRem` chunkSize
-    assemble stored = go 0 0
+    -- The widths the instructions ask for are read without a loop; the bytes are inside the
+    -- chunk, which is 'chunkSize' long, so no index is checked again.
+    assemble stored = case count of
+        8 -> low4 .|. (high4 `shiftL` 32)
+        4 -> low4
+        2 -> byte 0 .|. (byte 1 `shiftL` 8)
+        1 -> byte 0
+        _ -> go 0 0
       where
+        byte :: Int -> Word64
+        byte i = fromIntegral (UV.unsafeIndex stored (offset + i))
+        low4 = byte 0 .|. (byte 1 `shiftL` 8) .|. (byte 2 `shiftL` 16) .|. (byte 3 `shiftL` 24)
+        high4 = byte 4 .|. (byte 5 `shiftL` 8) .|. (byte 6 `shiftL` 16) .|. (byte 7 `shiftL` 24)
         go :: Int -> Word64 -> Word64
         go !i !acc
             | i == count = acc
-            | otherwise = go (i + 1) (acc .|. (fromIntegral (fromMaybe 0 (stored UV.!? (offset + i))) `shiftL` (8 * i)))
+            | otherwise = go (i + 1) (acc .|. (byte i `shiftL` (8 * i)))
 
 {- | Write the low @count@ bytes (1 to 8) of @word@, little-endian, at @addr@; 'Nothing' if the
   range falls outside the memory. A word inside one chunk copies that chunk once; a word
@@ -296,7 +307,18 @@ storeWordAt level mem addr count word
   where
     (chunkIx, offset) = addr `quotRem` chunkSize
     current = IntMap.findWithDefault zeroChunk chunkIx mem.chunks
-    written = modifiedCopy (\slots -> forM_ [0 .. count - 1] (\i -> MV.write slots (offset + i) (fromIntegral (word `shiftR` (8 * i))))) current
+    -- As for a read: the usual widths without a loop, and no index checked again, since the
+    -- bytes are inside the chunk (the guard above).
+    written = modifiedCopy write current
+    write :: MV.MVector s Word8 -> ST s ()
+    write slots = case count of
+        8 -> put 0 >> put 1 >> put 2 >> put 3 >> put 4 >> put 5 >> put 6 >> put 7
+        4 -> put 0 >> put 1 >> put 2 >> put 3
+        2 -> put 0 >> put 1
+        1 -> put 0
+        _ -> forM_ [0 .. count - 1] put
+      where
+        put i = MV.unsafeWrite slots (offset + i) (fromIntegral (word `shiftR` (8 * i)))
 
 {- | Read @count@ bytes starting at effective byte address @addr@, in ascending order.
   'Nothing' if the range falls outside the memory. The address is an 'Int' (the caller

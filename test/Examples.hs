@@ -222,6 +222,8 @@ secretPlusPublic = secret :. one :. IAdd I32IsNum :. INil
   public local reveals the condition, even though the value written is public. Inside the
   @if@ the pc is 'High, so 'ILocalSet' asks for a proof that 'High flows into 'Low, which does
   not exist: the only way to write the body below is with a hole where that proof should go.
+  The fields of an instruction are strict, so the hole is found as soon as the program is
+  built: the test expects its error, and nothing can run the program.
 
   A store under the same condition is checked the same way ('secretStore' below shows the
   store rules); a call is not yet, since calls are only allowed at a public pc until function

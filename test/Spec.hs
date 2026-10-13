@@ -9,7 +9,7 @@ module Main (main) where
 
 import Control.Concurrent (forkIO, threadDelay)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
-import Control.Exception (IOException, try)
+import Control.Exception (IOException, evaluate, try)
 import Control.Monad (forM_, void)
 import Data.Bifunctor (first)
 import Data.Bits (xor, (.&.), (.|.))
@@ -71,7 +71,10 @@ spec = do
         it "an endless loop is still running when the step budget is spent" $ runSpinFor 1000 `shouldBe` Right True
         it "increment 41 = 42" $ runIncrement 41 `shouldBe` Right 42
         it "a secret plus a public value is typed secret (the first labelled program)" $ labelledSumLength `shouldBe` 3
-        it "a public write under a secret condition needs a proof that does not exist" $ leakLength `shouldBe` 1
+        -- The fields of an instruction are strict, so the hole left for the proof is found when
+        -- the program is built, before anything can run it.
+        it "a public write under a secret condition needs a proof that does not exist" $
+            evaluate leakLength `shouldThrow` errorCall "unreachable: a secret pc never flows into a public local"
         it "a secret stored into memory declares its bytes secret, statically" $ secretStoreLength `shouldBe` 3
 
     describe "elaborate + run (built from RawModule)" $ do

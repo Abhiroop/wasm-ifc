@@ -6,6 +6,7 @@
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneKindSignatures #-}
+{-# LANGUAGE StrictData #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -122,7 +123,6 @@ data TableReach l labels pcs pcs' reach where
 -- | A target within a table's reach, as the label in the whole context it names.
 withinReach :: TableReach l labels pcs pcs' reach -> Elem rs reach -> Elem rs labels
 withinReach ReachesHere Here = Here
-withinReach ReachesHere (There beyond) = case beyond of {}
 withinReach (ReachesThere _) Here = Here
 withinReach (ReachesThere reach) (There ix) = There (withinReach reach ix)
 
