@@ -75,9 +75,7 @@ RULES = [
     ("load", "`ILoad`, `ILoadN`", "T+-Load", "the level is the load's declaration; the check is in the semantics"),
     ("store", "`IStore`, `IStoreN`", "T+-Store", "the level is at least the join, where the implementation takes the join"),
     ("fill", "`IMemFill`", "T+-Memory-Fill", ""),
-    ("copy", "`IMemCopy`", "T+-Memory-Copy", ""),
-    ("copyTo", "`IMemCopy` with two memories", "T+-Memory-Copy", "from the memory to the second one"),
-    ("copyFrom", "`IMemCopy` with two memories", "T+-Memory-Copy", "from the second memory"),
+    ("copy", "`IMemCopy`", "T+-Memory-Copy", "within a memory or between two; the rule does not depend on which"),
     ("memInit", "`IMemInit`", "as T+-Memory-Copy", ""),
     ("dataDrop", "`IDataDrop`", "in the text: no premise", ""),
     ("memSize", "`IMemSize`", "as T+-Const", ""),
@@ -222,8 +220,8 @@ call through a reference ask that of the type they expect, which is where the pr
 
 ## 4. States and semantics
 
-`State`, {at("Defs", r"^structure State")}: the locals, the globals, the memory as bytes with a
-level each, its size and limit, a second memory of a fixed size, the tables, each with its size and limit, the element segments, the levels of the host's channels (a stream, a directory, a file), the descriptor table, the
+`State`, {at("Defs", r"^structure State")}: the locals, the globals, the memories as bytes with a
+level each, the size and the limit of each memory, the tables, each with its size and limit, the element segments, the levels of the host's channels (a stream, a directory, a file), the descriptor table, the
 names of the files in each directory, what
 was written to each and what is left to read from each, the data segments, and the
 exceptions kept for the references to them.
@@ -285,8 +283,8 @@ text:
 | The paper's clause | `LowEq` |
 |---|---|
 | (i) every global labelled public | the clause on `glob` |
-| (ii) every byte labelled public in both states | the clause on `mem` and `lab`, and the one on `mem2` and `lab2` for the second memory |
-| (iii) the size and the limit of the memory | `s.size = t.size`, `s.cap = t.cap`; and `s.size2 = t.size2`, the second memory's size, which is fixed |
+| (ii) every byte labelled public in both states | the clause on `mem` and `lab`, for every memory |
+| (iii) the size and the limit of the memory | `s.size = t.size`, `s.cap = t.cap`: the sizes and the limits of all memories, as functions of the memory's index |
 | (iv) the table, if its label is public | `∀ x, C.table x = L → s.sameTable t x`: for every table, the entries, the size and the limit ({at("Defs", r"^def State.sameTable")}) |
 | (v) the descriptors, the labels of the channels, and the names of the files in every directory | `s.chan = t.chan` and `s.sameHost t` ({at("Defs", r"^def State.sameHost")}): the descriptor table `fdt`, the names `names`, and `file`, which gives a file of a directory its channel |
 | (vi) the output written to and the unread input of every public channel | the clause on `out` and `inp` |
@@ -306,7 +304,8 @@ text:
   exception, so it holds there.
 
 In the other direction the paper's definition lacks nothing of substance, with two remarks.
-Clauses (ii) and (iii) speak of "the memory", where the core has two: read them for both.
+Clauses (ii) and (iii) speak of "the memory", where the core has any number: read them for
+each.
 And clause (v) includes `file`, the function from a directory's channel and a name to the
 file's channel, which the paper's wording covers as part of the descriptors' state.
 
@@ -426,8 +425,7 @@ nothing follows the `br_table` in its block.
 
 More than one value type, and so the numeric and vector instructions as such (the operations
 that trap are in the core, as partial functions); 64-bit
-memories, more than two memories, and every instruction on the second memory but
-`memory.copy` to and from it;
+memories and tables;
 linking; the WASI calls other than one that reads, one that writes and one that opens a file
 in a directory, the error codes but the one for a missing file, and sockets; local variables split into webs and the inference of labels, which
 happen before typing; declassification.

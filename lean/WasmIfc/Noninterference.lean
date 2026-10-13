@@ -761,11 +761,11 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
             · have hpcH := hl hlH
               subst hpcH
               exact .inr (hiUpTo_zero_cons _)
-    | load w lm ht' =>
+    | load m w lm ht' =>
       cases he0 with
-      | load _ _ hsz0 hlab0 he0' =>
+      | load _ _ _ hsz0 hlab0 he0' =>
         cases he1 with
-        | load _ _ hsz1 hlab1 he1' =>
+        | load _ _ _ hsz1 hlab1 he1' =>
           cases hσ with
           | cons ha hσ' =>
             refine ih _ (by omega) hF ht' he0' he1' (.cons (fun hl => ?_) hσ') hs hp
@@ -776,12 +776,12 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
             subst hlm
             -- each byte passed the check in both runs, so each is public in both
             exact word_eq _ _ (fun i hi =>
-              hs.2.2.1 _ (Lab.eq_L_of_le (hlab0 i hi) rfl) (Lab.eq_L_of_le (hlab1 i hi) rfl))
-    | store w lm hle ht' =>
+              hs.2.2.1 _ _ (Lab.eq_L_of_le (hlab0 i hi) rfl) (Lab.eq_L_of_le (hlab1 i hi) rfl))
+    | store m w lm hle ht' =>
       cases he0 with
-      | store _ _ hsz0 he0' =>
+      | store _ _ _ hsz0 he0' =>
         cases he1 with
-        | store _ _ hsz1 he1' =>
+        | store _ _ _ hsz1 he1' =>
           cases hσ with
           | cons hv hσa =>
             cases hσa with
@@ -792,11 +792,11 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
               obtain ⟨hj', hlv⟩ := Lab.join_eq_L hj
               obtain ⟨_, hla⟩ := Lab.join_eq_L hj'
               exact ⟨ha hla, by rw [hv hlv]⟩
-    | fill lm hle ht' =>
+    | fill m lm hle ht' =>
       cases he0 with
-      | fill _ hb0 he0' =>
+      | fill _ _ hb0 he0' =>
         cases he1 with
-        | fill _ hb1 he1' =>
+        | fill _ _ hb1 he1' =>
           cases hσ with
           | cons hk hσa =>
             cases hσa with
@@ -809,11 +809,11 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
                 obtain ⟨hln, hj2⟩ := Lab.join_eq_L hj1
                 obtain ⟨hlv, hld⟩ := Lab.join_eq_L hj2
                 exact ⟨ha hld, hv hlv, hk hln⟩
-    | copy lm hle ht' =>
+    | copy md ms lm hle ht' =>
       cases he0 with
-      | copy _ hb0 hb0' he0' =>
+      | copy _ _ _ hb0 hb0' he0' =>
         cases he1 with
-        | copy _ hb1 hb1' he1' =>
+        | copy _ _ _ hb1 hb1' he1' =>
           cases hσ with
           | cons hk hσa =>
             cases hσa with
@@ -821,40 +821,6 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
               cases hσb with
               | cons ha hσc =>
                 refine ih _ (by omega) hF ht' he0' he1' hσc (hs.copy (fun hlm => ?_))
-                  (hp.of_glob rfl rfl)
-                obtain ⟨_, hj1⟩ := Lab.join_eq_L (Lab.eq_L_of_le hle hlm)
-                obtain ⟨hln, hj2⟩ := Lab.join_eq_L hj1
-                obtain ⟨hlb, hld⟩ := Lab.join_eq_L hj2
-                exact ⟨ha hld, hb hlb, hk hln⟩
-    | copyTo lm hle ht' =>
-      cases he0 with
-      | copyTo _ hb0 hb0' he0' =>
-        cases he1 with
-        | copyTo _ hb1 hb1' he1' =>
-          cases hσ with
-          | cons hk hσa =>
-            cases hσa with
-            | cons hb hσb =>
-              cases hσb with
-              | cons ha hσc =>
-                refine ih _ (by omega) hF ht' he0' he1' hσc (hs.copyTo (fun hlm => ?_))
-                  (hp.of_glob rfl rfl)
-                obtain ⟨_, hj1⟩ := Lab.join_eq_L (Lab.eq_L_of_le hle hlm)
-                obtain ⟨hln, hj2⟩ := Lab.join_eq_L hj1
-                obtain ⟨hlb, hld⟩ := Lab.join_eq_L hj2
-                exact ⟨ha hld, hb hlb, hk hln⟩
-    | copyFrom lm hle ht' =>
-      cases he0 with
-      | copyFrom _ hb0 hb0' he0' =>
-        cases he1 with
-        | copyFrom _ hb1 hb1' he1' =>
-          cases hσ with
-          | cons hk hσa =>
-            cases hσa with
-            | cons hb hσb =>
-              cases hσb with
-              | cons ha hσc =>
-                refine ih _ (by omega) hF ht' he0' he1' hσc (hs.copyFrom (fun hlm => ?_))
                   (hp.of_glob rfl rfl)
                 obtain ⟨_, hj1⟩ := Lab.join_eq_L (Lab.eq_L_of_le hle hlm)
                 obtain ⟨hln, hj2⟩ := Lab.join_eq_L hj1
@@ -967,11 +933,11 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
         | hostOpenNone hc1 hb1 hp1 hl1 hin1 ho1 he1' =>
           obtain ⟨rfl, rfl, rfl, rfl, rfl, hσ'⟩ := five_public hσ
           exact ih _ (by omega) hF ht' he0' he1' (.cons (fun _ => rfl) hσ') hs hp
-    | memInit k lm hle ht' =>
+    | memInit m k lm hle ht' =>
       cases he0 with
-      | memInit _ _ hb0 hs0 he0' =>
+      | memInit _ _ _ hb0 hs0 he0' =>
         cases he1 with
-        | memInit _ _ hb1 hs1 he1' =>
+        | memInit _ _ _ hb1 hs1 he1' =>
           cases hσ with
           | cons hc hσa =>
             cases hσa with
@@ -1082,25 +1048,25 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
               exact ih _ (by omega) hF ht' he0' he1'
                 (.cons (fun hl => hres (Lab.join_eq_L hl).2) hσb) hs'
                 (hp.of_glob (State.growTbl_glob _ _ _ _) (State.growTbl_glob _ _ _ _))
-    | memSize ht' =>
+    | memSize m ht' =>
       cases he0 with
-      | memSize he0' =>
+      | memSize _ he0' =>
         cases he1 with
-        | memSize he1' =>
-          exact ih _ (by omega) hF ht' he0' he1' (.cons (fun _ => hs.2.2.2.2.1) hσ) hs hp
-    | memGrow hle ht' =>
+        | memSize _ he1' =>
+          exact ih _ (by omega) hF ht' he0' he1' (.cons (fun _ => congrFun hs.2.2.2.2.1 m) hσ) hs hp
+    | memGrow m hle ht' =>
       cases he0 with
-      | memGrow he0' =>
+      | memGrow _ he0' =>
         cases he1 with
-        | memGrow he1' =>
+        | memGrow _ he1' =>
           cases hσ with
           | cons hv hσ' =>
             -- the pc and the amount are public, so the two runs grow alike
             have hd := hv (Lab.join_eq_L (Lab.eq_L_of_le hle rfl)).2
             subst hd
-            obtain ⟨hres, hs'⟩ := hs.grow _
+            obtain ⟨hres, hs'⟩ := hs.grow m _
             exact ih _ (by omega) hF ht' he0' he1' (.cons (fun _ => hres) hσ') hs'
-              (hp.of_glob (State.grow_glob _ _) (State.grow_glob _ _))
+              (hp.of_glob (State.grow_glob _ _ _) (State.grow_glob _ _ _))
     | block hfl hge hres hbody hrest =>
       obtain ⟨vs0, base0, m0, ob0, rfl, hvs0, hm0, hb0, hc0⟩ := block_inv he0
       obtain ⟨vs1, base1, m1, ob1, rfl, hvs1, hm1, hb1, hc1⟩ := block_inv he1

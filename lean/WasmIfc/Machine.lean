@@ -86,22 +86,16 @@ inductive Basic : Instr → List Nat → State → List Nat → State → Prop w
   | localTee {v σ s} (i : Nat) : Basic (.localTee i) (v :: σ) s (v :: σ) (s.setLoc i v)
   | globalGet {σ s} (i : Nat) : Basic (.globalGet i) σ s (s.glob i :: σ) s
   | globalSet {v σ s} (i : Nat) : Basic (.globalSet i) (v :: σ) s σ (s.setGlob i v)
-  | load {a σ s} (w : Nat) (lm : Lab) :
-      a + w ≤ s.size → (∀ i, i < w → Lab.le (s.lab (a + i)) lm) →
-      Basic (.load w lm) (a :: σ) s (s.word a w :: σ) s
-  | store {v a σ s} (w : Nat) (lm : Lab) :
-      a + w ≤ s.size → Basic (.store w lm) (v :: a :: σ) s σ (s.put a (bytesOf v w) lm)
-  | fill {k v a σ s} (lm : Lab) :
-      a + k ≤ s.size → Basic (.fill lm) (k :: v :: a :: σ) s σ (s.fill a v k lm)
-  | copy {k b a σ s} (lm : Lab) :
-      a + k ≤ s.size → b + k ≤ s.size →
-      Basic (.copy lm) (k :: b :: a :: σ) s σ (s.copy a b k lm)
-  | copyTo {k b a σ s} (lm : Lab) :
-      a + k ≤ s.size2 → b + k ≤ s.size →
-      Basic (.copyTo lm) (k :: b :: a :: σ) s σ (s.copyTo a b k lm)
-  | copyFrom {k b a σ s} (lm : Lab) :
-      a + k ≤ s.size → b + k ≤ s.size2 →
-      Basic (.copyFrom lm) (k :: b :: a :: σ) s σ (s.copyFrom a b k lm)
+  | load {a σ s} (m w : Nat) (lm : Lab) :
+      a + w ≤ s.size m → (∀ i, i < w → Lab.le (s.lab m (a + i)) lm) →
+      Basic (.load m w lm) (a :: σ) s (s.word m a w :: σ) s
+  | store {v a σ s} (m w : Nat) (lm : Lab) :
+      a + w ≤ s.size m → Basic (.store m w lm) (v :: a :: σ) s σ (s.put m a (bytesOf v w) lm)
+  | fill {k v a σ s} (m : Nat) (lm : Lab) :
+      a + k ≤ s.size m → Basic (.fill m lm) (k :: v :: a :: σ) s σ (s.fill m a v k lm)
+  | copy {k b a σ s} (md ms : Nat) (lm : Lab) :
+      a + k ≤ s.size md → b + k ≤ s.size ms →
+      Basic (.copy md ms lm) (k :: b :: a :: σ) s σ (s.copy md ms a b k lm)
   | tableGet {c σ s} (x : Nat) :
       c < s.tsize x → Basic (.tableGet x) (c :: σ) s (refOf (s.tbl x c) :: σ) s
   | tableSet {v c σ s} (x : Nat) :
@@ -119,31 +113,31 @@ inductive Basic : Instr → List Nat → State → List Nat → State → Prop w
       Basic (.tableInit x k) (c :: b :: a :: σ) s σ (s.initTbl x k a b c)
   | elemDrop {σ s} (k : Nat) : Basic (.elemDrop k) σ s σ (s.dropElem k)
   | hostRead {np k a fd c σ s} :
-      s.fdt fd = some c → a + k ≤ s.size → np < s.size →
+      s.fdt fd = some c → a + k ≤ s.size 0 → np < s.size 0 →
       Basic .hostRead (np :: k :: a :: fd :: σ) s σ
-        (((s.put a ((s.inp c).take k) (s.chan c)).setMem np ((s.inp c).take k).length
+        (((s.put 0 a ((s.inp c).take k) (s.chan c)).setMem 0 np ((s.inp c).take k).length
           (s.chan c)).consume c k)
   | hostWrite {k a fd c σ s} :
-      s.fdt fd = some c → a + k ≤ s.size →
-      (∀ x, a ≤ x → x < a + k → Lab.le (s.lab x) (s.chan c)) →
+      s.fdt fd = some c → a + k ≤ s.size 0 →
+      (∀ x, a ≤ x → x < a + k → Lab.le (s.lab 0 x) (s.chan c)) →
       Basic .hostWrite (k :: a :: fd :: σ) s σ (s.emit c (s.cells a k))
   | hostOpen {p o k a fd c d σ s} :
-      s.fdt fd = some c → a + k ≤ s.size → p < s.size →
-      (∀ x, a ≤ x → x < a + k → s.lab x = Lab.L) →
+      s.fdt fd = some c → a + k ≤ s.size 0 → p < s.size 0 →
+      (∀ x, a ≤ x → x < a + k → s.lab 0 x = Lab.L) →
       (s.cells a k ∈ s.names c ∨ o % 2 = 1) → s.fresh d →
       Basic .hostOpen (p :: o :: k :: a :: fd :: σ) s (0 :: σ)
-        ((s.openAt c (s.cells a k) d).setMem p d Lab.L)
+        ((s.openAt c (s.cells a k) d).setMem 0 p d Lab.L)
   | hostOpenNone {p o k a fd c σ s} :
-      s.fdt fd = some c → a + k ≤ s.size → p < s.size →
-      (∀ x, a ≤ x → x < a + k → s.lab x = Lab.L) →
+      s.fdt fd = some c → a + k ≤ s.size 0 → p < s.size 0 →
+      (∀ x, a ≤ x → x < a + k → s.lab 0 x = Lab.L) →
       s.cells a k ∉ s.names c → o % 2 ≠ 1 →
       Basic .hostOpen (p :: o :: k :: a :: fd :: σ) s (noEntry :: σ) s
-  | memInit {c b a σ s} (k : Nat) (lm : Lab) :
-      a + c ≤ s.size → b + c ≤ (s.segs k).length →
-      Basic (.memInit k lm) (c :: b :: a :: σ) s σ (s.put a (((s.segs k).drop b).take c) lm)
+  | memInit {c b a σ s} (m k : Nat) (lm : Lab) :
+      a + c ≤ s.size m → b + c ≤ (s.segs k).length →
+      Basic (.memInit m k lm) (c :: b :: a :: σ) s σ (s.put m a (((s.segs k).drop b).take c) lm)
   | dataDrop {σ s} (k : Nat) : Basic (.dataDrop k) σ s σ (s.dropSeg k)
-  | memSize {σ s} : Basic .memSize σ s (s.size :: σ) s
-  | memGrow {d σ s} : Basic .memGrow (d :: σ) s ((s.grow d).1 :: σ) (s.grow d).2
+  | memSize {σ s} (m : Nat) : Basic (.memSize m) σ s (s.size m :: σ) s
+  | memGrow {d σ s} (m : Nat) : Basic (.memGrow m) (d :: σ) s ((s.grow m d).1 :: σ) (s.grow m d).2
   /-- a conditional branch that is not taken -/
   | brIfNot {σ s} (i : Nat) : Basic (.brIf i) (0 :: σ) s σ s
 

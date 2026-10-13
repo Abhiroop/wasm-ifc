@@ -11,7 +11,7 @@ namespace WasmIfc
 /--
 Low equivalence of two states, for the levels of `C`. The two states agree on what the
 attacker may know: the public local variables, the public globals, every byte of memory that
-is public in both, in either memory, the size of each memory and the limit of the first, every table that is public (its entries, its size and its limit),
+is public in both, in every memory, the size and the limit of each memory, every table that is public (its entries, its size and its limit),
 the levels of the host's channels, the descriptor table and the names of the files in every
 directory, and for each public channel what was written to it and what is left to read from
 it. A data segment or an element segment that both states still have is the same in
@@ -21,9 +21,8 @@ references to them, and these carry what their tags say; a new instance keeps no
 def LowEq (C : Ctx) (s t : State) : Prop :=
   (∀ i, C.locals i = Lab.L → s.loc i = t.loc i) ∧
   (∀ i, C.globals i = Lab.L → s.glob i = t.glob i) ∧
-  (∀ a, s.lab a = Lab.L → t.lab a = Lab.L → s.mem a = t.mem a) ∧
+  (∀ m a, s.lab m a = Lab.L → t.lab m a = Lab.L → s.mem m a = t.mem m a) ∧
   s.size = t.size ∧ s.cap = t.cap ∧
-  (∀ a, s.lab2 a = Lab.L → t.lab2 a = Lab.L → s.mem2 a = t.mem2 a) ∧ s.size2 = t.size2 ∧
   (∀ x, C.table x = Lab.L → s.sameTable t x) ∧
   s.chan = t.chan ∧ s.sameHost t ∧
   (∀ d, s.chan d = Lab.L → s.out d = t.out d ∧ s.inp d = t.inp d) ∧
@@ -34,14 +33,14 @@ def LowEq (C : Ctx) (s t : State) : Prop :=
 /-- Low equivalence is the two relations of the proof together, if the preserved globals are public. -/
 theorem LowEq.split {C : Ctx} {s t : State} (hpub : ∀ i, C.preserved i → C.globals i = Lab.L)
     (h : LowEq C s t) : StRel C s t ∧ PresEq C s t := by
-  obtain ⟨hloc, hglob, hmem, hsize, hcap, hm2, hs2, htbl, hchan, hhost, hio, hseg, helem, hexn, hok⟩ := h
-  exact ⟨⟨hloc, fun i hi _ => hglob i hi, hmem, htbl, hsize, ⟨hcap, hexn, hok, ⟨hm2, hs2⟩, hhost⟩,
+  obtain ⟨hloc, hglob, hmem, hsize, hcap, htbl, hchan, hhost, hio, hseg, helem, hexn, hok⟩ := h
+  exact ⟨⟨hloc, fun i hi _ => hglob i hi, hmem, htbl, hsize, ⟨hcap, hexn, hok, hhost⟩,
     hchan, hio, fun k => ⟨hseg k, helem k⟩⟩,
     fun i hi => hglob i (hpub i hi)⟩
 
 theorem LowEq.join {C : Ctx} {s t : State} (h : StRel C s t) (hp : PresEq C s t) : LowEq C s t := by
-  obtain ⟨hloc, hglob, hmem, htbl, hsize, ⟨hcap, hexn, hok, ⟨hm2, hs2⟩, hhost⟩, hchan, hio, hseg⟩ := h
-  refine ⟨hloc, fun i hi => ?_, hmem, hsize, hcap, hm2, hs2, htbl, hchan, hhost, hio,
+  obtain ⟨hloc, hglob, hmem, htbl, hsize, ⟨hcap, hexn, hok, hhost⟩, hchan, hio, hseg⟩ := h
+  refine ⟨hloc, fun i hi => ?_, hmem, hsize, hcap, htbl, hchan, hhost, hio,
     fun k => (hseg k).1, fun k => (hseg k).2, hexn, hok⟩
   by_cases hpi : C.preserved i
   · exact hp i hpi

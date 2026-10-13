@@ -82,12 +82,12 @@ inductive Instr where
   | localTee (i : Nat)
   | globalGet (i : Nat)
   | globalSet (i : Nat)
-  /-- `load w lm`: read a value of `w` bytes, each of which must be labelled at most `lm` -/
-  | load (w : Nat) (lm : Lab)
-  /-- `store w lm`: write the low `w` bytes of a value and label them `lm` -/
-  | store (w : Nat) (lm : Lab)
-  | memSize
-  | memGrow
+  /-- `load m w lm`: read a value of `w` bytes of the memory `m`, each of which must be labelled at most `lm` -/
+  | load (m w : Nat) (lm : Lab)
+  /-- `store m w lm`: write the low `w` bytes of a value to the memory `m` and label them `lm` -/
+  | store (m w : Nat) (lm : Lab)
+  | memSize (m : Nat)
+  | memGrow (m : Nat)
   /-- read an entry of the table `x`, as a reference -/
   | tableGet (x : Nat)
   /-- write a reference to an entry of the table `x` -/
@@ -104,22 +104,21 @@ inductive Instr where
   | tableInit (x k : Nat)
   /-- `elemDrop k`: the element segment `k` is empty from now on -/
   | elemDrop (k : Nat)
-  /-- a host call that reads from a descriptor into the memory -/
+  /-- a host call that reads from a descriptor into the first memory -/
   | hostRead
-  /-- a host call that writes cells of the memory to a descriptor -/
+  /-- a host call that writes cells of the first memory to a descriptor -/
   | hostWrite
   /-- a host call that opens a file in a directory, as a new descriptor (`path_open`) -/
   | hostOpen
-  /-- `fill lm`: write one value to a range of cells and label them `lm` -/
-  | fill (lm : Lab)
-  /-- `copy lm`: copy a range of cells; each keeps its level, raised by `lm` -/
-  | copy (lm : Lab)
-  /-- `copyTo lm`: `memory.copy` from the memory to the second memory -/
-  | copyTo (lm : Lab)
-  /-- `copyFrom lm`: `memory.copy` from the second memory to the memory -/
-  | copyFrom (lm : Lab)
-  /-- `memInit k lm`: copy bytes of the data segment `k` into the memory and label them `lm` -/
-  | memInit (k : Nat) (lm : Lab)
+  /-- `fill m lm`: write one value to a range of cells of the memory `m` and label them `lm` -/
+  | fill (m : Nat) (lm : Lab)
+  /--
+  `copy md ms lm`: copy a range of cells of the memory `ms` to the memory `md`; each keeps its
+  level, raised by `lm`
+  -/
+  | copy (md ms : Nat) (lm : Lab)
+  /-- `memInit m k lm`: copy bytes of the data segment `k` into the memory `m` and label them `lm` -/
+  | memInit (m k : Nat) (lm : Lab)
   /-- `dataDrop k`: the data segment `k` is empty from now on -/
   | dataDrop (k : Nat)
   /--
@@ -269,35 +268,27 @@ inductive Typed (C : Ctx) : List STy → List Instr → Pcs → STy → Pcs → 
       C.preserved i → Lab.le l pc →
       Typed C Ls rest (pc :: Pr) st P' st' →
       Typed C Ls (.globalSet i :: rest) (pc :: Pr) (l :: st) P' st'
-  | load {Ls rest pc Pr la st P' st'} (w : Nat) (lm : Lab) :
+  | load {Ls rest pc Pr la st P' st'} (m w : Nat) (lm : Lab) :
       Typed C Ls rest (pc :: Pr) (((la.join lm).join pc) :: st) P' st' →
-      Typed C Ls (.load w lm :: rest) (pc :: Pr) (la :: st) P' st'
-  | store {Ls rest pc Pr lv la st P' st'} (w : Nat) (lm : Lab) :
+      Typed C Ls (.load m w lm :: rest) (pc :: Pr) (la :: st) P' st'
+  | store {Ls rest pc Pr lv la st P' st'} (m w : Nat) (lm : Lab) :
       Lab.le ((pc.join la).join lv) lm →
       Typed C Ls rest (pc :: Pr) st P' st' →
-      Typed C Ls (.store w lm :: rest) (pc :: Pr) (lv :: la :: st) P' st'
+      Typed C Ls (.store m w lm :: rest) (pc :: Pr) (lv :: la :: st) P' st'
   /-- `memory.fill`: the cells get a level at least the pc's, the count's, the value's and the address's. -/
-  | fill {Ls rest pc Pr ln lv ld st P' st'} (lm : Lab) :
+  | fill {Ls rest pc Pr ln lv ld st P' st'} (m : Nat) (lm : Lab) :
       Lab.le (pc.join (ln.join (lv.join ld))) lm →
       Typed C Ls rest (pc :: Pr) st P' st' →
-      Typed C Ls (.fill lm :: rest) (pc :: Pr) (ln :: lv :: ld :: st) P' st'
+      Typed C Ls (.fill m lm :: rest) (pc :: Pr) (ln :: lv :: ld :: st) P' st'
   /--
-  `memory.copy`: each copied cell keeps its own level, raised by one that is at least the pc's,
-  the count's and the two addresses'. No check is made: the levels move with the values.
+  `memory.copy`, within a memory or between two: each copied cell keeps its own level, raised by
+  one that is at least the pc's, the count's and the two addresses'. No check is made: the
+  levels move with the values.
   -/
-  | copy {Ls rest pc Pr ln lsrc ld st P' st'} (lm : Lab) :
+  | copy {Ls rest pc Pr ln lsrc ld st P' st'} (md ms : Nat) (lm : Lab) :
       Lab.le (pc.join (ln.join (lsrc.join ld))) lm →
       Typed C Ls rest (pc :: Pr) st P' st' →
-      Typed C Ls (.copy lm :: rest) (pc :: Pr) (ln :: lsrc :: ld :: st) P' st'
-  /-- `memory.copy` between two memories is typed as within one. -/
-  | copyTo {Ls rest pc Pr ln lsrc ld st P' st'} (lm : Lab) :
-      Lab.le (pc.join (ln.join (lsrc.join ld))) lm →
-      Typed C Ls rest (pc :: Pr) st P' st' →
-      Typed C Ls (.copyTo lm :: rest) (pc :: Pr) (ln :: lsrc :: ld :: st) P' st'
-  | copyFrom {Ls rest pc Pr ln lsrc ld st P' st'} (lm : Lab) :
-      Lab.le (pc.join (ln.join (lsrc.join ld))) lm →
-      Typed C Ls rest (pc :: Pr) st P' st' →
-      Typed C Ls (.copyFrom lm :: rest) (pc :: Pr) (ln :: lsrc :: ld :: st) P' st'
+      Typed C Ls (.copy md ms lm :: rest) (pc :: Pr) (ln :: lsrc :: ld :: st) P' st'
   /-- What is read from the table is as secret as the table, the index and the pc. -/
   | tableGet {Ls rest pc Pr li st P' st'} (x : Nat) :
       Typed C Ls rest (pc :: Pr) ((pc.join (li.join (C.table x))) :: st) P' st' →
@@ -329,10 +320,10 @@ inductive Typed (C : Ctx) : List STy → List Instr → Pcs → STy → Pcs → 
       Typed C Ls (.hostOpen :: rest) (Lab.L :: Pr)
         (Lab.L :: Lab.L :: Lab.L :: Lab.L :: Lab.L :: st) P' st'
   /-- `memory.init`: as `memory.fill`, with the segment's bytes for the value. A segment is public. -/
-  | memInit {Ls rest pc Pr ln lsrc ld st P' st'} (k : Nat) (lm : Lab) :
+  | memInit {Ls rest pc Pr ln lsrc ld st P' st'} (m k : Nat) (lm : Lab) :
       Lab.le (pc.join (ln.join (lsrc.join ld))) lm →
       Typed C Ls rest (pc :: Pr) st P' st' →
-      Typed C Ls (.memInit k lm :: rest) (pc :: Pr) (ln :: lsrc :: ld :: st) P' st'
+      Typed C Ls (.memInit m k lm :: rest) (pc :: Pr) (ln :: lsrc :: ld :: st) P' st'
   /-- `data.drop` has no premise, under any pc. -/
   | dataDrop {Ls rest P st P' st'} (k : Nat) :
       Typed C Ls rest P st P' st' →
@@ -368,15 +359,15 @@ inductive Typed (C : Ctx) : List STy → List Instr → Pcs → STy → Pcs → 
   | elemDrop {Ls rest P st P' st'} (k : Nat) :
       Typed C Ls rest P st P' st' →
       Typed C Ls (.elemDrop k :: rest) P st P' st'
-  /-- The size of the memory is public. -/
-  | memSize {Ls rest pc Pr st P' st'} :
+  /-- The size of a memory is public. -/
+  | memSize {Ls rest pc Pr st P' st'} (m : Nat) :
       Typed C Ls rest (pc :: Pr) (pc :: st) P' st' →
-      Typed C Ls (.memSize :: rest) (pc :: Pr) st P' st'
-  /-- The memory grows only under a public pc, by a public amount, so that its size stays public. -/
-  | memGrow {Ls rest pc Pr l st P' st'} :
+      Typed C Ls (.memSize m :: rest) (pc :: Pr) st P' st'
+  /-- A memory grows only under a public pc, by a public amount, so that its size stays public. -/
+  | memGrow {Ls rest pc Pr l st P' st'} (m : Nat) :
       Lab.le (pc.join l) Lab.L →
       Typed C Ls rest (pc :: Pr) (pc :: st) P' st' →
-      Typed C Ls (.memGrow :: rest) (pc :: Pr) (l :: st) P' st'
+      Typed C Ls (.memGrow m :: rest) (pc :: Pr) (l :: st) P' st'
   /-- The results are at least the pc at which the body starts (the paper's Property (E)). -/
   | block {Ls rest pc Pr tin keep ps rs body p P1 st P' st'} :
       SFlows tin ps → AllGe pc rs → Restores C p P1 keep →
@@ -513,18 +504,15 @@ def WellTyped (C : Ctx) (F : List Func) : Prop :=
         (p = Lab.L ∨ ∀ j, C.preserved j → j ∈ f.keep)
 
 /--
-The values of the local and of the global variables, and the memory: each byte's value and
-level, how many bytes it has, and how many it may grow to.
+The values of the local and of the global variables, and the memories: each byte's value and
+level, how many bytes each memory has, and how many it may grow to.
 -/
 structure State where
   loc : Nat → Nat
   glob : Nat → Nat
-  mem : Nat → Nat
-  lab : Nat → Lab
-  /-- a second memory, of a size that does not change: its bytes and their levels -/
-  mem2 : Nat → Nat
-  lab2 : Nat → Lab
-  size2 : Nat
+  /-- the memories: the byte at an address of a memory, and its level -/
+  mem : Nat → Nat → Nat
+  lab : Nat → Nat → Lab
   /-- the tables: an entry of a table names a function or is null -/
   tbl : Nat → Nat → Option Nat
   /-- how many entries each table has, and how many it may grow to -/
@@ -532,8 +520,9 @@ structure State where
   tcap : Nat → Nat
   /-- the element segments, of references; a dropped one is empty -/
   elems : Nat → List (Option Nat)
-  size : Nat
-  cap : Nat
+  /-- how many bytes each memory has, and how many it may grow to -/
+  size : Nat → Nat
+  cap : Nat → Nat
   /-- the level of each channel of the host: a stream, a directory, a file -/
   chan : Nat → Lab
   /-- what has been written to each channel, the latest first -/
@@ -582,9 +571,9 @@ def State.setGlob (s : State) (i v : Nat) : State :=
   { s with glob := fun j => if j = i then v else s.glob j }
 
 /-- Write a cell and give it a level. -/
-def State.setMem (s : State) (a v : Nat) (l : Lab) : State :=
-  { s with mem := fun x => if x = a then v else s.mem x,
-           lab := fun x => if x = a then l else s.lab x }
+def State.setMem (s : State) (m a v : Nat) (l : Lab) : State :=
+  { s with mem := fun y x => if y = m ∧ x = a then v else s.mem y x,
+           lab := fun y x => if y = m ∧ x = a then l else s.lab y x }
 
 /-- A table entry as a value: zero for null, and the function's index plus one. -/
 def refOf : Option Nat → Nat
@@ -621,39 +610,33 @@ def State.dropElem (s : State) (k : Nat) : State :=
 /-- The function an entry of the table `x` names: none if it is null or beyond the table. -/
 def State.entry (s : State) (x c : Nat) : Option Nat := if c < s.tsize x then s.tbl x c else none
 
-/-- Write `v` to the `n` cells from `a`, and give them the level `l`. -/
-def State.fill (s : State) (a v n : Nat) (l : Lab) : State :=
-  { s with mem := fun x => if a ≤ x ∧ x < a + n then v else s.mem x,
-           lab := fun x => if a ≤ x ∧ x < a + n then l else s.lab x }
+/-- Write `v` to the `n` cells from `a` of the memory `m`, and give them the level `l`. -/
+def State.fill (s : State) (m a v n : Nat) (l : Lab) : State :=
+  { s with mem := fun y x => if y = m ∧ a ≤ x ∧ x < a + n then v else s.mem y x,
+           lab := fun y x => if y = m ∧ a ≤ x ∧ x < a + n then l else s.lab y x }
 
-/-- Copy the `n` cells from `a` to those from `d`: each value with its level, raised by `l`. -/
-def State.copy (s : State) (d a n : Nat) (l : Lab) : State :=
-  { s with mem := fun x => if d ≤ x ∧ x < d + n then s.mem (a + (x - d)) else s.mem x,
-           lab := fun x => if d ≤ x ∧ x < d + n then l.join (s.lab (a + (x - d))) else s.lab x }
+/--
+Copy the `n` cells from `a` of the memory `ms` to those from `d` of the memory `md`: each value
+with its level, raised by `l`.
+-/
+def State.copy (s : State) (md ms d a n : Nat) (l : Lab) : State :=
+  { s with mem := fun y x => if y = md ∧ d ≤ x ∧ x < d + n then s.mem ms (a + (x - d)) else s.mem y x,
+           lab := fun y x => if y = md ∧ d ≤ x ∧ x < d + n then l.join (s.lab ms (a + (x - d)))
+                             else s.lab y x }
 
-/-- Copy the `n` cells from `a` of the memory to those from `d` of the second memory, as `copy`. -/
-def State.copyTo (s : State) (d a n : Nat) (l : Lab) : State :=
-  { s with mem2 := fun x => if d ≤ x ∧ x < d + n then s.mem (a + (x - d)) else s.mem2 x,
-           lab2 := fun x => if d ≤ x ∧ x < d + n then l.join (s.lab (a + (x - d))) else s.lab2 x }
-
-/-- Copy the `n` cells from `a` of the second memory to those from `d` of the memory, as `copy`. -/
-def State.copyFrom (s : State) (d a n : Nat) (l : Lab) : State :=
-  { s with mem := fun x => if d ≤ x ∧ x < d + n then s.mem2 (a + (x - d)) else s.mem x,
-           lab := fun x => if d ≤ x ∧ x < d + n then l.join (s.lab2 (a + (x - d))) else s.lab x }
-
-/-- Write the values `vs` to the cells from `a`, and give them the level `l`. -/
-def State.put (s : State) (a : Nat) (vs : List Nat) (l : Lab) : State :=
-  { s with mem := fun x => if a ≤ x ∧ x < a + vs.length then (vs[x - a]?).getD 0 else s.mem x,
-           lab := fun x => if a ≤ x ∧ x < a + vs.length then l else s.lab x }
+/-- Write the values `vs` to the cells from `a` of the memory `m`, and give them the level `l`. -/
+def State.put (s : State) (m a : Nat) (vs : List Nat) (l : Lab) : State :=
+  { s with mem := fun y x => if y = m ∧ a ≤ x ∧ x < a + vs.length then (vs[x - a]?).getD 0 else s.mem y x,
+           lab := fun y x => if y = m ∧ a ≤ x ∧ x < a + vs.length then l else s.lab y x }
 
 /-- Take `k` values off what is left to read from the descriptor `fd`. -/
 def State.consume (s : State) (fd k : Nat) : State :=
   { s with inp := fun d => if d = fd then (s.inp fd).drop k else s.inp d }
 
-/-- The value of the `w` bytes from `a`, the first the least significant. -/
-def State.word (s : State) : Nat → Nat → Nat
+/-- The value of the `w` bytes from `a` of the memory `m`, the first the least significant. -/
+def State.word (s : State) (m : Nat) : Nat → Nat → Nat
   | _, 0 => 0
-  | a, w + 1 => s.mem a + 256 * s.word (a + 1) w
+  | a, w + 1 => s.mem m a + 256 * s.word m (a + 1) w
 
 /-- The low `w` bytes of a value, the least significant first. -/
 def bytesOf (v : Nat) : Nat → List Nat
@@ -663,8 +646,8 @@ def bytesOf (v : Nat) : Nat → List Nat
 def State.dropSeg (s : State) (k : Nat) : State :=
   { s with segs := fun j => if j = k then [] else s.segs j }
 
-/-- The `k` cells from `a`. -/
-def State.cells (s : State) (a k : Nat) : List Nat := (List.range k).map (fun i => s.mem (a + i))
+/-- The `k` cells from `a` of the first memory, which is the one the host reads and writes. -/
+def State.cells (s : State) (a k : Nat) : List Nat := (List.range k).map (fun i => s.mem 0 (a + i))
 
 /-- Write the values `vs` to the descriptor `fd`. -/
 def State.emit (s : State) (fd : Nat) (vs : List Nat) : State :=
@@ -691,14 +674,15 @@ def State.openAt (s : State) (c : Nat) (x : List Nat) (d : Nat) : State :=
 def growFailed : Nat := 0xFFFFFFFF
 
 /--
-`memory.grow` by `d` cells: the old size and the memory with `d` more cells, which are zero and
-public, or `growFailed` and the memory as it was, if it would exceed its limit.
+`memory.grow` of the memory `m` by `d` cells: the old size and the memory with `d` more cells,
+which are zero and public, or `growFailed` and the memory as it was, if it would exceed its
+limit.
 -/
-def State.grow (s : State) (d : Nat) : Nat × State :=
-  if s.size + d ≤ s.cap then
-    (s.size, { s with size := s.size + d,
-                      mem := fun x => if s.size ≤ x then 0 else s.mem x,
-                      lab := fun x => if s.size ≤ x then Lab.L else s.lab x })
+def State.grow (s : State) (m d : Nat) : Nat × State :=
+  if s.size m + d ≤ s.cap m then
+    (s.size m, { s with size := fun y => if y = m then s.size m + d else s.size y,
+                        mem := fun y x => if y = m ∧ s.size m ≤ x then 0 else s.mem y x,
+                        lab := fun y x => if y = m ∧ s.size m ≤ x then Lab.L else s.lab y x })
   else (growFailed, s)
 
 /--
@@ -863,29 +847,21 @@ inductive Eval (F : List Func) : Nat → List Nat → List Instr → List Nat �
       Eval F n ls rest (s.glob i :: σ) s o → Eval F (n + 1) ls (.globalGet i :: rest) σ s o
   | globalSet {n ls rest v σ s o} (i : Nat) :
       Eval F n ls rest σ (s.setGlob i v) o → Eval F (n + 1) ls (.globalSet i :: rest) (v :: σ) s o
-  | load {n ls rest a σ s o} (w : Nat) (lm : Lab) :
-      a + w ≤ s.size → (∀ i, i < w → Lab.le (s.lab (a + i)) lm) →
-      Eval F n ls rest (s.word a w :: σ) s o → Eval F (n + 1) ls (.load w lm :: rest) (a :: σ) s o
-  | store {n ls rest v a σ s o} (w : Nat) (lm : Lab) :
-      a + w ≤ s.size →
-      Eval F n ls rest σ (s.put a (bytesOf v w) lm) o →
-      Eval F (n + 1) ls (.store w lm :: rest) (v :: a :: σ) s o
-  | fill {n ls rest k v a σ s o} (lm : Lab) :
-      a + k ≤ s.size →
-      Eval F n ls rest σ (s.fill a v k lm) o →
-      Eval F (n + 1) ls (.fill lm :: rest) (k :: v :: a :: σ) s o
-  | copy {n ls rest k b a σ s o} (lm : Lab) :
-      a + k ≤ s.size → b + k ≤ s.size →
-      Eval F n ls rest σ (s.copy a b k lm) o →
-      Eval F (n + 1) ls (.copy lm :: rest) (k :: b :: a :: σ) s o
-  | copyTo {n ls rest k b a σ s o} (lm : Lab) :
-      a + k ≤ s.size2 → b + k ≤ s.size →
-      Eval F n ls rest σ (s.copyTo a b k lm) o →
-      Eval F (n + 1) ls (.copyTo lm :: rest) (k :: b :: a :: σ) s o
-  | copyFrom {n ls rest k b a σ s o} (lm : Lab) :
-      a + k ≤ s.size → b + k ≤ s.size2 →
-      Eval F n ls rest σ (s.copyFrom a b k lm) o →
-      Eval F (n + 1) ls (.copyFrom lm :: rest) (k :: b :: a :: σ) s o
+  | load {n ls rest a σ s o} (m w : Nat) (lm : Lab) :
+      a + w ≤ s.size m → (∀ i, i < w → Lab.le (s.lab m (a + i)) lm) →
+      Eval F n ls rest (s.word m a w :: σ) s o → Eval F (n + 1) ls (.load m w lm :: rest) (a :: σ) s o
+  | store {n ls rest v a σ s o} (m w : Nat) (lm : Lab) :
+      a + w ≤ s.size m →
+      Eval F n ls rest σ (s.put m a (bytesOf v w) lm) o →
+      Eval F (n + 1) ls (.store m w lm :: rest) (v :: a :: σ) s o
+  | fill {n ls rest k v a σ s o} (m : Nat) (lm : Lab) :
+      a + k ≤ s.size m →
+      Eval F n ls rest σ (s.fill m a v k lm) o →
+      Eval F (n + 1) ls (.fill m lm :: rest) (k :: v :: a :: σ) s o
+  | copy {n ls rest k b a σ s o} (md ms : Nat) (lm : Lab) :
+      a + k ≤ s.size md → b + k ≤ s.size ms →
+      Eval F n ls rest σ (s.copy md ms a b k lm) o →
+      Eval F (n + 1) ls (.copy md ms lm :: rest) (k :: b :: a :: σ) s o
   | tableGet {n ls rest c σ s o} (x : Nat) :
       c < s.tsize x →
       Eval F n ls rest (refOf (s.tbl x c) :: σ) s o →
@@ -900,9 +876,9 @@ inductive Eval (F : List Func) : Nat → List Nat → List Instr → List Nat �
   that the table does not have is a trap.
   -/
   | hostRead {n ls rest np k a fd c σ s o} :
-      s.fdt fd = some c → a + k ≤ s.size → np < s.size →
+      s.fdt fd = some c → a + k ≤ s.size 0 → np < s.size 0 →
       Eval F n ls rest σ
-        (((s.put a ((s.inp c).take k) (s.chan c)).setMem np ((s.inp c).take k).length
+        (((s.put 0 a ((s.inp c).take k) (s.chan c)).setMem 0 np ((s.inp c).take k).length
           (s.chan c)).consume c k) o →
       Eval F (n + 1) ls (.hostRead :: rest) (np :: k :: a :: fd :: σ) s o
   /--
@@ -910,8 +886,8 @@ inductive Eval (F : List Func) : Nat → List Nat → List Instr → List Nat �
   secret than it.
   -/
   | hostWrite {n ls rest k a fd c σ s o} :
-      s.fdt fd = some c → a + k ≤ s.size →
-      (∀ x, a ≤ x → x < a + k → Lab.le (s.lab x) (s.chan c)) →
+      s.fdt fd = some c → a + k ≤ s.size 0 →
+      (∀ x, a ≤ x → x < a + k → Lab.le (s.lab 0 x) (s.chan c)) →
       Eval F n ls rest σ (s.emit c (s.cells a k)) o →
       Eval F (n + 1) ls (.hostWrite :: rest) (k :: a :: fd :: σ) s o
   /--
@@ -921,23 +897,23 @@ inductive Eval (F : List Func) : Nat → List Nat → List Instr → List Nat �
   the cell `p` as a public value and the status is 0.
   -/
   | hostOpen {n ls rest p o k a fd c d σ s out} :
-      s.fdt fd = some c → a + k ≤ s.size → p < s.size →
-      (∀ x, a ≤ x → x < a + k → s.lab x = Lab.L) →
+      s.fdt fd = some c → a + k ≤ s.size 0 → p < s.size 0 →
+      (∀ x, a ≤ x → x < a + k → s.lab 0 x = Lab.L) →
       (s.cells a k ∈ s.names c ∨ o % 2 = 1) → s.fresh d →
-      Eval F n ls rest (0 :: σ) ((s.openAt c (s.cells a k) d).setMem p d Lab.L) out →
+      Eval F n ls rest (0 :: σ) ((s.openAt c (s.cells a k) d).setMem 0 p d Lab.L) out →
       Eval F (n + 1) ls (.hostOpen :: rest) (p :: o :: k :: a :: fd :: σ) s out
   /-- Otherwise nothing is opened, and the status says so. -/
   | hostOpenNone {n ls rest p o k a fd c σ s out} :
-      s.fdt fd = some c → a + k ≤ s.size → p < s.size →
-      (∀ x, a ≤ x → x < a + k → s.lab x = Lab.L) →
+      s.fdt fd = some c → a + k ≤ s.size 0 → p < s.size 0 →
+      (∀ x, a ≤ x → x < a + k → s.lab 0 x = Lab.L) →
       s.cells a k ∉ s.names c → o % 2 ≠ 1 →
       Eval F n ls rest (noEntry :: σ) s out →
       Eval F (n + 1) ls (.hostOpen :: rest) (p :: o :: k :: a :: fd :: σ) s out
   /-- A trap if the bytes asked for are not in the segment, which is so of any byte of a dropped one. -/
-  | memInit {n ls rest c b a σ s o} (k : Nat) (lm : Lab) :
-      a + c ≤ s.size → b + c ≤ (s.segs k).length →
-      Eval F n ls rest σ (s.put a (((s.segs k).drop b).take c) lm) o →
-      Eval F (n + 1) ls (.memInit k lm :: rest) (c :: b :: a :: σ) s o
+  | memInit {n ls rest c b a σ s o} (m k : Nat) (lm : Lab) :
+      a + c ≤ s.size m → b + c ≤ (s.segs k).length →
+      Eval F n ls rest σ (s.put m a (((s.segs k).drop b).take c) lm) o →
+      Eval F (n + 1) ls (.memInit m k lm :: rest) (c :: b :: a :: σ) s o
   | dataDrop {n ls rest σ s o} (k : Nat) :
       Eval F n ls rest σ (s.dropSeg k) o → Eval F (n + 1) ls (.dataDrop k :: rest) σ s o
   | tableFill {n ls rest k v c σ s o} (x : Nat) :
@@ -960,11 +936,11 @@ inductive Eval (F : List Func) : Nat → List Nat → List Instr → List Nat �
       Eval F (n + 1) ls (.tableInit x k :: rest) (c :: b :: a :: σ) s o
   | elemDrop {n ls rest σ s o} (k : Nat) :
       Eval F n ls rest σ (s.dropElem k) o → Eval F (n + 1) ls (.elemDrop k :: rest) σ s o
-  | memSize {n ls rest σ s o} :
-      Eval F n ls rest (s.size :: σ) s o → Eval F (n + 1) ls (.memSize :: rest) σ s o
-  | memGrow {n ls rest d σ s o} :
-      Eval F n ls rest ((s.grow d).1 :: σ) (s.grow d).2 o →
-      Eval F (n + 1) ls (.memGrow :: rest) (d :: σ) s o
+  | memSize {n ls rest σ s o} (m : Nat) :
+      Eval F n ls rest (s.size m :: σ) s o → Eval F (n + 1) ls (.memSize m :: rest) σ s o
+  | memGrow {n ls rest d σ s o} (m : Nat) :
+      Eval F n ls rest ((s.grow m d).1 :: σ) (s.grow m d).2 o →
+      Eval F (n + 1) ls (.memGrow m :: rest) (d :: σ) s o
   | blockCont {n1 n2 ls rest keep ps rs body vs base s ob σ1 s1 o} :
       vs.length = ps.length →
       Eval F n1 (rs.length :: ls) body vs s ob → ob.lands = some (σ1, s1) → Kept keep s s1 →

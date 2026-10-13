@@ -3,9 +3,9 @@
 A Lean 4 development that proves termination-insensitive noninterference for the labelled
 typing rules of this repository on a core of WebAssembly: blocks, loops and conditionals with
 parameters and results, `br`, `br_if`, `br_table` and `return`, direct calls, indirect calls,
-calls through a reference and tail calls, direct and indirect, of the module's functions (recursion included), a bounded memory whose bytes carry a level, with loads and stores of several bytes, data segments (`memory.init`, `data.drop`),
+calls through a reference and tail calls, direct and indirect, of the module's functions (recursion included), any number of bounded memories whose bytes carry a level, with loads and stores of several bytes, data segments (`memory.init`, `data.drop`),
 SecWasm's run-time check on loads, `memory.size`, `memory.grow`, `memory.fill` and
-`memory.copy`, a second memory with `memory.copy` between the two, any number of tables, each with a level, a size and a limit (`table.get`, `table.set`, `table.fill`, `table.copy` between two tables, `table.size`, `table.grow`, `table.init` and `elem.drop` with element segments), a host that reads from and writes to
+`memory.copy` within a memory and between two, any number of tables, each with a level, a size and a limit (`table.get`, `table.set`, `table.fill`, `table.copy` between two tables, `table.size`, `table.grow`, `table.init` and `elem.drop` with element segments), a host that reads from and writes to
 descriptors of channels with levels and opens files in directories (`path_open`), local and global
 variables with `local.tee`, exceptions (`throw`, `throw_ref` and `try_table` with its four kinds
 of clause, so references to exceptions), preserved globals with
@@ -99,7 +99,7 @@ type `Syntax.Instructions.Instr` for the instructions above:
   takes flows into the descriptor's level; a read stores what it read, and how much, at the
   descriptor's level. The attacker sees what was written to a public descriptor and what is
   left to read from one (`IoRel`).
-- The size of the memory is public: `memory.size` gives a value at the pc, and `memory.grow`
+- The size of each memory is public: `memory.size` gives a value at the pc, and `memory.grow`
   is typed only under a public pc with a public amount.
 - A module is well typed if every function body is typed as the paper's rule for functions
   says. That a function's results be at least its bound, which that rule also asks, is not
