@@ -3,5 +3,7 @@ import WasmIfc.Basic
 import WasmIfc.Confinement
 import WasmIfc.Noninterference
 import WasmIfc.Examples
+import WasmIfc.Findings
+import WasmIfc.SecWasmPrinted
 import WasmIfc.Statement
 import WasmIfc.Machine

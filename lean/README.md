@@ -33,6 +33,9 @@ implementation and the rule of the paper it stands for, and what is assumed.
 | `refinement` | `Machine.lean` | A run of the small-step machine from the call of a function to its end is a derivation of the big-step semantics with the same end (the paper's `lem:refinement`). No typing is assumed. |
 | `machine_noninterference` | `Machine.lean` | `noninterference` for two runs of the machine. |
 | `tini` | `Noninterference.lean` | For a function of a well-typed module: two calls with arguments that agree where the parameters are public, from states that agree where public, if both end, either both return or both end by the same exception with the same values, and they leave states that agree where public. If they return, their results agree where the result type is public, and they agree on the preserved globals too if both pass the comparison made at the function's return. |
+| `leak_not_typed`, `leak_runs_differ` | `Findings.lean` | The paper's leak through `br_table` has no typing by these rules, and it has two runs, from states that differ in a secret local only, after which a public global differs. |
+| `call_after_secret_branch_typed`, `write_after_public_branch_typed` | `Findings.lean` | The paper's two secure programs that SecWasm's rules for `call` and `br_if` reject are typed. |
+| `SecWasm.printed_rule_accepts_leak`, `SecWasm.repaired_rule_rejects_leak`, `SecWasm.printed_rule_unsound` | `SecWasmPrinted.lean` | SecWasm's rules as printed, for the five instructions of the leak, type it; with the lift of `br_table` down to the deepest target they do not. |
 
 `Machine.lean` has a small-step machine written after the implementation's `step`: a
 configuration with a state, the operands of the current block, the rest of the block and a
