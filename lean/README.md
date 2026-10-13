@@ -5,7 +5,7 @@ typing rules of this repository on a core of WebAssembly: blocks, loops and cond
 parameters and results, `br`, `br_if`, `br_table` and `return`, direct calls, indirect calls
 and tail calls of the module's functions (recursion included), a bounded memory whose cells carry a level, with
 SecWasm's run-time check on loads, `memory.size`, `memory.grow`, `memory.fill` and
-`memory.copy`, local and global
+`memory.copy`, a function table with a level (`table.get`, `table.set`), local and global
 variables with `local.tee`, exceptions (`throw` and `try_table`), preserved globals with
 their run-time comparison, and arithmetic on one value type. It has no `sorry`, and its
 theorems depend on Lean's three standard axioms only (`propext`, `Classical.choice`,
@@ -49,8 +49,12 @@ type `Syntax.Instructions.Instr` for the instructions above:
   value's. At run time a load traps unless the cell's level flows into the declared one.
 - A call needs the caller's pc to flow into the callee's bound, and the arguments to flow into
   the parameters. The arguments need not be at least the pc (SecWasm's lift raised them).
-- An indirect call needs the pc and the level of the table index to flow into the bound of the
-  expected type, and that type to be well formed: its results are at least its bound. At run
+- The function table has one level (`Ctx.table`). What `table.get` reads is as secret as the
+  table, the index and the pc. `table.set` needs the pc, the index and the reference to flow
+  into the table's level.
+- An indirect call needs the pc, the level of the table index and the level of the table to
+  flow into the bound of the expected type, and that type to be well formed: its results are
+  at least its bound. At run
   time it traps unless the table entry names a function of exactly the expected type.
 - An exception is thrown only under a public pc and carries public values, and a `try_table`
   is typed only under a public pc. A clause's branch raises no pc.
@@ -136,7 +140,8 @@ paper's appendix B.4 has no counterpart here.
   runs in constant space. A tag
   is the number of public values its exceptions carry, a clause catches by tag or catches
   everything, and there is no reference to an exception (`exnref`, `throw_ref`, and the
-  clauses that hand one out). The function table is public and no instruction writes it, and an indirect call
+  clauses that hand one out). The function table has no bound and no size, a reference in it is a number (zero for null), and
+there is no `table.grow`, `table.fill` or `table.copy`. An indirect call
   asks the callee's type to equal the expected one, where the implementation compares the
   bounds by the order of the levels. The memory's cells hold whole values, not bytes. A load
   or a store outside the memory traps, a load also by the level check, and `unreachable` is

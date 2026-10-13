@@ -12,6 +12,7 @@ def exampleCtx : Ctx where
   globals := fun _ => Lab.L
   preserved := fun _ => False
   funcs := []
+  table := Lab.L
   tags := []
 
 /--
@@ -130,6 +131,7 @@ def moduleCtx : Ctx where
   globals := fun _ => Lab.L
   preserved := fun _ => False
   funcs := [identity.ty, callsIdentity.ty]
+  table := Lab.L
   tags := []
 
 example : WellTyped moduleCtx [identity, callsIdentity] := by
@@ -162,6 +164,7 @@ def frameCtx : Ctx where
   globals := fun _ => Lab.L
   preserved := fun i => i = 0
   funcs := []
+  table := Lab.L
   tags := []
 
 /-- What the secret selects: move the global, and put it back. -/
@@ -240,6 +243,7 @@ def tagCtx : Ctx where
   globals := fun _ => Lab.L
   preserved := fun _ => False
   funcs := []
+  table := Lab.L
   tags := [1]
 
 /-- Throw 5 in a `try_table` whose clause for the tag branches to the function's label. -/

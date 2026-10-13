@@ -80,6 +80,10 @@ inductive Instr where
   | store (lm : Lab)
   | memSize
   | memGrow
+  /-- read an entry of the function table, as a reference -/
+  | tableGet
+  /-- write a reference to an entry of the function table -/
+  | tableSet
   /-- `fill lm`: write one value to a range of cells and label them `lm` -/
   | fill (lm : Lab)
   /-- `copy lm`: copy a range of cells; each keeps its level, raised by `lm` -/
@@ -132,6 +136,8 @@ structure Ctx where
   /-- the globals the policy declares preserved (public ones, as the stack pointer of compiled C) -/
   preserved : Nat → Prop
   funcs : List FuncTy
+  /-- the level of the function table: one level for all its entries -/
+  table : Lab
   /-- how many values an exception of each tag carries; they are public -/
   tags : List Nat
 
@@ -222,6 +228,15 @@ inductive Typed (C : Ctx) : List STy → List Instr → Pcs → STy → Pcs → 
       Lab.le (pc.join (ln.join (lsrc.join ld))) lm →
       Typed C Ls rest (pc :: Pr) st P' st' →
       Typed C Ls (.copy lm :: rest) (pc :: Pr) (ln :: lsrc :: ld :: st) P' st'
+  /-- What is read from the table is as secret as the table, the index and the pc. -/
+  | tableGet {Ls rest pc Pr li st P' st'} :
+      Typed C Ls rest (pc :: Pr) ((pc.join (li.join C.table)) :: st) P' st' →
+      Typed C Ls (.tableGet :: rest) (pc :: Pr) (li :: st) P' st'
+  /-- A write to the table needs the pc, the index and the value to flow into the table's level. -/
+  | tableSet {Ls rest pc Pr lv li st P' st'} :
+      Lab.le (pc.join (li.join lv)) C.table →
+      Typed C Ls rest (pc :: Pr) st P' st' →
+      Typed C Ls (.tableSet :: rest) (pc :: Pr) (lv :: li :: st) P' st'
   /-- The size of the memory is public. -/
   | memSize {Ls rest pc Pr st P' st'} :
       Typed C Ls rest (pc :: Pr) (pc :: st) P' st' →
@@ -292,12 +307,12 @@ inductive Typed (C : Ctx) : List STy → List Instr → Pcs → STy → Pcs → 
       Typed C Ls (.retCall i :: rest) (pc :: Pr) (targs ++ st)
         (raise pc (pc :: Pr) (Ls.length - 1)) stAny
   /--
-  The pc and the level of the table index flow into the bound of the expected type, whose
-  results are at least its bound (the type is well formed, as the paper's rule for functions
-  asks of every function type).
+  The pc, the level of the table index and the level of the table flow into the bound of the
+  expected type, whose results are at least its bound (the type is well formed, as the paper's
+  rule for functions asks of every function type).
   -/
   | callIndirect {Ls rest pc Pr l ps b rs targs st P' st'} :
-      Lab.le (pc.join l) b → AllGe b rs → SFlows targs ps →
+      Lab.le (pc.join (l.join C.table)) b → AllGe b rs → SFlows targs ps →
       Typed C Ls rest (pc :: Pr) (rs ++ st) P' st' →
       Typed C Ls (.callIndirect ps b rs :: rest) (pc :: Pr) (l :: (targs ++ st)) P' st'
   | unreachable {Ls rest P st stAny} :
@@ -358,7 +373,7 @@ structure State where
   glob : Nat → Nat
   mem : Nat → Nat
   lab : Nat → Lab
-  /-- the function table, which no instruction of the core writes -/
+  /-- the function table: an entry names a function or is null -/
   tbl : Nat → Option Nat
   size : Nat
   cap : Nat
@@ -373,6 +388,18 @@ def State.setGlob (s : State) (i v : Nat) : State :=
 def State.setMem (s : State) (a v : Nat) (l : Lab) : State :=
   { s with mem := fun x => if x = a then v else s.mem x,
            lab := fun x => if x = a then l else s.lab x }
+
+/-- A table entry as a value: zero for null, and the function's index plus one. -/
+def refOf : Option Nat → Nat
+  | none => 0
+  | some i => i + 1
+
+def ofRef : Nat → Option Nat
+  | 0 => none
+  | i + 1 => some i
+
+def State.setTbl (s : State) (c : Nat) (e : Option Nat) : State :=
+  { s with tbl := fun j => if j = c then e else s.tbl j }
 
 /-- Write `v` to the `n` cells from `a`, and give them the level `l`. -/
 def State.fill (s : State) (a v n : Nat) (l : Lab) : State :=
@@ -523,6 +550,12 @@ inductive Eval (F : List Func) : Nat → List Nat → List Instr → List Nat �
       a + k ≤ s.size → b + k ≤ s.size →
       Eval F n ls rest σ (s.copy a b k lm) o →
       Eval F (n + 1) ls (.copy lm :: rest) (k :: b :: a :: σ) s o
+  | tableGet {n ls rest c σ s o} :
+      Eval F n ls rest (refOf (s.tbl c) :: σ) s o →
+      Eval F (n + 1) ls (.tableGet :: rest) (c :: σ) s o
+  | tableSet {n ls rest v c σ s o} :
+      Eval F n ls rest σ (s.setTbl c (ofRef v)) o →
+      Eval F (n + 1) ls (.tableSet :: rest) (v :: c :: σ) s o
   | memSize {n ls rest σ s o} :
       Eval F n ls rest (s.size :: σ) s o → Eval F (n + 1) ls (.memSize :: rest) σ s o
   | memGrow {n ls rest d σ s o} :

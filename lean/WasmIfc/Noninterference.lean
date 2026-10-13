@@ -705,6 +705,31 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
                 obtain ⟨hln, hj2⟩ := Lab.join_eq_L hj1
                 obtain ⟨hlb, hld⟩ := Lab.join_eq_L hj2
                 exact ⟨ha hld, hb hlb, hk hln⟩
+    | tableGet ht' =>
+      cases he0 with
+      | tableGet he0' =>
+        cases he1 with
+        | tableGet he1' =>
+          cases hσ with
+          | cons hc hσ' =>
+            refine ih _ (by omega) hF ht' he0' he1' (.cons (fun hl => ?_) hσ') hs hp
+            obtain ⟨_, hj⟩ := Lab.join_eq_L hl
+            obtain ⟨hli, hlt⟩ := Lab.join_eq_L hj
+            rw [hc hli, hs.2.2.2.1 hlt]
+    | tableSet hle ht' =>
+      cases he0 with
+      | tableSet he0' =>
+        cases he1 with
+        | tableSet he1' =>
+          cases hσ with
+          | cons hv hσa =>
+            cases hσa with
+            | cons hc hσb =>
+              refine ih _ (by omega) hF ht' he0' he1' hσb (hs.setTbl (fun hlt => ?_))
+                (hp.of_glob rfl rfl)
+              obtain ⟨_, hj⟩ := Lab.join_eq_L (Lab.eq_L_of_le hle hlt)
+              obtain ⟨hli, hlv⟩ := Lab.join_eq_L hj
+              exact ⟨hc hli, by rw [hv hlv]⟩
     | memSize ht' =>
       cases he0 with
       | memSize he0' =>
@@ -1050,10 +1075,10 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
         obtain ⟨_, q1, hbody1, hret1⟩ := hF _ _ hf1
         rw [hty0] at hbody0
         rw [hty1] at hbody1
-        rcases cond_cases hc with hcc | hlH
-        · -- the same table entry: the same function, as for a direct call
+        rcases Lab.table_cases C.table hc with ⟨hcc, hlt⟩ | hsec
+        · -- the same entry of a public table: the same function, as for a direct call
           subst hcc
-          rw [hs.2.2.2.1] at htbl0
+          rw [hs.2.2.2.1 hlt] at htbl0
           cases htbl0.symm.trans htbl1
           cases hf0.symm.trans hf1
           have hrel := ih _ hm0 (hF.enter _) hbody0 hb0 hb1 .nil
@@ -1086,9 +1111,9 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
                 cases hob1
                 subst ho1
                 exact .inl (.exn htag hlen (StRel.leave hs hst) (fun i hi => hpe i hi))
-        · -- a secret index: two functions of the expected type, each run under a secret pc
-          subst hlH
-          have hbound := hpc (Lab.join_H _)
+        · -- a secret index or a secret table: two functions of the expected type, each run
+          -- under a secret pc
+          have hbound := hpc (hsec _)
           subst hbound
           obtain ⟨hcf0, hi0⟩ := confine _ (hF.enter _) hbody0 (hiUpTo_zero_cons _) rfl hb0
           obtain ⟨hcf1, hi1⟩ := confine _ (hF.enter _) hbody1 (hiUpTo_zero_cons _) rfl hb1
