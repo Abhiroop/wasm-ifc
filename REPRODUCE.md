@@ -45,7 +45,7 @@ the specification suite, and `wat2wasm` (wabt) for the examples written as text.
 
 | Claim | Command | Recorded in | Time |
 |---|---|---|---|
-| every row of the section: SecWasm's 11 examples and the 7 programs of the findings, the password checker and its variants, the service, the 14 C programs of the WASI suite under two policies, the 10 PolyBench kernels in three builds, the program with a stack frame | `./casestudies/run.py` | `casestudies/results/2026-10-13-67e5597.json` (per program: policy lines, outcome with rule and site, labels inferred, whether SecWasm's restrictions accept it) | 100 s |
+| every row of the section: SecWasm's 11 examples and the 7 programs of the findings, the password checker and its variants, the service, the 14 C programs of the WASI suite under two policies, the 10 PolyBench kernels in three builds, the program with a stack frame | `./casestudies/run.py` | `casestudies/results/2026-10-13-88d3636.json` (per program: policy lines, outcome with rule and site, labels inferred, whether SecWasm's restrictions accept it) | 100 s |
 | the checker's run, the traps of its leaking variants and the rejection of the naive one, as a user sees them | the commands of `HANDOFF.md`, "The overview's example" | there | 1 s |
 | no accepted program needs the absence of the lift | the field `secwasm_restrictions` of the same file | | |
 
