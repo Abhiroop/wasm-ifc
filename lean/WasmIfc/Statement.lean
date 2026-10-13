@@ -57,8 +57,9 @@ inductive Invoke (F : List Func) (f : Func) (a : List Nat) (s : State) : Ended �
       Eval F n [f.ty.results.length] f.body [] { s with loc := frame a } o →
       o.lands = some (r, t) → Kept f.keep s t →
       Invoke F f a s (.returned r { t with loc := s.loc })
-  | threw {n tag : Nat} {w : List Nat} {u : State} :
-      Eval F n [f.ty.results.length] f.body [] { s with loc := frame a } (.exn tag w u) →
+  | threw {n tag : Nat} {o : Out} {w : List Nat} {u : State} :
+      Eval F n [f.ty.results.length] f.body [] { s with loc := frame a } o →
+      o.thrown = some (tag, w, u) →
       Invoke F f a s (.threw tag w { u with loc := s.loc })
 
 /--
@@ -89,28 +90,25 @@ theorem noninterference {C : Ctx} {F : List Func} (hF : WellTyped C F)
         rw [hl1] at hl1'
         cases hl1'
         exact .inl ⟨_, _, _, _, rfl, rfl, hres, LowEq.join hrel (fun i hi => hpres hk0 hk1 i hi)⟩
-      · subst ho0
-        simp [Out.lands] at hl0
-    | threw he1 =>
+      · exact (lands_thrown hl0 ho0).elim
+    | threw he1 ht1 =>
       rcases tini hF hf he0 he1 ha hst hpe with ⟨r0, t0, r1, t1, _, hl1', _, _, _⟩ |
         ⟨tag, w, u0, u1, ho0, _, _, _⟩
-      · simp [Out.lands] at hl1'
-      · subst ho0
-        simp [Out.lands] at hl0
-  | threw he0 =>
+      · exact (lands_thrown hl1' ht1).elim
+      · exact (lands_thrown hl0 ho0).elim
+  | threw he0 ht0 =>
     cases h1 with
     | returned he1 hl1 hk1 =>
       rcases tini hF hf he0 he1 ha hst hpe with ⟨r0, t0, r1, t1, hl0', _, _, _, _⟩ |
         ⟨tag, w, u0, u1, _, ho1, _, _⟩
-      · simp [Out.lands] at hl0'
-      · subst ho1
-        simp [Out.lands] at hl1
-    | threw he1 =>
+      · exact (lands_thrown hl0' ht0).elim
+      · exact (lands_thrown hl1 ho1).elim
+    | threw he1 ht1 =>
       rcases tini hF hf he0 he1 ha hst hpe with ⟨r0, t0, r1, t1, hl0', _, _, _, _⟩ |
         ⟨tag, w, u0, u1, ho0, ho1, hrel, hpres⟩
-      · simp [Out.lands] at hl0'
-      · cases ho0
-        cases ho1
+      · exact (lands_thrown hl0' ht0).elim
+      · cases ht0.symm.trans ho0
+        cases ht1.symm.trans ho1
         exact .inr ⟨_, _, _, _, rfl, rfl, LowEq.join hrel (fun i hi => hpres i hi)⟩
 
 end WasmIfc

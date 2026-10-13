@@ -553,16 +553,30 @@ inductive Out where
   | normal (σ : List Nat) (s : State)
   | br (i : Nat) (w : List Nat) (s : State)
   | exn (t : Nat) (w : List Nat) (s : State)
+  /--
+  An exception that left the callee of a tail call. The function that made the tail call is
+  gone by then, so no `try_table` of its own catches it: it passes them all, and is an
+  ordinary exception again for whoever called the function.
+  -/
+  | tailExn (t : Nat) (w : List Nat) (s : State)
 
 def Out.state : Out → State
   | .normal _ s => s
   | .br _ _ s => s
   | .exn _ _ s => s
+  | .tailExn _ _ s => s
 
 def Out.isBr : Out → Prop
   | .normal _ _ => False
   | .br _ _ _ => True
   | .exn _ _ _ => False
+  | .tailExn _ _ _ => False
+
+/-- The exception a function's body ends by, if it does: its own or that of a tail call's callee. -/
+def Out.thrown : Out → Option (Nat × List Nat × State)
+  | .exn t w s => some (t, w, s)
+  | .tailExn t w s => some (t, w, s)
+  | _ => none
 
 /-- What a block continues with after its body: the body's results, or the values of a branch to its own label. -/
 def Out.lands : Out → Option (List Nat × State)
@@ -570,11 +584,13 @@ def Out.lands : Out → Option (List Nat × State)
   | .br 0 w s => some (w, s)
   | .br (_ + 1) _ _ => none
   | .exn _ _ _ => none
+  | .tailExn _ _ _ => none
 
 /-- A branch past the block, as the block's own outcome; an exception passes a block as it is. -/
 def Out.exits : Out → Option Out
   | .br (i + 1) w s => some (.br i w s)
   | .exn t w s => some (.exn t w s)
+  | .tailExn t w s => some (.tailExn t w s)
   | _ => none
 
 /--
@@ -619,7 +635,8 @@ construct's start (`Kept`), and so does a call for the globals its callee names.
 further out skips the comparison of the constructs it leaves.
 
 An exception leaves the blocks and the calls it passes without their comparisons, and the
-caller's local variables are its own again. A `try_table` is a block whose body's outcome is
+caller's local variables are its own again. The exception of a tail call's callee is not
+offered to the clauses of the function that made the tail call (`Out.tailExn`). A `try_table` is a block whose body's outcome is
 first looked up in its clauses (`Out.caught`).
 
 A loop runs the iterations of its body (`iter`) as a block runs its body, so the state it
@@ -746,6 +763,9 @@ inductive Eval (F : List Func) : Nat → List Nat → List Instr → List Nat �
   | iterExn {n ls rest ps rs body vs s t w s1} :
       Eval F n (ps.length :: ls.tail) body vs s (.exn t w s1) →
       Eval F (n + 1) ls (.iter ps rs body :: rest) vs s (.exn t w s1)
+  | iterTailExn {n ls rest ps rs body vs s t w s1} :
+      Eval F n (ps.length :: ls.tail) body vs s (.tailExn t w s1) →
+      Eval F (n + 1) ls (.iter ps rs body :: rest) vs s (.tailExn t w s1)
   | iteCont {n1 n2 ls rest keep ps rs thn els c vs base s ob σ1 s1 o} :
       vs.length = ps.length →
       Eval F n1 (rs.length :: ls) (if c = 0 then els else thn) vs s ob → ob.lands = some (σ1, s1) →
@@ -789,10 +809,11 @@ inductive Eval (F : List Func) : Nat → List Nat → List Instr → List Nat �
       ob.lands = some (r, t) → Kept f.keep s t →
       Eval F (n1 + 1) ls (.retCall i :: rest) (args ++ base) s
         (.br (ls.length - 1) r { t with loc := s.loc })
-  | retCallExn {n1 ls rest i f args base s t w u} :
+  | retCallExn {n1 ls rest i f args base s ob t w u} :
       F[i]? = some f → args.length = f.ty.params.length →
-      Eval F n1 [f.ty.results.length] f.body [] { s with loc := frame args } (.exn t w u) →
-      Eval F (n1 + 1) ls (.retCall i :: rest) (args ++ base) s (.exn t w { u with loc := s.loc })
+      Eval F n1 [f.ty.results.length] f.body [] { s with loc := frame args } ob →
+      ob.thrown = some (t, w, u) →
+      Eval F (n1 + 1) ls (.retCall i :: rest) (args ++ base) s (.tailExn t w { u with loc := s.loc })
   | retCallIndirect {n1 ls rest ps b rs c i f args base s ob r t} :
       s.tbl c = some i → F[i]? = some f → f.ty.params = ps → f.ty.results = rs → Lab.le b f.ty.bound →
       args.length = ps.length →
@@ -800,20 +821,23 @@ inductive Eval (F : List Func) : Nat → List Nat → List Instr → List Nat �
       ob.lands = some (r, t) → Kept f.keep s t →
       Eval F (n1 + 1) ls (.retCallIndirect ps b rs :: rest) (c :: (args ++ base)) s
         (.br (ls.length - 1) r { t with loc := s.loc })
-  | retCallIndirectExn {n1 ls rest ps b rs c i f args base s t w u} :
+  | retCallIndirectExn {n1 ls rest ps b rs c i f args base s ob t w u} :
       s.tbl c = some i → F[i]? = some f → f.ty.params = ps → f.ty.results = rs → Lab.le b f.ty.bound →
       args.length = ps.length →
-      Eval F n1 [rs.length] f.body [] { s with loc := frame args } (.exn t w u) →
+      Eval F n1 [rs.length] f.body [] { s with loc := frame args } ob →
+      ob.thrown = some (t, w, u) →
       Eval F (n1 + 1) ls (.retCallIndirect ps b rs :: rest) (c :: (args ++ base)) s
-        (.exn t w { u with loc := s.loc })
-  | callExn {n1 ls rest i f args base s t w u} :
+        (.tailExn t w { u with loc := s.loc })
+  | callExn {n1 ls rest i f args base s ob t w u} :
       F[i]? = some f → args.length = f.ty.params.length →
-      Eval F n1 [f.ty.results.length] f.body [] { s with loc := frame args } (.exn t w u) →
+      Eval F n1 [f.ty.results.length] f.body [] { s with loc := frame args } ob →
+      ob.thrown = some (t, w, u) →
       Eval F (n1 + 1) ls (.call i :: rest) (args ++ base) s (.exn t w { u with loc := s.loc })
-  | callIndirectExn {n1 ls rest ps b rs c i f args base s t w u} :
+  | callIndirectExn {n1 ls rest ps b rs c i f args base s ob t w u} :
       s.tbl c = some i → F[i]? = some f → f.ty.params = ps → f.ty.results = rs → Lab.le b f.ty.bound →
       args.length = ps.length →
-      Eval F n1 [rs.length] f.body [] { s with loc := frame args } (.exn t w u) →
+      Eval F n1 [rs.length] f.body [] { s with loc := frame args } ob →
+      ob.thrown = some (t, w, u) →
       Eval F (n1 + 1) ls (.callIndirect ps b rs :: rest) (c :: (args ++ base)) s
         (.exn t w { u with loc := s.loc })
   /-- A null reference is a trap; so is a function that an indirect call would refuse. -/
@@ -824,10 +848,11 @@ inductive Eval (F : List Func) : Nat → List Nat → List Instr → List Nat �
       ob.lands = some (r, t) → Kept f.keep s t →
       Eval F n2 ls rest (r ++ base) { t with loc := s.loc } o →
       Eval F (n1 + n2 + 1) ls (.callRef ps b rs :: rest) (c :: (args ++ base)) s o
-  | callRefExn {n1 ls rest ps b rs c i f args base s t w u} :
+  | callRefExn {n1 ls rest ps b rs c i f args base s ob t w u} :
       ofRef c = some i → F[i]? = some f → f.ty.params = ps → f.ty.results = rs → Lab.le b f.ty.bound →
       args.length = ps.length →
-      Eval F n1 [rs.length] f.body [] { s with loc := frame args } (.exn t w u) →
+      Eval F n1 [rs.length] f.body [] { s with loc := frame args } ob →
+      ob.thrown = some (t, w, u) →
       Eval F (n1 + 1) ls (.callRef ps b rs :: rest) (c :: (args ++ base)) s
         (.exn t w { u with loc := s.loc })
   | throw {ls rest t k σ s} : Eval F 1 ls (.throw t k :: rest) σ s (.exn t (σ.take k) s)

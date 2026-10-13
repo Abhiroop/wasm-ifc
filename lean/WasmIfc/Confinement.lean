@@ -54,6 +54,7 @@ theorem lands_info {Ls : List STy} {rs : STy} {P : Pcs} {ob : Out} {σ1 : List N
       exact ⟨h3, rfl⟩
     | succ i => simp [Out.lands] at hl
   | exn t w s => exact False.elim h
+  | tailExn t w s => exact False.elim h
 
 /-- A branch past a block is, seen from outside the block, a branch under a secret pc again. -/
 theorem exits_info {Ls : List STy} {l0 : STy} {p : Lab} {P1 : Pcs} {st : STy} {ob o : Out}
@@ -70,6 +71,7 @@ theorem exits_info {Ls : List STy} {l0 : STy} {p : Lab} {P1 : Pcs} {st : STy} {o
       obtain ⟨rs, h1, h2, h3, h4⟩ := h
       exact ⟨rfl, trivial, fun _ => ⟨rs, by simpa using h1, h2, h3, h4.tail⟩⟩
   | exn t w s => exact False.elim h
+  | tailExn t w s => exact False.elim h
 
 /-- A function body ends at its end or by a branch to the function's label, with as many values as it has results. -/
 theorem top_lands {rs : STy} {P : Pcs} {o : Out} (h : Info [rs] P rs o) :
@@ -86,6 +88,7 @@ theorem top_lands {rs : STy} {P : Pcs} {o : Out} (h : Info [rs] P rs o) :
       exact ⟨w, s, rfl, h3, rfl, fun _ => h2⟩
     | succ i => simp at h1
   | exn t w s => exact False.elim h
+  | tailExn t w s => exact False.elim h
 
 /-- The arm a condition selects is typed, and ends below the join of the two arms' pc stacks. -/
 theorem arm_typed {C : Ctx} {Ls : List STy} {thn els : List Instr} {pcl pc p1 p2 : Lab}
@@ -313,6 +316,9 @@ theorem confine : ∀ (n : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P'
     | iterExn hb =>
       cases ht with
       | iter hp hge hbody => exact False.elim (ih _ (by omega) hF hbody hP hlen hb).2
+    | iterTailExn hb =>
+      cases ht with
+      | iter hp hge hbody => exact False.elim (ih _ (by omega) hF hbody hP hlen hb).2
     | throw =>
       cases ht with
       | throw _ _ _ => exact absurd hP.head (by decide)
@@ -338,22 +344,22 @@ theorem confine : ∀ (n : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P'
         simp only [List.length_map]
         exact ⟨Conf.call (hst' ▸ hs1), _, hLs, hge, hlen'.trans hres.length_eq,
           hiUpTo_raise _ _ _ (Nat.le_refl _)⟩
-    | retCallExn hf hargs hb =>
+    | retCallExn hf hargs hb hth =>
       cases ht with
       | retCall hft hpc hfl hLs hge hres =>
         obtain ⟨hty, P'', hbodyT, _⟩ := hF _ _ hf
         cases hft.symm.trans hty
         have hbound := hpc hP.head
-        exact False.elim (ih _ (by omega) (hF.enter _) hbodyT
-          (by rw [hbound]; exact hiUpTo_zero_cons _) rfl hb).2
-    | callExn hf hargs hb =>
+        exact ((ih _ (by omega) (hF.enter _) hbodyT
+          (by rw [hbound]; exact hiUpTo_zero_cons _) rfl hb).2.not_thrown hth).elim
+    | callExn hf hargs hb hth =>
       cases ht with
       | call hft hpc hfl hrest =>
         obtain ⟨hty, P'', hbodyT, _⟩ := hF _ _ hf
         cases hft.symm.trans hty
         have hbound := hpc hP.head
-        exact False.elim (ih _ (by omega) (hF.enter _) hbodyT
-          (by rw [hbound]; exact hiUpTo_zero_cons _) rfl hb).2
+        exact ((ih _ (by omega) (hF.enter _) hbodyT
+          (by rw [hbound]; exact hiUpTo_zero_cons _) rfl hb).2.not_thrown hth).elim
     | callIndirect htbl hf hps hrs hbd hargs hb hl hk hr =>
       cases ht with
       | callIndirect hpc hge hfl hrest =>
@@ -377,7 +383,7 @@ theorem confine : ∀ (n : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P'
         obtain ⟨h1, h2⟩ := ih _ (by omega) hF hrest hP
           (by simp only [List.length_append]; omega) hr
         exact ⟨(Conf.call (hst' ▸ hs1)).trans h1, h2⟩
-    | callIndirectExn htbl hf hps hrs hbd hargs hb =>
+    | callIndirectExn htbl hf hps hrs hbd hargs hb hth =>
       cases ht with
       | callIndirect hpc hge hfl hrest =>
         obtain ⟨_, P'', hbodyT, _⟩ := hF _ _ hf
@@ -387,8 +393,8 @@ theorem confine : ∀ (n : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P'
         subst hbound
         have hfb := hbd rfl
         rw [← hrs] at hb
-        exact False.elim (ih _ (by omega) (hF.enter _) hbodyT
-          (by rw [hfb]; exact hiUpTo_zero_cons _) rfl hb).2
+        exact ((ih _ (by omega) (hF.enter _) hbodyT
+          (by rw [hfb]; exact hiUpTo_zero_cons _) rfl hb).2.not_thrown hth).elim
     | callRef href hf hps hrs hbd hargs hb hl hk hr =>
       cases ht with
       | callRef hpc hge hfl hrest =>
@@ -412,7 +418,7 @@ theorem confine : ∀ (n : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P'
         obtain ⟨h1, h2⟩ := ih _ (by omega) hF hrest hP
           (by simp only [List.length_append]; omega) hr
         exact ⟨(Conf.call (hst' ▸ hs1)).trans h1, h2⟩
-    | callRefExn href hf hps hrs hbd hargs hb =>
+    | callRefExn href hf hps hrs hbd hargs hb hth =>
       cases ht with
       | callRef hpc hge hfl hrest =>
         obtain ⟨_, P'', hbodyT, _⟩ := hF _ _ hf
@@ -422,8 +428,8 @@ theorem confine : ∀ (n : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P'
         subst hbound
         have hfb := hbd rfl
         rw [← hrs] at hb
-        exact False.elim (ih _ (by omega) (hF.enter _) hbodyT
-          (by rw [hfb]; exact hiUpTo_zero_cons _) rfl hb).2
+        exact ((ih _ (by omega) (hF.enter _) hbodyT
+          (by rw [hfb]; exact hiUpTo_zero_cons _) rfl hb).2.not_thrown hth).elim
     | retCallIndirect htbl hf hps hrs hbd hargs hb hl hk =>
       cases ht with
       | retCallIndirect hpc hge hfl hLs hgr hres =>
@@ -443,7 +449,7 @@ theorem confine : ∀ (n : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P'
         simp only [List.length_map]
         exact ⟨Conf.call (hst' ▸ hs1), _, hLs, hgr, hlen'.trans hres.length_eq,
           hiUpTo_raise _ _ _ (Nat.le_refl _)⟩
-    | retCallIndirectExn htbl hf hps hrs hbd hargs hb =>
+    | retCallIndirectExn htbl hf hps hrs hbd hargs hb hth =>
       cases ht with
       | retCallIndirect hpc hge hfl hLs hgr hres =>
         obtain ⟨_, P'', hbodyT, _⟩ := hF _ _ hf
@@ -453,8 +459,8 @@ theorem confine : ∀ (n : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P'
         subst hbound
         have hfb := hbd rfl
         rw [← hrs] at hb
-        exact False.elim (ih _ (by omega) (hF.enter _) hbodyT
-          (by rw [hfb]; exact hiUpTo_zero_cons _) rfl hb).2
+        exact ((ih _ (by omega) (hF.enter _) hbodyT
+          (by rw [hfb]; exact hiUpTo_zero_cons _) rfl hb).2.not_thrown hth).elim
     | iteCont hvs hb hl hk hr =>
       cases ht with
       | ite hfl hge hres h1 h2 hrest =>

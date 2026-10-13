@@ -753,6 +753,24 @@ def Info (Ls : List STy) (P : Pcs) (st : STy) : Out → Prop
   | .normal σ _ => σ.length = st.length
   | .br i w _ => ∃ rs, Ls[i]? = some rs ∧ AllGe Lab.H rs ∧ w.length = rs.length ∧ HiUpTo i P
   | .exn _ _ _ => False
+  | .tailExn _ _ _ => False
+
+theorem Info.not_thrown {Ls : List STy} {P : Pcs} {st : STy} {o : Out} {x : Nat × List Nat × State}
+    (h : Info Ls P st o) (hx : o.thrown = some x) : False := by
+  cases o with
+  | normal σ s => simp [Out.thrown] at hx
+  | br i w s => simp [Out.thrown] at hx
+  | exn t w s => exact h
+  | tailExn t w s => exact h
+
+/-- An outcome that a block goes on after is not an exception. -/
+theorem lands_thrown {o : Out} {x : List Nat × State} {y : Nat × List Nat × State}
+    (hl : o.lands = some x) (hy : o.thrown = some y) : False := by
+  cases o with
+  | normal σ s => simp [Out.thrown] at hy
+  | br i w s => simp [Out.thrown] at hy
+  | exn t w s => simp [Out.lands] at hl
+  | tailExn t w s => simp [Out.lands] at hl
 
 theorem Info.mono {Ls : List STy} {P P' : Pcs} {st : STy} {o : Out} (hf : SFlows P P')
     (h : Info Ls P st o) : Info Ls P' st o := by
@@ -762,6 +780,7 @@ theorem Info.mono {Ls : List STy} {P P' : Pcs} {st : STy} {o : Out} (hf : SFlows
     obtain ⟨rs, h1, h2, h3, h4⟩ := h
     exact ⟨rs, h1, h2, h3, HiUpTo.sflows hf h4⟩
   | exn t w s => exact h
+  | tailExn t w s => exact h
 
 /--
 The two runs ended the same way, with segments or carried values that agree where public. They
@@ -779,6 +798,10 @@ inductive Sync (C : Ctx) (Ls : List STy) (P : Pcs) (st : STy) : Out → Out → 
   | exn {t k : Nat} {w : List Nat} {s0 s1 : State} :
       C.tags[t]? = some k → w.length = k → StRel C s0 s1 → PresEq C s0 s1 →
       Sync C Ls P st (.exn t w s0) (.exn t w s1)
+  /-- The same, for the exception of a tail call's callee. -/
+  | tailExn {t k : Nat} {w : List Nat} {s0 s1 : State} :
+      C.tags[t]? = some k → w.length = k → StRel C s0 s1 → PresEq C s0 s1 →
+      Sync C Ls P st (.tailExn t w s0) (.tailExn t w s1)
 
 theorem Sync.mono {C : Ctx} {Ls : List STy} {P P' : Pcs} {st : STy} {o0 o1 : Out}
     (hf : SFlows P P') (h : Sync C Ls P st o0 o1) : Sync C Ls P' st o0 o1 := by
@@ -786,6 +809,7 @@ theorem Sync.mono {C : Ctx} {Ls : List STy} {P P' : Pcs} {st : STy} {o0 o1 : Out
   | normal h1 h2 h3 => exact .normal h1 h2 (h3.mono hf)
   | br h0 h1 h2 h3 => exact .br h0 h1 h2 (h3.mono hf)
   | exn h0 h1 h2 h3 => exact .exn h0 h1 h2 h3
+  | tailExn h0 h1 h2 h3 => exact .tailExn h0 h1 h2 h3
 
 /-- The two runs took different paths under a secret pc: their states agree, and each is as `Info` says. -/
 def Loose (C : Ctx) (Ls : List STy) (P : Pcs) (st : STy) (o0 o1 : Out) : Prop :=

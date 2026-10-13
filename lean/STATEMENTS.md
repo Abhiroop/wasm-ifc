@@ -3,8 +3,8 @@
 For a reviewer who checks the definitions and the statement and leaves the proofs to Lean.
 `lake build` checks every proof, and `#print axioms WasmIfc.noninterference` lists `propext`,
 `Classical.choice` and `Quot.sound` only. So what remains to be checked by a person is that
-the definitions say what the paper says. They are in two files, 845 and
-116 lines long, of the development's 4,193:
+the definitions say what the paper says. They are in two files, 870 and
+114 lines long, of the development's 4,289:
 
 - `WasmIfc/Defs.lean`: the syntax, the typing judgment, the states and the semantics.
 - `WasmIfc/Statement.lean`: low equivalence, a call from outside, and the theorem.
@@ -54,51 +54,51 @@ on the stack before a branch.
 
 | Lean rule | Line | Semantics (lines) | `Instr` constructor | Paper's rule | Note |
 |---|---:|---|---|---|---|
-| `nil` | 185 | 631 | `INil`, the end of a sequence | W-Seq |  |
-| `const` | 186 | 632 | `IConst` | W-Const |  |
-| `binop` | 189 | 634 | `IAdd` and the other operations on two values | W-Binop | one rule for all of them |
-| `unop` | 192 | 636 | the operations on one value, `IRefIsNull` among them | W-Binop |  |
-| `dup` | 195 | 638 | `IDuplicate` | typed references | written by the elaborator for `br_on_null` |
-| `select` | 198 | 640 | `ISelect` | W-Select |  |
-| `drop` | 201 | 643 | `IDrop` | W-Drop |  |
-| `nop` | 204 | 645 | `INop` | W-Nop |  |
-| `relabel` | 207 | 647 | `IRelabelResults` | W-Relabel, W-Nop-Sub | raises labels of the block's whole segment |
-| `localGet` | 211 | 649 | `ILocalGet` | W-Get-Local |  |
-| `localSet` | 214 | 651 | `ILocalSet` | W-Set-Local |  |
-| `localTee` | 218 | 653 | `ILocalTee` | W-Tee-Local |  |
-| `globalGet` | 222 | 656 | `IGlobalGet` | as in SecWasm |  |
-| `globalSet` | 225 | 658 | `IGlobalSet` | W-Set-Global | for a global that is not preserved |
-| `globalSetPreserved` | 233 | 658 | `IGlobalSetPreserved` | preserved globals | the same instruction, for a preserved global |
-| `load` | 237 | 660 | `ILoad`, `ILoadN` | W-Load | the level is the load's declaration; the check is in the semantics |
-| `store` | 240 | 663 | `IStore`, `IStoreN` | W-Store | the level is at least the join, where the implementation takes the join |
-| `fill` | 245 | 667 | `IMemFill` | W-Memory-Fill |  |
-| `copy` | 253 | 671 | `IMemCopy` | W-Memory-Copy |  |
-| `memInit` | 279 | 697 | `IMemInit` | W-Memory-Init |  |
-| `dataDrop` | 284 | 701 | `IDataDrop` | bulk memory | no premise |
-| `memSize` | 298 | 709 | `IMemSize` | as in SecWasm |  |
-| `memGrow` | 302 | 711 | `IMemGrow` | W-Memory-Grow |  |
-| `tableGet` | 258 | 675 | `ITableGet` | tables | one table |
-| `tableSet` | 262 | 678 | `ITableSet` | tables |  |
-| `tableFill` | 288 | 703 | `ITableFill` | tables |  |
-| `tableCopy` | 293 | 706 | `ITableCopy` | tables | one table, so the source's level is the table's |
-| `hostRead` | 271 | 685 | a call of a host import that reads (`HostFunc`), with the driver's labelling | W-Host | one call stands for the reading ones |
-| `hostWrite` | 275 | 692 | a call of a host import that writes, with the driver's check | W-Host | one call stands for the writing ones |
-| `block` | 307 | 714, 719 | `IBlock` | W-Block | with `Restores`, the comparison of preserved globals |
-| `loop` | 313 | 723, 729 | `ILoop` | W-Loop | with `Restores` |
-| `iter` | 323 | 734, 738, 743, 746 | none: the iterations of a loop's body | none | no program contains it; the loop's rule types the body, and this one says the same of its iterations |
-| `ite` | 327 | 749, 755 | `IIf` | W-If | with `Restores` |
-| `br` | 333 | 759 | `IBr` | W-Br |  |
-| `brIf` | 337 | 761, 763 | `IBrIf` | W-Br-If | not taken, the carried values keep their labels |
-| `brTable` | 342 | 765 | `IBrTable` | W-Br-Table' | the repaired rule |
-| `ret` | 347 | 768 | `IReturn` | W-Return | the branch to the outermost label |
-| `call` | 352 | 772, 809 | `ICall` | W-Call |  |
-| `retCall` | 361 | 786, 792 | `IReturnCall` | tail calls |  |
-| `retCallIndirect` | 376 | 796, 803 | `IReturnCallIndirect` | tail calls |  |
-| `callIndirect` | 371 | 778, 813 | `ICallIndirect` | W-Call-Indirect | the table's level is in the premise |
-| `callRef` | 385 | 820, 827 | `ICallRef` | typed references |  |
+| `nil` | 185 | 648 | `INil`, the end of a sequence | W-Seq |  |
+| `const` | 186 | 649 | `IConst` | W-Const |  |
+| `binop` | 189 | 651 | `IAdd` and the other operations on two values | W-Binop | one rule for all of them |
+| `unop` | 192 | 653 | the operations on one value, `IRefIsNull` among them | W-Binop |  |
+| `dup` | 195 | 655 | `IDuplicate` | typed references | written by the elaborator for `br_on_null` |
+| `select` | 198 | 657 | `ISelect` | W-Select |  |
+| `drop` | 201 | 660 | `IDrop` | W-Drop |  |
+| `nop` | 204 | 662 | `INop` | W-Nop |  |
+| `relabel` | 207 | 664 | `IRelabelResults` | W-Relabel, W-Nop-Sub | raises labels of the block's whole segment |
+| `localGet` | 211 | 666 | `ILocalGet` | W-Get-Local |  |
+| `localSet` | 214 | 668 | `ILocalSet` | W-Set-Local |  |
+| `localTee` | 218 | 670 | `ILocalTee` | W-Tee-Local |  |
+| `globalGet` | 222 | 673 | `IGlobalGet` | as in SecWasm |  |
+| `globalSet` | 225 | 675 | `IGlobalSet` | W-Set-Global | for a global that is not preserved |
+| `globalSetPreserved` | 233 | 675 | `IGlobalSetPreserved` | preserved globals | the same instruction, for a preserved global |
+| `load` | 237 | 677 | `ILoad`, `ILoadN` | W-Load | the level is the load's declaration; the check is in the semantics |
+| `store` | 240 | 680 | `IStore`, `IStoreN` | W-Store | the level is at least the join, where the implementation takes the join |
+| `fill` | 245 | 684 | `IMemFill` | W-Memory-Fill |  |
+| `copy` | 253 | 688 | `IMemCopy` | W-Memory-Copy |  |
+| `memInit` | 279 | 714 | `IMemInit` | W-Memory-Init |  |
+| `dataDrop` | 284 | 718 | `IDataDrop` | bulk memory | no premise |
+| `memSize` | 298 | 726 | `IMemSize` | as in SecWasm |  |
+| `memGrow` | 302 | 728 | `IMemGrow` | W-Memory-Grow |  |
+| `tableGet` | 258 | 692 | `ITableGet` | tables | one table |
+| `tableSet` | 262 | 695 | `ITableSet` | tables |  |
+| `tableFill` | 288 | 720 | `ITableFill` | tables |  |
+| `tableCopy` | 293 | 723 | `ITableCopy` | tables | one table, so the source's level is the table's |
+| `hostRead` | 271 | 702 | a call of a host import that reads (`HostFunc`), with the driver's labelling | W-Host | one call stands for the reading ones |
+| `hostWrite` | 275 | 709 | a call of a host import that writes, with the driver's check | W-Host | one call stands for the writing ones |
+| `block` | 307 | 731, 736 | `IBlock` | W-Block | with `Restores`, the comparison of preserved globals |
+| `loop` | 313 | 740, 746 | `ILoop` | W-Loop | with `Restores` |
+| `iter` | 323 | 751, 755, 760, 763, 766 | none: the iterations of a loop's body | none | no program contains it; the loop's rule types the body, and this one says the same of its iterations |
+| `ite` | 327 | 769, 775 | `IIf` | W-If | with `Restores` |
+| `br` | 333 | 779 | `IBr` | W-Br |  |
+| `brIf` | 337 | 781, 783 | `IBrIf` | W-Br-If | not taken, the carried values keep their labels |
+| `brTable` | 342 | 785 | `IBrTable` | W-Br-Table' | the repaired rule |
+| `ret` | 347 | 788 | `IReturn` | W-Return | the branch to the outermost label |
+| `call` | 352 | 792, 831 | `ICall` | W-Call |  |
+| `retCall` | 361 | 806, 812 | `IReturnCall` | tail calls |  |
+| `retCallIndirect` | 376 | 817, 824 | `IReturnCallIndirect` | tail calls |  |
+| `callIndirect` | 371 | 798, 836 | `ICallIndirect` | W-Call-Indirect | the table's level is in the premise |
+| `callRef` | 385 | 844, 851 | `ICallRef` | typed references |  |
 | `unreachable` | 389 | none: a trap | `IUnreachable` | W-Unreachable-Poly |  |
-| `throw` | 392 | 833 | `IThrow` | exceptions | a tag is the number of public values it carries |
-| `tryTable` | 399 | 834, 840 | `ITryTable` | exceptions |  |
+| `throw` | 392 | 858 | `IThrow` | exceptions | a tag is the number of public values it carries |
+| `tryTable` | 399 | 859, 865 | `ITryTable` | exceptions |  |
 
 Where the column of the paper's rule names no W-rule, the rule is in the paper's section on
 what it adds to SecWasm (`sec:ifc-beyond`) and has no printed inference rule.
@@ -128,7 +128,7 @@ call through a reference ask that of the type they expect, which is where the pr
 level each, its size and limit, the function table, the levels of the host's descriptors, what
 was written to each and what is left to read from each, and the data segments.
 
-`Eval F n ls e σ s o`, `Defs.lean:630`: in the module `F`, with enclosing
+`Eval F n ls e σ s o`, `Defs.lean:647`: in the module `F`, with enclosing
 labels of arities `ls`, the sequence `e` on the segment `σ` and the state `s` ends as `o`. `n`
 is the size of the derivation and nothing else. An outcome (`Out`,
 `Defs.lean:552`) is the end of the sequence, a branch to an enclosing label
@@ -139,24 +139,24 @@ Convince yourself of five things, which are where this semantics is not the spec
 text:
 
 1. **A block's body runs on the block's parameters alone** (`blockCont`,
-   line 714), and what is below them on the stack waits. On validated code
+   line 731), and what is below them on the stack waits. On validated code
    this is what WebAssembly does, since a body cannot reach below its parameters. That the two
    agree is not proved.
 2. **The run-time checks are premises.** A load goes on only if every byte it reads is within
-   the memory and its level flows into the load's declared level (line 660).
+   the memory and its level flows into the load's declared level (line 677).
    An indirect call goes on only if the entry names a function with the expected parameters
-   and results whose bound is at least the expected one (line 778).
+   and results whose bound is at least the expected one (line 798).
    A host write goes on only if every byte it takes flows into the descriptor's level
-   (line 692). These are the paper's hybrid checks.
+   (line 709). These are the paper's hybrid checks.
 3. **The comparison of preserved globals is a premise too** (`Kept`,
    `Defs.lean:545`): where control comes out of a block, a loop, a conditional or a
    `try_table` by its end or by a branch to its label, and where a call returns, the globals
    in `keep` hold what they held at the construct's start or at the call. A branch further
    out and an exception skip it.
-4. **A loop runs `iter`** (lines 723 to 746): the body
+4. **A loop runs `iter`** (lines 740 to 763): the body
    again while it branches to the loop's label. The loop's comparison is therefore with the
    state at its first entry, as in the implementation.
-5. **A call** (line 772) runs the callee's body on an empty segment with a
+5. **A call** (line 792) runs the callee's body on an empty segment with a
    frame made of the arguments, and gives the caller its own locals back. `return` and a
    branch to the function's label end the callee alike (`Out.lands`).
 
@@ -183,7 +183,7 @@ exception. Convince yourself that it is `Eval` of the body as rule `call` runs i
 comparison of the function's `keep` included, which the machine makes for the invoked function
 as for a callee.
 
-`noninterference`, `Statement.lean:72`:
+`noninterference`, `Statement.lean:73`:
 
 > For a well-typed module whose preserved globals are public, a function of it, two calls from
 > low-equivalent states with arguments that agree where the parameters are public: if both
