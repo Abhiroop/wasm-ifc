@@ -509,9 +509,9 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
               exact .inr (hiUpTo_zero_cons _)
     | load lm ht' =>
       cases he0 with
-      | load _ hlab0 he0' =>
+      | load _ hsz0 hlab0 he0' =>
         cases he1 with
-        | load _ hlab1 he1' =>
+        | load _ hsz1 hlab1 he1' =>
           cases hσ with
           | cons ha hσ' =>
             refine ih _ (by omega) hF ht' he0' he1' (.cons (fun hl => ?_) hσ') hs hp
@@ -523,9 +523,9 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
             exact hs.2.2.1 _ (Lab.eq_L_of_le hlab0 rfl) (Lab.eq_L_of_le hlab1 rfl)
     | store lm hle ht' =>
       cases he0 with
-      | store _ he0' =>
+      | store _ hsz0 he0' =>
         cases he1 with
-        | store _ he1' =>
+        | store _ hsz1 he1' =>
           cases hσ with
           | cons hv hσa =>
             cases hσa with
@@ -536,6 +536,25 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
               obtain ⟨hj', hlv⟩ := Lab.join_eq_L hj
               obtain ⟨_, hla⟩ := Lab.join_eq_L hj'
               exact ⟨ha hla, hv hlv⟩
+    | memSize ht' =>
+      cases he0 with
+      | memSize he0' =>
+        cases he1 with
+        | memSize he1' =>
+          exact ih _ (by omega) hF ht' he0' he1' (.cons (fun _ => hs.2.2.2.2.1) hσ) hs hp
+    | memGrow hle ht' =>
+      cases he0 with
+      | memGrow he0' =>
+        cases he1 with
+        | memGrow he1' =>
+          cases hσ with
+          | cons hv hσ' =>
+            -- the pc and the amount are public, so the two runs grow alike
+            have hd := hv (Lab.join_eq_L (Lab.eq_L_of_le hle rfl)).2
+            subst hd
+            obtain ⟨hres, hs'⟩ := hs.grow _
+            exact ih _ (by omega) hF ht' he0' he1' (.cons (fun _ => hres) hσ') hs'
+              (hp.of_glob (State.grow_glob _ _) (State.grow_glob _ _))
     | block hfl hge hres hbody hrest =>
       obtain ⟨vs0, base0, m0, ob0, rfl, hvs0, hm0, hb0, hc0⟩ := block_inv he0
       obtain ⟨vs1, base1, m1, ob1, rfl, hvs1, hm1, hb1, hc1⟩ := block_inv he1
@@ -783,7 +802,7 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
             rcases cond_cases hc with hcc | hlH
             · -- the same table entry: the same function, as for a direct call
               subst hcc
-              rw [hs.2.2.2] at htbl0
+              rw [hs.2.2.2.1] at htbl0
               cases htbl0.symm.trans htbl1
               cases hf0.symm.trans hf1
               have hrel := ih _ (by omega) (hF.enter _) hbody0 hb0 hb1 .nil

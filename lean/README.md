@@ -3,8 +3,9 @@
 A Lean 4 development that proves termination-insensitive noninterference for the labelled
 typing rules of this repository on a core of WebAssembly: blocks, loops and conditionals with
 parameters and results, `br`, `br_if`, `br_table` and `return`, direct and indirect calls of
-the module's functions (recursion included), a memory whose cells carry a level with SecWasm's
-run-time check on loads, local and global variables with `local.tee`, preserved globals with
+the module's functions (recursion included), a bounded memory whose cells carry a level, with
+SecWasm's run-time check on loads, `memory.size` and `memory.grow`, local and global
+variables with `local.tee`, preserved globals with
 their run-time comparison, and arithmetic on one value type. It has no `sorry`, and its
 theorems depend on Lean's three standard axioms only (`propext`, `Classical.choice`,
 `Quot.sound`).
@@ -48,6 +49,8 @@ type `Syntax.Instructions.Instr` for the instructions above:
 - An indirect call needs the pc and the level of the table index to flow into the bound of the
   expected type, and that type to be well formed: its results are at least its bound. At run
   time it traps unless the table entry names a function of exactly the expected type.
+- The size of the memory is public: `memory.size` gives a value at the pc, and `memory.grow`
+  is typed only under a public pc with a public amount.
 - A module is well typed if every function body is typed as the paper's rule for functions
   says. That a function's results be at least its bound, which that rule also asks, is not
   part of `WellTyped`: the proof uses it in one place, an indirect call on a secret index,
@@ -110,11 +113,14 @@ paper's appendix B.4 has no counterpart here.
 - **The comparison names its globals.** The implementation compares every preserved global of
   the module, which a typed construct cannot leave out. Here a construct lists the globals it
   compares, and the rule asks that the list cover the preserved ones where the pc drops.
-- **The core is small.** One value type; two levels; no `memory.grow`, no bulk memory, no
-  exceptions and no tail calls. The function table is public and no instruction writes it,
-  and an indirect call asks the callee's type to equal the expected one, where the
-  implementation compares the bounds by the order of the levels. The memory is unbounded and its cells
-  hold whole values, so a load traps only by the level check. `unreachable` is the other trap.
+- **The core is small.** One value type; two levels; no bulk memory, no exceptions and no
+  tail calls. The function table is public and no instruction writes it, and an indirect call
+  asks the callee's type to equal the expected one, where the implementation compares the
+  bounds by the order of the levels. The memory's cells hold whole values, not bytes. A load
+  or a store outside the memory traps, a load also by the level check, and `unreachable` is
+  the other trap. `memory.grow` fails only if the memory would exceed its limit, which is
+  part of the state and the same in both runs; the implementation's may also fail for want of
+  host memory, which the proof does not model.
 - **Two relations between states.** `StRel` relates the states of two runs and is not
   transitive, because a cell that is secret in the middle state says nothing. `Conf` relates a
   state to a later one of the same run under a secret pc, in which a public cell may have

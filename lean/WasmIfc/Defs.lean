@@ -78,6 +78,8 @@ inductive Instr where
   | load (lm : Lab)
   /-- `store lm`: write a cell and label it `lm` -/
   | store (lm : Lab)
+  | memSize
+  | memGrow
   /--
   `block keep ps rs body`: where control comes out of the block, by its end or by a branch to
   its label, the globals `keep` must hold what they held at its start, or the run traps
@@ -187,6 +189,15 @@ inductive Typed (C : Ctx) : List STy → List Instr → Pcs → STy → Pcs → 
       Lab.le ((pc.join la).join lv) lm →
       Typed C Ls rest (pc :: Pr) st P' st' →
       Typed C Ls (.store lm :: rest) (pc :: Pr) (lv :: la :: st) P' st'
+  /-- The size of the memory is public. -/
+  | memSize {Ls rest pc Pr st P' st'} :
+      Typed C Ls rest (pc :: Pr) (pc :: st) P' st' →
+      Typed C Ls (.memSize :: rest) (pc :: Pr) st P' st'
+  /-- The memory grows only under a public pc, by a public amount, so that its size stays public. -/
+  | memGrow {Ls rest pc Pr l st P' st'} :
+      Lab.le (pc.join l) Lab.L →
+      Typed C Ls rest (pc :: Pr) (pc :: st) P' st' →
+      Typed C Ls (.memGrow :: rest) (pc :: Pr) (l :: st) P' st'
   /-- The results are at least the pc at which the body starts (the paper's Property (E)). -/
   | block {Ls rest pc Pr tin keep ps rs body p P1 st P' st'} :
       SFlows tin ps → AllGe pc rs → Restores C p P1 keep →
@@ -282,7 +293,10 @@ def WellTyped (C : Ctx) (F : List Func) : Prop :=
       ∃ p, Typed (C.enter f) [f.ty.results] f.body [f.ty.bound] [] [p] f.ty.results ∧
         (p = Lab.L ∨ ∀ j, C.preserved j → j ∈ f.keep)
 
-/-- The values of the local and of the global variables, and the memory: each cell's value and level. -/
+/--
+The values of the local and of the global variables, and the memory: each cell's value and
+level, how many cells it has, and how many it may grow to.
+-/
 structure State where
   loc : Nat → Nat
   glob : Nat → Nat
@@ -290,6 +304,8 @@ structure State where
   lab : Nat → Lab
   /-- the function table, which no instruction of the core writes -/
   tbl : Nat → Option Nat
+  size : Nat
+  cap : Nat
 
 def State.setLoc (s : State) (i v : Nat) : State :=
   { s with loc := fun j => if j = i then v else s.loc j }
@@ -301,6 +317,20 @@ def State.setGlob (s : State) (i v : Nat) : State :=
 def State.setMem (s : State) (a v : Nat) (l : Lab) : State :=
   { s with mem := fun x => if x = a then v else s.mem x,
            lab := fun x => if x = a then l else s.lab x }
+
+/-- What `memory.grow` gives when the memory cannot grow. -/
+def growFailed : Nat := 0xFFFFFFFF
+
+/--
+`memory.grow` by `d` cells: the old size and the memory with `d` more cells, which are zero and
+public, or `growFailed` and the memory as it was, if it would exceed its limit.
+-/
+def State.grow (s : State) (d : Nat) : Nat × State :=
+  if s.size + d ≤ s.cap then
+    (s.size, { s with size := s.size + d,
+                      mem := fun x => if s.size ≤ x then 0 else s.mem x,
+                      lab := fun x => if s.size ≤ x then Lab.L else s.lab x })
+  else (growFailed, s)
 
 /-- `Kept keep s t`: the globals `keep` hold in `t` what they held in `s`. -/
 def Kept (keep : List Nat) (s t : State) : Prop := ∀ i, i ∈ keep → t.glob i = s.glob i
@@ -344,7 +374,8 @@ def frame (args : List Nat) : Nat → Nat := fun i => (args[i]?).getD 0
 the size of the derivation. A block's body runs on the block's parameters alone; what lies
 below them on the stack waits for the body's results. A call runs the callee's body on an
 empty segment with its own local variables, and the caller's are as before when it returns.
-A trap is the absence of a rule: `unreachable` has none, and a `load` has one only if the
+A trap is the absence of a rule: `unreachable` has none, a `load` and a `store` have one only
+if the address is within the memory, and a `load` only if, besides, the
 cell's level flows into the level the load declares (SecWasm's run-time check), and an
 indirect call only if the table entry names a function of exactly the expected type. A block,
 a loop and a conditional go on only if the globals they name hold what they held at the
@@ -383,10 +414,16 @@ inductive Eval (F : List Func) : Nat → List Nat → List Instr → List Nat �
   | globalSet {n ls rest v σ s o} (i : Nat) :
       Eval F n ls rest σ (s.setGlob i v) o → Eval F (n + 1) ls (.globalSet i :: rest) (v :: σ) s o
   | load {n ls rest a σ s o} (lm : Lab) :
-      Lab.le (s.lab a) lm →
+      a < s.size → Lab.le (s.lab a) lm →
       Eval F n ls rest (s.mem a :: σ) s o → Eval F (n + 1) ls (.load lm :: rest) (a :: σ) s o
   | store {n ls rest v a σ s o} (lm : Lab) :
+      a < s.size →
       Eval F n ls rest σ (s.setMem a v lm) o → Eval F (n + 1) ls (.store lm :: rest) (v :: a :: σ) s o
+  | memSize {n ls rest σ s o} :
+      Eval F n ls rest (s.size :: σ) s o → Eval F (n + 1) ls (.memSize :: rest) σ s o
+  | memGrow {n ls rest d σ s o} :
+      Eval F n ls rest ((s.grow d).1 :: σ) (s.grow d).2 o →
+      Eval F (n + 1) ls (.memGrow :: rest) (d :: σ) s o
   | blockCont {n1 n2 ls rest keep ps rs body vs base s ob σ1 s1 o} :
       vs.length = ps.length →
       Eval F n1 (rs.length :: ls) body vs s ob → ob.lands = some (σ1, s1) → Kept keep s s1 →

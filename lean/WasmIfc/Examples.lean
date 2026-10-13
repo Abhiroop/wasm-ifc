@@ -96,9 +96,9 @@ example : Typed exampleCtx [[]] storeSecret [Lab.L] [] [Lab.L] [] :=
   .const 0 (.localGet 0 (.store Lab.H (fun _ => rfl) (.const 0 (.load Lab.H (.drop .nil)))))
 
 /-- The run: the cell holds the secret and is labelled so, and the load's check passes. -/
-example (s : State) :
+example (s : State) (hs : 0 < s.size) :
     Eval [] 6 [0] storeSecret [] s (.normal [] (s.setMem 0 (s.loc 0) Lab.H)) :=
-  .const 0 (.localGet 0 (.store Lab.H (.const 0 (.load Lab.H (by simp [State.setMem, Lab.le])
+  .const 0 (.localGet 0 (.store Lab.H hs (.const 0 (.load Lab.H hs (by simp [State.setMem, Lab.le])
     (.drop .nil)))))
 
 /-- The same store into a cell labelled public is not typed. -/

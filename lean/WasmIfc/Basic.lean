@@ -220,11 +220,12 @@ the pc is public (`PresOr`).
 def StRel (C : Ctx) (s t : State) : Prop :=
   (∀ i, C.locals i = Lab.L → s.loc i = t.loc i) ∧
     (∀ i, C.globals i = Lab.L → ¬ C.preserved i → s.glob i = t.glob i) ∧
-    (∀ a, s.lab a = Lab.L → t.lab a = Lab.L → s.mem a = t.mem a) ∧ s.tbl = t.tbl
+    (∀ a, s.lab a = Lab.L → t.lab a = Lab.L → s.mem a = t.mem a) ∧ s.tbl = t.tbl ∧
+    s.size = t.size ∧ s.cap = t.cap
 
 theorem StRel.symm {C : Ctx} {s t : State} (h : StRel C s t) : StRel C t s :=
   ⟨fun i hi => (h.1 i hi).symm, fun i hi hn => (h.2.1 i hi hn).symm,
-    fun a ha hb => (h.2.2.1 a hb ha).symm, h.2.2.2.symm⟩
+    fun a ha hb => (h.2.2.1 a hb ha).symm, h.2.2.2.1.symm, h.2.2.2.2.1.symm, h.2.2.2.2.2.symm⟩
 
 /-- The two runs' states agree on the preserved globals. -/
 def PresEq (C : Ctx) (s t : State) : Prop := ∀ i, C.preserved i → s.glob i = t.glob i
@@ -270,15 +271,17 @@ they were, except the preserved globals, which it may have written. A cell that 
 def Conf (C : Ctx) (s t : State) : Prop :=
   (∀ i, C.locals i = Lab.L → s.loc i = t.loc i) ∧
     (∀ i, C.globals i = Lab.L → ¬ C.preserved i → s.glob i = t.glob i) ∧
-    (∀ a, t.lab a = Lab.L → s.lab a = Lab.L ∧ s.mem a = t.mem a) ∧ s.tbl = t.tbl
+    (∀ a, t.lab a = Lab.L → s.lab a = Lab.L ∧ s.mem a = t.mem a) ∧ s.tbl = t.tbl ∧
+    s.size = t.size ∧ s.cap = t.cap
 
 theorem Conf.refl (C : Ctx) (s : State) : Conf C s s :=
-  ⟨fun _ _ => rfl, fun _ _ _ => rfl, fun _ h => ⟨h, rfl⟩, rfl⟩
+  ⟨fun _ _ => rfl, fun _ _ _ => rfl, fun _ h => ⟨h, rfl⟩, rfl, rfl, rfl⟩
 
 theorem Conf.trans {C : Ctx} {s t u : State} (h1 : Conf C s t) (h2 : Conf C t u) : Conf C s u :=
   ⟨fun i hi => (h1.1 i hi).trans (h2.1 i hi), fun i hi hn => (h1.2.1 i hi hn).trans (h2.2.1 i hi hn),
     fun a ha => ⟨(h1.2.2.1 a (h2.2.2.1 a ha).1).1,
-      ((h1.2.2.1 a (h2.2.2.1 a ha).1).2).trans (h2.2.2.1 a ha).2⟩, h1.2.2.2.trans h2.2.2.2⟩
+      ((h1.2.2.1 a (h2.2.2.1 a ha).1).2).trans (h2.2.2.1 a ha).2⟩, h1.2.2.2.1.trans h2.2.2.2.1,
+    h1.2.2.2.2.1.trans h2.2.2.2.2.1, h1.2.2.2.2.2.trans h2.2.2.2.2.2⟩
 
 /-- The first run goes on alone under a secret pc: the two still agree. -/
 theorem StRel.conf_left {C : Ctx} {s s' t : State} (h : StRel C s t) (hc : Conf C s s') :
@@ -286,7 +289,8 @@ theorem StRel.conf_left {C : Ctx} {s s' t : State} (h : StRel C s t) (hc : Conf 
   ⟨fun i hi => (hc.1 i hi).symm.trans (h.1 i hi),
     fun i hi hn => (hc.2.1 i hi hn).symm.trans (h.2.1 i hi hn),
     fun a ha hb => (hc.2.2.1 a ha).2.symm.trans (h.2.2.1 a (hc.2.2.1 a ha).1 hb),
-    hc.2.2.2.symm.trans h.2.2.2⟩
+    hc.2.2.2.1.symm.trans h.2.2.2.1, hc.2.2.2.2.1.symm.trans h.2.2.2.2.1,
+    hc.2.2.2.2.2.symm.trans h.2.2.2.2.2⟩
 
 /-- The second run goes on alone under a secret pc: the two still agree. -/
 theorem StRel.conf_right {C : Ctx} {s t t' : State} (h : StRel C s t) (hc : Conf C t t') :
@@ -341,14 +345,14 @@ theorem StRel.setMem {C : Ctx} {s t : State} {a0 a1 v0 v1 : Nat} {lm : Lab}
 /-- A write to a secret local variable leaves the state as the attacker sees it. -/
 theorem Conf.setLoc_high {C : Ctx} (s : State) {i : Nat} (v : Nat) (hi : C.locals i = Lab.H) :
     Conf C s (s.setLoc i v) := by
-  refine ⟨fun j hj => ?_, fun _ _ _ => rfl, fun _ h => ⟨h, rfl⟩, rfl⟩
+  refine ⟨fun j hj => ?_, fun _ _ _ => rfl, fun _ h => ⟨h, rfl⟩, rfl, rfl, rfl⟩
   by_cases hji : j = i
   · subst hji; rw [hi] at hj; cases hj
   · simp [State.setLoc, hji]
 
 theorem Conf.setGlob_high {C : Ctx} (s : State) {i : Nat} (v : Nat) (hi : C.globals i = Lab.H) :
     Conf C s (s.setGlob i v) := by
-  refine ⟨fun _ _ => rfl, fun j hj _ => ?_, fun _ h => ⟨h, rfl⟩, rfl⟩
+  refine ⟨fun _ _ => rfl, fun j hj _ => ?_, fun _ h => ⟨h, rfl⟩, rfl, rfl, rfl⟩
   by_cases hji : j = i
   · subst hji; rw [hi] at hj; cases hj
   · simp [State.setGlob, hji]
@@ -356,18 +360,38 @@ theorem Conf.setGlob_high {C : Ctx} (s : State) {i : Nat} (v : Nat) (hi : C.glob
 /-- A write to a preserved global is one a run under a secret pc may make. -/
 theorem Conf.setGlob_preserved {C : Ctx} (s : State) {i : Nat} (v : Nat) (hi : C.preserved i) :
     Conf C s (s.setGlob i v) := by
-  refine ⟨fun _ _ => rfl, fun j _ hn => ?_, fun _ h => ⟨h, rfl⟩, rfl⟩
+  refine ⟨fun _ _ => rfl, fun j _ hn => ?_, fun _ h => ⟨h, rfl⟩, rfl, rfl, rfl⟩
   by_cases hji : j = i
   · subst hji; exact absurd hi hn
   · simp [State.setGlob, hji]
 
 /-- A store at a secret level makes its cell secret and touches no other. -/
 theorem Conf.setMem_high (C : Ctx) (s : State) (a v : Nat) : Conf C s (s.setMem a v Lab.H) := by
-  refine ⟨fun _ _ => rfl, fun _ _ _ => rfl, fun x hx => ?_, rfl⟩
+  refine ⟨fun _ _ => rfl, fun _ _ _ => rfl, fun x hx => ?_, rfl, rfl, rfl⟩
   by_cases hxa : x = a
   · simp [State.setMem, hxa] at hx
   · simp only [State.setMem, hxa, ite_false] at hx ⊢
     exact ⟨hx, trivial⟩
+
+/-- The memory grows by the same amount in two runs: the same result, and states that still agree. -/
+theorem StRel.grow {C : Ctx} {s t : State} (d : Nat) (h : StRel C s t) :
+    (s.grow d).1 = (t.grow d).1 ∧ StRel C (s.grow d).2 (t.grow d).2 := by
+  obtain ⟨h1, h2, h3, h4, h5, h6⟩ := h
+  unfold State.grow
+  rw [h5, h6]
+  by_cases hc : t.size + d ≤ t.cap
+  · simp only [hc, ite_true]
+    refine ⟨trivial, fun i hi => h1 i hi, fun i hi hn => h2 i hi hn, fun a ha hb => ?_, h4, rfl, rfl⟩
+    by_cases hsz : t.size ≤ a
+    · simp [hsz]
+    · simp only [hsz, ite_false] at ha hb ⊢
+      exact h3 a ha hb
+  · simp only [hc, ite_false]
+    exact ⟨trivial, h1, h2, h3, h4, h5, h6⟩
+
+theorem State.grow_glob (s : State) (d : Nat) : (s.grow d).2.glob = s.glob := by
+  unfold State.grow
+  split <;> rfl
 
 /-! ### Calls -/
 
@@ -512,6 +536,8 @@ theorem rise {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : Pcs} {st st' : S
   | globalSetPreserved _ _ _ _ ih => exact ih
   | load _ _ ih => exact ih
   | store _ _ _ ih => exact ih
+  | memSize _ ih => exact ih
+  | memGrow _ _ ih => exact ih
   | block _ _ _ _ _ ihb ihr => exact SFlows.trans ihb.tail ihr
   | loop _ _ _ _ _ _ _ ihb ihr => exact SFlows.trans ihb.tail ihr
   | iter _ _ _ ih => exact .cons (Lab.le_refl _) ih.tail

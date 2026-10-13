@@ -609,7 +609,7 @@ implemented since e87e76a.
 
 ## Lean: noninterference on a core with control flow, calls and memory (item 12, 2026-10-12)
 
-- **Where:** `lean/` (Lean 4.35.0, no dependencies; `cd lean && lake build`). 2,425 lines in
+- **Where:** `lean/` (Lean 4.35.0, no dependencies; `cd lean && lake build`). 2,516 lines in
   five files; `lean/README.md` states what is proved and what differs from the paper.
 - **What is proved** (`WasmIfc.tini`, from `WasmIfc.ni`): termination-insensitive
   noninterference for a function of a well-typed module, under the lift-free rules, on a core
@@ -620,7 +620,7 @@ implemented since e87e76a.
   depend on `propext`, `Classical.choice` and `Quot.sound` only** (`#print axioms`).
 - **Against the plan's steps (a) to (f):** (a) in part. The rules are the W-rules themselves,
   so for this core there is no erasure and no inclusion to prove, and the theorem is the main
-  theorem's statement for the typed program. Not covered: `memory.grow`, a bounded memory of bytes, more
+  theorem's statement for the typed program. Not covered: a memory of bytes, more
   than one value type, more than two levels, bulk memory, WASI, the features of 3.0, and
   the correspondence with SecWasm's flat-stack semantics (the Lean semantics evaluates a
   block's body on the block's parameters alone). (b) to (f): not done.
@@ -647,7 +647,7 @@ implemented since e87e76a.
 - **Preserved globals, `return` and `local.tee` (added 2026-10-13).** The core now has the
   rule for a preserved global and its run-time comparison, so the plan's item "preserved
   globals in the proofs" has a proof case and is no longer an assumption of the theorem.
-  2,425 lines, no `sorry`, the same three axioms.
+  No `sorry`, the same three axioms.
   - *What is modelled.* `Ctx.preserved` says which globals are preserved. A write to one has
     the rule of `IGlobalSetPreserved` (no premise on the pc; the value at most as secret as
     the pc). A block, a loop and a conditional carry the premise `Restores pcEnd after keep`,
@@ -682,6 +682,11 @@ implemented since e87e76a.
     the rule for functions makes each compare the preserved globals at its return. Without
     that premise the caller, whose pc may be public, would go on with globals the two runs
     disagree on.
+  - *The memory is bounded now* (the same day): a load or a store outside it traps,
+    `memory.size` gives a public value, and `memory.grow` is typed as `IMemGrow` is, only
+    under a public pc with a public amount. 2,516 lines. One thing the proof does not model:
+    the implementation's `memory.grow` may also fail when the host has no memory left, which
+    is outside the program's state. In the proof it fails only by the memory's declared limit.
   - *Not covered.* Exceptions and tail calls are not in the core, so that an exception cannot
     skip a comparison is still my argument and not a proof. For a tail call I re-read the
     machine: the callee's comparison is made in the place of the caller's, and the caller's
