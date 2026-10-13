@@ -9,10 +9,10 @@ paper, **P3** is desirable. Items marked **decision** wait on Daniel. Open desig
 code are `TODO(ifc Pn)` comments beside what they concern (`grep -rn 'TODO(ifc' src test`); they
 are summarised here, not repeated.
 
-## Where things stand (2026-10-08)
+## Where things stand (2026-10-13)
 
 - WebAssembly: the spec testsuite, at the WebAssembly 3.0 release (all 257 scripts), passes for
-  the supported subset (62,137 assertions, none failing, 3,065 skipped, counted by feature
+  the supported subset (63,080 assertions, none failing, 2,122 skipped, counted by reason
   below); the wasi-testsuite passes 72 of 72. Both also with SecWasm's restrictions on.
 - Information flow: SecWasm's static rules in the single instruction type, with the repairs of
   the paper's findings (`br_table` raises down to its deepest target); inference of stores,
@@ -58,22 +58,20 @@ are summarised here, not repeated.
 The supported subset is WebAssembly 3.0 without garbage collection: 2.0, plus several memories
 per module, 64-bit memories and tables, tail calls, extended constant expressions, the relaxed
 vector instructions, typed function references and exceptions. What the 3.0 suite skips
-(`WASM_IFC_SPEC_REPORT=f cabal test wasm-ifc-spec; ./scripts/spec-report.py f`), by the features
-a skipped module uses according to `wasm-tools`, in assertions:
+(`WASM_IFC_SPEC_REPORT=f cabal test wasm-ifc-spec; ./scripts/spec-report.py f`), in
+assertions:
 
-| Skipped | Features the module uses beyond the subset |
+| Skipped | Why |
 |---:|---|
-| 877 | garbage collection |
-| 27 | none: the script instantiates one module definition several times (`module definition`, `module instance`), which the harness does not do, and what depends on those instances |
-| 10 | none: a module that imports the same memory twice |
-| 1,245 | none: malformed modules given as text, which the harness does not run |
+| 877 | the module uses garbage collection |
+| 1,245 | the module is malformed text, which the harness does not run (it runs binaries) |
 
-- [ ] **P2** A module that imports the same memory, table or writable global under two of its
-  indices is not linked (`ImportedTwice`). Sharing is by handing an object over when control
-  passes between instances (`Runtime.Link`), and inside one instance each index holds its own
-  object. A way that keeps the design: rename the uses of the second index to the first before
-  the module is validated, which the linker can do since it knows from the import names that
-  the two are one. 10 assertions of the suite (`imports1`, `imports2`, `data0`, `data1`).
+Every other assertion of the suite passes (63,080).
+
+- [ ] **P3** A module that imports one memory, table or writable global twice is linked only
+  after `Runtime.Link.unaliased` has rewritten it, which an embedder must call before
+  validation (the spec runner does). A policy that names a global or a table by index still
+  names the index as written, which the rewriting leaves in place and unused.
 - [ ] **P3** `Runtime.Link` has no WASI host: a module linked with others that calls a WASI
   function fails with `HostCallNotServed`. The CLI runs one module.
 - [ ] **P3** `Runtime.Module.invokeExport` and the CLI give back no instance after a trap, so
@@ -94,9 +92,6 @@ a skipped module uses according to `wasm-tools`, in assertions:
   instruction (`IRelabelTop`) before what the caller returns to; a long chain of such calls
   between functions of different result levels grows that continuation. A function that calls
   itself in tail position, or one of the same result levels, does not.
-- [ ] **P3** The spec runner does not perform `module definition` and `module instance`, which
-  instantiate one module several times; `instance.wast` is skipped for it (27 assertions with
-  what depends on them). The linker has what they need: `instantiateIn` on the same module twice.
 - [ ] **P3** The store keeps every exception that a clause caught by reference, for the
   `exnref` that names it, and never frees one.
 - [ ] **P3** The typed program does not know whether a reference may be null, nor the function

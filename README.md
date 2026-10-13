@@ -108,9 +108,9 @@ including bulk memory, structured control, calls, reference types (`funcref`, `e
 several tables with the table instructions and every kind of element segment, `call_indirect`,
 globals, typed `select`, exceptions, imports, whole-module validation and the start function. The official
 spec testsuite, at the
-WebAssembly 3.0 release, passes for this subset (62,137 assertions over 257 scripts, none
-failing; the rest need features listed below, and `scripts/spec-report.py` counts them by
-feature), and so does
+WebAssembly 3.0 release, passes for this subset (63,080 assertions over 257 scripts, none
+failing; the 2,122 others are on modules that use garbage collection or are malformed text,
+which the harness does not run, and `scripts/spec-report.py` counts them), and so does
 every program in the official wasi-testsuite (72 of 72), over the complete WASI Preview 1
 interface. Its four socket calls are served on sockets the host listens on (`--listen`): a
 module accepts connections, receives and sends, and a connection has the level of the socket

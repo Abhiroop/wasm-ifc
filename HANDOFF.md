@@ -735,9 +735,16 @@ implemented since e87e76a.
     a public load in another.
   **For the paper track:** none of this is in section 5 or 6. The rule is short ("an import
   has the level of what is imported; calls between modules are public").
-- **One limit, refused by name:** a module that imports the same memory, table or writable
-  global twice is not linked (`ImportedTwice`): inside one instance two indices are two
-  objects. 10 assertions.
+- **An object imported twice (2026-10-12, later the same day):** inside one instance two
+  indices are two objects, so a module that imports the same memory, table or writable global
+  under two indices cannot be instantiated as it is written (`ImportedTwice`). It does not
+  have to be: a use of the second index is a use of the first. `Runtime.Link.unaliased`
+  rewrites every such use before validation and declares the second index unused
+  (`Validation.Aliases`); the elaborator checks that it is unused before it believes it; the
+  linker then gives that index its object once and leaves it alone. In C terms: two pointer
+  variables that are known to hold the same address are replaced by one. 20 assertions of the
+  suite (`instance.wast`, `imports1`, `imports2`, `data0`, `data1`). The spec runner also
+  performs `module_definition` and `module_instance` now (17 assertions).
 - **Exceptions across modules (added 2026-10-12, later the same day):** a tag is imported and
   exported, and has one name among all the instances (`tagNames`); a module's own tag is named
   after its instance, and an imported one has the name of the tag it imports. An exception is
@@ -799,11 +806,9 @@ Supported, with the 3.0 suite passing on all of it: **WebAssembly 3.0 without ga
 collection**, that is every instruction and type of WebAssembly 2.0, linking between modules
 included, and of what 3.0 adds, several memories, 64-bit memories and tables, tail calls,
 extended constant expressions, the relaxed vector instructions, typed function references and
-exceptions. Three qualifications:
+exceptions. Two qualifications:
 
 - exceptions are thrown and caught under a public pc only (a rule, not a gap in coverage);
-- a module that imports the same memory, table or writable global twice is not linked (10
-  assertions of the suite), refused by name;
 - nullability and the function type behind a reference are checked by a validator beside the
   typed program, not by its types (see "Typed function references").
 
@@ -816,7 +821,7 @@ vector operation. All seven scripts of the suite pass in full (77 assertions).
 Not supported: garbage collection, as decided.
 
 Every feature that clang 23 (wasi-sdk 34) and rustc 1.99 enable by default for
-`wasm32-wasip1` is supported. The suite's 2,159 skipped assertions are: 1,245 malformed modules
-given as text, which the harness does not run; 877 on modules that use garbage collection; 27
-for a script command the harness lacks; 10 for an object imported twice. Counts are in
-`TODO.md`.
+`wasm32-wasip1` is supported. **The suite: 63,080 assertions pass, none fails, 2,122 are
+skipped: 877 on modules that use garbage collection, and 1,245 malformed modules given as
+text, which the harness does not run.** Nothing else is skipped: 174 of the 257 scripts run
+without a skipped assertion.
