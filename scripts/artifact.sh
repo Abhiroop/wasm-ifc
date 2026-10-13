@@ -38,7 +38,7 @@ from pathlib import Path
 tree, commit, suites = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
 REWRITES = [
     (re.compile(r"/tmp/claude-\d+/[^/\"\s]+"), "/tmp/scratch"),
-    (re.compile(r"/home/[A-Za-z0-9_.-]+/repos/[A-Za-z0-9_.-]+/wasm-ifc[A-Za-z-]*"), "."),
+    (re.compile(r"/home/[A-Za-z0-9_.-]+/(?:[A-Za-z0-9_.-]+/)*?wasm-ifc[A-Za-z-]*"), "."),
     (re.compile(r"/home/[A-Za-z0-9_.-]+"), "~"),
     (re.compile(r"-home-[A-Za-z0-9_]+-repos-[A-Za-z0-9_]+-wasm-ifc[A-Za-z-]*"), "scratch"),
     (re.compile(r"\b(Daniel|Abhi(roop)?)'s\b"), "an author's"),
