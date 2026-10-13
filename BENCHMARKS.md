@@ -1060,3 +1060,124 @@ In the order of what they would give on compiled programs:
    and CoreMark took 10 to 15 % fewer cycles in one noisy run each, and with `-A16m` more.
    This needs a quiet machine, and the executable would have to be linked with `-rtsopts`
    or `-with-rtsopts`.
+
+## Performance work of 2026-10-13, third round: instructions executed (78c3f93)
+
+As in the second round, the machine was busy and nothing was timed: the numbers are
+instructions executed per machine step. Where cycles are given, they are the least of three
+or five interleaved runs, which is a hint and not a measurement. This round took the steps
+that keep the machine a pure function of a configuration; the two that do not, a store in
+place and an array of functions, are still open.
+
+### What was done
+
+| # | Cost | Why it was there | What was done | Effect (instructions per step) |
+|---|---|---|---|---|
+| 1 | A walk down a general map of integers at every load, and a path of it rebuilt at every store | the written chunks of a memory were in an `IntMap` | they are in a radix tree of fan-out sixteen (`Runtime.Chunks`), whose nodes have a constant size, so GHC allocates and copies them in line; the nodes are an unlifted type, so the walk checks for no unevaluated node | LU 191 to 167, Jacobi 144 to 124, CoreMark 135 to 130 |
+| 2 | 1 KiB copied by every store | the chunk size that was best with the map | 256 bytes, which the tree makes better: the same instructions, and 4 to 18 % fewer cycles on five memory-bound programs (128 bytes gives no more) | cycles only |
+| 3 | A call, with eight registers saved and restored around it, at every load of a memory that holds no secret | the test for "no secret" was inside `levelOfRange`, which calls itself, and GHC inlines no such function whatever its pragma | the test is made in line, before the call | a load 50 fewer, CoreMark 126 to 122, LU 153 to 146 |
+| 4 | A suspended computation built at every store and forced inside the write | the word to store is used on two paths of `storeWordAt`, and GHC shared it between them lazily | the store is strict in the word | a store 630 to 560 |
+| 5 | A jump on the width and a shift per byte at every load | the word was put together byte by byte | away from a chunk's last bytes the eight bytes are read as one word and cut to the width | LU 158 to 153, Jacobi 123 to 118 |
+| 6 | A call for every branch to the innermost label, and for every stack split or appended with nothing | `unwind`, `splitStack` and `appendStack` are recursive | each has its first case in line and calls a recursive function for the rest; the loop's label is kept and not built again at every iteration | a block with its end 216 to 195, the back edge of a loop 50 fewer, CoreMark 129 to 126 |
+| 7 | Checks for unevaluated fields on the way to a callee | the function record, the function space and the memory and table references had lazy fields | they are strict | a call with its return 485 to 450 |
+
+Tried without effect or with a loss:
+
+- **GHC's LLVM backend** (`-fllvm` with LLVM 19, for the interpreter's module): 10 % more
+  instructions and 2 to 36 % more cycles than the native code generator on seven workloads.
+  GHC gives LLVM one function per basic block of the loop, with every machine register
+  passed between them, and LLVM does not see the loop.
+- Inlining the end of a block (`popControl`) into the driver loop: a block got 50
+  instructions cheaper and every other instruction 5 dearer.
+- A store as a call of its own instead of code in the loop: 110 instructions dearer.
+- `-fregs-iterative`, `-fspec-constr-keen` (both worse), `-fno-liberate-case` (the same),
+  `-fworker-wrapper-cbv` (1 to 3 % fewer on calls, not adopted).
+
+### Instructions per machine step
+
+| Workload | 48ac063 | second round (1d633f3) | third round | third / second | third / 48ac063 |
+|---|---:|---:|---:|---:|---:|
+| br-table | 140 | 98 | 91 | 0.93 | 0.65 |
+| call-indirect | 168 | 126 | 117 | 0.93 | 0.70 |
+| fib | 159 | 128 | 117 | 0.91 | 0.74 |
+| float | 119 | 80 | 75 | 0.94 | 0.63 |
+| funcs-16 | 167 | 125 | 115 | 0.92 | 0.69 |
+| funcs-2 | 149 | 106 | 96 | 0.91 | 0.64 |
+| funcs-4 | 151 | 109 | 99 | 0.91 | 0.66 |
+| funcs-64 | 232 | 189 | 179 | 0.95 | 0.77 |
+| globals-16 | 207 | 168 | 163 | 0.97 | 0.79 |
+| globals-2 | 130 | 91 | 86 | 0.95 | 0.66 |
+| globals-4 | 141 | 102 | 97 | 0.95 | 0.69 |
+| globals-64 | 472 | 432 | 427 | 0.99 | 0.90 |
+| labels-16 | 151 | 108 | 104 | 0.96 | 0.69 |
+| labels-2 | 130 | 86 | 80 | 0.93 | 0.62 |
+| labels-4 | 135 | 91 | 85 | 0.93 | 0.63 |
+| labels-64 | 166 | 123 | 120 | 0.98 | 0.72 |
+| locals-16 | 122 | 81 | 75 | 0.93 | 0.61 |
+| locals-2 | 119 | 74 | 68 | 0.92 | 0.57 |
+| locals-4 | 119 | 74 | 68 | 0.92 | 0.57 |
+| locals-64 | 129 | 106 | 100 | 0.94 | 0.78 |
+| loop-arith | 108 | 72 | 69 | 0.96 | 0.64 |
+| loop-arith64 | 113 | 76 | 73 | 0.96 | 0.65 |
+| memory-random | 143 | 87 | 77 | 0.89 | 0.54 |
+| memory-stream | 187 | 137 | 109 | 0.80 | 0.58 |
+
+Geometric mean of the 24 kernels: 0.93 (0.80 to 0.99) of the second round's, 0.67 (0.54 to 0.90) of 48ac063's.
+
+| Program | 48ac063 | second round (1d633f3) | third round | third / second | third / 48ac063 |
+|---|---:|---:|---:|---:|---:|
+| coremark-100 | 195 | 135 | 120 | 0.89 | 0.62 |
+| pb-2mm-small | 236 | 165 | 133 | 0.81 | 0.56 |
+| pb-3mm-small | 244 | 171 | 134 | 0.78 | 0.55 |
+| pb-atax-small | 297 | 224 | 194 | 0.87 | 0.65 |
+| pb-correlation-small | 240 | 176 | 139 | 0.79 | 0.58 |
+| pb-floyd-warshall-small | 217 | 166 | 132 | 0.80 | 0.61 |
+| pb-gemm-small | 253 | 182 | 139 | 0.76 | 0.55 |
+| pb-jacobi-2d-small | 197 | 144 | 111 | 0.77 | 0.56 |
+| pb-lu-small | 256 | 191 | 143 | 0.75 | 0.56 |
+| pb-nussinov-small | 210 | 147 | 121 | 0.82 | 0.58 |
+| pb-seidel-2d-small | 178 | 124 | 106 | 0.85 | 0.60 |
+
+Geometric mean of the 11 programs: 0.81 (0.75 to 0.89) of the second round's, 0.58 (0.55 to 0.65) of 48ac063's.
+
+The least cycles of three interleaved runs, per step, for what they are worth on a machine
+with a load of 9: CoreMark 123 at 48ac063, 77 after the second round and 64 now; LU 142, 93
+and 66; Jacobi 98, 58 and 48; Nussinov 109, 64 and 52; `fib` 75, 65 and 54; `loop-arith` 40,
+23 and 23. So the programs take about half the cycles they took at 48ac063.
+
+The changes are in bcf5e58 and 78c3f93. The gate, the three test suites in both
+configurations and the case studies pass. The allocation reference is recorded anew: the
+three programs of the tripwire allocate 13 to 22 % less than after the second round, and no
+workload more. The erased twin has the changes that apply to it (it reads memory through
+`Runtime.MemInst`, so the tree and the loads came with it); by instructions the labelled
+build is at 0.98 to 1.06 of the twin on arithmetic, locals, globals, memory and direct calls
+in a loop, 1.12 to 1.16 on `fib` and indirect calls, and 1.19 to 1.25 on `br_table` and
+blocks.
+
+### What one instruction costs now
+
+On the loops of the second round, with a constant and a `drop` at 42 each: a `local.get` 67,
+a `local.set` 94 in a frame of at most 8 words and 137 in one of 18, `i32.add` 60, a load 260
+from a chunk three nodes down the tree (205 from memory never written), a store 560, a block
+with its end 195, a call with its return 450.
+
+What CoreMark and two PolyBench kernels execute, counted with a build that counts (not
+committed): `local.get` is 27 to 33 % of the instructions, constants 12 to 13 %, `i32.add`
+9 to 18 %, `local.set` and `local.tee` 11 to 15 %, loads 7 to 14 %, stores 2 to 5 %,
+`br_if` 2 to 7 %, blocks 5 % in CoreMark and none in the kernels, calls 0.2 %.
+
+### What is left
+
+1. **A store, 560 instructions.** It allocates the chunk through the runtime system (40),
+   copies it (90), rebuilds four nodes of the tree and five records around the memory, and
+   saves and restores the loop's registers around each call. In place it would be about 30.
+   This is the decision of the second round's list, unchanged.
+2. **A load, 260.** What is left is spread over the address, the bounds, the tree (8
+   instructions a node) and the result; I found no single cost in it any more.
+3. **The fixed cost, 42.** GHC's native code generator moves values between registers and
+   the C stack around the dispatch, and LLVM does worse. I do not see how to lower it from
+   the source.
+4. **Functions and globals found by walking a list**, as before: an array needs the unchecked
+   coercion.
+5. **The frame size of a callee** is computed from its types at every call (`wordsIn`, 5 % of
+   `fib`): keeping it in `Function` changes that record and the tests that build one.

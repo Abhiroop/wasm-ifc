@@ -1239,7 +1239,16 @@ has to replace them, and I did not start one.
   measured again in the next sweep. By instructions it is 1.00 to 1.11 on eleven kernels.
 - **The allocation reference** is recorded anew: up to 3 % less on the programs, 6 % more on
   kernels that have two or three locals.
-- **What is left**, with what each would take, is at the end of that section of
+- **A third round** (78c3f93, the same day, also by instructions) took the steps that need no
+  decision: the chunks of a memory in a radix tree in place of the `IntMap`
+  (`Runtime.Chunks`), chunks of 256 bytes, a load that tests for "no secret" without a
+  call and reads its word in one piece, a store strict in its word, and the first case of a
+  branch and of a stack split in line. The programs execute 0.81 times the instructions of
+  the second round (0.75 to 0.89) and the kernels 0.93. From 48ac063, the day's start, that
+  is 0.58 on the programs and 0.67 on the kernels, and about half the cycles on the programs
+  as far as a busy machine shows. GHC's LLVM backend was tried (LLVM 19 is installed now,
+  `opt-19` and `llc-19`) and is slower than the native one here, by 2 to 36 % in cycles.
+- **What is left**, with what each would take, is at the end of the third round's section of
   `BENCHMARKS.md`. The large one is still the memory: a store in place gave 16 to 20 % fewer
   cycles on three memory-bound programs in an experiment that is not committed, and it needs
   Daniel's decision, since the machine then is a function of a configuration only if each
