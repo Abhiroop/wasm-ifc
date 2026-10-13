@@ -1080,6 +1080,29 @@ Directories: `test/wasi/testsuite/tests/{c,rust,assemblyscript}/testsuite/wasm32
 `casestudies/build/{password,frames,service,polybench}`, `bench/wasm-t2`. Data:
 `bench/results/2026-10-13-secwasm-shapes.json`.
 
+## An anonymized artifact (the plan's second list, item 4, 2026-10-13)
+
+`./scripts/artifact.sh [OUT]` writes an anonymized copy of the tree to `OUT/wasm-ifc/` and
+`OUT/wasm-ifc-artifact.tar.gz` (default `../wasm-ifc-artifact`). Nothing is published.
+
+- **What it is:** the files of `HEAD`, without history, so without commit messages and
+  trailers. At 67cc4ce: 350 files, 4.5 MB unpacked, 656 KB packed. `REPRODUCE.md` is at its
+  top, with the two test suites fetched by `git clone` at their pinned commits, since a copy
+  without history has no submodules.
+- **What is removed:** `CLAUDE.md`, `paper/`, `.gitmodules` (it had the paper's remote), and
+  the script itself, which names what it removes.
+- **What is rewritten:** the licence's copyright line and the package's `author` and
+  `maintainer`; the two first names where a document has them ("an author"); e-mail
+  addresses; absolute paths under a home directory, which the recorded benchmark results
+  had (30 files in all). The archive's entries have no user name and one fixed date.
+- **How it is checked:** the script searches every file of the copy, binaries included, for
+  the names, the addresses, the user's name and home paths, and fails if one is left. The
+  copy builds from the archive with `-Werror`, and its 239 unit tests pass.
+- **What is not anonymous in it, to decide:** the repository's name `wasm-ifc` and the
+  documents' talk of "the paper", its sections and its plan (`HANDOFF.md`, `TODO.md`). If the
+  artifact should not carry the hand-off, delete `HANDOFF.md` from the copy; `REPRODUCE.md`
+  points to five of its sections for details that the commands' output also gives.
+
 ## A Rust program with secrets (the plan's second list, item 5, 2026-10-13)
 
 The password checker is ported to Rust (`casestudies/password-rust/`), built by the installed

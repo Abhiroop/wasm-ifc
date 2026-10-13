@@ -18,7 +18,9 @@ for study in password service frames polybench secwasm; do ./casestudies/$study/
 rustup target add wasm32-wasip1 && ./casestudies/password-rust/build.sh     # the checker in Rust, optional
 ```
 
-The first build takes about 15 minutes. `wasm-tools` 1.261 or later must be on the `PATH` for
+The compiler is GHC 9.12.2 with cabal 3.14 (`ghcup install ghc 9.12.2`); if another GHC is
+the default, `echo 'with-compiler: ghc-9.12.2' > cabal.project.local` first. The first build
+takes about 15 minutes. `wasm-tools` 1.261 or later must be on the `PATH` for
 the specification suite, and `wat2wasm` (wabt) for the examples written as text.
 
 ## Conformance (RQ1)
