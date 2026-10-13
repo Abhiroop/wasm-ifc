@@ -71,6 +71,8 @@ RULES = [
     ("memGrow", "`IMemGrow`", "W-Memory-Grow", ""),
     ("tableGet", "`ITableGet`", "tables", "one table"),
     ("tableSet", "`ITableSet`", "tables", ""),
+    ("tableFill", "`ITableFill`", "tables", ""),
+    ("tableCopy", "`ITableCopy`", "tables", "one table, so the source's level is the table's"),
     ("hostRead", "a call of a host import that reads (`HostFunc`), with the driver's labelling", "W-Host", "one call stands for the reading ones"),
     ("hostWrite", "a call of a host import that writes, with the driver's check", "W-Host", "one call stands for the writing ones"),
     ("block", "`IBlock`", "W-Block", "with `Restores`, the comparison of preserved globals"),
@@ -83,6 +85,7 @@ RULES = [
     ("ret", "`IReturn`", "W-Return", "the branch to the outermost label"),
     ("call", "`ICall`", "W-Call", ""),
     ("retCall", "`IReturnCall`", "tail calls", ""),
+    ("retCallIndirect", "`IReturnCallIndirect`", "tail calls", ""),
     ("callIndirect", "`ICallIndirect`", "W-Call-Indirect", "the table's level is in the premise"),
     ("callRef", "`ICallRef`", "typed references", ""),
     ("unreachable", "`IUnreachable`", "W-Unreachable-Poly", ""),
@@ -286,8 +289,7 @@ the results.
 ### Outside the core
 
 More than one value type, and so the numeric and vector instructions as such; 64-bit and
-several memories; several tables, and a table's size, growth, fill and copy; the indirect
-tail calls; references to exceptions (`exnref`, `throw_ref`, the clauses that hand one out);
+several memories; several tables, and a table's size and growth; references to exceptions (`exnref`, `throw_ref`, the clauses that hand one out);
 linking; the WASI calls other than one that reads and one that writes, with directories,
 error codes and sockets; local variables split into webs and the inference of labels, which
 happen before typing; declassification.

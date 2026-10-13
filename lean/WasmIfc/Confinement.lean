@@ -212,6 +212,20 @@ theorem confine : ∀ (n : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P'
       | dataDrop _ ht' =>
         obtain ⟨h1, h2⟩ := ih _ (by omega) hF ht' hP hlen he'
         exact ⟨(Conf.dropSeg _ _ _).trans h1, h2⟩
+    | tableFill he' =>
+      cases ht with
+      | tableFill hle ht' =>
+        have hpc := hP.head
+        subst hpc
+        obtain ⟨h1, h2⟩ := ih _ (by omega) hF ht' (hiUpTo_zero_cons _) (by simpa using hlen) he'
+        exact ⟨(Conf.tbl_high _ _ (hle (Lab.H_join _))).trans h1, h2⟩
+    | tableCopy he' =>
+      cases ht with
+      | tableCopy hle ht' =>
+        have hpc := hP.head
+        subst hpc
+        obtain ⟨h1, h2⟩ := ih _ (by omega) hF ht' (hiUpTo_zero_cons _) (by simpa using hlen) he'
+        exact ⟨(Conf.tbl_high _ _ (hle (Lab.H_join _))).trans h1, h2⟩
     | memSize he' =>
       cases ht with
       | memSize ht' => exact ih _ (by omega) hF ht' hP (by simp [hlen]) he'
@@ -401,6 +415,37 @@ theorem confine : ∀ (n : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P'
     | callRefExn href hf hps hrs hbd hargs hb =>
       cases ht with
       | callRef hpc hge hfl hrest =>
+        obtain ⟨_, P'', hbodyT, _⟩ := hF _ _ hf
+        have hpcH := hP.head
+        subst hpcH
+        have hbound := hpc (Lab.H_join _)
+        subst hbound
+        have hfb := hbd rfl
+        rw [← hrs] at hb
+        exact False.elim (ih _ (by omega) (hF.enter _) hbodyT
+          (by rw [hfb]; exact hiUpTo_zero_cons _) rfl hb).2
+    | retCallIndirect htbl hf hps hrs hbd hargs hb hl hk =>
+      cases ht with
+      | retCallIndirect hpc hge hfl hLs hgr hres =>
+        obtain ⟨_, P'', hbodyT, _⟩ := hF _ _ hf
+        have hpcH := hP.head
+        subst hpcH
+        have hbound := hpc (Lab.H_join _)
+        subst hbound
+        have hfb := hbd rfl
+        rw [← hrs] at hb
+        obtain ⟨hs1, hi1⟩ := ih _ (by omega) (hF.enter _) hbodyT
+          (by rw [hfb]; exact hiUpTo_zero_cons _) rfl hb
+        obtain ⟨r', t', hl', hlen', hst', _⟩ := top_lands hi1
+        rw [hrs] at hlen'
+        rw [hl] at hl'
+        cases hl'
+        simp only [List.length_map]
+        exact ⟨Conf.call (hst' ▸ hs1), _, hLs, hgr, hlen'.trans hres.length_eq,
+          hiUpTo_raise _ _ _ (Nat.le_refl _)⟩
+    | retCallIndirectExn htbl hf hps hrs hbd hargs hb =>
+      cases ht with
+      | retCallIndirect hpc hge hfl hLs hgr hres =>
         obtain ⟨_, P'', hbodyT, _⟩ := hF _ _ hf
         have hpcH := hP.head
         subst hpcH

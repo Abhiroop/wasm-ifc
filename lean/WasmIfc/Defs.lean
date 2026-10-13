@@ -88,6 +88,10 @@ inductive Instr where
   | tableGet
   /-- write a reference to an entry of the function table -/
   | tableSet
+  /-- write one reference to a range of entries -/
+  | tableFill
+  /-- copy a range of entries -/
+  | tableCopy
   /-- a host call that reads from a descriptor into the memory -/
   | hostRead
   /-- a host call that writes cells of the memory to a descriptor -/
@@ -121,6 +125,8 @@ inductive Instr where
   | call (i : Nat)
   /-- `return_call`: call a function and return what it returns -/
   | retCall (i : Nat)
+  /-- `return_call_indirect`: the indirect call, as a tail call -/
+  | retCallIndirect (ps : STy) (b : Lab) (rs : STy)
   /-- `callIndirect ps b rs`: call the function a table entry names, expected at the type `ps -[b]-> rs` -/
   | callIndirect (ps : STy) (b : Lab) (rs : STy)
   /-- `callRef ps b rs`: call the function a reference on the stack names, expected at the type `ps -[b]-> rs` -/
@@ -278,6 +284,16 @@ inductive Typed (C : Ctx) : List STy → List Instr → Pcs → STy → Pcs → 
   | dataDrop {Ls rest P st P' st'} (k : Nat) :
       Typed C Ls rest P st P' st' →
       Typed C Ls (.dataDrop k :: rest) P st P' st'
+  /-- `table.fill`: as `table.set`, with the count. -/
+  | tableFill {Ls rest pc Pr ln lv li st P' st'} :
+      Lab.le (pc.join (ln.join (lv.join li))) C.table →
+      Typed C Ls rest (pc :: Pr) st P' st' →
+      Typed C Ls (.tableFill :: rest) (pc :: Pr) (ln :: lv :: li :: st) P' st'
+  /-- `table.copy`: the pc, the count and the two indices flow into the table's level. -/
+  | tableCopy {Ls rest pc Pr ln lsrc ld st P' st'} :
+      Lab.le (pc.join (ln.join (lsrc.join ld))) C.table →
+      Typed C Ls rest (pc :: Pr) st P' st' →
+      Typed C Ls (.tableCopy :: rest) (pc :: Pr) (ln :: lsrc :: ld :: st) P' st'
   /-- The size of the memory is public. -/
   | memSize {Ls rest pc Pr st P' st'} :
       Typed C Ls rest (pc :: Pr) (pc :: st) P' st' →
@@ -356,6 +372,12 @@ inductive Typed (C : Ctx) : List STy → List Instr → Pcs → STy → Pcs → 
       Lab.le (pc.join (l.join C.table)) b → AllGe b rs → SFlows targs ps →
       Typed C Ls rest (pc :: Pr) (rs ++ st) P' st' →
       Typed C Ls (.callIndirect ps b rs :: rest) (pc :: Pr) (l :: (targs ++ st)) P' st'
+  /-- An indirect tail call: the premises of the indirect call, then those of `return`. -/
+  | retCallIndirect {Ls rest pc Pr l ps b rs ret targs st stAny} :
+      Lab.le (pc.join (l.join C.table)) b → AllGe b rs → SFlows targs ps →
+      Ls[Ls.length - 1]? = some ret → AllGe pc ret → SFlows rs ret →
+      Typed C Ls (.retCallIndirect ps b rs :: rest) (pc :: Pr) (l :: (targs ++ st))
+        (raise pc (pc :: Pr) (Ls.length - 1)) stAny
   /--
   A call through a reference is an indirect call without the table: the reference decides the
   callee as a table index does, so its level is in the premise on the bound.
@@ -457,6 +479,14 @@ def ofRef : Nat → Option Nat
 
 def State.setTbl (s : State) (c : Nat) (e : Option Nat) : State :=
   { s with tbl := fun j => if j = c then e else s.tbl j }
+
+/-- Write the entry `e` to the `n` entries from `c`. -/
+def State.fillTbl (s : State) (c : Nat) (e : Option Nat) (n : Nat) : State :=
+  { s with tbl := fun j => if c ≤ j ∧ j < c + n then e else s.tbl j }
+
+/-- Copy the `n` entries from `a` to those from `d`. -/
+def State.copyTbl (s : State) (d a n : Nat) : State :=
+  { s with tbl := fun j => if d ≤ j ∧ j < d + n then s.tbl (a + (j - d)) else s.tbl j }
 
 /-- Write `v` to the `n` cells from `a`, and give them the level `l`. -/
 def State.fill (s : State) (a v n : Nat) (l : Lab) : State :=
@@ -670,6 +700,12 @@ inductive Eval (F : List Func) : Nat → List Nat → List Instr → List Nat �
       Eval F (n + 1) ls (.memInit k lm :: rest) (c :: b :: a :: σ) s o
   | dataDrop {n ls rest σ s o} (k : Nat) :
       Eval F n ls rest σ (s.dropSeg k) o → Eval F (n + 1) ls (.dataDrop k :: rest) σ s o
+  | tableFill {n ls rest k v c σ s o} :
+      Eval F n ls rest σ (s.fillTbl c (ofRef v) k) o →
+      Eval F (n + 1) ls (.tableFill :: rest) (k :: v :: c :: σ) s o
+  | tableCopy {n ls rest k b a σ s o} :
+      Eval F n ls rest σ (s.copyTbl a b k) o →
+      Eval F (n + 1) ls (.tableCopy :: rest) (k :: b :: a :: σ) s o
   | memSize {n ls rest σ s o} :
       Eval F n ls rest (s.size :: σ) s o → Eval F (n + 1) ls (.memSize :: rest) σ s o
   | memGrow {n ls rest d σ s o} :
@@ -757,6 +793,19 @@ inductive Eval (F : List Func) : Nat → List Nat → List Instr → List Nat �
       F[i]? = some f → args.length = f.ty.params.length →
       Eval F n1 [f.ty.results.length] f.body [] { s with loc := frame args } (.exn t w u) →
       Eval F (n1 + 1) ls (.retCall i :: rest) (args ++ base) s (.exn t w { u with loc := s.loc })
+  | retCallIndirect {n1 ls rest ps b rs c i f args base s ob r t} :
+      s.tbl c = some i → F[i]? = some f → f.ty.params = ps → f.ty.results = rs → Lab.le b f.ty.bound →
+      args.length = ps.length →
+      Eval F n1 [rs.length] f.body [] { s with loc := frame args } ob →
+      ob.lands = some (r, t) → Kept f.keep s t →
+      Eval F (n1 + 1) ls (.retCallIndirect ps b rs :: rest) (c :: (args ++ base)) s
+        (.br (ls.length - 1) r { t with loc := s.loc })
+  | retCallIndirectExn {n1 ls rest ps b rs c i f args base s t w u} :
+      s.tbl c = some i → F[i]? = some f → f.ty.params = ps → f.ty.results = rs → Lab.le b f.ty.bound →
+      args.length = ps.length →
+      Eval F n1 [rs.length] f.body [] { s with loc := frame args } (.exn t w u) →
+      Eval F (n1 + 1) ls (.retCallIndirect ps b rs :: rest) (c :: (args ++ base)) s
+        (.exn t w { u with loc := s.loc })
   | callExn {n1 ls rest i f args base s t w u} :
       F[i]? = some f → args.length = f.ty.params.length →
       Eval F n1 [f.ty.results.length] f.body [] { s with loc := frame args } (.exn t w u) →

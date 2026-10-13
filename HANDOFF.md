@@ -609,7 +609,7 @@ implemented since e87e76a.
 
 ## Lean: noninterference on a core with control flow, calls and memory (item 12, 2026-10-12)
 
-- **Where:** `lean/` (Lean 4.35.0, no dependencies; `cd lean && lake build`). 3,945 lines in
+- **Where:** `lean/` (Lean 4.35.0, no dependencies; `cd lean && lake build`). 4,193 lines in
   six files; `lean/README.md` states what is proved and what differs from the paper.
 - **What is proved** (`WasmIfc.tini`, from `WasmIfc.ni`): termination-insensitive
   noninterference for a function of a well-typed module, under the lift-free rules, on a core
@@ -724,6 +724,10 @@ implemented since e87e76a.
       directories (the core's host has none). One hypothesis is new and explicit: a preserved
       global is public, which the policy ensures.
     3,945 lines; `noninterference` depends on the three standard axioms.
+  - *More of the table, and the indirect tail call* (the same list, item 6): `table.fill`,
+    `table.copy` and `return_call_indirect`, with the rules of `ITableFill`, `ITableCopy` and
+    `IReturnCallIndirect`. 4,193 lines. Not done: `table.size` and `table.grow`, for
+    which the core's table would need a size that two runs agree on when the table is public.
   - *A memory of bytes and data segments* (2026-10-13, the plan's item 5). A load and a store
     name a number of bytes. A load of several bytes checks the level of each, which is the
     check on the join of their labels that the paper states, and the proof of the case is that

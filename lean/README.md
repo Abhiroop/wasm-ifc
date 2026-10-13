@@ -3,9 +3,9 @@
 A Lean 4 development that proves termination-insensitive noninterference for the labelled
 typing rules of this repository on a core of WebAssembly: blocks, loops and conditionals with
 parameters and results, `br`, `br_if`, `br_table` and `return`, direct calls, indirect calls,
-calls through a reference and tail calls of the module's functions (recursion included), a bounded memory whose bytes carry a level, with loads and stores of several bytes, data segments (`memory.init`, `data.drop`),
+calls through a reference and tail calls, direct and indirect, of the module's functions (recursion included), a bounded memory whose bytes carry a level, with loads and stores of several bytes, data segments (`memory.init`, `data.drop`),
 SecWasm's run-time check on loads, `memory.size`, `memory.grow`, `memory.fill` and
-`memory.copy`, a function table with a level (`table.get`, `table.set`), a host that reads
+`memory.copy`, a function table with a level (`table.get`, `table.set`, `table.fill`, `table.copy`), a host that reads
 from and writes to descriptors with levels, local and global
 variables with `local.tee`, exceptions (`throw` and `try_table`), preserved globals with
 their run-time comparison, and arithmetic on one value type. It has no `sorry`, and its
@@ -159,13 +159,12 @@ paper's appendix B.4 has no counterpart here.
 - **The host is two calls.** One reads and one writes, with the checks and the labels of the
   implementation's rule for the host boundary. WASI's other calls, its error codes, and
   results on the stack are not modelled.
-- **The core is small.** One value type; two levels; a tail call names its
-  callee (`return_call`, not the indirect forms), and the semantics does not model that it
+- **The core is small.** One value type; two levels; the semantics of a tail call does not model that it
   runs in constant space. A tag
   is the number of public values its exceptions carry, a clause catches by tag or catches
   everything, and there is no reference to an exception (`exnref`, `throw_ref`, and the
   clauses that hand one out). The function table has no bound and no size, a reference in it is a number (zero for null), and
-there is no `table.grow`, `table.fill` or `table.copy`. A value is a natural number, of which a store writes the low bytes. A load
+there is no `table.size` or `table.grow`. A value is a natural number, of which a store writes the low bytes. A load
   or a store outside the memory traps, a load also by the level check, and `unreachable` is
   the other trap. `memory.grow` fails only if the memory would exceed its limit, which is
   part of the state and the same in both runs; the implementation's may also fail for want of

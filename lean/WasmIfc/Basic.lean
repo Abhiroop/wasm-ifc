@@ -452,6 +452,20 @@ theorem StRel.setTbl {C : Ctx} {s t : State} {c0 c1 : Nat} {e0 e1 : Option Nat}
   obtain ⟨rfl, rfl⟩ := hv hl
   simp [State.setTbl, h.2.2.2.1 hl]
 
+/-- Two states that differ in a public table at most as two others that agree on it do. -/
+theorem StRel.tbl {C : Ctx} {s t s' t' : State} (h : StRel C s t)
+    (hs : { s with tbl := s'.tbl } = s') (ht : { t with tbl := t'.tbl } = t')
+    (htbl : C.table = Lab.L → s'.tbl = t'.tbl) : StRel C s' t' := by
+  rw [← hs, ← ht]
+  exact ⟨h.1, h.2.1, h.2.2.1, htbl, h.2.2.2.2⟩
+
+/-- Any write to a secret table leaves the state as the attacker sees it. -/
+theorem Conf.tbl_high {C : Ctx} (s : State) (tbl : Nat → Option Nat) (hl : C.table = Lab.H) :
+    Conf C s { s with tbl := tbl } := by
+  refine ⟨fun _ _ => rfl, fun _ _ _ => rfl, fun _ h => ⟨h, rfl⟩, fun h => ?_, rfl, rfl, .refl _⟩
+  rw [hl] at h
+  cases h
+
 /-- A write to a secret table leaves the state as the attacker sees it. -/
 theorem Conf.setTbl_high {C : Ctx} (s : State) (c : Nat) (e : Option Nat) (hl : C.table = Lab.H) :
     Conf C s (s.setTbl c e) := by
@@ -818,6 +832,8 @@ theorem rise {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : Pcs} {st st' : S
   | hostWrite _ ih => exact ih
   | memInit _ _ _ _ ih => exact ih
   | dataDrop _ _ ih => exact ih
+  | tableFill _ _ ih => exact ih
+  | tableCopy _ _ ih => exact ih
   | memSize _ ih => exact ih
   | memGrow _ _ ih => exact ih
   | block _ _ _ _ _ ihb ihr => exact SFlows.trans ihb.tail ihr
@@ -829,6 +845,7 @@ theorem rise {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : Pcs} {st st' : S
   | brTable _ _ _ => exact sflows_raise _ _ _
   | ret _ _ _ => exact sflows_raise _ _ _
   | retCall _ _ _ _ _ _ => exact sflows_raise _ _ _
+  | retCallIndirect _ _ _ _ _ _ => exact sflows_raise _ _ _
   | call _ _ _ _ ih => exact ih
   | callIndirect _ _ _ _ ih => exact ih
   | callRef _ _ _ _ ih => exact ih
