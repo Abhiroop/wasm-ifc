@@ -48,6 +48,22 @@ $(genSingletons [''ValType])
 -- with the library's 'Data.Singletons.Decide.decideEquality' instead of hand-rolling it.
 $(singDecideInstances [''ValType])
 
+{- | Whether two value types are the same, with the evidence: what the library's
+  'Data.Singletons.Decide.decideEquality' answers, by a direct comparison. The library's goes
+  through a class dictionary and builds a refutation nobody reads; an indirect call compares
+  types on every call, and paid for both.
+-}
+sameValType :: Sing (a :: ValType) -> Sing (b :: ValType) -> Maybe (a :~: b)
+sameValType a b = case a of
+    SI32 -> case b of SI32 -> Just Refl; _ -> Nothing
+    SI64 -> case b of SI64 -> Just Refl; _ -> Nothing
+    SF32 -> case b of SF32 -> Just Refl; _ -> Nothing
+    SF64 -> case b of SF64 -> Just Refl; _ -> Nothing
+    SV128 -> case b of SV128 -> Just Refl; _ -> Nothing
+    SFuncRef -> case b of SFuncRef -> Just Refl; _ -> Nothing
+    SExternRef -> case b of SExternRef -> Just Refl; _ -> Nothing
+    SExnRef -> case b of SExnRef -> Just Refl; _ -> Nothing
+
 {- | Evidence that a value type is a numeric type (the spec's @numtype@), refined to which
   one. Carried by every instruction the spec restricts to @numtype@ — @const@, @add@/@sub@/
   @mul@/@div@, the comparisons, @load@/@store@, conversions, @select@ — so none of them can

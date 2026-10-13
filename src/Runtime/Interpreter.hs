@@ -19,7 +19,7 @@
 -- the Stepped and the Config after all: 60 bytes more per step, which bench/tripwire.py caught
 -- when the levels went in (2026-09-20). Without the limit the figures equal the unlabelled
 -- build's exactly.
-{-# OPTIONS_GHC -O2 -fno-spec-constr-count #-}
+{-# OPTIONS_GHC -O2 -fno-spec-constr-count -fno-full-laziness #-}
 
 {- | The intrinsically-typed interpreter, as a small-step abstract machine.
 
@@ -118,7 +118,7 @@ import GHC.Exts (Int (I#))
 import GHC.Float (castDoubleToWord64, castFloatToWord32, castWord32ToFloat, castWord64ToDouble)
 
 import Data.ByteString qualified as BS
-import Data.List.Singletons (type (++))
+import Data.List.Singletons (SList (SCons), type (++))
 import Data.Maybe (fromMaybe)
 import Data.Singletons (Sing, fromSing)
 import Data.Singletons.Decide (decideEquality)
@@ -899,7 +899,11 @@ stepped ::
     Either Trap (StepResult check mod res)
 stepped evidence store locals stack code control = Right (Stepped evidence (Config store locals stack code control))
 
--- | Pop two same-typed operands (@a@ below, @b@ on top), push @op a b@, and continue.
+{- | Pop two same-typed operands (@a@ below, @b@ on top), push @op a b@, and continue.
+Inlined into its uses, where the operation is known: as a call it takes the operation as
+a function and applies it through its class's dictionary, on boxed words.
+-}
+{-# INLINE stepBin #-}
 stepBin ::
     CheckPassed check ->
     Store mod ->
@@ -912,6 +916,7 @@ stepBin ::
 stepBin evidence store locals (b :# a :# r) op = stepped evidence store locals (op a b :# r)
 
 -- | Pop one operand, push @op a@, and continue.
+{-# INLINE stepUn #-}
 stepUn ::
     CheckPassed check ->
     Store mod ->
@@ -1114,7 +1119,7 @@ tailCall evidence funcs store flows witness ix args results control = case contr
         let onStack = appendOnto witness
          in case results of
                 SameResults _ -> enterCallee evidence funcs store callerLocals flows onStack ix (appendWith onStack args below) cont callerControl
-                RaisedResults _ raised -> case segmentAppends below raised of
+                RaisedResults resultTypes raised -> case segmentAppends resultTypes below raised of
                     (from, to) -> enterCallee evidence funcs store callerLocals flows onStack ix (appendWith onStack args below) (IRelabelTop raised from to :. cont) callerControl
     EntryBoundary ->
         let onStack = appendOnto witness
@@ -1122,7 +1127,7 @@ tailCall evidence funcs store flows witness ix args results control = case contr
          in case results of
                 SameResults resultTypes -> case appendIs (appendNil resultTypes) of
                     Refl -> enterCallee evidence funcs store noLocals flows onStack ix atBottom INil EntryBoundary
-                RaisedResults resultTypes raised -> case (segmentAppends VNil raised, appendIs (appendNil resultTypes)) of
+                RaisedResults resultTypes raised -> case (segmentAppends resultTypes VNil raised, appendIs (appendNil resultTypes)) of
                     ((from, to), Refl) -> enterCallee evidence funcs store noLocals flows onStack ix atBottom (IRelabelTop raised from to :. INil) EntryBoundary
 
 -- | A segment on top of another stack than the one a witness was made for.
@@ -1131,9 +1136,10 @@ appendOnto ANil = ANil
 appendOnto (ACons rest) = ACons (appendOnto rest)
 
 -- | Where the two ends of a relabelling sit on a stack (which is given for its type only).
-segmentAppends :: ValueStack s -> SegmentFlows from to -> (Append from s (from ++ s), Append to s (to ++ s))
-segmentAppends _ NoValuesFlow = (ANil, ANil)
-segmentAppends below (ValueFlows _ rest) = case segmentAppends below rest of (from, to) -> (ACons from, ACons to)
+segmentAppends :: Sing to -> ValueStack s -> SegmentFlows from to -> (Append from s (from ++ s), Append to s (to ++ s))
+segmentAppends _ _ NoValuesFlow = (ANil, ANil)
+segmentAppends (SCons _ types) below (ValueFlows _ rest) = case segmentAppends types below rest of (from, to) -> (ACons from, ACons to)
+segmentAppends types _ SegmentAsItIs = (appendFromSing types, appendFromSing types)
 
 {- | Throw an exception: unwind the control stack, through call boundaries too, to the nearest
   @try_table@ with a clause for it, and branch to that clause's label with what the clause
@@ -1333,6 +1339,7 @@ startFunction _ _ GhostFunc _ = Left InformationFlowViolation
    operation is total over exactly the cases that can occur.
 -}
 
+{-# INLINE numBinary #-}
 numBinary ::
     IsNum t ->
     (forall a. Num a => a -> a -> a) ->
@@ -1366,6 +1373,7 @@ numRem I64IsInt sign a b = intRem64 sign a b
 {- | The ordered comparisons (@lt@/@gt@/@le@/@ge@): signed vs. unsigned on integers, plain on
   floats — driven by the 'NumWithSign' witness, so no signedness ever reaches a float compare.
 -}
+{-# INLINE numCompare #-}
 numCompare ::
     (forall a. Ord a => a -> a -> Bool) ->
     NumWithSign t ->
@@ -1380,6 +1388,7 @@ numCompare cmp (FloatsHaveNoSign F32IsFloat) a b = boolWord (cmp a b)
 numCompare cmp (FloatsHaveNoSign F64IsFloat) a b = boolWord (cmp a b)
 
 -- | Equality/inequality (@eq@/@ne@): no signedness on either integers or floats.
+{-# INLINE numEqNe #-}
 numEqNe ::
     (forall a. Eq a => a -> a -> Bool) ->
     IsNum t ->
@@ -1415,6 +1424,7 @@ storedWord F64IsNum = castDoubleToWord64
 
 -- *** Bitwise / count / float / narrow-memory helpers ***
 
+{-# INLINE bitwiseT #-}
 bitwiseT ::
     IsInt t ->
     BitwiseOp ->

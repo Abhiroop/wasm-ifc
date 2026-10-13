@@ -47,12 +47,11 @@ import Data.Vector qualified as V
 import Data.Word (Word32)
 
 import Data.Singletons (Sing)
-import Data.Singletons.Decide (decideEquality)
 import Data.Type.Equality ((:~:) (Refl))
 import Runtime.Trap (Trap (..))
 import Syntax.Immediates (Reference, functionReferenceIn, functionReferent, isNullReference, nullReference, referent)
 import Syntax.Types (Limits (..))
-import Syntax.TypesIFC (AllPublic, FlowsInto, LabelledFuncType (..), LabelledValType, SLabelledFuncType (..), SSecLevel (..), SecLevel (..), decideAllPublic, decideFlow)
+import Syntax.TypesIFC (AllPublic, FlowsInto, LabelledFuncType (..), LabelledValType, SLabelledFuncType (..), SSecLevel (..), SecLevel (..), decideAllPublic, decideFlow, sameSegment)
 import Validation.Shape (Elem, SomeFuncRef (..))
 
 data TableInst = TableInst
@@ -194,11 +193,13 @@ lookupReferenced directory reference expected
 {-# INLINE compared #-}
 compared :: SomeFuncRef fts -> Sing ('LabelledFuncType lf ps rs) -> Either Trap (CheckedCallee lf ps rs fts)
 compared (SomeFuncRef boundS paramsS resultsS ix) (SLabelledFuncType expectedBound expectedParams expectedResults) =
-    case (decideEquality paramsS expectedParams, decideEquality resultsS expectedResults) of
-        (Just Refl, Just Refl) -> case decideFlow expectedBound boundS of
-            Just flows -> Right (CheckedCallee flows ix)
-            Nothing -> Left IndirectCallBelowBound
-        _ -> Left IndirectCallTypeMismatch
+    case sameSegment paramsS expectedParams of
+        Just Refl -> case sameSegment resultsS expectedResults of
+            Just Refl -> case decideFlow expectedBound boundS of
+                Just flows -> Right (CheckedCallee flows ix)
+                Nothing -> Left IndirectCallBelowBound
+            Nothing -> Left IndirectCallTypeMismatch
+        Nothing -> Left IndirectCallTypeMismatch
 
 {- | A table entry that names a function of another instance, for an indirect call that expects
   a type whose parameters are public and whose bound is public: what a call out of the module

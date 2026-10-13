@@ -216,18 +216,53 @@ decideFlow SHigh SLow = Nothing
 data SegmentFlows (from :: [LabelledValType]) (to :: [LabelledValType]) where
     NoValuesFlow :: SegmentFlows '[] '[]
     ValueFlows :: FlowsInto l l' -> SegmentFlows from to -> SegmentFlows ((t ':~ l) ': from) ((t ':~ l') ': to)
+    {- | The segment at its own levels. The other two constructors say the same value by
+      value, with every level flowing into itself. Said at once, the machine has nothing to
+      rebuild when it gives a stack the levels of the witness ('Runtime.Stack.relabelStack'),
+      and that is the witness of every branch, call and block of a program without secrets.
+    -}
+    SegmentAsItIs :: SegmentFlows s s
+
+{- | Whether two segments are the same, levels included, with the evidence: 'decideEquality'
+  on them, by a direct comparison ('Syntax.Types.sameValType' says why).
+-}
+sameSegment :: Sing (a :: [LabelledValType]) -> Sing (b :: [LabelledValType]) -> Maybe (a :~: b)
+sameSegment SNil SNil = Just Refl
+sameSegment (SCons (t :%~ l) rest) (SCons (t' :%~ l') rest') = case sameValType t t' of
+    Just Refl -> case sameLevel l l' of
+        Just Refl -> case sameSegment rest rest' of
+            Just Refl -> Just Refl
+            Nothing -> Nothing
+        Nothing -> Nothing
+    Nothing -> Nothing
+sameSegment SNil (SCons _ _) = Nothing
+sameSegment (SCons _ _) SNil = Nothing
+
+sameLevel :: Sing (a :: SecLevel) -> Sing (b :: SecLevel) -> Maybe (a :~: b)
+sameLevel a b = case a of
+    SLow -> case b of SLow -> Just Refl; SHigh -> Nothing
+    SHigh -> case b of SHigh -> Just Refl; SLow -> Nothing
+
+-- | The witness for all but the first value of a segment.
+flowsOfRest :: SegmentFlows (a ': from) (b ': to) -> SegmentFlows from to
+flowsOfRest (ValueFlows _ rest) = rest
+flowsOfRest SegmentAsItIs = SegmentAsItIs
 
 decideSegmentFlows :: Sing (from :: [LabelledValType]) -> Sing (to :: [LabelledValType]) -> Maybe (SegmentFlows from to)
-decideSegmentFlows SNil SNil = Just NoValuesFlow
-decideSegmentFlows (SCons (t :%~ l) rest) (SCons (t' :%~ l') rest') = do
+decideSegmentFlows from to = case decideEquality from to of
+    Just Refl -> Just SegmentAsItIs
+    Nothing -> decideFlowsByValue from to
+
+decideFlowsByValue :: Sing (from :: [LabelledValType]) -> Sing (to :: [LabelledValType]) -> Maybe (SegmentFlows from to)
+decideFlowsByValue SNil SNil = Just NoValuesFlow
+decideFlowsByValue (SCons (t :%~ l) rest) (SCons (t' :%~ l') rest') = do
     Refl <- decideEquality t t'
-    ValueFlows <$> decideFlow l l' <*> decideSegmentFlows rest rest'
-decideSegmentFlows _ _ = Nothing
+    ValueFlows <$> decideFlow l l' <*> decideFlowsByValue rest rest'
+decideFlowsByValue _ _ = Nothing
 
 -- | A segment flows into itself: what a hand-written program with matching levels supplies.
 segmentSelf :: Sing (s :: [LabelledValType]) -> SegmentFlows s s
-segmentSelf SNil = NoValuesFlow
-segmentSelf (SCons (_ :%~ l) rest) = ValueFlows (flowsSelf l) (segmentSelf rest)
+segmentSelf _ = SegmentAsItIs
 
 {- | Evidence that two stack segments have the same value types, whatever their levels: what a
   host function's own type (public throughout, since a host implementation knows nothing of

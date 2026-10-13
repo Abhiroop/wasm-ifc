@@ -128,9 +128,19 @@ data GlobalSpaceInst gs where
 {- | Give a stack the levels a 'SegmentFlows' witness allows: the same words, rebuilt under
   the new index. Linear in the segment, like every operation on the value stack.
 -}
+
+-- Inlined, so that the usual witness, of a segment at its own levels, costs a comparison where
+-- the stack is used and no call.
+{-# INLINE relabelStack #-}
 relabelStack :: SegmentFlows from to -> ValueStack from -> ValueStack to
-relabelStack NoValuesFlow VNil = VNil
-relabelStack (ValueFlows _ rest) (v :# vs) = v :# relabelStack rest vs
+relabelStack flows vs = case flows of
+    SegmentAsItIs -> vs
+    _ -> relabelByValue flows vs
+
+relabelByValue :: SegmentFlows from to -> ValueStack from -> ValueStack to
+relabelByValue NoValuesFlow VNil = VNil
+relabelByValue (ValueFlows _ rest) (v :# vs) = v :# relabelByValue rest vs
+relabelByValue SegmentAsItIs vs = vs
 
 -- | Re-index a stack under other levels for the same value types: the host boundary's retagging.
 retagStack :: SameValueTypes from to -> ValueStack from -> ValueStack to
@@ -176,7 +186,13 @@ seedLocals flows paramTypes declaredTypes args =
 -}
 writeArguments :: MV.MVector s Word64 -> Int -> SegmentFlows args ps -> Sing (ps :: [LabelledValType]) -> ValueStack args -> ST s ()
 writeArguments _ _ NoValuesFlow SNil VNil = pure ()
-writeArguments slots end (ValueFlows _ flows) (SCons (st :%~ _) rest) (x :# xs) = case st of
+writeArguments _ _ SegmentAsItIs SNil VNil = pure ()
+writeArguments slots end flows@(ValueFlows _ _) types@(SCons _ _) stack@(_ :# _) = writeArgument slots end (flowsOfRest flows) types stack
+writeArguments slots end SegmentAsItIs types@(SCons _ _) stack@(_ :# _) = writeArgument slots end SegmentAsItIs types stack
+
+-- | 'writeArguments' for a segment that has a first value: that value, then the rest.
+writeArgument :: MV.MVector s Word64 -> Int -> SegmentFlows args ps -> Sing ((t ':~ lp) ': ps) -> ValueStack ((t ':~ la) ': args) -> ST s ()
+writeArgument slots end flows (SCons (st :%~ _) rest) (x :# xs) = case st of
     SV128 -> case x of
         Vector128 low high -> do
             MV.unsafeWrite slots (end - 2) low

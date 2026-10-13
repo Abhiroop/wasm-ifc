@@ -175,13 +175,20 @@ data SomeCoercion (ps :: [LabelledValType]) (full :: [LabelledValType]) where
     SomeCoercion :: Sing (s :: [LabelledValType]) -> SegmentFlows args ps -> Append args s full -> SomeCoercion ps full
 
 matchPrefixFlows :: Sing (ps :: [LabelledValType]) -> Sing (full :: [LabelledValType]) -> Maybe (SomeCoercion ps full)
-matchPrefixFlows SNil sfull = Just (SomeCoercion sfull NoValuesFlow ANil)
-matchPrefixFlows (SCons (p :%~ lp) ps) (SCons (f :%~ lf) fs) = do
+matchPrefixFlows psS sfull = case matchPrefix psS sfull of
+    -- The segment is at the levels asked for, which it always is in a program without secrets.
+    Just (SomeSplit s w) -> Just (SomeCoercion s SegmentAsItIs w)
+    Nothing -> matchPrefixRaising psS sfull
+
+-- | 'matchPrefixFlows' value by value: some level of the segment is below the one asked for.
+matchPrefixRaising :: Sing (ps :: [LabelledValType]) -> Sing (full :: [LabelledValType]) -> Maybe (SomeCoercion ps full)
+matchPrefixRaising SNil sfull = Just (SomeCoercion sfull NoValuesFlow ANil)
+matchPrefixRaising (SCons (p :%~ lp) ps) (SCons (f :%~ lf) fs) = do
     Refl <- decideEquality p f
     flow <- decideFlow lf lp
-    SomeCoercion s flows w <- matchPrefixFlows ps fs
+    SomeCoercion s flows w <- matchPrefixRaising ps fs
     Just (SomeCoercion s (ValueFlows flow flows) (ACons w))
-matchPrefixFlows (SCons _ _) SNil = Nothing
+matchPrefixRaising (SCons _ _) SNil = Nothing
 
 -- | The top @n@ entries of a stack, whatever they are, with the suffix and the split witness.
 data SomePrefix (full :: [LabelledValType]) where
