@@ -141,8 +141,10 @@ are imported at the level they have where they are defined, and the bytes of a s
 keep their levels. A module on its own imports from an embedder (`instantiateWith`), which
 answers its calls. An exception that leaves a function another module called is thrown again
 in that module, and a tag has one name among all instances, so a clause for it catches the
-exception whichever module threw it. Not yet: a module that imports the same memory, table or
-writable global twice; and garbage collection. The Lean proof of noninterference (`lean/`) covers a core, not the whole.
+exception whichever module threw it. A module that imports one memory, table or writable
+global twice has its uses of the second index rewritten to the first before it is validated
+(`Runtime.Link.unaliased`), since an instance holds each index's object by itself. Not
+supported: garbage collection. The Lean proof of noninterference (`lean/`) covers a core, not the whole.
 
 A reference to a function type (WebAssembly 3.0) is a `funcref` in the typed program. What a
 module writes beyond that, whether a reference may be null and of which function type it is,

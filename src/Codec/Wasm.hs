@@ -1025,6 +1025,7 @@ assemble secs = do
             , stateImports = StateImports (map names importedGlobals) (map names importedMemories) (map names importedTables)
             , tags = [tagType | TagImport _ _ tagType _ <- secs.importSection] ++ map fst secs.tagSection
             , tagImports = [(moduleName, fieldName) | TagImport moduleName fieldName _ _ <- secs.importSection]
+            , aliases = noAliases
             , written =
                 Just
                     Written

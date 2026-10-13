@@ -34,7 +34,7 @@ import Text.Read (readMaybe)
 
 import Codec.Wasm (decodeModule)
 import Runtime.Instantiate (InstantiationError (..))
-import Runtime.Link (World, callExport, emptyWorld, instantiateIn, register, viewInstance)
+import Runtime.Link (World, callExport, emptyWorld, instantiateIn, register, unaliased, viewInstance)
 import Runtime.Module (RunError (..), Value (..), readGlobalExport, valueType)
 import Runtime.Trap (Trap (..))
 import Runtime.Vector (fromLanes, lanes)
@@ -43,7 +43,7 @@ import Syntax.Globals (RawGlobal (..))
 import Syntax.Immediates (Reference (..), Vector128 (..), isNullReference, nullReference, referenceTo)
 import Syntax.Indices (FunctionIdx (..), GlobalIdx (..), MemoryIdx (..), TableIdx (..))
 import Syntax.Instructions (RawInstr (..))
-import Syntax.Module (Export (..), ExportDesc (..), RawMemory (..), RawModule (..), RawTable (..), importsNoState)
+import Syntax.Module (Export (..), ExportDesc (..), RawMemory (..), RawModule (..), RawTable (..), importsNoState, noAliases)
 import Syntax.Types (AddrType (..), FuncTypeOf (..), GlobalTypeOf (..), Limits (..), MemType (..), Mutability (..), SValType (..), ValType (..))
 import Validation.Elaborate (elaborateModuleWith)
 import Validation.Policy (Policy (..), Restrictions (..), emptyPolicy)
@@ -122,6 +122,10 @@ data Command = Command
     , expected :: [Literal]
     , trapText :: Maybe Text
     , registerAs :: Maybe Text
+    , instanceName :: Maybe Text
+    -- ^ of a @module_instance@: the name of the instance it makes
+    , definition :: Maybe Text
+    -- ^ of a @module_instance@: the name of the definition it instantiates
     }
 
 instance FromJSON Command where
@@ -136,6 +140,8 @@ instance FromJSON Command where
             <*> (fromMaybe [] <$> o .:? "expected")
             <*> o .:? "text"
             <*> o .:? "as"
+            <*> o .:? "instance"
+            <*> o .:? "module"
 
 data Action = Action
     { actionKind :: Text
@@ -222,10 +228,12 @@ data State = State
     -- ^ the module the last @module@ command loaded, which an action without a name means
     , registers :: Bool
     -- ^ whether the script has registered a module for import
+    , definitions :: Map.Map Text FilePath
+    -- ^ the modules the script has defined without instantiating them, by name
     }
 
 runScript :: FilePath -> [Command] -> IO [(Int, Outcome)]
-runScript dir = fmap (reverse . snd) . foldM step (State withSpectest Map.empty Map.empty Nothing False, [])
+runScript dir = fmap (reverse . snd) . foldM step (State withSpectest Map.empty Map.empty Nothing False Map.empty, [])
   where
     step (state, acc) cmd = do
         (state', outcome) <- runCommand dir state cmd
@@ -268,6 +276,7 @@ withSpectest = case elaborateModuleWith emptyPolicy spectest of
             , stateImports = importsNoState
             , tags = []
             , tagImports = []
+            , aliases = noAliases
             , tableInitialisers = []
             , written = Nothing
             }
@@ -309,6 +318,20 @@ runCommand dir state cmd = case cmd.kind of
                     , latest = Just index
                     }
         pure (state', outcome)
+    -- A definition is a module that is checked now and instantiated later, any number of times.
+    "module_definition" -> do
+        let path = dir </> fromMaybe "" cmd.filename
+        bytes <- BL.readFile path
+        missing <- neededFeatures path
+        pure $ case first AtDecode (decodeModule bytes) >>= first (AtValidation . show) . elaborateModuleWith emptyPolicy of
+            Right _ -> (state {definitions = Map.insert (fromMaybe "" cmd.name) path state.definitions}, Passed)
+            Left rejection
+                | Just feature <- missing -> (state, Skipped ("needs " ++ feature))
+                | isUnsupported rejection -> (state, Skipped (describeRejection rejection))
+                | otherwise -> (state, Failed ("valid module rejected: " ++ describeRejection rejection))
+    "module_instance" -> case cmd.definition >>= (`Map.lookup` state.definitions) of
+        Just path -> runCommand "" state cmd {kind = "module", filename = Just path, name = cmd.instanceName, moduleType = Just "binary"}
+        Nothing -> pure (state, Skipped "an instance of a module that is not defined")
     "assert_return" -> pure (withAction (\current i act -> assertReturn current i act cmd.expected))
     "assert_trap" -> pure (withAction (\current i act -> assertTrap current i act cmd.trapText))
     -- (An exception that leaves the function invoked: the run ends with it.)
@@ -435,7 +458,8 @@ loadModule world path = do
     let policy = case restricted of
             Nothing -> emptyPolicy
             Just _ -> emptyPolicy {restrictions = SecWasmRestrictions}
-    pure $ case first AtDecode (decodeModule bytes) >>= first (AtValidation . show) . elaborateModuleWith policy of
+    -- (A module that imports one object of the world twice is made to use it under one index.)
+    pure $ case first AtDecode (decodeModule bytes) >>= first (AtValidation . show) . elaborateModuleWith policy . unaliased world of
         Left rejection -> (world, Left rejection)
         -- (An instance that failed while it was being initialised stays in the world, with
         -- what it had written.)

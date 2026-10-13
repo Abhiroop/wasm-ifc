@@ -35,7 +35,7 @@ import Syntax.Globals (RawGlobal (..))
 import Syntax.Immediates
 import Syntax.Indices
 import Syntax.Instructions (RawInstr (..))
-import Syntax.Module (ElemMode (..), Export (..), ExportDesc (..), RawElementSegment (..), RawMemory (..), RawModule (..), RawTable (..), importsNoState)
+import Syntax.Module (ElemMode (..), Export (..), ExportDesc (..), RawElementSegment (..), RawMemory (..), RawModule (..), RawTable (..), importsNoState, noAliases)
 import Syntax.Types
 import Syntax.TypesIFC (SecLevel (..))
 import Validation.Elaborate (elaborateModuleWith)
@@ -230,6 +230,7 @@ compileModule generated =
         , stateImports = importsNoState
         , tags = []
         , tagImports = []
+        , aliases = noAliases
         , tableInitialisers = []
         , written = Nothing
         }

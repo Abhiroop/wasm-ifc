@@ -39,7 +39,7 @@ import Runtime.Convert (convertVal)
 import Runtime.Host (WasiFunc (..))
 import Runtime.Instantiate (Embedder (Embedder), InstantiationError (..), instantiate, instantiateWith, newMemory, providesFunctions, providesNothing)
 import Runtime.Interpreter (HostRequest (..), callDepthBound, resumeWith)
-import Runtime.Link (World, callExport, emptyWorld, instantiateIn, register)
+import Runtime.Link (World, callExport, emptyWorld, instantiateIn, register, unaliased)
 import Runtime.Module (ForeignCall (..), ForeignTarget (..), Invocation (..), RunError (..), SomeHostRequest (..), SomeModuleInst, Value (..), answerForeign, continueWith, exportSignature, foreignCall, invokeExport, readGlobalExport, renderValue)
 import Runtime.Numeric (intDiv32)
 import Runtime.Stack (ValueStack (..), retagStack)
@@ -50,7 +50,7 @@ import Syntax.Globals (RawGlobal (..))
 import Syntax.Immediates
 import Syntax.Indices
 import Syntax.Instructions
-import Syntax.Module (DataMode (..), ElemMode (..), Export (..), ExportDesc (..), ImportDesc (..), RawDataSegment (..), RawElementSegment (..), RawImport (..), RawMemory (..), RawModule (..), RawTable (..), StateImports (StateImports), importsNoState)
+import Syntax.Module (Aliases (Aliases), DataMode (..), ElemMode (..), Export (..), ExportDesc (..), ImportDesc (..), RawDataSegment (..), RawElementSegment (..), RawImport (..), RawMemory (..), RawModule (..), RawTable (..), StateImports (StateImports), importsNoState, noAliases)
 import Syntax.Types
 import Syntax.TypesIFC (LabelledFuncType (..), LabelledValType (..), SecLevel (..))
 import Syntax.Vector (IntBinary (..), LaneType (..), Shape (..), SomeVectorOp (..), VectorBinary (..), VectorOp (..))
@@ -747,9 +747,22 @@ spec = do
             snd (invoked world 1 "f" []) `shouldBe` Right [I32Value 7]
             snd (invoked world 2 "f" []) `shouldBe` Right [I32Value 1]
             snd (invoked world 3 "f" []) `shouldBe` Left (Trapped UncaughtException)
-        it "a module that imports one memory twice is not linked" $ do
-            let twice = (moduleOf [onePageMemory, onePageMemory] [poke] (FunctionIdx 0)) {stateImports = StateImports [] [("owner", "mem"), ("owner", "mem")] []}
-            snd (worldOf [("owner", "", memoryOwner), ("twice", "", twice)]) `shouldBe` [Right 0, Left "ImportedTwice \"owner\" \"mem\""]
+        it "a memory imported under two indices is one memory, once its uses are written under the first" $ do
+            -- writes through memory 0 and reads through memory 1, both the owner's memory
+            let pokeFirst = RawFunction (FuncType [I32, I32] []) [] [LocalGet (LocalIdx 0), LocalGet (LocalIdx 1), Store SI32 (MemArg 0 0 0)]
+                peekSecond = RawFunction (FuncType [I32] [I32]) [] [LocalGet (LocalIdx 0), Load SI32 (MemArg 0 0 1)]
+                twice = (moduleOf [onePageMemory, onePageMemory] [pokeFirst, peekSecond] (FunctionIdx 0)) {stateImports = StateImports [] [("owner", "mem"), ("owner", "mem")] [], exports = pokeAndPeek}
+                (world, linked) = worldOf [("owner", "", memoryOwner), ("twice", "", twice)]
+            linked `shouldBe` [Right 0, Right 1]
+            let (written, _) = invoked world 1 "poke" [0, 42]
+            snd (invoked written 1 "peek" [0]) `shouldBe` Right [I32Value 42]
+            snd (invoked written 0 "peek" [0]) `shouldBe` Right [I32Value 42]
+            -- As it is written, the module is not linked: an instance holds two memories at two indices.
+            let asWritten = either (error . show) id (elaborateModule twice)
+                (_, refused, _) = instantiateIn (register "owner" 0 world) asWritten
+            first show refused `shouldBe` Left "ImportedTwice \"owner\" \"mem\""
+            -- And an import declared unused that is used is refused.
+            first show (void (elaborateModule twice {aliases = Aliases [] [1] []})) `shouldSatisfy` either (isInfixOf "declared unused") (const False)
 
     describe "WASI imports" $ do
         it "resolve to typed host functions; proc_exit ends the run with its code" $ do
@@ -1264,6 +1277,7 @@ moduleOf memories funcs exported =
         , stateImports = importsNoState
         , tags = []
         , tagImports = []
+        , aliases = noAliases
         , tableInitialisers = []
         , written = Nothing
         }
@@ -1363,7 +1377,8 @@ noHost = WasiConfig [] [] [] [] publicDescriptors
 worldOf :: [(Text, Text, RawModule)] -> (World, [Either String Int])
 worldOf = foldl add (emptyWorld, [])
   where
-    add (world, linked) (name, policyText, m) = case first show (parsePolicy policyText) >>= first show . (`elaborateModuleWith` m) of
+    -- (A module that imports one object of the world twice is made to use it under one index.)
+    add (world, linked) (name, policyText, m) = case first show (parsePolicy policyText) >>= first show . (`elaborateModuleWith` unaliased world m) of
         Left invalid -> (world, linked ++ [Left invalid])
         Right validated -> case instantiateIn world validated of
             (world', Right x, _) -> (register name x world', linked ++ [Right x])
@@ -1471,6 +1486,7 @@ startModule startBody =
         , stateImports = importsNoState
         , tags = []
         , tagImports = []
+        , aliases = noAliases
         , tableInitialisers = []
         , written = Nothing
         }

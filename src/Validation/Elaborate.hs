@@ -28,7 +28,7 @@ module Validation.Elaborate (
     elaborateModuleTraced,
 ) where
 
-import Control.Monad (foldM, forM, void, when)
+import Control.Monad (foldM, forM, unless, void, when)
 import Data.Bifunctor (first)
 import Data.Text (Text)
 import Data.Type.Equality ((:~:) (Refl))
@@ -64,6 +64,7 @@ import Syntax.Module
 import Syntax.Types
 import Syntax.TypesIFC
 import Syntax.Vector (SomeVectorOp (..), VectorBinary (VShuffle), VectorOp (..), laneBytes, laneCount, loadedBytes)
+import Validation.Aliases (Kind (..), used)
 import Validation.LocalWebs (mergeModuleWebs, splitModuleLocals)
 import Validation.Policy (Assembled (..), LocalSplitting (..), Policy, PolicyError, Restrictions (..), assemble, emptyPolicy, modulePolicy)
 import Validation.Ref (MemoryRef (..), TableRef (..), resolveFunction, resolveLocal)
@@ -1900,7 +1901,7 @@ elaborateUnder assembled choices =
                     Right (TableInitialiser (fromIntegral i) isRef value)
             start <- traverse (resolveStart ftsS) (m.start)
             when (not (null assembled.secretRegions) && null m.memories) (Left (NoMemory "region"))
-            Right (SomeModule ctxS (Module {functions, globals, dataSegments, secretRegions = assembled.secretRegions, elementSegments, interface = interfaceOf <$> m.written, tableInitialisers, tagImports = m.tagImports, memoryImports = m.stateImports.memories, tableImports = m.stateImports.tables, exports = m.exports, start}))
+            Right (SomeModule ctxS (Module {functions, globals, dataSegments, secretRegions = assembled.secretRegions, elementSegments, interface = interfaceOf <$> m.written, tableInitialisers, tagImports = m.tagImports, aliases = m.aliases, memoryImports = m.stateImports.memories, tableImports = m.stateImports.tables, exports = m.exports, start}))
   where
     m = assembled.annotated
     entries = zip3 [0 ..] assembled.loadDefaults (map Left m.imports ++ map (\(i, f) -> Right (f, Map.findWithDefault [] i choices.localLevels)) (zip [importCount ..] m.functions))
@@ -1940,6 +1941,12 @@ validateStructure m = do
     when (or [not (null results) | FuncType _ results <- m.tags]) (Left (Malformed "an exception tag whose type has results"))
     checkDistinct [e.name | e <- m.exports]
     mapM_ checkExport m.exports
+    -- An index the module declares an unused second name of an import is an import, and is not used.
+    let unused kind count = all (\index -> fromIntegral index < (count :: Int) && (kind, index) `notElem` mentioned)
+        mentioned = used m
+    unless
+        (unused OfGlobals (length m.stateImports.globals) m.aliases.globals && unused OfMemories (length m.stateImports.memories) m.aliases.memories && unused OfTables (length m.stateImports.tables) m.aliases.tables)
+        (Left (Malformed "an import declared unused that is used"))
   where
     checkLimits (addresses, declared)
         | declared.min > maxMemoryPages addresses = Left (InvalidMemoryLimits declared)

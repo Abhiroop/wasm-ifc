@@ -16,6 +16,8 @@ module Syntax.Module (
     interfaceOf,
     StateImports (..),
     importsNoState,
+    Aliases (..),
+    noAliases,
     referencedFunctions,
     RawImport (..),
     ImportDesc (..),
@@ -77,6 +79,8 @@ data RawModule = RawModule
     -- ^ the exception tags, each with the type of what an exception of it carries (as parameters)
     , tagImports :: [(Text, Text)]
     -- ^ the names the first tags of 'tags' are imported under
+    , aliases :: Aliases
+    -- ^ the imported globals, memories and tables that the module does not use ("Validation.Aliases")
     , tableInitialisers :: [(TableIdx, RawExpr)]
     -- ^ for the tables declared with one, the constant expression every entry starts at (the others start null)
     , written :: Maybe Written
@@ -117,6 +121,20 @@ data StateImports = StateImports
 
 importsNoState :: StateImports
 importsNoState = StateImports [] [] []
+
+{- | Indices of imported globals, memories and tables that name an object the module also
+  imports under an earlier index, and that nothing in the module uses: every use was rewritten
+  to the earlier index ("Validation.Aliases"). The elaborator checks that they are unused.
+-}
+data Aliases = Aliases
+    { globals :: [Word32]
+    , memories :: [Word32]
+    , tables :: [Word32]
+    }
+    deriving stock (Eq, Show)
+
+noAliases :: Aliases
+noAliases = Aliases [] [] []
 
 -- | An import: where it comes from and what it must be.
 data RawImport = RawImport
@@ -241,6 +259,8 @@ data Module (shape :: ModuleShape) = Module
     -- ^ what the entries of some of its tables start at
     , tagImports :: [(Text, Text)]
     -- ^ the names the module's first tags are imported under
+    , aliases :: Aliases
+    -- ^ the imports it does not use, each an object it imports under an earlier index too
     , exports :: [Export]
     , start :: Maybe (Elem ('LabelledFuncType 'Low '[] '[]) (ModuleFuncs shape))
     -- ^ the start function, known to take and return nothing

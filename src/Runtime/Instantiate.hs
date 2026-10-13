@@ -44,7 +44,7 @@ import Runtime.Trap (Trap)
 import Syntax.Functions (FunctionSpace (..))
 import Syntax.Globals (ConstExpr (..), ConstOp (..), Global (..), GlobalSpace (..))
 import Syntax.Immediates (HostType, Reference, functionReferenceIn, withReference)
-import Syntax.Module (DataPlacement (..), DataSegment (..), ElementMode (..), ElementSegment (..), ElementSpace (..), Export, Interface, Module (..), SomeModule (..), TableInitialiser (..))
+import Syntax.Module (Aliases, DataPlacement (..), DataSegment (..), ElementMode (..), ElementSegment (..), ElementSpace (..), Export, Interface, Module (..), SomeModule (..), TableInitialiser (..))
 import Syntax.Types
 import Syntax.TypesIFC (LabelledFuncType (..), SLabelledFuncType (..), SLabelledValType (..), SSecLevel (..), SecLevel (..), decideAllPublic, decideSameValueTypes, decideSegmentFlows, unlabelled)
 import Validation.Policy (ghostModuleName)
@@ -206,10 +206,12 @@ data StateImports = StateImports
     , tables :: [(Text, Text)]
     , functions :: [(Text, Text)]
     , tags :: [(Text, Text)]
+    , unused :: Aliases
+    -- ^ those of the globals, memories and tables that the module does not use ('Syntax.Module.Aliases')
     }
 
 stateImportsOf :: SomeModule -> StateImports
-stateImportsOf (SomeModule _ m) = StateImports (provided m.globals) m.memoryImports m.tableImports (imported m.functions) m.tagImports
+stateImportsOf (SomeModule _ m) = StateImports (provided m.globals) m.memoryImports m.tableImports (imported m.functions) m.tagImports m.aliases
   where
     imported :: FunctionSpace shape fts -> [(Text, Text)]
     imported NoFunctions = []

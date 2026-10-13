@@ -15,11 +15,11 @@
   back). 'Runtime.Module.Instance' keeps one state for all its activations, so the waiting
   one resumes from what the nested one, and whoever wrote to its memory meanwhile, left.
 
-  One limit follows from this design, and instantiation refuses it by name rather than get it
-  wrong. Inside one instance two indices cannot be one object, so a module that imports the
-  same memory, the same table or the same writable global twice is not linked
-  ('Runtime.Instantiate.ImportedTwice'). (A tag is a name and holds nothing, so it may be
-  imported any number of times.)
+  Inside one instance two indices cannot be one object. A module that imports the same
+  memory, the same table or the same writable global twice is therefore rewritten before it is
+  validated, so that it uses the object under its first index only ('unaliased'); one that was
+  not is not linked ('Runtime.Instantiate.ImportedTwice'). (A tag is a name and holds nothing,
+  so it may be imported any number of times.)
 
   An exception that leaves a function another module called is thrown again in that module,
   where the call was ('Runtime.Module.throwInto'). A tag has one name among all instances, and
@@ -42,6 +42,7 @@ module Runtime.Link (
     World,
     emptyWorld,
     instantiateIn,
+    unaliased,
     register,
     callExport,
     callFunction,
@@ -62,9 +63,11 @@ import Runtime.Module
 import Runtime.Trap (Trap (..))
 import Syntax.Immediates (functionReferent)
 import Syntax.Indices (FunctionIdx (..), GlobalIdx (..), MemoryIdx (..), TableIdx (..), TagIdx (..))
-import Syntax.Module (ExportDesc (..), Interface (..), SomeModule)
+import Syntax.Module (Aliases (..), ExportDesc (..), Interface (..), RawModule (..), SomeModule)
+import Syntax.Module qualified as Raw (StateImports (..))
 import Syntax.Types (FuncType, Mutability (..), ValType, closedBelow)
 import Syntax.TypesIFC (SecLevel (..))
+import Validation.Aliases (Kind (..), renamed)
 
 -- | Where a shared object lives: the instance that defines it, and its index there.
 type Home = (Int, Int)
@@ -164,7 +167,9 @@ instantiateIn :: World -> SomeModule -> (World, Either InstantiationError Int, M
 instantiateIn world m = case maybe (instantiateUntilStart (embedderIn world x) m) Left (fmap (uncurry ImportedTwice) twice <|> fmap (ImportTypeMismatch . snd) mismatched) of
     Left failure -> (world, Left failure, Nothing)
     Right (inst, failed, start) ->
-        let homes kind imported names = [(slot, home) | (slot, (moduleName, fieldName)) <- zip [0 ..] names, Just home <- [homeOf kind imported world world.registered moduleName fieldName]]
+        -- (An import the module does not use is given once and then left alone.)
+        let homes kind imported names = filter ((`notElem` unusedOf kind) . fst) (homesOf kind imported names)
+            homesOf kind imported names = [(slot, home) | (slot, (moduleName, fieldName)) <- zip [0 ..] names, Just home <- [homeOf kind imported world world.registered moduleName fieldName]]
             binding =
                 Bound
                     { globals = homes globalExport (.globals) imports.globals
@@ -187,9 +192,15 @@ instantiateIn world m = case maybe (instantiateUntilStart (embedderIn world x) m
     -- The first import that names an object another import of the module names already. (A
     -- global that cannot be written may be imported any number of times: each index has its value.)
     twice =
-        firstRepeated [(homeOf memoryExport (.memories) world world.registered moduleName fieldName, name) | name@(moduleName, fieldName) <- imports.memories]
-            <|> firstRepeated [(homeOf tableExport (.tables) world world.registered moduleName fieldName, name) | name@(moduleName, fieldName) <- imports.tables]
-            <|> firstRepeated [(home, name) | name@(moduleName, fieldName) <- imports.globals, let home = homeOf globalExport (.globals) world world.registered moduleName fieldName, writable home]
+        firstRepeated [(homeOf memoryExport (.memories) world world.registered moduleName fieldName, name) | (slot, name@(moduleName, fieldName)) <- zip [0 ..] imports.memories, slot `notElem` unusedOf memoryExport]
+            <|> firstRepeated [(homeOf tableExport (.tables) world world.registered moduleName fieldName, name) | (slot, name@(moduleName, fieldName)) <- zip [0 ..] imports.tables, slot `notElem` unusedOf tableExport]
+            <|> firstRepeated [(home, name) | (slot, name@(moduleName, fieldName)) <- zip [0 ..] imports.globals, slot `notElem` unusedOf globalExport, let home = homeOf globalExport (.globals) world world.registered moduleName fieldName, writable home]
+    -- The imports of a kind that the module declares it does not use, which the elaborator has checked.
+    unusedOf :: (ExportDesc -> Maybe Int) -> [Int]
+    unusedOf kind = map fromIntegral $ case (kind (ExportGlobal (GlobalIdx 0)), kind (ExportMem (MemoryIdx 0))) of
+        (Just _, _) -> imports.unused.globals
+        (_, Just _) -> imports.unused.memories
+        _ -> imports.unused.tables
 
     {- The first import whose type as written does not fit what it names, where both modules
        wrote types: the erased types, which instantiation compares, say nothing of whether a
@@ -220,6 +231,31 @@ instantiateIn world m = case maybe (instantiateUntilStart (embedderIn world x) m
     firstRepeated named = case [name | (i, (Just home, name)) <- zip [0 :: Int ..] named, home `elem` [earlier | (Just earlier, _) <- take i named]] of
         name : _ -> Just name
         [] -> Nothing
+
+{- | A decoded module in which an object imported twice is used under its first index only: for
+  an import that names a memory, a table or a writable global that an earlier import of the
+  module names too, every use of its index is rewritten to the earlier index, and the import is
+  declared unused ('Syntax.Module.Aliases'). The two imports are one object in the world, and
+  an instance cannot hold one object at two indices; after this it does not have to. To be
+  applied to a module before it is validated for this world.
+-}
+unaliased :: World -> RawModule -> RawModule
+unaliased world m =
+    (renamed rename m) {aliases = Aliases (map fst globals) (map fst memories) (map fst tables)}
+  where
+    rename kind index = fromMaybe index . lookup index $ case kind of
+        OfGlobals -> globals
+        OfMemories -> memories
+        OfTables -> tables
+    -- Each import that names what an earlier one names, with the index of the earliest such.
+    repeats homes = [(fromIntegral j, fromIntegral i) | (j, Just home) <- zip [0 :: Int ..] homes, i : _ <- [[i | (i, Just earlier) <- zip [0 :: Int ..] (take j homes), earlier == home]]]
+    memories = repeats [homeOf memoryExport (.memories) world world.registered moduleName fieldName | (moduleName, fieldName) <- m.stateImports.memories]
+    tables = repeats [homeOf tableExport (.tables) world world.registered moduleName fieldName | (moduleName, fieldName) <- m.stateImports.tables]
+    -- (A global that cannot be written may be imported twice as it is: each index has its value.)
+    globals = repeats [if writes home then home else Nothing | (moduleName, fieldName) <- m.stateImports.globals, let home = homeOf globalExport (.globals) world world.registered moduleName fieldName]
+    writes home = case home >>= \(y, index) -> IntMap.lookup y world.instances >>= (`globalAt` index) of
+        Just (mutability, _, _) -> mutability /= Immutable
+        Nothing -> False
 
 -- | Take what instance @x@ imports from its homes.
 pull :: Int -> World -> World
