@@ -11,6 +11,9 @@ and its collector).
 
 ## The answer
 
+*The latest numbers, on a quiet machine and for the labelled interpreter, are in the last
+section, "Performance work of 2026-10-13". What follows is the study of September.*
+
 **No — the typing itself costs nothing measurable.** Compared with an erased twin that is the
 same machine with its types removed and nothing else changed, the typed interpreter is 3–5 %
 *faster* (geometric mean over 24 kernels, before and after E2b; it makes no run-time tag checks
@@ -462,6 +465,9 @@ every local split into its webs.
 
 ## The cost of the labels (2026-10-06, d2839ff)
 
+**Superseded** by "Performance work of 2026-10-13" at the end of this file, which was taken on
+a quiet machine after the costs found here, and others, were removed. Kept for the record.
+
 **Read this first.** The machine was not quiet. Unrelated jobs of another project kept all
 twelve hardware threads busy while the sweeps ran: the load average was 32 when the kernel
 sweep started and 8 when it ended, 3 to 4 during the two small sweeps, 29 during the medium
@@ -676,3 +682,223 @@ skips by reason, as far as the runner's output attributes them (937 of them):
 | imports of the test harness (`spectest.print_i32` 12, `spectest.print` 1) | 13 |
 | a table shared with another module through an import (known gap) | 5 |
 | not attributed: the runner prints the four most frequent reasons of each script | 23 |
+
+## Performance work of 2026-10-13 (c2a3f4b), on a quiet machine
+
+**Read this first.** These numbers replace the timings of the section above ("The cost of the
+labels", 6 October), which were taken under load. The machine is the same, an AMD Ryzen 5 3600
+(6 cores, 12 threads), bare metal, Linux 5.14 (EL9). The load average was between 0.6 and 1.3
+for the whole sweep: one thread of twelve was busy with services that do not stop. The spread
+over the repetitions of a workload is 0.6 % as a median and 1.3 % at most on the kernels, and
+0.2 % and 0.4 % on the medium programs.
+
+Two things happened in one night. The interpreter was profiled for the first time by
+instructions executed (`perf`, user-space events), which found six costs that neither the
+allocation tripwire nor the earlier timings had shown, and they were removed. Then the sweep of
+6 October was taken again. The profile comes first here, since it explains the numbers.
+
+Builds:
+
+- **labelled**: the interpreter at c2a3f4b, run without a policy unless stated.
+- **pre-ifc**: the typed core at 0fcf4b4 (18 September), as before.
+- **pre-ifc-opt**: 0fcf4b4 with `bench/pre-ifc-opt.patch`, which gives it the four of the six
+  changes below that do not concern labels (rows 1, 2, 5 and 6 of the table). This is the
+  like-for-like baseline: what the labels, and everything else added since 18 September, cost
+  is labelled against pre-ifc-opt. Against pre-ifc itself the labelled build is simply faster.
+- **erased**: `bench/erased` at c2a3f4b, with the same four changes. It has no labels and
+  none of the features added since they landed.
+
+Method as before: CPU seconds, the median of 7 repetitions (3 at the medium sizes) after one
+warm-up, the repetitions interleaved across the configurations of a workload; on the kernels
+each runtime's start-up is subtracted; cells under 50 ms take part in no ratio.
+`bench/sweep-labels.sh` took the sweep and `bench/sweep-report.py` printed the tables below.
+One field of the results files is wrong: `environment.ghc` records the `ghc` on the `PATH`
+(9.10.3), not the compiler of the binaries, which is 9.12.2.
+
+### What the profile found
+
+Instructions executed per machine step on `loop-arith` went from 109 on 18 September to 138
+at ee259ec, with the same allocation. All of the difference was inside the driver loop.
+
+| # | Cost | Why it was there | What was done | Effect |
+|---|---|---|---|---|
+| 1 | About twenty loads and stack writes at every step, before the instruction is looked at | GHC's full laziness floats the selections of the store's fields (its tables, tags, first memory) out of the instruction's case, since they depend on the loop's arguments only; each feature added fields | `Runtime.Interpreter` is compiled with `-fno-full-laziness` | `loop-arith` 138 → 115 instructions per step; `fib` −9 %, `memory-random` −13 % instructions |
+| 2 | Arithmetic, comparisons and bitwise operations applied through a class dictionary on boxed words | their helpers take the operation as a function (`numCompare (>=)`), and were not inlined | the helpers are inlined where the operation is known | `loop-arith` 115 → 109; cycles −14 % |
+| 3 | A stack segment rebuilt cell by cell at every block entry, branch and call | the witness that a segment's levels may flow into another's was followed value by value even when no level changes | `SegmentFlows` has a constructor for a segment at its own levels (`SegmentAsItIs`), which the elaborator uses whenever it applies; relabelling under it is the identity | `labels-16` −6 % instructions |
+| 4 | 21 % of an indirect call spent comparing types | singletons' decidable equality: a dictionary per value and a refutation nobody reads | a direct comparison (`sameSegment`) | `call-indirect` −5 % instructions, and its allocation back at the reference |
+| 5 | A `memset` before every copy of a chunk, a frame or a chunk of levels | the vector library's `modify` clears the new vector, then copies the old one over it | the copy is made into an uncleared vector (`modifiedCopy`) | PolyBench `lu` −11 % cycles, `locals-16` −27 %, CoreMark −4 % |
+| 6 | Thunks entered and updated at every block and call | the continuations in the configuration and in the control stack were lazy fields, and a stack split built its halves lazily | the fields are strict, and so is the split | `labels-16` −14 % cycles and −37 % allocation; `fib` −14 % cycles and −20 % allocation |
+
+Two more, under a policy that names secrets:
+
+| Cost | Why it was there | What was done | Effect |
+|---|---|---|---|
+| A chunk of the level map copied by every store of a secret | a store wrote its level whether or not the bytes had it already | no levels are written when the bytes are at the store's level; the levels are one bit per byte, so a store that does change them copies an eighth as much | time with all data secret, against no policy: 1.81 → 1.13 at the small sizes (below) |
+| 0.18 s of validation for a small module, against 0.01 s without a policy | inference elaborated the whole module again for every local variable it raised | a failure that only a local of the failing function repairs is repaired there; the module is elaborated once per round of labels that concern other functions | `correlation`: 14 elaborations → 2, 0.18 s → 0.035 s; the same labels |
+
+Each change is in the history with its measurement (4d63b2e, 71cedde, c2a3f4b). The gate, the
+three test suites and the case studies pass as before, and the allocation reference
+(`bench/allocation.txt`) is recorded anew at c2a3f4b.
+
+### The answers
+
+- **What the labels cost without secrets.** On the kernels the labelled build takes 1.02 times
+  the time of pre-ifc-opt (geometric mean of 24; 0.78 to 1.20). The 0.78 is `float`, which the
+  patch makes slower in the old build (0.110 s against 0.092 s); without it the mean is 1.03.
+  The cost is where blocks are entered and left: `br-table` 1.20, the `labels` kernels 1.11
+  to 1.13, `loop-arith` 1.09, the calls 1.06 to 1.07; locals, globals and memory are within
+  0.93 to 1.03. On the programs the labelled build takes less than pre-ifc-opt, 0.91 at the
+  small sizes and 0.88 at the medium sizes, because the memory was made faster after 18
+  September by changes pre-ifc-opt does not have (a load no longer boxes its word). So the
+  labels cost 2 to 3 % on the kernels, and nothing that can be measured on the programs.
+- **What secrets in memory cost.** With every byte that `main` stores secret and every value
+  it loads secret, the PolyBench kernels take 1.13 times the time of a run without a policy
+  at the small sizes and 1.08 at the medium sizes (1.76 and 1.69 on 6 October), and allocate
+  1.10 and 1.04 times as much (2.23 and 2.11). What is left is mostly the front end, which is
+  0.03 s per module whatever the size of the run: `atax`, the shortest, has the largest
+  ratio. Against pre-ifc-opt without a policy, the runs with secrets are at 0.99 (small) and
+  0.94 (medium).
+- **Typing and labels together, against the erased twin.** 1.04 on the kernels (0.88 to 1.25).
+  The largest gaps are the calls (`fib` 1.22, `call-indirect` 1.22), scattered memory
+  (`memory-random` 1.25) and `br-table` (1.15).
+- **Other interpreters.** wabt's `wasm-interp` 1.0.42 is 1.5 times as fast on the kernels
+  (geometric mean; ours is ahead on the kernels of locals and on `loop-arith`). The Hackage
+  `wasm` 1.1.1 is 4.5 times slower. On the medium programs Pulley is 11 times as fast, WAMR
+  35, wasm3 46 and wasmi 53. The labelled build needs 22 ns per machine step there (16 to 26).
+
+### Kernels
+
+| Kernel | before the labels (s) | the same, optimized (s) | labelled (s) | erased (s) | labelled / pre-ifc | labelled / pre-ifc-opt | labelled / erased | labelled / wabt-interp | labelled / haskell-wasm | ns per step |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| br-table | 0.160 | 0.126 | 0.152 | 0.132 | 0.95 | 1.20 | 1.15 | 1.42 | 0.25 | 13.2 |
+| call-indirect | 0.221 | 0.189 | 0.201 | 0.165 | 0.91 | 1.06 | 1.22 | 1.53 | 0.28 | 19.1 |
+| fib | 0.593 | 0.465 | 0.498 | 0.409 | 0.84 | 1.07 | 1.22 | 1.59 | 0.30 | 16.8 |
+| float | 0.092 | 0.110 | 0.086 | 0.083 | 0.93 | 0.78 | 1.04 | 1.10 | 0.13 | 10.1 |
+| funcs-16 | 0.169 | 0.139 | 0.137 | 0.142 | 0.81 | 0.98 | 0.96 | 1.39 | 0.22 | 15.2 |
+| funcs-2 | 0.156 | 0.126 | 0.125 | 0.126 | 0.80 | 0.99 | 0.99 | 1.26 | 0.20 | 13.9 |
+| funcs-4 | 0.157 | 0.127 | 0.125 | 0.128 | 0.80 | 0.99 | 0.98 | 1.26 | 0.21 | 13.9 |
+| funcs-64 | 0.248 | 0.217 | 0.218 | 0.218 | 0.88 | 1.00 | 1.00 | 2.20 | 0.36 | 24.2 |
+| globals-16 | 0.167 | 0.163 | 0.155 | 0.159 | 0.92 | 0.95 | 0.97 | 1.75 | 0.30 | 18.2 |
+| globals-2 | 0.101 | 0.094 | 0.092 | 0.091 | 0.90 | 0.97 | 1.01 | 1.03 | 0.18 | 10.8 |
+| globals-4 | 0.105 | 0.102 | 0.097 | 0.097 | 0.93 | 0.96 | 1.00 | 1.11 | 0.19 | 11.5 |
+| globals-64 | 0.418 | 0.415 | 0.408 | 0.408 | 0.98 | 0.98 | 1.00 | 4.54 | 0.79 | 47.9 |
+| labels-16 | 0.203 | 0.154 | 0.175 | 0.162 | 0.86 | 1.13 | 1.08 | 2.98 | 0.28 | 11.7 |
+| labels-2 | 0.098 | 0.078 | 0.086 | 0.081 | 0.88 | 1.11 | 1.06 | 1.47 | 0.18 | 10.8 |
+| labels-4 | 0.112 | 0.097 | 0.109 | 0.099 | 0.98 | 1.13 | 1.10 | 1.86 | 0.22 | 12.1 |
+| labels-64 | 0.537 | 0.406 | 0.458 | 0.433 | 0.85 | 1.13 | 1.06 | 7.74 | 0.40 | 11.7 |
+| locals-16 | 0.166 | 0.118 | 0.120 | 0.120 | 0.72 | 1.02 | 1.00 | 0.92 | 0.16 | 9.2 |
+| locals-2 | 0.162 | 0.116 | 0.120 | 0.136 | 0.74 | 1.03 | 0.88 | 0.92 | 0.16 | 9.2 |
+| locals-4 | 0.164 | 0.116 | 0.119 | 0.117 | 0.72 | 1.02 | 1.01 | 0.91 | 0.16 | 9.1 |
+| locals-64 | 0.180 | 0.152 | 0.155 | 0.152 | 0.86 | 1.02 | 1.02 | 1.18 | 0.19 | 11.9 |
+| loop-arith | 0.134 | 0.111 | 0.121 | 0.114 | 0.91 | 1.09 | 1.06 | 0.85 | 0.10 | 8.4 |
+| loop-arith64 | 0.138 | 0.117 | 0.125 | 0.127 | 0.90 | 1.06 | 0.98 | 1.02 | 0.11 | 9.2 |
+| memory-random | 0.422 | 0.377 | 0.371 | 0.297 | 0.88 | 0.98 | 1.25 | 1.38 | 0.28 | 14.9 |
+| memory-stream | 0.486 | 0.397 | 0.370 | 0.343 | 0.76 | 0.93 | 1.08 | 1.54 | 0.30 | 16.1 |
+
+- labelled / pre-ifc: 0.86 (geometric mean of 24; 0.72 to 0.98)
+- labelled / pre-ifc-opt: 1.02 (geometric mean of 24; 0.78 to 1.20)
+- labelled / erased: 1.04 (geometric mean of 24; 0.88 to 1.25)
+- labelled / wabt-interp: 1.50 (geometric mean of 24; 0.85 to 7.74)
+- labelled / haskell-wasm: 0.22 (geometric mean of 24; 0.10 to 0.79)
+- spread of the labelled build over the repetitions (relative MAD of wall time): 0.6 % (median), 1.3 % (max)
+
+### Programs, small
+
+| Program | labelled (s) | labelled / pre-ifc | labelled / pre-ifc-opt | ns per step | wamr-interp | wasm3 | wasmi | wasmtime-cranelift | wasmtime-pulley | wasmtime-winch |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| coremark-100 | 1.432 | 0.96 | 1.03 | 23.6 | - | - | - | - | 17× | - |
+| pb-2mm-small | 0.185 | 0.89 | 0.91 | 27.0 | - | - | - | - | - | - |
+| pb-3mm-small | 0.301 | 0.86 | 0.87 | 26.5 | - | - | - | - | - | - |
+| pb-atax-small | 0.045 | - | - | 55.2 | - | - | - | - | - | - |
+| pb-correlation-small | 0.207 | 0.90 | 0.93 | 30.1 | - | - | - | - | - | - |
+| pb-floyd-warshall-small | 3.162 | 0.86 | 0.92 | 22.1 | 33× | 44× | - | - | 20× | - |
+| pb-gemm-small | 0.205 | 0.85 | 0.87 | 27.4 | - | - | - | - | - | - |
+| pb-jacobi-2d-small | 0.475 | 0.88 | 0.86 | 18.8 | - | - | - | - | 7× | - |
+| pb-lu-small | 1.179 | 0.84 | 0.85 | 26.0 | - | - | - | - | 10× | - |
+| pb-nussinov-small | 0.616 | 0.83 | 0.92 | 23.3 | - | - | - | - | - | - |
+| pb-seidel-2d-small | 0.562 | 0.96 | 0.97 | 18.7 | - | - | - | - | 7× | - |
+
+- labelled / pre-ifc: 0.88 (geometric mean of 10; 0.83 to 0.96)
+- labelled / pre-ifc-opt: 0.91 (geometric mean of 10; 0.85 to 1.03)
+- how many times faster wamr-interp is: 33.08 (geometric mean of 1; 33.08 to 33.08)
+- how many times faster wasm3 is: 43.84 (geometric mean of 1; 43.84 to 43.84)
+- how many times faster wasmi is: no workload above the floor
+- how many times faster wasmtime-cranelift is: no workload above the floor
+- how many times faster wasmtime-pulley is: 10.99 (geometric mean of 5; 7.02 to 20.34)
+- how many times faster wasmtime-winch is: no workload above the floor
+- nanoseconds per machine step of the labelled build: 24.1 (geometric mean; 18.7 to 30.1)
+- spread of the labelled build over the repetitions: 0.6 % (median), 1.3 % (max)
+
+### Programs, medium
+
+| Program | labelled (s) | labelled / pre-ifc | labelled / pre-ifc-opt | ns per step | wamr-interp | wasm3 | wasmi | wasmtime-cranelift | wasmtime-pulley | wasmtime-winch |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| coremark-4000 | 44.982 | 0.89 | 0.96 | 18.5 | 27× | 33× | 39× | 333× | 14× | 152× |
+| pb-2mm-medium | 7.453 | 0.84 | 0.87 | 24.4 | 41× | 58× | 56× | - | 9× | - |
+| pb-3mm-medium | 11.602 | 0.82 | 0.84 | 24.5 | 43× | 57× | 57× | - | 9× | 168× |
+| pb-atax-medium | 0.229 | 0.89 | 0.91 | 25.7 | - | - | - | - | - | - |
+| pb-correlation-medium | 3.629 | 0.84 | 0.86 | 24.0 | 35× | 54× | 57× | - | 9× | - |
+| pb-floyd-warshall-medium | 67.717 | 0.85 | 0.91 | 22.4 | 36× | 45× | 71× | 738× | 22× | 223× |
+| pb-gemm-medium | 5.594 | 0.81 | 0.82 | 24.8 | 41× | 47× | 53× | - | 9× | - |
+| pb-jacobi-2d-medium | 8.147 | 0.81 | 0.80 | 16.4 | 27× | 34× | 40× | - | 7× | - |
+| pb-lu-medium | 45.315 | 0.87 | 0.87 | 25.6 | 43× | 51× | 58× | 710× | 11× | 249× |
+| pb-nussinov-medium | 12.683 | 0.82 | 0.90 | 23.0 | 43× | 50× | 74× | - | 28× | 244× |
+| pb-seidel-2d-medium | 13.879 | 0.91 | 0.90 | 16.4 | 23× | 37× | 36× | 110× | 7× | 71× |
+
+- labelled / pre-ifc: 0.85 (geometric mean of 11; 0.81 to 0.91)
+- labelled / pre-ifc-opt: 0.88 (geometric mean of 11; 0.80 to 0.96)
+- how many times faster wamr-interp is: 35.20 (geometric mean of 10; 22.97 to 43.47)
+- how many times faster wasm3 is: 45.66 (geometric mean of 10; 33.22 to 58.34)
+- how many times faster wasmi is: 52.61 (geometric mean of 10; 36.40 to 73.73)
+- how many times faster wasmtime-cranelift is: 372.14 (geometric mean of 4; 109.99 to 737.97)
+- how many times faster wasmtime-pulley is: 11.18 (geometric mean of 10; 6.56 to 28.23)
+- how many times faster wasmtime-winch is: 170.61 (geometric mean of 6; 71.26 to 249.47)
+- nanoseconds per machine step of the labelled build: 22.1 (geometric mean; 16.4 to 25.7)
+- spread of the labelled build over the repetitions: 0.2 % (median), 0.4 % (max)
+
+### With secrets in memory, small
+
+| Kernel | no policy (s) | data secret (s) | ratio | no policy (MB) | data secret (MB) | ratio |
+|---|---:|---:|---:|---:|---:|---:|
+| 2mm-small | 0.172 | 0.212 | 1.24 | 939.1 | 1036.5 | 1.10 |
+| 3mm-small | 0.288 | 0.333 | 1.16 | 1636.5 | 1761.1 | 1.08 |
+| atax-small | 0.032 | 0.060 | - | 133.8 | 206.9 | 1.55 |
+| correlation-small | 0.176 | 0.216 | 1.23 | 994.6 | 1103.5 | 1.11 |
+| floyd-warshall-small | 3.109 | 3.363 | 1.08 | 18113.0 | 19084.2 | 1.05 |
+| gemm-small | 0.192 | 0.216 | 1.13 | 991.9 | 1044.6 | 1.05 |
+| jacobi-2d-small | 0.437 | 0.469 | 1.07 | 2228.8 | 2277.7 | 1.02 |
+| lu-small | 1.102 | 1.239 | 1.12 | 6478.5 | 6700.9 | 1.03 |
+| nussinov-small | 0.607 | 0.661 | 1.09 | 3476.5 | 3750.3 | 1.08 |
+| seidel-2d-small | 0.513 | 0.568 | 1.11 | 2908.8 | 3054.5 | 1.05 |
+
+- time, data secret / no policy: 1.13 (geometric mean of 9; 1.07 to 1.24)
+- allocation, data secret / no policy: 1.10 (geometric mean of 10; 1.02 to 1.55)
+
+### With secrets in memory, medium
+
+| Kernel | no policy (s) | data secret (s) | ratio | no policy (MB) | data secret (MB) | ratio |
+|---|---:|---:|---:|---:|---:|---:|
+| 2mm-medium | 7.400 | 7.969 | 1.08 | 42713.6 | 43953.2 | 1.03 |
+| 3mm-medium | 11.867 | 12.786 | 1.08 | 67647.8 | 69520.6 | 1.03 |
+| atax-medium | 0.223 | 0.274 | 1.23 | 1268.0 | 1452.7 | 1.15 |
+| correlation-medium | 3.624 | 3.964 | 1.09 | 22042.1 | 22897.0 | 1.04 |
+| floyd-warshall-medium | 67.504 | 71.587 | 1.06 | 400004.8 | 419250.4 | 1.05 |
+| gemm-medium | 5.577 | 5.893 | 1.06 | 30631.2 | 31330.5 | 1.02 |
+| jacobi-2d-medium | 8.128 | 8.667 | 1.07 | 44710.6 | 45102.0 | 1.01 |
+| lu-medium | 45.324 | 47.119 | 1.04 | 256066.2 | 261443.7 | 1.02 |
+| nussinov-medium | 12.756 | 13.366 | 1.05 | 74621.9 | 78970.7 | 1.06 |
+| seidel-2d-medium | 13.981 | 14.525 | 1.04 | 83223.2 | 85527.5 | 1.03 |
+
+- time, data secret / no policy: 1.08 (geometric mean of 10; 1.04 to 1.23)
+- allocation, data secret / no policy: 1.04 (geometric mean of 10; 1.01 to 1.15)
+
+### Load while the sweep ran
+
+```
+02:11:38 kernels start (load 0.63 0.96 1.06)
+02:17:20 kernels exit 0 (load 1.24 1.11 1.09)
+02:21:08 programs small exit 0 (load 1.12 1.15 1.10)
+02:25:33 secrets small exit 0 (load 1.16 1.14 1.10)
+03:16:22 programs medium exit 0 (load 1.16 1.20 1.18)
+04:03:24 secrets medium exit 0 (load 1.09 1.10 1.09)
+```

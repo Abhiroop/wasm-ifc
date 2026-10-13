@@ -877,6 +877,42 @@ implemented since e87e76a.
   call of its own; the next commit inlines it again.) Five unit examples (`test/Spec.hs`,
   "typed function references").
 
+## Performance and the clean benchmark (item 9, 2026-10-13)
+
+`BENCHMARKS.md`, last section, has the tables; `bench/results/2026-10-13-c2a3f4b*` the data.
+The machine was quiet (load about 1 of 12 threads, spread 0.6 % on the kernels and 0.2 % on
+the medium programs), so the times may be quoted, for this machine: an AMD Ryzen 5 3600.
+
+- **What changed first.** A profile by instructions executed found eight costs, and they are
+  removed (`BENCHMARKS.md` lists each with its cause). The interpreter at c2a3f4b is 14 %
+  faster on the kernels than the typed core of 18 September and 15 % faster on the medium
+  programs, and with secrets in memory it costs 8 % where it cost 70 %.
+- **The placeholders of section 9.5.** The labels against the typed core need a baseline with
+  the same general optimizations, or the comparison credits the labels with a speed-up. That
+  baseline is `pre-ifc-opt` (0fcf4b4 with `bench/pre-ifc-opt.patch`). Against it:
+  - X, the kernels under no policy: **2 %** (1.02 as a geometric mean of 24, 0.78 to 1.20; 3 %
+    without the one kernel the patch slows down). It is 11 to 20 % where blocks are entered
+    and left, and nothing on locals, globals and memory.
+  - Y, the programs under no policy: **no cost that can be measured.** The labelled build is
+    at 0.91 (small) and 0.88 (medium), since memory was made faster after 18 September.
+  - Z, the programs with secrets in memory: **8 %** over the same build without a policy at
+    the medium sizes (1.04 to 1.23), 13 % at the small sizes, where a constant 0.03 s of
+    inference weighs more. Allocation: 4 % and 10 % more.
+- **Intrinsic typing.** The typed and labelled machine against its erased twin, both with the
+  general optimizations: 1.04 on the kernels (0.88 to 1.25). The paper's 0.97 is of the typed
+  core of 18 September against the twin of that day. The twin has no labels, so 1.04 is typing
+  and labels together.
+- **Other interpreters, which the paper's paragraph must change.** `wasm-interp` 1.0.42 is 1.5
+  times as fast as the labelled build on the kernels, not 1.2 (that was 1.0.27 on the laptop).
+  The Hackage `wasm` 1.1.1 is 4.5 times slower. On the medium programs: Pulley 11 times as
+  fast, WAMR 35, wasm3 46, wasmi 53 (the paper has 16, 9, 45, 49 from the laptop). The
+  labelled build needs 16 to 26 ns per step on the programs (the paper says 11 to 24).
+- **What I did not do.** One trusted line would make giving a stack new levels free
+  (`relabelStack` as a coercion). Nothing measured asks for it now, and it would qualify "the
+  machine is its own soundness argument", so it is left for Daniel to decide (`TODO.md`). The
+  memory is still persistent: a store copies 1 KiB and inserts it in a map, which is the
+  largest cost left in a memory-bound program.
+
 ## Where coverage stands (2026-10-12, for the paper's claim)
 
 Supported, with the 3.0 suite passing on all of it: **WebAssembly 3.0 without garbage

@@ -113,27 +113,34 @@ Every other assertion of the suite passes (63,080).
 
 ## Performance
 
-- [ ] **P2** The cost of the labels was measured on 2026-10-06 on a loaded machine
-  (`BENCHMARKS.md`): the ratios stand with their spread, the absolute times do not. Re-run on a
-  quiet machine, `PRE=<wasm-ifc built at 0fcf4b4> ./bench/sweep-labels.sh`, after
-  `./bench/tools/fetch.sh wasm3` (WAMR's release binary does not run on EL9: build it from
-  source or drop it from the table), and replace the section's timings.
-- [ ] **P2** With secrets in memory the interpreter takes 1.7 to 1.8 times the time and
-  allocates 2.1 to 2.2 times as much (`BENCHMARKS.md`): a store under a secret label copies a
-  chunk of the label map as well as a chunk of bytes. Keeping a byte and its label in one
-  chunk, or the label map coarser where a whole chunk is secret, would be the first things to
-  try.
-- [ ] **P3** `call_indirect`: avoid the allocation of the level-aware type check (number table
-  entries' types at instantiation), then re-record `bench/allocation.txt`.
-- [ ] **P3** The front end under a policy that names a secret: splitting, inference and the
-  merge take three times the time of plain validation on CoreMark (0.09 s against 0.03 s). The
-  reaching-definitions pass keeps a set of definitions per local at every point.
-- [ ] **P3** Memory in `ST` against persistent chunks, now that bytes carry levels
-  (`BENCHMARKS.md`, E6).
-- [ ] **P3** `bench/erased` is the twin of the typed core without labels (it is kept compiling,
-  not in lockstep): against it the typed core of 0fcf4b4 is at 1.00 and the labelled build at
-  1.05 on the loaded machine. A twin of the labelled machine would separate typing from labels
-  at the current commit; settle whether the paper needs one.
+What a profile of instructions executed found, and what was done about it, is in
+`BENCHMARKS.md` ("Performance work of 2026-10-13"). Open:
+
+- [ ] **P2** A store copies its 1 KiB chunk of bytes and inserts it in the chunk map: with the
+  clearing gone, that is what is left of a store, and 10 to 15 % of a memory-bound program
+  (`IntMap` insertion and the copy). Memory in `ST`, or as a mutable array behind a pure
+  interface, is the next step; it changes how instances hand a shared memory over
+  (`Runtime.Link`) and how the two-run tests keep two states. **decision**
+- [ ] **P3** A call computes the size of the callee's frame from the singletons of its types
+  (`Runtime.Stack.wordsIn`, 4 % of `fib`), and a return appends the results to the caller's
+  stack cell by cell (`appendStack`, 7 %). The frame size can be kept in `Function`.
+- [ ] **P3** `br_table` turns its target into a label of the whole context at run time
+  (`Validation.Shape.withinReach`, 1 to 2 % of the `br-table` kernel): the proof that the
+  target is within the raise is walked on every execution.
+- [ ] **P3** `relabelStack` rebuilds a segment whose levels do rise, value by value. It is the
+  identity on the words. A coercion would make it free, at the price of one trusted line in
+  the machine; with `SegmentAsItIs` covering the segments whose levels do not change, nothing
+  measured asks for it.
+- [ ] **P3** The front end under a policy that names a secret takes three to four times the
+  time of plain validation (0.035 s against 0.010 s on a PolyBench kernel): the locals are
+  split into webs, the module is elaborated until the labels settle (a function's own locals
+  settle without the rest, since 2026-10-13), and once more with the webs merged.
+- [ ] **P3** `bench/erased` is the twin of the typed core without labels. It has the general
+  optimizations of the interpreter (2026-10-13) and none of the features added since the
+  labels, so it bounds the cost of typing and labels together from below.
+- [ ] **P3** wabt's interpreter is about twice as fast on the kernels, and wasm3, WAMR and
+  wasmi 20 to 80 times on programs (`BENCHMARKS.md`). The paper's "within 20 % of wabt" was
+  measured on another processor against wabt 1.0.27 and does not hold here.
 
 ## Repository
 

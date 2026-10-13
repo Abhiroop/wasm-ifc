@@ -26,19 +26,23 @@ PROGRESS=$PREFIX.progress
 stamp() { echo "$(date +%H:%M:%S) $1 (load $(cut -d' ' -f1-3 /proc/loadavg))" | tee -a "$PROGRESS"; }
 others=(--binary pre-ifc="$PRE" --binary erased="$ERASED")
 if [ -n "${HASKELL_WASM:-}" ]; then others+=(--binary haskell-wasm="$HASKELL_WASM"); fi
+# PREOPT, if set, is the build before the labels with the general optimizations of 2026-10-13
+# (bench/pre-ifc-opt.patch on 0fcf4b4): the like-for-like baseline for the cost of the labels.
+preopt=()
+if [ -n "${PREOPT:-}" ]; then others+=(--binary pre-ifc-opt="$PREOPT"); preopt=(--binary pre-ifc-opt="$PREOPT" -r pre-ifc-opt); fi
 # On the programs: ours, the build before the labels, and the runtimes that are not ours.
 programs=(-r wasm-ifc -r pre-ifc -r wasmi -r wasm3 -r wamr-interp -r wasmtime-pulley -r wasmtime-winch -r wasmtime-cranelift)
 
 stamp "kernels start"
 python3 bench/run.py "${others[@]}" --reps 7 -o "$PREFIX.json" > "$PREFIX.kernels.log" 2>&1
 stamp "kernels exit $?"
-python3 bench/run.py --tier t2 --binary pre-ifc="$PRE" "${programs[@]}" -w coremark-100 -w 'pb-*-small' --reps 7 -o "$PREFIX-t2-small.json" > "$PREFIX.t2-small.log" 2>&1
+python3 bench/run.py --tier t2 --binary pre-ifc="$PRE" "${preopt[@]}" "${programs[@]}" -w coremark-100 -w 'pb-*-small' --reps 7 -o "$PREFIX-t2-small.json" > "$PREFIX.t2-small.log" 2>&1
 stamp "programs small exit $?"
-python3 bench/secrets.py --size small --reps 7 --plain pre-ifc="$PRE" -o "$PREFIX-secrets-small.json" > "$PREFIX.secrets-small.log" 2>&1
+python3 bench/secrets.py --size small --reps 7 --plain pre-ifc="$PRE" ${PREOPT:+--plain pre-ifc-opt="$PREOPT"} -o "$PREFIX-secrets-small.json" > "$PREFIX.secrets-small.log" 2>&1
 stamp "secrets small exit $?"
 if [ "${MEDIUM:-1}" != 0 ]; then
-    python3 bench/run.py --tier t2 --binary pre-ifc="$PRE" "${programs[@]}" -w coremark-4000 -w 'pb-*-medium' --reps 3 --timeout 1800 -o "$PREFIX-t2-medium.json" > "$PREFIX.t2-medium.log" 2>&1
+    python3 bench/run.py --tier t2 --binary pre-ifc="$PRE" "${preopt[@]}" "${programs[@]}" -w coremark-4000 -w 'pb-*-medium' --reps 3 --timeout 1800 -o "$PREFIX-t2-medium.json" > "$PREFIX.t2-medium.log" 2>&1
     stamp "programs medium exit $?"
-    python3 bench/secrets.py --size medium --reps 3 -o "$PREFIX-secrets-medium.json" > "$PREFIX.secrets-medium.log" 2>&1
+    python3 bench/secrets.py --size medium --reps 3 ${PREOPT:+--plain pre-ifc-opt="$PREOPT"} -o "$PREFIX-secrets-medium.json" > "$PREFIX.secrets-medium.log" 2>&1
     stamp "secrets medium exit $?"
 fi
