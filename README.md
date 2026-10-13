@@ -38,8 +38,8 @@ Levels come from a policy (`Validation.Policy`), one text format with two carrie
 module's own `ifc` custom section, keyed by function index, global index and memory-access
 position, and a file given with `--policy`, keyed by import and export names. It declares
 function types with the bound on their calling context (`export check : H -{L}-> L`), globals,
-memory accesses and regions, and the levels of the standard streams, the preopened directories
-and the listening sockets the WASI host connects to. Stores need no declaration, since their level is inferred; loads
+memory accesses and regions, and the levels of the standard streams, of the directories granted
+with `--dir` (`dir /secrets : H`) and of the listening sockets the WASI host connects to. Stores need no declaration, since their level is inferred; loads
 take a site declaration, a region, or a default. Annotations can also be written in the source
 program as calls to an import module `ifc` (`secret_i32`, `load_secret_i32`, `declassify_i32`,
 …), which a plain runtime serves with a shim and this one rewrites into the instructions they
@@ -93,7 +93,7 @@ cabal run wasm-ifc -- invoke [--policy P] <file.wasm> <export> [args...]   # run
 cabal run wasm-ifc -- run    [--policy P] [--dir D[::G]]... [--listen HOST:PORT]... [--env K=V]... <file.wasm> [args...]   # a WASI program
 cabal run wasm-ifc -- get    [--policy P] <file.wasm> <global>             # an exported global
 
-./scripts/gate.sh   # format, -Werror build, all test suites, lint, samples
+./scripts/gate.sh   # format, -Werror build, all test suites, lint, typed obligations, what a step reaches, samples
 cabal test          # unit tests, the spec testsuite (needs wasm-tools), the wasi-testsuite;
                     # the suites are submodules: git submodule update --init
 ```
@@ -127,7 +127,11 @@ C programs and SecWasm's and WANILLA's examples under policies with secrets.
 SecWasm's two run-time checks are typed obligations: an instruction's type names the check
 its rule depends on, and the machine's step for it type-checks only with evidence that the
 checked memory read, or the checked table lookup, hands out (`Runtime.Obligation`;
-`test/obligations-must-not-compile.sh` checks that four wrong steps are rejected).
+`test/obligations-must-not-compile.sh` checks that four wrong steps are rejected). GHC checks
+neither that a step terminates nor that it raises no exception, so `scripts/step-inventory.py`
+takes from GHC's Core the recursive definitions and the uses of partial or unchecked functions
+that `step` can reach, and compares them with two lists in which each has its reason
+(`test/recursion-allowed.txt`, `test/partial-allowed.txt`).
 
 Modules are linked in a world (`Runtime.Link`): a module imports functions, memories, tables
 and globals from the modules registered there, and what it imports is shared, not copied. The

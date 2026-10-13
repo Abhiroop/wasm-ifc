@@ -1,0 +1,66 @@
+# The recursive definitions that `Runtime.Interpreter.step` can reach, each with what it
+# descends on. `scripts/recursion.py` takes the list from GHC's Core and fails, in the gate, if
+# a definition is recursive and not here, or here and no longer found. A line is
+#
+#   Module.definition[/local definition] | itself, or the group it is recursive with | the argument
+#
+# `step` and `stepInstr` are not on the list: neither is recursive. What a step does not reach
+# is not on it either, the driver's loop (`runKeeping`) among it, which runs for as long as the
+# program does.
+
+Runtime.Chunks.chunkAt/descend | itself | the tree of chunks: a child of the node
+Runtime.Chunks.withChunk | itself | the key's bits above the root's shift: each call adds 4 to the shift, and a key is an address divided by the chunk size, so below 2^56, and at most 13 calls follow one another
+Runtime.Chunks.withChunk/put | group below put | the shift, which `below` lowers by 4 and at which it stops at 0
+Runtime.Chunks.withChunk/below | group below put | the shift, as `put`
+Runtime.Interpreter.activationDepth | itself | the control stack
+Runtime.Interpreter.appendFromSameValues | itself | the witness (`SameValueTypes`)
+Runtime.Interpreter.appendOnto | itself | the witness (`Append`)
+Runtime.Interpreter.getFunc | itself | the witness of the index (`Elem`)
+Runtime.Interpreter.returnUnwind | itself | the control stack, down to the function's boundary
+Runtime.Interpreter.segmentAppends | itself | the witness (`SegmentFlows`)
+Runtime.Interpreter.tailCall | itself | the control stack, down to the function's boundary
+Runtime.Interpreter.throwException | itself | the control stack, through call boundaries
+Runtime.Interpreter.throwException/offer | itself | the list of a handler's clauses; where it calls `throwException`, that is on the rest of the control stack
+Runtime.Interpreter.throwException/$dSDecide | itself | no function: the dictionary of the singletons library's equality on lists of types, which refers to itself for the tail of a list; the comparison it is used for descends on the types of a tag
+Runtime.Interpreter.unwindFrom | itself | the witness of the branch's target (`BranchTarget`) and the control stack
+Runtime.Interpreter.unwindTo | itself | the witness of the label (`Elem`) and the control stack
+Runtime.MemInst.bytesAt/ds | itself | the list of the addresses from `addr` to `addr + count - 1` (a list comprehension)
+Runtime.MemInst.levelWhereSecrets | itself | the count: its one call of itself is with the count 1, which does not call again, since an offset is below the chunk size
+Runtime.MemInst.levelWhereSecrets/anySecret | itself | the words of the label map up to the last one of the range
+Runtime.MemInst.runsByChunk | itself | the list of bytes: each call takes at least one off
+Runtime.MemInst.setLevelsFrom | itself | the count: each call takes off what is left of the chunk, which is at least one byte
+Runtime.MemInst.setLevelsFrom/unchanged | itself | the words of the label map up to the last one of the range
+Runtime.MemInst.wordInBounds/go | itself | the bytes up to the count, which is the width of a load in bytes and so positive
+Runtime.Stack.appendValues | itself | the first operand stack
+Runtime.Stack.appendWith | itself | the witness (`Append`)
+Runtime.Stack.dropElements/go | itself | the witness of the index (`Elem`)
+Runtime.Stack.dropSegment | itself | the witness of the index (`Elem`)
+Runtime.Stack.frameSlot | group frameSlot slotOfLargeFrame | the tree of a frame: one of the eight parts
+Runtime.Stack.getElements/go | itself | the witness of the index (`Elem`)
+Runtime.Stack.getGlobal | itself | the witness of the index (`Elem`)
+Runtime.Stack.getLaterMem | itself | the witness of the index (`Elem`)
+Runtime.Stack.getSegment | itself | the witness of the index (`Elem`)
+Runtime.Stack.getTable/go | itself | the witness of the index (`Elem`)
+Runtime.Stack.recordPreserved/record | itself | the witness of the preserved globals (`PreservedGlobals`)
+Runtime.Stack.recordPreserved/anyPreserved | itself | the witness of the preserved globals (`PreservedGlobals`)
+Runtime.Stack.relabelByValue | itself | the witness (`SegmentFlows`)
+Runtime.Stack.setGlobal | itself | the witness of the index (`Elem`)
+Runtime.Stack.setLaterMem | itself | the witness of the index (`Elem`)
+Runtime.Stack.setTable/go | itself | the witness of the index (`Elem`)
+Runtime.Stack.slotOfLargeFrame | group frameSlot slotOfLargeFrame | the tree of a frame: one of the eight parts
+Runtime.Stack.splitValues | itself | the witness (`Append`)
+Runtime.Stack.stillRestored | itself | the recorded globals (`PreservedGlobals`)
+Runtime.Stack.tagName/at | itself | the witness of the index (`Elem`)
+Runtime.Stack.withArgument | group withArgument withArguments | the singleton of the parameters and the stack of arguments
+Runtime.Stack.withArguments | group withArgument withArguments | the singleton of the parameters and the stack of arguments
+Runtime.Stack.withFrameSlot | itself | the tree of a frame: one of the eight parts
+Runtime.Stack.wordsIn | itself | the singleton of the locals' types
+Runtime.Stack.zeroFrame/eightOf | itself | the size left to cover: each call multiplies what the frame holds by 8, and a frame has at most 2 * maxLocals words (the decoder rejects a function with more locals), so at most 5 calls follow one another
+Runtime.Vector.lanes/ds | itself | the list of the lanes' numbers (a list comprehension)
+Runtime.Vector.pairs | itself | the list, by two elements
+Syntax.TypesIFC.decideAllPublic | itself | the singleton of the types
+Syntax.TypesIFC.sameSegment | itself | the two singletons
+Validation.Reflect.appendNil | itself | the singleton
+Validation.Shape.appendFromSing | itself | the singleton
+Validation.Shape.appendIs | itself | the witness (`Append`)
+Validation.Shape.withinReach | itself | the witness of the table's reach (`TableReach`) and the index

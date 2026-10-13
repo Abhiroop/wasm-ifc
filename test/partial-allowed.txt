@@ -1,0 +1,98 @@
+# The uses of a partial or an unchecked function in what `Runtime.Interpreter.step` can reach,
+# each with why it raises no exception and reads nothing outside an array.
+# `scripts/step-inventory.py` takes the list from GHC's Core and fails, in the gate, if a use
+# is not here, or is here and no longer found. A line is
+#
+#   Module.definition | the function | the reason
+#
+# and `*` for the definition allows the function everywhere. No definition that a step reaches
+# calls `error`, `undefined`, `head`, `tail`, `fromJust`, `!!`, an indexing that checks and
+# raises (`!`), `toEnum`, `throw`, or an unsafe coercion: the script looks for these too.
+#
+# What WebAssembly prescribes a trap for is a `Left` of the step and no exception: division by
+# zero and the overflow of signed division (`Runtime.Numeric.intDiv32`, `intDiv64`, `intRem32`,
+# `intRem64`, listed below), a conversion of a float that is no number or out of range
+# (`Runtime.Convert.truncToI32`, `truncToI64`, which compare before they convert), and an
+# access outside a memory or a table (`Runtime.MemInst.loadChecked` and `storeWordAt`,
+# `Runtime.TableInst.getEntry` and the others, which compare with the size and answer through a
+# `Maybe` or a continuation for the failure).
+
+* | patError | the fall-through that GHC's desugarer leaves under a match on a GADT whose other constructors the types exclude; the exhaustiveness checker accepts each of these matches (an incomplete one is an error of the build, by `-Wall -Werror`), so no value reaches it
+
+Runtime.Chunks.beyond | uncheckedIShiftRL# | the count is the node's shift or 4 more; a shift is a multiple of 4 that `withChunk` raises only while the key has bits above it, and a key is below 2^56, so the count is at most 56
+Runtime.Chunks.chunkAt | indexSmallArray# | the index is four bits of the key, and a node has sixteen children
+Runtime.Chunks.chunkAt | uncheckedIShiftRL# | the count is the node's shift or 4 more; a shift is a multiple of 4 that `withChunk` raises only while the key has bits above it, and a key is below 2^56, so the count is at most 56
+Runtime.Chunks.onlyChild | writeSmallArray# | the index is four bits of the key, and a node has sixteen children; the array is new, of sixteen
+Runtime.Chunks.withChild | writeSmallArray# | the index is four bits of the key, and a node has sixteen children; the array is a copy of the sixteen
+Runtime.Chunks.withChunk | indexSmallArray# | the index is four bits of the key, and a node has sixteen children
+Runtime.Chunks.withChunk | uncheckedIShiftRL# | the count is the node's shift or 4 more; a shift is a multiple of 4 that `withChunk` raises only while the key has bits above it, and a key is below 2^56, so the count is at most 56
+Runtime.Convert.truncSatToI32 | ^ | the exponent is a constant that is not negative
+Runtime.Convert.truncSatToI64 | ^ | the exponent is a constant that is not negative
+Runtime.Convert.truncToI32 | ^ | the exponent is a constant that is not negative
+Runtime.Convert.truncToI64 | ^ | the exponent is a constant that is not negative
+Runtime.Interpreter.beyondEveryMemory | ^ | the exponent is a constant that is not negative
+Runtime.Interpreter.bitwise32 | shiftL | the count is `modBits 32`, between 0 and 31
+Runtime.Interpreter.bitwise32 | shiftR | the count is `modBits 32`, between 0 and 31
+Runtime.Interpreter.bitwise64 | shiftL | the count is `modBits 64`, between 0 and 63
+Runtime.Interpreter.bitwise64 | shiftR | the count is `modBits 64`, between 0 and 63
+Runtime.Interpreter.extendNarrow | shiftL | the count is eight times a narrow width, which is 1, 2 or 4 bytes (`narrowBytes`)
+Runtime.Interpreter.extendNarrow | testBit | the bit is the top one of a narrow width of 1, 2 or 4 bytes
+Runtime.Interpreter.modBits | mod | the divisor is 32 or 64, at its two uses
+Runtime.MemInst.bytesAt | quotRem | the divisor is `chunkSize`, the constant 256
+Runtime.MemInst.eightBytesAt | indexWord8ArrayAsWord64# | its one caller, `wordInBounds`, reads only where the offset and eight more bytes are within the chunk's vector (the guard `offset + 8 <= UV.length stored`)
+Runtime.MemInst.levelWhereSecrets | quotRem | the divisor is `chunkSize`, the constant 256
+Runtime.MemInst.levelWhereSecrets | shiftR | the count is the constant 6
+Runtime.MemInst.modifiedCopy | unsafeCopy | the target was made with the length of the source one line above
+Runtime.MemInst.modifiedCopy | unsafeNew | the length is that of a vector, so not negative, and every element is written by the copy that follows
+Runtime.MemInst.publicChunk | div | the divisor is the constant 64
+Runtime.MemInst.runsByChunk | quotRem | the divisor is `chunkSize`, the constant 256
+Runtime.MemInst.setLevelsFrom | quotRem | the divisor is `chunkSize`, the constant 256
+Runtime.MemInst.setLevelsFrom | shiftR | the count is the constant 6
+Runtime.MemInst.storeWordAt | quotRem | the divisor is `chunkSize`, the constant 256
+Runtime.MemInst.storeWordAt | shiftR | the count is eight times the number of a byte, from 0
+Runtime.MemInst.storeWordAt | unsafeWrite | the write is made only if the offset and the count are within the chunk (the guard `offset + count <= chunkSize`), into a copy of the chunk, which is `chunkSize` long
+Runtime.MemInst.wordInBounds | quotRem | the divisor is `chunkSize`, the constant 256
+Runtime.MemInst.wordInBounds | shiftL | the counts are constants, or eight times the number of a byte, from 0
+Runtime.MemInst.wordInBounds | shiftR | the count is 64 less eight times the width of a load, which is between 1 and 8 bytes at every call of `loadChecked`
+Runtime.MemInst.wordInBounds | unsafeIndex | the bytes read are from the offset to the offset and the count, which are within the chunk (the guard `offset + count <= chunkSize`); a chunk that is held is `chunkSize` long
+Runtime.MemInst.wordMask | shiftL | the two counts are the distances from the start of word `w` to the first and the last bit of the range in it, and the callers pass only the words that the range reaches, so neither is negative
+Runtime.Numeric.intDiv32 | div | the first clause returns the trap `IntegerDivideByZero` for the divisor 0
+Runtime.Numeric.intDiv32 | quot | the divisor 0 and the overflow of `minBound` by -1 are the traps `IntegerDivideByZero` and `IntegerOverflow`, in the clauses before
+Runtime.Numeric.intDiv64 | div | the first clause returns the trap `IntegerDivideByZero` for the divisor 0
+Runtime.Numeric.intDiv64 | quot | the divisor 0 and the overflow of `minBound` by -1 are the traps `IntegerDivideByZero` and `IntegerOverflow`, in the clauses before
+Runtime.Numeric.intRem32 | rem | the first clause returns the trap `IntegerDivideByZero` for the divisor 0, and `minBound` by -1 is answered 0 before
+Runtime.Numeric.intRem64 | rem | the first clause returns the trap `IntegerDivideByZero` for the divisor 0, and `minBound` by -1 is answered 0 before
+Runtime.Stack.groupAt | indexSmallArray# | the index is three bits of the place, and a frame of this kind has eight groups
+Runtime.Stack.groupAt | uncheckedIShiftRL# | the count is the constant 3
+Runtime.Stack.slotAt | indexWord64Array# | the index is three bits of the place, and a group is 64 bytes, eight words
+Runtime.Stack.slotOfLargeFrame | shiftR | the count is the shift of an `EightFrames`, which only `zeroFrame` builds, with 3 or more
+Runtime.Stack.withFrameSlot | shiftR | the count is the shift of an `EightFrames`, which only `zeroFrame` builds, with 3 or more
+Runtime.Stack.withGroupAt | uncheckedIShiftRL# | the count is the constant 3
+Runtime.Stack.withGroupAt | writeSmallArray# | the index is three bits of the place, and a frame of this kind has eight groups; the array is a copy of the eight
+Runtime.Stack.withSlotAt | writeWord64Array# | the index is three bits of the place, and the array is new, of 64 bytes
+Runtime.Stack.zeroFrame | shiftL | the count starts at 3 and grows
+Runtime.Vector.bitsScalar | ^ | the exponent is a constant that is not negative
+Runtime.Vector.bitsScalar | mod | the divisor is the constant 2^32
+Runtime.Vector.fromLanes | shiftL | the count is a lane's position less the half's base, and the comprehension keeps the positions from the base on
+Runtime.Vector.lanes | div | a lane's width in bits is 8, 16, 32 or 64 (`laneBits`, `shapeBits`)
+Runtime.Vector.lanes | mod | the divisor is the constant 64
+Runtime.Vector.lanes | shiftR | the count is a remainder by 64 of a position that is not negative
+Runtime.Vector.loadedVector | div | the divisors are a lane's width, 8, 16 or 32 bits, and a lane's size in bytes, 1, 2, 4 or 8
+Runtime.Vector.maskOf | shiftL | the count is a lane's width, and the guard takes 64 and more away
+Runtime.Vector.pick | div | the divisor is the constant 2
+Runtime.Vector.saturateLane | ^ | the exponent is a lane's width or one less; a lane's width in bits is 8, 16, 32 or 64 (`laneBits`, `shapeBits`)
+Runtime.Vector.signedLane | ^ | the exponent is a lane's width; a lane's width in bits is 8, 16, 32 or 64 (`laneBits`, `shapeBits`)
+Runtime.Vector.signedLane | testBit | the bit is the top one of a lane; a lane's width in bits is 8, 16, 32 or 64 (`laneBits`, `shapeBits`)
+Runtime.Vector.splatLane | div | a lane's width in bits is 8, 16, 32 or 64 (`laneBits`, `shapeBits`)
+Runtime.Vector.vectorBinary | div | the divisors are the constants 2 and 0x8000
+Runtime.Vector.vectorBinary | mod | the divisor is the constant 32
+Runtime.Vector.vectorShift | ^ | the exponent is the count of the shift, a remainder by the lane's width and so not negative
+Runtime.Vector.vectorShift | div | the divisor is a power of 2
+Runtime.Vector.vectorShift | mod | a lane's width in bits is 8, 16, 32 or 64 (`laneBits`, `shapeBits`)
+Runtime.Vector.vectorTest | shiftL | the count is the number of a lane, from 0
+Runtime.Vector.vectorTest | testBit | the bit is the top one of a lane; a lane's width in bits is 8, 16, 32 or 64 (`laneBits`, `shapeBits`)
+Runtime.Vector.vectorUnary | shiftL | the count is a lane's width less one; a lane's width in bits is 8, 16, 32 or 64 (`laneBits`, `shapeBits`)
+Runtime.Vector.wrapLane | ^ | the exponent is a lane's width; a lane's width in bits is 8, 16, 32 or 64 (`laneBits`, `shapeBits`)
+Runtime.Vector.wrapLane | mod | the divisor is a power of 2
+Syntax.Immediates.functionReferenceIn | shiftL | the count is the constant 33
+Syntax.Immediates.functionReferent | shiftR | the count is the constant 33

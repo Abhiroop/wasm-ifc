@@ -64,6 +64,15 @@ lanes bits (Vector128 low high) = [lane (i * bits) | i <- [0 .. 128 `div` bits -
   where
     lane at = ((if at < 64 then low else high) `shiftR` (at `mod` 64)) .&. maskOf bits
 
+{- | The lane at an index, and 0 past the last one. Validation rejects an instruction whose lane
+  index is past the last lane, but a typed instruction can hold any byte, so the lookup is
+  total: a step raises no exception.
+-}
+laneAt :: [Word64] -> Int -> Word64
+laneAt values index = case drop index values of
+    value : _ -> value
+    [] -> 0
+
 -- | A vector from its lanes at a width in bits; a lane's bits past the width are dropped.
 fromLanes :: Int -> [Word64] -> Vector128
 fromLanes bits values = Vector128 (half 0) (half 64)
@@ -198,10 +207,10 @@ vectorBinary op first@(Vector128 firstLow firstHigh) second@(Vector128 secondLow
     VXor -> Vector128 (firstLow `xor` secondLow) (firstHigh `xor` secondHigh)
     VSwizzle ->
         let bytes = lanes 8 first
-         in fromLanes 8 [if index < 16 then bytes !! fromIntegral index else 0 | index <- lanes 8 second]
+         in fromLanes 8 [if index < 16 then laneAt bytes (fromIntegral index) else 0 | index <- lanes 8 second]
     VShuffle indices ->
         let bytes = lanes 8 first ++ lanes 8 second
-         in fromLanes 8 [bytes !! (fromIntegral index `mod` 32) | index <- indices]
+         in fromLanes 8 [laneAt bytes (fromIntegral index `mod` 32) | index <- indices]
     VIntBinary shape intOp ->
         let bits = shapeBits shape
             apply a b = case intOp of
@@ -324,7 +333,7 @@ splatLane :: LaneType t -> HostType t -> Vector128
 splatLane lane value = fromLanes (laneBits lane) (replicate (128 `div` laneBits lane) (scalarBits lane value))
 
 extractLane :: LaneType t -> Word8 -> Signedness -> Vector128 -> HostType t
-extractLane lane index sign vector = bitsScalar lane sign (lanes (laneBits lane) vector !! fromIntegral index)
+extractLane lane index sign vector = bitsScalar lane sign (laneAt (lanes (laneBits lane) vector) (fromIntegral index))
 
 replaceLane :: LaneType t -> Word8 -> Vector128 -> HostType t -> Vector128
 replaceLane lane index vector value = replaceLaneBits (laneBits lane) index vector (scalarBits lane value)
@@ -350,4 +359,4 @@ loadedVector kind low high = case kind of
 
 -- | The bits of one lane of a vector, at a width in bits.
 laneBitsAt :: Int -> Word8 -> Vector128 -> Word64
-laneBitsAt bits index vector = lanes bits vector !! fromIntegral index
+laneBitsAt bits index vector = laneAt (lanes bits vector) (fromIntegral index)
