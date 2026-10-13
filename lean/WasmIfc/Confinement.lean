@@ -254,6 +254,30 @@ theorem confine : ∀ (n : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P'
     | tryExit hvs hb hx =>
       cases ht with
       | tryTable _ _ _ _ _ => exact absurd hP.head (by decide)
+    | retCall hf hargs hb hl hk =>
+      cases ht with
+      | retCall hft hpc hfl hLs hge hres =>
+        obtain ⟨hty, P'', hbodyT, _⟩ := hF _ _ hf
+        cases hft.symm.trans hty
+        have hpcH := hP.head
+        subst hpcH
+        have hbound := hpc rfl
+        obtain ⟨hs1, hi1⟩ := ih _ (by omega) (hF.enter _) hbodyT
+          (by rw [hbound]; exact hiUpTo_zero_cons _) rfl hb
+        obtain ⟨r', t', hl', hlen', hst', _⟩ := top_lands hi1
+        rw [hl] at hl'
+        cases hl'
+        simp only [List.length_map]
+        exact ⟨Conf.call (hst' ▸ hs1), _, hLs, hge, hlen'.trans hres.length_eq,
+          hiUpTo_raise _ _ _ (Nat.le_refl _)⟩
+    | retCallExn hf hargs hb =>
+      cases ht with
+      | retCall hft hpc hfl hLs hge hres =>
+        obtain ⟨hty, P'', hbodyT, _⟩ := hF _ _ hf
+        cases hft.symm.trans hty
+        have hbound := hpc hP.head
+        exact False.elim (ih _ (by omega) (hF.enter _) hbodyT
+          (by rw [hbound]; exact hiUpTo_zero_cons _) rfl hb).2
     | callExn hf hargs hb =>
       cases ht with
       | call hft hpc hfl hrest =>

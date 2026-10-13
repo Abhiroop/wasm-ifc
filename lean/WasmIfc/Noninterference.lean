@@ -454,6 +454,24 @@ theorem call_inv {n i : Nat} {ls : List Nat} {rest : List Instr} {σ : List Nat}
     exact ⟨_, _, _, _, _, hf, rfl, hargs, by omega, hb, .land hl hk (by omega) hr⟩
   | callExn hf hargs hb => exact ⟨_, _, _, _, _, hf, rfl, hargs, by omega, hb, .exn rfl rfl⟩
 
+/-- What a tail call does after the callee's body: the function returns its results, or the exception. -/
+inductive TailCont (keep : List Nat) (s : State) (i : Nat) (ob : Out) (o : Out) : Prop where
+  | land {r : List Nat} {t : State} :
+      ob.lands = some (r, t) → Kept keep s t → o = .br i r { t with loc := s.loc } →
+      TailCont keep s i ob o
+  | exn {t : Nat} {w : List Nat} {u : State} :
+      ob = .exn t w u → o = .exn t w { u with loc := s.loc } → TailCont keep s i ob o
+
+theorem retCall_inv {n i : Nat} {ls : List Nat} {rest : List Instr} {σ : List Nat} {s : State}
+    {o : Out} (h : Eval F n ls (.retCall i :: rest) σ s o) :
+    ∃ f args base n1 ob, F[i]? = some f ∧ σ = args ++ base ∧ args.length = f.ty.params.length ∧
+      n1 < n ∧ Eval F n1 [f.ty.results.length] f.body [] { s with loc := frame args } ob ∧
+      TailCont f.keep s (ls.length - 1) ob o := by
+  cases h with
+  | retCall hf hargs hb hl hk =>
+    exact ⟨_, _, _, _, _, hf, rfl, hargs, by omega, hb, .land hl hk rfl⟩
+  | retCallExn hf hargs hb => exact ⟨_, _, _, _, _, hf, rfl, hargs, by omega, hb, .exn rfl rfl⟩
+
 theorem callIndirect_inv {n : Nat} {ls : List Nat} {ps rs : STy} {b : Lab} {rest : List Instr}
     {σ : List Nat} {s : State} {o : Out} (h : Eval F n ls (.callIndirect ps b rs :: rest) σ s o) :
     ∃ c i f args base n1 ob, s.tbl c = some i ∧ F[i]? = some f ∧ f.ty = ⟨ps, b, rs⟩ ∧
@@ -940,6 +958,47 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
           subst ho0
           cases hc1 with
           | land hl1 _ _ _ => simp [Out.lands] at hl1
+          | exn hob1 ho1 =>
+            cases hob1
+            subst ho1
+            exact .inl (.exn htag hlen (StRel.leave hs hst) (fun i hi => hpe i hi))
+    | retCall hft hpc hfl hLs hge hres =>
+      -- the call, then the branch to the function's label with what the callee returned
+      obtain ⟨f0, args0, base0, m0, ob0, hf0, rfl, hargs0, hm0, hb0, hc0⟩ := retCall_inv he0
+      obtain ⟨f1, args1, base1, m1, ob1, hf1, rfl, hargs1, hm1, hb1, hc1⟩ := retCall_inv he1
+      cases hf0.symm.trans hf1
+      obtain ⟨hty, q, hbodyT, hret⟩ := hF _ _ hf0
+      cases hft.symm.trans hty
+      obtain ⟨hargs, hbase⟩ := StkRel.split hσ (hargs0.trans hfl.length_eq.symm)
+        (hargs1.trans hfl.length_eq.symm)
+      have hrel := ih _ hm0 (hF.enter _) hbodyT hb0 hb1 .nil
+        (StRel.enter (hargs.mono hfl) hs) (hp.call hpc)
+      simp only [List.length_map] at hc0 hc1
+      rcases fun_result hrel with ⟨r0, t0, r1, t1, hl0', hl1', hrs, hst, hpt⟩ |
+        ⟨t, k, w, u0, u1, ho0, ho1, htag, hlen, hst, hpe⟩
+      · cases hc0 with
+        | land hl0 hk0 ho0 =>
+          cases hc1 with
+          | land hl1 hk1 ho1 =>
+            rw [hl0] at hl0'
+            cases hl0'
+            rw [hl1] at hl1'
+            cases hl1'
+            subst ho0 ho1
+            exact .inl (.br hLs (hrs.mono hres) (StRel.leave hs hst)
+              (PresOr.of_glob rfl rfl
+                ((pres_after_call hret hp hk0 hk1 (hpt.imp (fun h i hi => h i hi) id)).br
+                  (Nat.le_refl _) (Lab.le_refl _))))
+          | exn hob1 _ => subst hob1; simp [Out.lands] at hl1'
+        | exn hob0 _ => subst hob0; simp [Out.lands] at hl0'
+      · subst ho0 ho1
+        cases hc0 with
+        | land hl0 _ _ => simp [Out.lands] at hl0
+        | exn hob0 ho0 =>
+          cases hob0
+          subst ho0
+          cases hc1 with
+          | land hl1 _ _ => simp [Out.lands] at hl1
           | exn hob1 ho1 =>
             cases hob1
             subst ho1

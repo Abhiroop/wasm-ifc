@@ -2,8 +2,8 @@
 
 A Lean 4 development that proves termination-insensitive noninterference for the labelled
 typing rules of this repository on a core of WebAssembly: blocks, loops and conditionals with
-parameters and results, `br`, `br_if`, `br_table` and `return`, direct and indirect calls of
-the module's functions (recursion included), a bounded memory whose cells carry a level, with
+parameters and results, `br`, `br_if`, `br_table` and `return`, direct calls, indirect calls
+and tail calls of the module's functions (recursion included), a bounded memory whose cells carry a level, with
 SecWasm's run-time check on loads, `memory.size` and `memory.grow`, local and global
 variables with `local.tee`, exceptions (`throw` and `try_table`), preserved globals with
 their run-time comparison, and arithmetic on one value type. It has no `sorry`, and its
@@ -60,7 +60,8 @@ type `Syntax.Instructions.Instr` for the instructions above:
   part of `WellTyped`: the proof uses it in one place, an indirect call on a secret index,
   where two different functions run and their results must be secret. The rule for the
   indirect call asks it there.
-- `return` is the branch to the outermost label, and raises every pc.
+- `return` is the branch to the outermost label, and raises every pc. A tail call is typed as
+  the call followed by that branch, with the callee's results flowing into the function's.
 - A global may be declared preserved (`Ctx.preserved`), as the policy does for the stack
   pointer of compiled C. A write to it needs no premise on the pc, and the value written is at
   most as secret as the pc: under a public pc this is the ordinary rule, and under a secret pc
@@ -125,7 +126,9 @@ paper's appendix B.4 has no counterpart here.
 - **The comparison names its globals.** The implementation compares every preserved global of
   the module, which a typed construct cannot leave out. Here a construct lists the globals it
   compares, and the rule asks that the list cover the preserved ones where the pc drops.
-- **The core is small.** One value type; two levels; no bulk memory and no tail calls. A tag
+- **The core is small.** One value type; two levels; no bulk memory; a tail call names its
+  callee (`return_call`, not the indirect forms), and the semantics does not model that it
+  runs in constant space. A tag
   is the number of public values its exceptions carry, a clause catches by tag or catches
   everything, and there is no reference to an exception (`exnref`, `throw_ref`, and the
   clauses that hand one out). The function table is public and no instruction writes it, and an indirect call

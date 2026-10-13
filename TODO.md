@@ -51,10 +51,10 @@ are summarised here, not repeated.
 - [ ] **P3** Inference is monomorphic: one label per parameter joins every call site's (a
   precision loss against WANILLA, `casestudies/README.md`).
 - [ ] **P3** The noninterference proof in Lean (`lean/`, delta 6) covers a core: control flow
-  with `return`, direct and indirect calls, a memory with levels, local and global variables,
+  with `return`, direct, indirect and tail calls, a memory with levels, local and global variables,
   preserved globals, `memory.size` and `memory.grow`, exceptions. Not in it: a memory of bytes,
-  bulk memory, tables that are written, references to exceptions, tail calls, the host
-  boundary, more than one value
+  bulk memory, tables that are written, references to exceptions, indirect tail calls, the
+  host boundary, more than one value
   type. Its semantics evaluates a block's body on the block's parameters alone; that this
   agrees with the flat stack is not proved. `Formalisation/` holds earlier Agda and Lean
   models of the untyped core only.

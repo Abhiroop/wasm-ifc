@@ -99,6 +99,8 @@ inductive Instr where
   /-- `return`: a branch to the function's label, the outermost one -/
   | ret
   | call (i : Nat)
+  /-- `return_call`: call a function and return what it returns -/
+  | retCall (i : Nat)
   /-- `callIndirect ps b rs`: call the function a table entry names, expected at the type `ps -[b]-> rs` -/
   | callIndirect (ps : STy) (b : Lab) (rs : STy)
   | unreachable
@@ -146,7 +148,7 @@ def Restores (C : Ctx) (pcEnd : Lab) (after : Pcs) (keep : List Nat) : Prop :=
 /--
 `Typed C Ls e P st P' st'`: under the labels `Ls`, the sequence `e` takes the pc stack `P` and
 the segment `st` to `P'` and `st'`. Each rule types an instruction followed by the rest of its
-sequence. The code after a transfer (`br`, `br_table`, `return`, `unreachable`) is not typed, as the
+sequence. The code after a transfer (`br`, `br_table`, `return`, a tail call, `throw`, `unreachable`) is not typed, as the
 elaborator does not build its typed form.
 -/
 inductive Typed (C : Ctx) : List STy → List Instr → Pcs → STy → Pcs → STy → Prop where
@@ -262,6 +264,16 @@ inductive Typed (C : Ctx) : List STy → List Instr → Pcs → STy → Pcs → 
       C.funcs[i]? = some ft → Lab.le pc ft.bound → SFlows targs ft.params →
       Typed C Ls rest (pc :: Pr) (ft.results ++ st) P' st' →
       Typed C Ls (.call i :: rest) (pc :: Pr) (targs ++ st) P' st'
+  /--
+  A tail call is typed as the call followed by the `return` it stands for: the premises of the
+  call, then those of `return` on what the callee returns, which flows into the function's
+  results.
+  -/
+  | retCall {Ls rest pc Pr i ft ret targs st stAny} :
+      C.funcs[i]? = some ft → Lab.le pc ft.bound → SFlows targs ft.params →
+      Ls[Ls.length - 1]? = some ret → AllGe pc ret → SFlows ft.results ret →
+      Typed C Ls (.retCall i :: rest) (pc :: Pr) (targs ++ st)
+        (raise pc (pc :: Pr) (Ls.length - 1)) stAny
   /--
   The pc and the level of the table index flow into the bound of the expected type, whose
   results are at least its bound (the type is well formed, as the paper's rule for functions
@@ -551,6 +563,17 @@ inductive Eval (F : List Func) : Nat → List Nat → List Instr → List Nat �
       ob.lands = some (r, t) → Kept f.keep s t →
       Eval F n2 ls rest (r ++ base) { t with loc := s.loc } o →
       Eval F (n1 + n2 + 1) ls (.callIndirect ps b rs :: rest) (c :: (args ++ base)) s o
+  /-- A tail call: the function returns what the callee returns, if the callee's comparison passes. -/
+  | retCall {n1 ls rest i f args base s ob r t} :
+      F[i]? = some f → args.length = f.ty.params.length →
+      Eval F n1 [f.ty.results.length] f.body [] { s with loc := frame args } ob →
+      ob.lands = some (r, t) → Kept f.keep s t →
+      Eval F (n1 + 1) ls (.retCall i :: rest) (args ++ base) s
+        (.br (ls.length - 1) r { t with loc := s.loc })
+  | retCallExn {n1 ls rest i f args base s t w u} :
+      F[i]? = some f → args.length = f.ty.params.length →
+      Eval F n1 [f.ty.results.length] f.body [] { s with loc := frame args } (.exn t w u) →
+      Eval F (n1 + 1) ls (.retCall i :: rest) (args ++ base) s (.exn t w { u with loc := s.loc })
   | callExn {n1 ls rest i f args base s t w u} :
       F[i]? = some f → args.length = f.ty.params.length →
       Eval F n1 [f.ty.results.length] f.body [] { s with loc := frame args } (.exn t w u) →
