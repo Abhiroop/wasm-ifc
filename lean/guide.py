@@ -75,6 +75,8 @@ RULES = [
     ("store", "`IStore`, `IStoreN`", "W-Store", "the level is at least the join, where the implementation takes the join"),
     ("fill", "`IMemFill`", "W-Memory-Fill", ""),
     ("copy", "`IMemCopy`", "W-Memory-Copy", ""),
+    ("copyTo", "`IMemCopy` with two memories", "W-Memory-Copy", "from the memory to the second one"),
+    ("copyFrom", "`IMemCopy` with two memories", "W-Memory-Copy", "from the second memory"),
     ("memInit", "`IMemInit`", "W-Memory-Init", ""),
     ("dataDrop", "`IDataDrop`", "bulk memory", "no premise"),
     ("memSize", "`IMemSize`", "as in SecWasm", ""),
@@ -212,7 +214,7 @@ call through a reference ask that of the type they expect, which is where the pr
 ## 4. States and semantics
 
 `State`, {at("Defs", r"^structure State")}: the locals, the globals, the memory as bytes with a
-level each, its size and limit, the function table with its size and limit, the levels of the host's channels (a stream, a directory, a file), the descriptor table, the
+level each, its size and limit, a second memory of a fixed size, the function table with its size and limit, the levels of the host's channels (a stream, a directory, a file), the descriptor table, the
 names of the files in each directory, what
 was written to each and what is left to read from each, the data segments, and the
 exceptions kept for the references to them.
@@ -265,8 +267,8 @@ text:
 |---|---|
 | agree on every local variable labelled public, which includes the arguments | first clause, and the hypothesis `StkRel f.ty.params a0 a1` of the theorem for the arguments |
 | agree on every public global | second clause |
-| agree on every byte of memory labelled public in both | third clause |
-| memories of the same size | `s.size = t.size`, and the same limit |
+| agree on every byte of memory labelled public in both | third clause, and the clause on `mem2` for the second memory |
+| memories of the same size | `s.size = t.size`, and the same limit; `s.size2 = t.size2` |
 | the same table of descriptors | `s.sameHost t`: the descriptor table (`fdt`), and `s.chan = t.chan`: the channels' levels |
 | the input not yet read from and the output written to every public channel | the clause on `out` and `inp` |
 | every stack position labelled public | none: a call from outside starts on an empty stack |
@@ -357,8 +359,9 @@ instruction that compares two references to exceptions.
 
 ### Outside the core
 
-More than one value type, and so the numeric and vector instructions as such; 64-bit and
-several memories; several tables;
+More than one value type, and so the numeric and vector instructions as such; 64-bit
+memories, more than two memories, and every instruction on the second memory but
+`memory.copy` to and from it; several tables;
 linking; the WASI calls other than one that reads, one that writes and one that opens a file
 in a directory, the error codes but the one for a missing file, and sockets; local variables split into webs and the inference of labels, which
 happen before typing; declassification.

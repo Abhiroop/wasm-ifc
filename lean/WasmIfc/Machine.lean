@@ -92,6 +92,12 @@ inductive Basic : Instr → List Nat → State → List Nat → State → Prop w
   | copy {k b a σ s} (lm : Lab) :
       a + k ≤ s.size → b + k ≤ s.size →
       Basic (.copy lm) (k :: b :: a :: σ) s σ (s.copy a b k lm)
+  | copyTo {k b a σ s} (lm : Lab) :
+      a + k ≤ s.size2 → b + k ≤ s.size →
+      Basic (.copyTo lm) (k :: b :: a :: σ) s σ (s.copyTo a b k lm)
+  | copyFrom {k b a σ s} (lm : Lab) :
+      a + k ≤ s.size → b + k ≤ s.size2 →
+      Basic (.copyFrom lm) (k :: b :: a :: σ) s σ (s.copyFrom a b k lm)
   | tableGet {c σ s} : c < s.tsize → Basic .tableGet (c :: σ) s (refOf (s.tbl c) :: σ) s
   | tableSet {v c σ s} :
       c < s.tsize → Basic .tableSet (v :: c :: σ) s σ (s.setTbl c (ofRef v))

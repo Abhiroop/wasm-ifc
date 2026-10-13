@@ -106,6 +106,10 @@ inductive Instr where
   | fill (lm : Lab)
   /-- `copy lm`: copy a range of cells; each keeps its level, raised by `lm` -/
   | copy (lm : Lab)
+  /-- `copyTo lm`: `memory.copy` from the memory to the second memory -/
+  | copyTo (lm : Lab)
+  /-- `copyFrom lm`: `memory.copy` from the second memory to the memory -/
+  | copyFrom (lm : Lab)
   /-- `memInit k lm`: copy bytes of the data segment `k` into the memory and label them `lm` -/
   | memInit (k : Nat) (lm : Lab)
   /-- `dataDrop k`: the data segment `k` is empty from now on -/
@@ -270,6 +274,15 @@ inductive Typed (C : Ctx) : List STy → List Instr → Pcs → STy → Pcs → 
       Lab.le (pc.join (ln.join (lsrc.join ld))) lm →
       Typed C Ls rest (pc :: Pr) st P' st' →
       Typed C Ls (.copy lm :: rest) (pc :: Pr) (ln :: lsrc :: ld :: st) P' st'
+  /-- `memory.copy` between two memories is typed as within one. -/
+  | copyTo {Ls rest pc Pr ln lsrc ld st P' st'} (lm : Lab) :
+      Lab.le (pc.join (ln.join (lsrc.join ld))) lm →
+      Typed C Ls rest (pc :: Pr) st P' st' →
+      Typed C Ls (.copyTo lm :: rest) (pc :: Pr) (ln :: lsrc :: ld :: st) P' st'
+  | copyFrom {Ls rest pc Pr ln lsrc ld st P' st'} (lm : Lab) :
+      Lab.le (pc.join (ln.join (lsrc.join ld))) lm →
+      Typed C Ls rest (pc :: Pr) st P' st' →
+      Typed C Ls (.copyFrom lm :: rest) (pc :: Pr) (ln :: lsrc :: ld :: st) P' st'
   /-- What is read from the table is as secret as the table, the index and the pc. -/
   | tableGet {Ls rest pc Pr li st P' st'} :
       Typed C Ls rest (pc :: Pr) ((pc.join (li.join C.table)) :: st) P' st' →
@@ -481,6 +494,10 @@ structure State where
   glob : Nat → Nat
   mem : Nat → Nat
   lab : Nat → Lab
+  /-- a second memory, of a size that does not change: its bytes and their levels -/
+  mem2 : Nat → Nat
+  lab2 : Nat → Lab
+  size2 : Nat
   /-- the function table: an entry names a function or is null -/
   tbl : Nat → Option Nat
   /-- how many entries the table has, and how many it may grow to -/
@@ -571,6 +588,16 @@ def State.fill (s : State) (a v n : Nat) (l : Lab) : State :=
 def State.copy (s : State) (d a n : Nat) (l : Lab) : State :=
   { s with mem := fun x => if d ≤ x ∧ x < d + n then s.mem (a + (x - d)) else s.mem x,
            lab := fun x => if d ≤ x ∧ x < d + n then l.join (s.lab (a + (x - d))) else s.lab x }
+
+/-- Copy the `n` cells from `a` of the memory to those from `d` of the second memory, as `copy`. -/
+def State.copyTo (s : State) (d a n : Nat) (l : Lab) : State :=
+  { s with mem2 := fun x => if d ≤ x ∧ x < d + n then s.mem (a + (x - d)) else s.mem2 x,
+           lab2 := fun x => if d ≤ x ∧ x < d + n then l.join (s.lab (a + (x - d))) else s.lab2 x }
+
+/-- Copy the `n` cells from `a` of the second memory to those from `d` of the memory, as `copy`. -/
+def State.copyFrom (s : State) (d a n : Nat) (l : Lab) : State :=
+  { s with mem := fun x => if d ≤ x ∧ x < d + n then s.mem2 (a + (x - d)) else s.mem x,
+           lab := fun x => if d ≤ x ∧ x < d + n then l.join (s.lab2 (a + (x - d))) else s.lab x }
 
 /-- Write the values `vs` to the cells from `a`, and give them the level `l`. -/
 def State.put (s : State) (a : Nat) (vs : List Nat) (l : Lab) : State :=
@@ -801,6 +828,14 @@ inductive Eval (F : List Func) : Nat → List Nat → List Instr → List Nat �
       a + k ≤ s.size → b + k ≤ s.size →
       Eval F n ls rest σ (s.copy a b k lm) o →
       Eval F (n + 1) ls (.copy lm :: rest) (k :: b :: a :: σ) s o
+  | copyTo {n ls rest k b a σ s o} (lm : Lab) :
+      a + k ≤ s.size2 → b + k ≤ s.size →
+      Eval F n ls rest σ (s.copyTo a b k lm) o →
+      Eval F (n + 1) ls (.copyTo lm :: rest) (k :: b :: a :: σ) s o
+  | copyFrom {n ls rest k b a σ s o} (lm : Lab) :
+      a + k ≤ s.size → b + k ≤ s.size2 →
+      Eval F n ls rest σ (s.copyFrom a b k lm) o →
+      Eval F (n + 1) ls (.copyFrom lm :: rest) (k :: b :: a :: σ) s o
   | tableGet {n ls rest c σ s o} :
       c < s.tsize →
       Eval F n ls rest (refOf (s.tbl c) :: σ) s o →

@@ -802,6 +802,40 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
                 obtain ⟨hln, hj2⟩ := Lab.join_eq_L hj1
                 obtain ⟨hlb, hld⟩ := Lab.join_eq_L hj2
                 exact ⟨ha hld, hb hlb, hk hln⟩
+    | copyTo lm hle ht' =>
+      cases he0 with
+      | copyTo _ hb0 hb0' he0' =>
+        cases he1 with
+        | copyTo _ hb1 hb1' he1' =>
+          cases hσ with
+          | cons hk hσa =>
+            cases hσa with
+            | cons hb hσb =>
+              cases hσb with
+              | cons ha hσc =>
+                refine ih _ (by omega) hF ht' he0' he1' hσc (hs.copyTo (fun hlm => ?_))
+                  (hp.of_glob rfl rfl)
+                obtain ⟨_, hj1⟩ := Lab.join_eq_L (Lab.eq_L_of_le hle hlm)
+                obtain ⟨hln, hj2⟩ := Lab.join_eq_L hj1
+                obtain ⟨hlb, hld⟩ := Lab.join_eq_L hj2
+                exact ⟨ha hld, hb hlb, hk hln⟩
+    | copyFrom lm hle ht' =>
+      cases he0 with
+      | copyFrom _ hb0 hb0' he0' =>
+        cases he1 with
+        | copyFrom _ hb1 hb1' he1' =>
+          cases hσ with
+          | cons hk hσa =>
+            cases hσa with
+            | cons hb hσb =>
+              cases hσb with
+              | cons ha hσc =>
+                refine ih _ (by omega) hF ht' he0' he1' hσc (hs.copyFrom (fun hlm => ?_))
+                  (hp.of_glob rfl rfl)
+                obtain ⟨_, hj1⟩ := Lab.join_eq_L (Lab.eq_L_of_le hle hlm)
+                obtain ⟨hln, hj2⟩ := Lab.join_eq_L hj1
+                obtain ⟨hlb, hld⟩ := Lab.join_eq_L hj2
+                exact ⟨ha hld, hb hlb, hk hln⟩
     | tableGet ht' =>
       cases he0 with
       | tableGet _ he0' =>
@@ -847,7 +881,7 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
                   have e4 := hfd rfl
                   subst e1 e2 e3 e4
                   -- the same descriptor table: the same channel
-                  rw [hs.2.2.2.2.2.1.2.2.2.1] at hc0
+                  rw [hs.host.1] at hc0
                   cases hc0.symm.trans hc1
                   have hchan := hs.2.2.2.2.2.2.1
                   refine ih _ (by omega) hF ht' he0' he1' hσd ?_ (hp.of_glob rfl rfl)
@@ -872,14 +906,14 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
                 have e2 := ha rfl
                 have e3 := hfd rfl
                 subst e1 e2 e3
-                rw [hs.2.2.2.2.2.1.2.2.2.1] at hc0
+                rw [hs.host.1] at hc0
                 cases hc0.symm.trans hc1
                 exact ih _ (by omega) hF ht' he0' he1' hσc (hs.emit hchk0 hchk1)
                   (hp.of_glob rfl rfl)
     | hostOpen ht' =>
       -- the arguments are public, and so are the name's bytes in both runs, by the check:
       -- the two runs look the same name up in the same directory
-      have hhost := hs.2.2.2.2.2.1.2.2.2
+      have hhost := hs.host
       cases he0 with
       | hostOpen hc0 hb0 hp0 hl0 hin0 hd0 he0' =>
         cases he1 with

@@ -609,7 +609,7 @@ implemented since e87e76a.
 
 ## Lean: noninterference on a core with control flow, calls and memory (item 12, 2026-10-12)
 
-- **Where:** `lean/` (Lean 4.35.0, no dependencies; `cd lean && lake build`). 5,383 lines in
+- **Where:** `lean/` (Lean 4.35.0, no dependencies; `cd lean && lake build`). 5,566 lines in
   seven files; `lean/README.md` states what is proved and what differs from the paper.
 - **What is proved** (`WasmIfc.tini`, from `WasmIfc.ni`): termination-insensitive
   noninterference for a function of a well-typed module, under the lift-free rules, on a core
@@ -763,6 +763,16 @@ implemented since e87e76a.
     `def:attacker` that it lacked: the same descriptor table and the same names in every
     directory. The proof does not use that a file has its directory's level, which the paper
     states of the policy: two runs open the same channel whatever its level.
+  - *A second memory* (the list of 2026-10-14, item 4): of a fixed size, with `memory.copy`
+    from the memory to it and back (`copyTo`, `copyFrom`), typed as `IMemCopy` is whatever its
+    two memories. Its bytes have levels as the first one's, and `LowEq` has the clause for it.
+  - **Not done of that item: a second value type.** A type stack in Lean is a list of levels
+    (`STy`), and each of the 60 rules and every lemma on stacks is written on it; value types
+    would be a second component of every entry. The rules' premises on levels do not mention
+    the value types, and the semantics is on untyped numbers, so the proof would be the same
+    with the types carried along. For the paper: the Lean rules are the level part of the
+    paper's rules, and that a value has its type is WebAssembly's validation, which is not
+    restated in Lean.
   - *More of the table, and the indirect tail call* (the same list, item 6): `table.fill`,
     `table.copy` and `return_call_indirect`, with the rules of `ITableFill`, `ITableCopy` and
     `IReturnCallIndirect`. Then `table.size` and `table.grow` (the list of 2026-10-14, item 4),

@@ -185,6 +185,24 @@ theorem confine : ∀ (n : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P'
         subst hlm
         obtain ⟨h1, h2⟩ := ih _ (by omega) hF ht' (hiUpTo_zero_cons _) (by simpa using hlen) he'
         exact ⟨(Conf.copy_high _ _ _ _ _).trans h1, h2⟩
+    | copyTo lm hb hb' he' =>
+      cases ht with
+      | copyTo _ hle ht' =>
+        have hpc := hP.head
+        subst hpc
+        have hlm := hle (Lab.H_join _)
+        subst hlm
+        obtain ⟨h1, h2⟩ := ih _ (by omega) hF ht' (hiUpTo_zero_cons _) (by simpa using hlen) he'
+        exact ⟨(Conf.copyTo_high _ _ _ _ _).trans h1, h2⟩
+    | copyFrom lm hb hb' he' =>
+      cases ht with
+      | copyFrom _ hle ht' =>
+        have hpc := hP.head
+        subst hpc
+        have hlm := hle (Lab.H_join _)
+        subst hlm
+        obtain ⟨h1, h2⟩ := ih _ (by omega) hF ht' (hiUpTo_zero_cons _) (by simpa using hlen) he'
+        exact ⟨(Conf.copyFrom_high _ _ _ _ _).trans h1, h2⟩
     | tableGet _ he' =>
       cases ht with
       | tableGet ht' => exact ih _ (by omega) hF ht' hP (by simpa using hlen) he'

@@ -11,7 +11,7 @@ namespace WasmIfc
 /--
 Low equivalence of two states, for the levels of `C`. The two states agree on what the
 attacker may know: the public local variables, the public globals, every byte of memory that
-is public in both, the size of the memory and its limit, the function table if it is public,
+is public in both, in either memory, the size of each memory and the limit of the first, the function table if it is public,
 the levels of the host's channels, the descriptor table and the names of the files in every
 directory, and for each public channel what was written to it and what is left to read from
 it. A data segment that both states still have is the same in
@@ -23,6 +23,7 @@ def LowEq (C : Ctx) (s t : State) : Prop :=
   (∀ i, C.globals i = Lab.L → s.glob i = t.glob i) ∧
   (∀ a, s.lab a = Lab.L → t.lab a = Lab.L → s.mem a = t.mem a) ∧
   s.size = t.size ∧ s.cap = t.cap ∧
+  (∀ a, s.lab2 a = Lab.L → t.lab2 a = Lab.L → s.mem2 a = t.mem2 a) ∧ s.size2 = t.size2 ∧
   (C.table = Lab.L → s.sameTable t) ∧
   s.chan = t.chan ∧ s.sameHost t ∧
   (∀ d, s.chan d = Lab.L → s.out d = t.out d ∧ s.inp d = t.inp d) ∧
@@ -32,14 +33,15 @@ def LowEq (C : Ctx) (s t : State) : Prop :=
 /-- Low equivalence is the two relations of the proof together, if the preserved globals are public. -/
 theorem LowEq.split {C : Ctx} {s t : State} (hpub : ∀ i, C.preserved i → C.globals i = Lab.L)
     (h : LowEq C s t) : StRel C s t ∧ PresEq C s t := by
-  obtain ⟨hloc, hglob, hmem, hsize, hcap, htbl, hchan, hhost, hio, hseg, hexn, hok⟩ := h
-  exact ⟨⟨hloc, fun i hi _ => hglob i hi, hmem, htbl, hsize, ⟨hcap, hexn, hok, hhost⟩, hchan, hio,
-    hseg⟩,
+  obtain ⟨hloc, hglob, hmem, hsize, hcap, hm2, hs2, htbl, hchan, hhost, hio, hseg, hexn, hok⟩ := h
+  exact ⟨⟨hloc, fun i hi _ => hglob i hi, hmem, htbl, hsize, ⟨hcap, hexn, hok, ⟨hm2, hs2⟩, hhost⟩,
+    hchan, hio, hseg⟩,
     fun i hi => hglob i (hpub i hi)⟩
 
 theorem LowEq.join {C : Ctx} {s t : State} (h : StRel C s t) (hp : PresEq C s t) : LowEq C s t := by
-  obtain ⟨hloc, hglob, hmem, htbl, hsize, ⟨hcap, hexn, hok, hhost⟩, hchan, hio, hseg⟩ := h
-  refine ⟨hloc, fun i hi => ?_, hmem, hsize, hcap, htbl, hchan, hhost, hio, hseg, hexn, hok⟩
+  obtain ⟨hloc, hglob, hmem, htbl, hsize, ⟨hcap, hexn, hok, ⟨hm2, hs2⟩, hhost⟩, hchan, hio, hseg⟩ := h
+  refine ⟨hloc, fun i hi => ?_, hmem, hsize, hcap, hm2, hs2, htbl, hchan, hhost, hio, hseg, hexn,
+    hok⟩
   by_cases hpi : C.preserved i
   · exact hp i hpi
   · exact hglob i hi hpi
