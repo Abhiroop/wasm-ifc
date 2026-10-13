@@ -9,7 +9,7 @@ SecWasm's run-time check on loads, `memory.size`, `memory.grow`, `memory.fill` a
 descriptors of channels with levels and opens files in directories (`path_open`), local and global
 variables with `local.tee`, exceptions (`throw`, `throw_ref` and `try_table` with its four kinds
 of clause, so references to exceptions), preserved globals with
-their run-time comparison, and arithmetic on one value type, with the operations that trap
+their run-time comparison, and arithmetic, with the operations that trap
 (division, remainder, the truncation of a float) as partial functions. It has no `sorry`, and its
 theorems depend on Lean's three standard axioms only (`propext`, `Classical.choice`,
 `Quot.sound`).
@@ -34,6 +34,7 @@ implementation and the rule of the paper it stands for, and what is assumed.
 | `refinement` | `Machine.lean` | A run of the small-step machine from the call of a function to its end is a derivation of the big-step semantics with the same end (the paper's `lem:refinement`). No typing is assumed. |
 | `machine_noninterference` | `Machine.lean` | `noninterference` for two runs of the machine. |
 | `tini` | `Noninterference.lean` | For a function of a well-typed module: two calls with arguments that agree where the parameters are public, from states that agree where public, if both end, either both return or both end by the same exception with the same values, and they leave states that agree where public. If they return, their results agree where the result type is public, and they agree on the preserved globals too if both pass the comparison made at the function's return. |
+| `ValueTyped.erase`, `value_typed_noninterference`, `value_typed_machine_noninterference` | `ValueTypes.lean` | The judgment with labelled value types `t⟨ℓ⟩`, with address types for 64-bit memories and tables, erases to the judgment on labels, and the two theorems hold for a module typed with value types. |
 | `leak_not_typed`, `leak_runs_differ` | `Findings.lean` | The paper's leak through `br_table` has no typing by these rules, and it has two runs, from states that differ in a secret local only, after which a public global differs. |
 | `call_after_secret_branch_typed`, `write_after_public_branch_typed` | `Findings.lean` | The paper's two secure programs that SecWasm's rules for `call` and `br_if` reject are typed. |
 | `SecWasm.printed_rule_accepts_leak`, `SecWasm.repaired_rule_rejects_leak`, `SecWasm.printed_rule_unsound` | `SecWasmPrinted.lean` | SecWasm's rules as printed, for the five instructions of the leak, type it; with the lift of `br_table` down to the deepest target they do not. |
@@ -179,7 +180,8 @@ paper's appendix B.4 has no counterpart here.
   of the call's operands and of the public part of the state (`hostStatus`): the paper's
   assumption about the host is this definition. `STATEMENTS.md` has the shape of each of the
   46 functions. `proc_exit` and the operating system's failures are not modelled.
-- **The core is small.** One value type; two levels; the semantics of a tail call does not
+- **The core is small.** The proofs are for one value type, and `ValueTypes.lean` adds the
+  value types on top by erasure; two levels; the semantics of a tail call does not
   model that it runs in constant space. A tag is the number of public values its exceptions
   carry, and a reference to an exception is the number of one that the state keeps. A
   reference in a table is a number (zero for null), and the instructions on a table trap

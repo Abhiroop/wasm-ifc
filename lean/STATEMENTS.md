@@ -5,7 +5,7 @@ For a reviewer who checks the definitions and the statement and leaves the proof
 `propext`, `Classical.choice` and `Quot.sound` only. So what remains to be checked by a person
 is that the definitions say what the paper says, and that the machine of the last section is
 the implementation's. They are in three files, 1218, 120
-and 630 lines long, of the development's 6,494:
+and 630 lines long, of the development's 7,066:
 
 - `WasmIfc/Defs.lean`: the syntax, the typing judgment, the states and the semantics.
 - `WasmIfc/Statement.lean`: low equivalence, a call from outside, and the theorem.
@@ -14,8 +14,9 @@ and 630 lines long, of the development's 6,494:
   is proof.
 
 The other files (`Basic.lean`, `Confinement.lean`, `Noninterference.lean`) are lemmas and
-proofs, `Examples.lean` has small programs with their typings and runs, and `Findings.lean`
-and `SecWasmPrinted.lean` are the paper's findings (section 7). This file is
+proofs, `Examples.lean` has small programs with their typings and runs, `Findings.lean`
+and `SecWasmPrinted.lean` are the paper's findings (section 7), and `ValueTypes.lean` has the
+judgment with value types (section 9). This file is
 written by `lean/guide.py`, which looks the line numbers up.
 
 ## 1. Levels and types
@@ -448,11 +449,31 @@ Convince yourself of three things that the table rests on:
   host stores at the descriptor's level. `fd_seek` is a `hostCtl` that also stores the new
   position, as `fd_tell` would.
 
+## 9. Value types
+
+`Typed` has one type for all values. `ValueTypes.lean` has the judgment with labelled value
+types, the paper's `t⟨ℓ⟩`, over the same instructions and the same semantics:
+
+| Lean | Where | Convince yourself that |
+|---|---|---|
+| `VTy`, `LTy`, `VSTy` | `ValueTypes.lean:18` | the value types are WebAssembly's numbers, vectors and references to functions and to exceptions, and a stack type is a list of pairs of a value type and a level. `labelsOf` forgets the types. |
+| `VCtx` | `ValueTypes.lean:67` | the context has the labelled types of the locals and the globals, the types that each tag carries, and an address type for each memory and each table (`i32`, or `i64` for a 64-bit one). `VCtx.erase` is the `Ctx` of section 3. |
+| `ValueTyped` | `ValueTypes.lean:104` | each rule is the rule of `Typed` of the same name with the types that `Syntax.Instructions` gives the instruction: an address has its memory's or its table's address type, a condition and the operands of a host call are `i32`, a table holds references to functions, the operands of an operation on two values have one type. A block type in an instruction is the labels of the block's types. |
+| `ValueTyped.erase` | `ValueTypes.lean:363` | a derivation with value types is, with the types forgotten, a derivation of `Typed`. |
+| `WellValueTyped`, `WellValueTyped.erase` | `ValueTypes.lean:494` | a module whose functions are typed with value types is well typed in the sense of section 3. |
+| `value_typed_noninterference`, `value_typed_machine_noninterference` | `ValueTypes.lean:520` | the two theorems for such a module: `noninterference` and `machine_noninterference` with the function's type and the context read through `labelsOf` and `VCtx.erase`. |
+
+The semantics does not look at types: a value is a number whatever its type, and an operation
+is a function on numbers. So the theorems with value types follow from the ones without, by
+`ValueTyped.erase`, and no proof was done again. What the layer adds to the statement is that
+the hypothesis is about programs typed as WebAssembly types them, with 64-bit memories and
+tables among them. What it does not model: that a value of a type is within that type's range
+(an `i32` below 2^32), and so the wrapping of an address.
+
 ### Outside the core
 
-More than one value type, and so the numeric and vector instructions as such (the operations
-that trap are in the core, as partial functions); 64-bit
-memories and tables;
+The numeric and vector instructions one by one (an operation is any function on numbers, of
+one or two operands, total or partial); the ranges of the value types;
 linking; `proc_exit`, and the failures of the operating system on a secret file or connection
 (section 8); local variables split into webs and the inference of labels, which
 happen before typing; declassification.

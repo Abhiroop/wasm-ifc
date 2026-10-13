@@ -7,3 +7,4 @@ import WasmIfc.Findings
 import WasmIfc.SecWasmPrinted
 import WasmIfc.Statement
 import WasmIfc.Machine
+import WasmIfc.ValueTypes
