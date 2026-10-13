@@ -1137,7 +1137,7 @@ Directories: `test/wasi/testsuite/tests/{c,rust,assemblyscript}/testsuite/wasm32
 `OUT/wasm-ifc-artifact.tar.gz` (default `../wasm-ifc-artifact`). Nothing is published.
 
 - **What it is:** the files of `HEAD`, without history, so without commit messages and
-  trailers. At 67cc4ce: 350 files, 4.5 MB unpacked, 656 KB packed. `REPRODUCE.md` is at its
+  trailers. About 350 files, 4.6 MB unpacked, 680 KB packed; the script prints the numbers. `REPRODUCE.md` is at its
   top, with the two test suites fetched by `git clone` at their pinned commits, since a copy
   without history has no submodules.
 - **What is removed:** `CLAUDE.md`, `paper/`, `.gitmodules` (it had the paper's remote), and
