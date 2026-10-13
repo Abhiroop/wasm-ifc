@@ -61,17 +61,23 @@ module Runtime.MemInst (
 
 import Control.Monad (forM_)
 import Control.Monad.ST (ST)
+import Data.Array.Byte (ByteArray (ByteArray))
 import Data.Bits (complement, shiftL, shiftR, (.&.), (.|.))
 import Data.IntMap.Strict (IntMap)
 import Data.IntMap.Strict qualified as IntMap
 import Data.Kind (Type)
 import Data.Maybe (fromMaybe)
+import Data.Vector.Primitive qualified as PV
 import Data.Vector.Unboxed qualified as UV
+import Data.Vector.Unboxed.Base (Vector (V_Word8))
 import Data.Vector.Unboxed.Mutable qualified as MV
 import Data.Word (Word32, Word64, Word8)
+import GHC.ByteOrder (ByteOrder (LittleEndian), targetByteOrder)
+import GHC.Exts (Int (I#), indexWord8ArrayAsWord64#, (+#))
 import GHC.Word (Word64 (W64#))
 
 import Data.Singletons (Sing)
+import Runtime.Chunks (Chunks, Leaf (Held), chunkAt, noChunks, withChunk)
 import Syntax.Types (AddrType (..), Limits (..))
 import Syntax.TypesIFC (SSecLevel (..), SecLevel (..))
 import Validation.Shape (MemShape)
@@ -95,7 +101,7 @@ data MemInst m = MemInst
     { maxPages :: !Word32
     -- ^ how far the memory may grow: its declared maximum, or what its addresses reach if less
     , pageCount :: !Word32
-    , chunks :: !(IntMap (UV.Vector Word8))
+    , chunks :: !Chunks
     -- ^ by chunk index; an absent chunk is all zeros, a present one is 'chunkSize' bytes long
     , levels :: !(IntMap (UV.Vector Word64))
     {- ^ by chunk index, one bit per byte in 'levelWords' words, set where the byte is secret;
@@ -108,12 +114,14 @@ pageSize :: Int
 pageSize = 65536
 
 {- | Bytes per stored chunk: the unit of storage and of copy-on-write (see the module header).
-  1 KiB was measured against 4 KiB on the real programs in @bench/@: 1.26× faster, and 1.04× on
-  the kernels; 256 bytes bought nothing more (TODO.md §I, "E6 next"). A label store kept beside
-  the bytes for IFC can share this granularity.
+  A store copies one chunk, so a small chunk is a cheap store, and it costs a deeper tree of
+  chunks ("Runtime.Chunks"). With the chunks in a general map, 1 KiB was the best size on the
+  programs of @bench/@ (TODO.md §I, "E6 next"). With the tree, 256 bytes takes 4 to 18 % fewer
+  cycles than 1 KiB on five memory-bound programs, and 128 bytes no fewer than 256. The levels
+  kept beside the bytes for IFC share this granularity.
 -}
 chunkSize :: Int
-chunkSize = 1024
+chunkSize = 256
 
 {- | A copy of a vector with some of its slots written: the library's 'UV.modify', which
   clears the new vector before it copies the old one over it. The copy fills every slot, so
@@ -128,9 +136,23 @@ modifiedCopy write original = UV.create $ do
     write copy
     pure copy
 
+{- | Eight bytes of a chunk from an offset, as one word: on a little-endian machine, the word
+  that WebAssembly reads there. The read checks no index, so the caller has to know that the
+  eight bytes are inside the chunk.
+-}
+{-# INLINE eightBytesAt #-}
+eightBytesAt :: UV.Vector Word8 -> Int -> Word64
+eightBytesAt (V_Word8 (PV.Vector (I# start) _ (ByteArray bytes))) (I# offset) = W64# (indexWord8ArrayAsWord64# bytes (start +# offset))
+
 -- | A chunk that has never been written.
 zeroChunk :: UV.Vector Word8
 zeroChunk = UV.replicate chunkSize 0
+
+-- | The chunk at an index, which is zeros if nothing was written there.
+chunkOrZeros :: Int -> Chunks -> UV.Vector Word8
+chunkOrZeros chunkIx stored = case chunkAt chunkIx stored of
+    Held chunk -> chunk
+    _ -> zeroChunk
 
 -- | Words of level bits per chunk: byte @i@ of a chunk has bit @i mod 64@ of word @i div 64@.
 levelWords :: Int
@@ -172,7 +194,7 @@ pagesHeld AddrI64 = maxBound
 allocMemory :: AddrType -> Limits -> Maybe (MemInst m)
 allocMemory addresses declared
     | declared.min > held = Nothing
-    | otherwise = Just (MemInst (fromIntegral (maybe held (min held) declared.max)) (fromIntegral declared.min) IntMap.empty IntMap.empty)
+    | otherwise = Just (MemInst (fromIntegral (maybe held (min held) declared.max)) (fromIntegral declared.min) (noChunks ()) IntMap.empty)
   where
     held = fromIntegral (pagesHeld addresses)
 
@@ -268,13 +290,19 @@ loadWordUnchecked mem addr count
 {-# INLINE wordInBounds #-}
 wordInBounds :: MemInst m -> Int -> Int -> Word64
 wordInBounds mem addr count
-    | offset + count <= chunkSize = maybe 0 assemble (IntMap.lookup chunkIx mem.chunks)
+    | offset + count <= chunkSize = case chunkAt chunkIx mem.chunks of
+        Held stored -> assemble stored
+        _ -> 0
     | otherwise = foldr (.|.) 0 [fromIntegral b `shiftL` (8 * i) | (i, b) <- zip [0 ..] (bytesAt mem addr count)]
   where
     (chunkIx, offset) = addr `quotRem` chunkSize
     -- The widths the instructions ask for are read without a loop; the bytes are inside the
     -- chunk, which is 'chunkSize' long, so no index is checked again.
-    assemble stored = case count of
+    assemble stored
+        -- Away from the chunk's last bytes, the word is read in one piece and cut to its width.
+        | offset + 8 <= UV.length stored, LittleEndian <- targetByteOrder = eightBytesAt stored offset .&. (maxBound `shiftR` (64 - 8 * count))
+        | otherwise = byWidth stored
+    byWidth stored = case count of
         8 -> low4 .|. (high4 `shiftL` 32)
         4 -> low4
         2 -> byte 0 .|. (byte 1 `shiftL` 8)
@@ -302,11 +330,11 @@ storeWord = storeWordAt Low
 storeWordAt :: SecLevel -> MemInst m -> Int -> Int -> Word64 -> Maybe (MemInst m)
 storeWordAt level mem addr count word
     | not (inBounds mem addr count) = Nothing
-    | offset + count <= chunkSize = Just (setLevels level addr count mem {chunks = IntMap.insert chunkIx written mem.chunks})
+    | offset + count <= chunkSize = Just (setLevels level addr count mem {chunks = withChunk chunkIx written mem.chunks})
     | otherwise = writeBytesAt level mem addr [fromIntegral (word `shiftR` (8 * i)) | i <- [0 .. count - 1]]
   where
     (chunkIx, offset) = addr `quotRem` chunkSize
-    current = IntMap.findWithDefault zeroChunk chunkIx mem.chunks
+    current = chunkOrZeros chunkIx mem.chunks
     -- As for a read: the usual widths without a loop, and no index checked again, since the
     -- bytes are inside the chunk (the guard above).
     written = modifiedCopy write current
@@ -336,7 +364,7 @@ bytesAt mem addr count = [byteAt a | a <- [addr .. addr + count - 1]]
   where
     byteAt a =
         let (chunkIx, offset) = a `quotRem` chunkSize
-         in maybe 0 (\stored -> fromMaybe 0 (stored UV.!? offset)) (IntMap.lookup chunkIx mem.chunks)
+         in fromMaybe 0 (chunkOrZeros chunkIx mem.chunks UV.!? offset)
 
 {- | Write bytes starting at effective byte address @addr@, in ascending order.
   'Nothing' if the range falls outside the memory. Each chunk touched is copied once.
@@ -351,8 +379,7 @@ writeBytesAt level mem addr payload
     | otherwise = Nothing
   where
     writeRun stored (chunkIx, offset, run) =
-        let current = IntMap.findWithDefault zeroChunk chunkIx stored
-         in IntMap.insert chunkIx (current UV.// zip [offset ..] run) stored
+        withChunk chunkIx (chunkOrZeros chunkIx stored UV.// zip [offset ..] run) stored
 
 -- | Split a write into runs that each stay within one chunk: (chunk, offset in chunk, bytes).
 runsByChunk :: Int -> [Word8] -> [(Int, Int, [Word8])]
@@ -407,12 +434,21 @@ joinLevel High _ = High
   level it declares. A memory that never held a secret answers without a lookup, and a range
   inside one chunk costs one lookup.
 -}
+
+-- The test for a memory without secrets is made where the level is asked for, so that such
+-- a memory costs a load no call. ('levelWhereSecrets' calls itself, and GHC inlines no such
+-- function, whatever the pragma says: with the test inside it, every load paid for a call.)
 {-# INLINE levelOfRange #-}
 levelOfRange :: MemInst m -> Int -> Int -> SecLevel
 levelOfRange mem addr count
     | IntMap.null mem.levels = Low
+    | otherwise = levelWhereSecrets mem addr count
+
+-- | 'levelOfRange' for a memory that has held a secret.
+levelWhereSecrets :: MemInst m -> Int -> Int -> SecLevel
+levelWhereSecrets mem addr count
     | offset + count <= chunkSize = maybe Low chunkLevel (IntMap.lookup chunkIx mem.levels)
-    | otherwise = foldl' joinLevel Low [levelOfRange mem a 1 | a <- [addr .. addr + count - 1]]
+    | otherwise = foldl' joinLevel Low [levelWhereSecrets mem a 1 | a <- [addr .. addr + count - 1]]
   where
     (chunkIx, offset) = addr `quotRem` chunkSize
     chunkLevel stored = if anySecret stored (offset `shiftR` 6) then High else Low

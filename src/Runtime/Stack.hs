@@ -301,20 +301,36 @@ retagStack :: SameValueTypes from to -> ValueStack from -> ValueStack to
 retagStack NoValues VNil = VNil
 retagStack (SameValue rest) (v :# vs) = v :# retagStack rest vs
 
--- | Concatenate two stacks; the upper one ends up on top. Purely structural.
+{- | Concatenate two stacks; the upper one ends up on top. Purely structural.
+The stack with nothing to put on it is found where the append is asked for, without a
+call: that is the end of every block that has no result.
+-}
+{-# INLINE appendStack #-}
 appendStack :: ValueStack a -> ValueStack b -> ValueStack (a ++ b)
 appendStack VNil ys = ys
-appendStack (x :# xs) ys = x :# appendStack xs ys
+appendStack (x :# xs) ys = x :# appendValues xs ys
+
+appendValues :: ValueStack a -> ValueStack b -> ValueStack (a ++ b)
+appendValues VNil ys = ys
+appendValues (x :# xs) ys = x :# appendValues xs ys
 
 -- | Concatenate two stacks, guided by an 'Append' witness (so the result type is the witness's).
 appendWith :: Append a b c -> ValueStack a -> ValueStack b -> ValueStack c
 appendWith ANil VNil ys = ys
 appendWith (ACons w) (x :# xs) ys = x :# appendWith w xs ys
 
--- | Split a concatenated stack into its parts, guided by an 'Append' witness.
+{- | Split a concatenated stack into its parts, guided by an 'Append' witness.
+As for 'appendStack': a split that takes nothing off, which is the entry of every block
+without parameters, costs no call and no pair.
+-}
+{-# INLINE splitStack #-}
 splitStack :: Append a b c -> ValueStack c -> (ValueStack a, ValueStack b)
 splitStack ANil vs = (VNil, vs)
-splitStack (ACons w) (x :# vs) = case splitStack w vs of (upper, lower) -> (x :# upper, lower)
+splitStack (ACons w) (x :# vs) = case splitValues w vs of (upper, lower) -> (x :# upper, lower)
+
+splitValues :: Append a b c -> ValueStack c -> (ValueStack a, ValueStack b)
+splitValues ANil vs = (VNil, vs)
+splitValues (ACons w) (x :# vs) = case splitValues w vs of (upper, lower) -> (x :# upper, lower)
 
 {- | Seed a callee's locals from its argument segment: the parameters, then the declared locals
   at zero. The segment lists the last argument first (top of stack) while local 0 is the first

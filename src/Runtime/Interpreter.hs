@@ -157,7 +157,7 @@ import Validation.Shape (Append (..), BranchTarget (..), DataShape (..), Elem (.
   requires; the constraint is packed here so the driver can reach that memory without asking.
 -}
 data FuncInst (mod :: ModuleShape) (ft :: LabelledFuncType) where
-    WasmFunc :: Function mod ft -> FuncInst mod ft
+    WasmFunc :: !(Function mod ft) -> FuncInst mod ft
     {- | An import from the @ifc@ module: an annotation in the shape of a function
     ("Validation.Policy"). Assembly rewrote every call to it and refused to export it, start
     it or put it in a table, so it is never entered; it still has to occupy its place in the
@@ -199,7 +199,7 @@ data ForeignTarget = ImportedAs Text Text | ReferencedBy Reference
 -- | The instance of a module's function index space: one 'FuncInst' per type in 'ModuleFuncs'.
 data FuncSpaceInst (mod :: ModuleShape) (fts :: [LabelledFuncType]) where
     FsNil :: FuncSpaceInst mod '[]
-    FsCons :: FuncInst mod ft -> FuncSpaceInst mod fts -> FuncSpaceInst mod (ft ': fts)
+    FsCons :: !(FuncInst mod ft) -> !(FuncSpaceInst mod fts) -> FuncSpaceInst mod (ft ': fts)
 
 getFunc :: Elem ft fts -> FuncSpaceInst mod fts -> FuncInst mod ft
 getFunc Here (FsCons f _) = f
@@ -1055,6 +1055,10 @@ popControl store _ vs (CallBoundary _ below cl cont cf) = resume store cl vs bel
   witness of such a target does not exist, and since its fields are strict GHC's coverage
   check knows it.
 -}
+
+-- A branch to the innermost label, which is the back edge of every loop and the exit of most
+-- blocks, is taken where the branch is, without a call; 'unwindFrom' has every case.
+{-# INLINE unwind #-}
 unwind ::
     Store mod ->
     LocalSpaceInst locals ->
@@ -1062,15 +1066,29 @@ unwind ::
     ValueStack rs ->
     Control mod res ret locals labels cur ->
     StepResult 'NoDynamicCheck mod res
-unwind store _ TargetHere vs EntryBoundary = Done store vs
-unwind store locals TargetHere vs (BlockLabel below cont rest) = resume store locals vs below cont rest
-unwind store locals TargetHere vs (HandlerLabel _ below cont rest) = resume store locals vs below cont rest
-unwind store locals TargetHere vs (LoopLabel below body cont rest) =
-    Stepped NothingToCheck (Config store locals vs body (LoopLabel below body cont rest))
-unwind store _ TargetHere vs (CallBoundary _ below cl cont cf) = resume store cl vs below cont cf
-unwind store locals (TargetThere ix') vs (BlockLabel _ _ rest) = unwind store locals ix' vs rest
-unwind store locals (TargetThere ix') vs (HandlerLabel _ _ _ rest) = unwind store locals ix' vs rest
-unwind store locals (TargetThere ix') vs (LoopLabel _ _ _ rest) = unwind store locals ix' vs rest
+unwind store locals target vs control = case target of
+    TargetHere -> case control of
+        BlockLabel below cont rest -> resume store locals vs below cont rest
+        LoopLabel _ body _ _ -> Stepped NothingToCheck (Config store locals vs body control)
+        _ -> unwindFrom store locals target vs control
+    TargetThere _ -> unwindFrom store locals target vs control
+
+unwindFrom ::
+    Store mod ->
+    LocalSpaceInst locals ->
+    BranchTarget l rs labels pcs pcs' ->
+    ValueStack rs ->
+    Control mod res ret locals labels cur ->
+    StepResult 'NoDynamicCheck mod res
+unwindFrom store _ TargetHere vs EntryBoundary = Done store vs
+unwindFrom store locals TargetHere vs (BlockLabel below cont rest) = resume store locals vs below cont rest
+unwindFrom store locals TargetHere vs (HandlerLabel _ below cont rest) = resume store locals vs below cont rest
+unwindFrom store locals TargetHere vs control@(LoopLabel _ body _ _) =
+    Stepped NothingToCheck (Config store locals vs body control)
+unwindFrom store _ TargetHere vs (CallBoundary _ below cl cont cf) = resume store cl vs below cont cf
+unwindFrom store locals (TargetThere ix') vs (BlockLabel _ _ rest) = unwindFrom store locals ix' vs rest
+unwindFrom store locals (TargetThere ix') vs (HandlerLabel _ _ _ rest) = unwindFrom store locals ix' vs rest
+unwindFrom store locals (TargetThere ix') vs (LoopLabel _ _ _ rest) = unwindFrom store locals ix' vs rest
 
 -- | 'unwind' for @br_table@, whose targets are plain label indices.
 unwindTo ::

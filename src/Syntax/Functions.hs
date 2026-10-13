@@ -51,11 +51,11 @@ type FunctionBody mod locals rs bound pcOut = Expr mod ('FrameShape locals rs) '
 -}
 data Function (mod :: ModuleShape) (ft :: LabelledFuncType) where
     Function ::
-        Sing (ps :: [LabelledValType]) ->
-        Sing (declared :: [LabelledValType]) ->
+        !(Sing (ps :: [LabelledValType])) ->
+        !(Sing (declared :: [LabelledValType])) ->
         -- | whether the preserved globals must hold at its return what they held at the call
-        ReturnsWith pcOut (ModuleGlobals mod) ->
-        FunctionBody mod (ReverseOnto ps declared) rs bound pcOut ->
+        !(ReturnsWith pcOut (ModuleGlobals mod)) ->
+        !(FunctionBody mod (ReverseOnto ps declared) rs bound pcOut) ->
         Function mod ('LabelledFuncType bound ps rs)
 
 -- | A module's function index space: one entry per function type in the shape.

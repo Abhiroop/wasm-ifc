@@ -91,6 +91,7 @@ library
       , Validation.Aliases
       , Validation.LocalWebs
       , Validation.Policy
+      , Runtime.Chunks
       , Runtime.MemInst
       , Runtime.TableInst
       , Runtime.Obligation
