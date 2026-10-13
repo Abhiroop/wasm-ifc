@@ -161,9 +161,14 @@ def main():
     commit = run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT).stdout.strip()
     out = ROOT / "casestudies/results" / f"{datetime.date.today().isoformat()}-{commit}-wanilla.json"
     narrow = collections.Counter(r["verdict_narrow"] for r in rows)
-    out.write_text(json.dumps({"commit": commit, "counts": counts, "counts_narrow": narrow, "not_expressible": reasons, "specifications": rows}, indent=2) + "\n")
+    # Where the secure specifications that are rejected stop: the rule that fails.
+    stops = collections.Counter(
+        (re.search(r'IllegalFlow \\?"([a-z_.]+)', r.get("error") or "") or re.search(r"()", "")).group(1) or "other" for r in rows if r["verdict"] == "precision loss"
+    )
+    out.write_text(json.dumps({"commit": commit, "counts": counts, "counts_narrow": narrow, "not_expressible": reasons, "precision_losses_at": dict(stops.most_common()), "specifications": rows}, indent=2) + "\n")
     print(dict(counts))
     print(dict(reasons))
+    print("the rejected secure specifications stop at:", dict(stops.most_common()))
     print("without the queries on imports and memory data:", dict(narrow))
     print(f"wrote {out.relative_to(ROOT)}")
 
