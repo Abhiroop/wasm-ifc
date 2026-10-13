@@ -53,7 +53,8 @@
   > load-default export check : H
   > stdin : H                  ; the standard streams' levels, for the WASI host
   > stdout : L
-  > preopen /data : H          ; a preopened directory (by guest name) and all it contains
+  > dir /data : H              ; a directory granted with @--dir@ (by guest name) and all it contains;
+  >                            ; @preopen@, WASI's word for such a directory, is a synonym
   > listen 127.0.0.1:8080 : H  ; a socket the host listens on (by its address) and every connection it accepts
   > allow-declassify
   > secwasm-restrictions       ; impose the restrictions SecWasm's lift needs (see 'Restrictions')
@@ -300,7 +301,7 @@ parsePolicy source = foldM statement emptyPolicy (zip [1 ..] (T.lines source))
         [stream] | stream `elem` ["stdin", "stdout", "stderr"] -> do
             l <- oneLevel lineNo body
             Right policy {streamLevels = Map.insert stream l policy.streamLevels}
-        ["preopen", guest] -> do
+        [keyword, guest] | keyword `elem` ["dir", "preopen"] -> do
             l <- oneLevel lineNo body
             Right policy {preopenLevels = Map.insert guest l policy.preopenLevels}
         ["listen", address] -> do
@@ -344,7 +345,7 @@ mergePolicies a b = do
     storeDefaultsByIndex <- agreeing "store-default func" a.storeDefaultsByIndex b.storeDefaultsByIndex
     loadDefaultsByExport <- agreeing "load-default export" a.loadDefaultsByExport b.loadDefaultsByExport
     streamLevels <- agreeing "stream" a.streamLevels b.streamLevels
-    preopenLevels <- agreeing "preopen" a.preopenLevels b.preopenLevels
+    preopenLevels <- agreeing "dir" a.preopenLevels b.preopenLevels
     listenerLevels <- agreeing "listen" a.listenerLevels b.listenerLevels
     loadDefault <- case (a.loadDefault, b.loadDefault) of
         (Just x, Just y) | x /= y -> Left (PolicyConflict "load-default")

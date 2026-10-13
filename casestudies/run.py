@@ -57,7 +57,7 @@ def wasi_c_study():
         for stdout in ("H", "L"):
             programs.append({
                 "name": f"{wasm.stem} (stdout {stdout})", "wasm": str(wasm), "dirs": dirs, "args": config.get("args", []),
-                "policy_text": f"preopen / : H\nstdout : {stdout}\nstderr : {stdout}\n", "declare": True,
+                "policy_text": f"dir / : H\nstdout : {stdout}\nstderr : {stdout}\n", "declare": True,
             })
     return programs
 
@@ -93,7 +93,7 @@ def service_study():
 def frames_study():
     """A helper with a stack frame called under a secret pc (casestudies/frames/): with the
     shadow-stack pointer declared preserved, and without."""
-    base = "preopen /secrets : H\nload-default func {__original_main} : H\nload-default func {fold} : H\nload-default func {step} : H\n"
+    base = "dir /secrets : H\nload-default func {__original_main} : H\nload-default func {fold} : H\nload-default func {step} : H\n"
     odd = [{"guest": "/secrets", "files": {"key": "odd-key-material"}}]
     even = [{"guest": "/secrets", "files": {"key": "plain-key-bytes!"}}]
     return [

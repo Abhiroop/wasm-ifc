@@ -1,6 +1,6 @@
 ; The Rust password checker's policy (casestudies/password-rust/password.rs, built by build.sh).
-preopen /secrets : H           ; files opened here are secret: the password
-preopen /log : L               ; the log shared with the developer is public
+dir /secrets : H               ; files opened here are secret: the password
+dir /log : L                   ; the log shared with the developer is public
 stdout : H                     ; only the user sees the verdict
 ; The loads of password::main (function 17) that read what the host stored for the password:
 ; how many bytes were read, and the bytes. They are the declarations that the traps name, one

@@ -1033,8 +1033,8 @@ WABT `wasm-interp` 1.0.42 and the Hackage `wasm` 1.1.1 on the kernels.
 The policy, `casestudies/password/checker.policy`:
 
 ```
-preopen /secrets : H           ; files opened here are secret: the password
-preopen /log : L               ; the log shared with the developer is public
+dir /secrets : H               ; files opened here are secret: the password
+dir /log : L                   ; the log shared with the developer is public
 stdout : H                     ; only the user sees the verdict
 load-default func 11 : H       ; main (__original_main) reads the password's bytes
 ```

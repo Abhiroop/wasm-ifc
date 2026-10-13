@@ -251,11 +251,15 @@ spec = do
             elabRunWithPolicy "load-default : H" (withMemory [] [I32] [] [Const SI32 0, Load SI32 (MemArg 0 0 0)]) [] `shouldSatisfy` errorContaining "IllegalFlow \"result\""
         it "a module without functions assembles (the index space is empty, not wrapped around)" $
             void (elaborateModule (singleFunctionModule [] [] [] [] []) {functions = [], exports = []}) `shouldSatisfy` isRight
-        it "declares the levels of the standard streams, preopens and listening sockets for the host" $ do
-            let parsed = policy "stdout : H\npreopen /data : H\nlisten 127.0.0.1:8080 : H"
+        it "declares the levels of the standard streams, directories and listening sockets for the host" $ do
+            let parsed = policy "stdout : H\ndir /data : H\nlisten 127.0.0.1:8080 : H"
             Map.lookup "stdout" parsed.streamLevels `shouldBe` Just High
             Map.lookup "/data" parsed.preopenLevels `shouldBe` Just High
             Map.lookup "127.0.0.1:8080" parsed.listenerLevels `shouldBe` Just High
+        it "a directory's level is declared with dir, and with preopen as a synonym" $ do
+            parsePolicy "preopen /data : H\ndir /log : L" `shouldBe` parsePolicy "dir /data : H\ndir /log : L"
+            let synonym = policy "preopen /data : H"
+            synonym.preopenLevels `shouldBe` Map.fromList [("/data", High)]
         it "the module's own ifc section carries a policy" $ do
             let declassifying = (singleFunctionModule [] [] [I32] [] [Const SI32 1, Relabel High, Declassify Low]) {customSections = [("ifc", "allow-declassify")]}
             elabRunModule declassifying [] `shouldBe` Right ["1"]

@@ -139,7 +139,7 @@ data WasiConfig = WasiConfig
   read from it, byte counts, positions, attributes, directory entries) and the most secret
   byte a call may take from memory on its behalf (the data written to it, the arrays that list
   the buffers; see 'gather'). "Validation.Policy" carries the levels as @stdin : H@,
-  @stdout : H@, @stderr : H@, @preopen /data : H@ and @listen 127.0.0.1:8080 : H@. Everything
+  @stdout : H@, @stderr : H@, @dir /data : H@ and @listen 127.0.0.1:8080 : H@. Everything
   undeclared is public.
 -}
 data DescriptorLevels = DescriptorLevels

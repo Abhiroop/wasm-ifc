@@ -144,7 +144,7 @@ not. The per-specification verdicts, policies and errors are in
 ## The wasi-testsuite's C programs (`wasi-c` in `run.py`)
 
 The fourteen C programs of the wasi-testsuite, with the directory they are given secret
-(`preopen / : H`), once with secret and once with public standard streams; every load that
+(`dir / : H`), once with secret and once with public standard streams; every load that
 traps on a secret byte is declared secret and the program run again (`"declare"` in `run.py`).
 Eight run in both configurations: they never load a byte that the host labelled secret. Six
 are rejected (`fdopendir-with-access`, `lseek`, `pread-with-access`, `pwrite-with-access`,
