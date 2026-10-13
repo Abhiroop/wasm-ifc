@@ -1790,6 +1790,56 @@ The development has 7,066 lines in ten files, no `sorry`, and its theorems depen
 `propext`, `Classical.choice` and `Quot.sound` only. A clean `lake build` takes about a
 minute and a half.
 
+### The two proofs set aside: how I would state them
+
+The plan asked for half a page on linking and on the splitting of locals, and to stop there.
+
+**Linking.** The core's module is one list of functions with one state. A world of modules
+(`Runtime.Link`) is several instances that import functions, memories, tables and globals
+from one another, where an imported object lives in the instance that defines it and is
+handed over when control passes. I would not add worlds to the semantics. I would state that
+a world is one module of the core:
+
+- *Flattening.* A function `flatten` from a world to a context and a list of functions: the
+  function spaces are laid end to end, every instruction's indices (functions, globals,
+  memories, tables, tags, segments) are shifted by where its module's spaces start, and an
+  import's index is replaced by the index of the export it is linked to.
+- *Typing is kept.* If every module of the world is `WellTyped` in its own context, and every
+  import is linked to an export of the same type (a function type with its bound, a global's
+  level, a table's level, a tag's arity; `Runtime.Instantiate` checks this), then the
+  flattened module is `WellTyped` in the flattened context. The lemma behind it is that
+  `Typed` is stable under a renaming of indices that the context respects. This is routine.
+- *The machine is the same.* A run of the world from an export is a run of the flattened
+  module from the same function, with the state of the flattened module being the homes'
+  objects. This is the new proof: it has to show that pulling an imported object when control
+  comes to an instance and pushing it back when control leaves gives every instruction the
+  object as its last writer left it. In Lean it would be a refinement like `refinement`, from
+  a machine with a current instance and a table of homes to `Step`.
+
+`noninterference` for a world is then the theorem for the flattened module. The cost is in
+the third point, and it is about `Runtime.Link`, not about flows.
+
+**The splitting of locals into webs.** The interpreter runs the elaborated program, which is
+the program after the split, and the theorems are about that program. So the split does not
+enter noninterference. What is missing is that the elaborated program computes what the
+binary says, which is conformance, and for the split a statement of its own:
+
+- Let `split f` be the function with its locals renamed by `Validation.LocalWebs`, and let
+  `web p x` be the local that a use of `x` at the position `p` is renamed to.
+- *Invariant.* Two states are related at a position `p` if they agree on everything but the
+  locals, and `s.loc x = s'.loc (web p x)` for every local `x` that some definition reaches
+  at `p`.
+- *Statement.* If `Eval F n ls e σ s o` for a body `e` and the states are related at its
+  start, then `Eval F' n ls (split e) σ s' o'` with outcomes that carry the same values and
+  states related at the end, and conversely. The values of the stack, the globals, the
+  memories and the host are the same, so the two programs are indistinguishable from outside.
+
+The proof needs the reaching-definitions analysis to be sound (a use reads a local that only
+the definitions reaching it write), over structured control flow with a loop iterated to a
+fixed point, and the merging of webs after inference (`mergeWebs`) to be a coarser renaming
+of the same kind. It is a compiler-correctness proof for one pass. Today the evidence is the
+suite: all 63,080 assertions run through the elaborator with the split on.
+
 ## Where coverage stands (2026-10-12, for the paper's claim)
 
 Supported, with the 3.0 suite passing on all of it: **WebAssembly 3.0 without garbage

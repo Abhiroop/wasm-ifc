@@ -42,6 +42,7 @@ the specification suite, and `wat2wasm` (wabt) for the examples written as text.
 | a wrong step of the machine does not compile (the load check and the indirect call's check) | `./test/obligations-must-not-compile.sh` | its output, seven checks | 1 min |
 | GHC rejects SecWasm's printed rule for `br_table` | the same script | `HANDOFF.md`, "GHC's error for SecWasm's printed `br_table` rule" | |
 | the recursive definitions that a step of the machine reaches (56, each with what it descends on), and its uses of partial or unchecked functions (113, each with its reason) | `./scripts/step-inventory.py` | `test/recursion-allowed.txt`, `test/partial-allowed.txt` | 2 min the first time, then 10 s |
+| a file has one level: no rename or link between directories of different levels, no symbolic link that leads out of its directory, no nested directories of different levels | `cabal test wasm-ifc-test --test-options='--match "WASI imports"'` | `HANDOFF.md`, "Item 8" | 5 s |
 | mutants found after 1,666 and 5,057 programs | by hand: the mutations and the seeds are in `HANDOFF.md` ("Phase 1", "Preserved globals") | `HANDOFF.md` | |
 
 ## Programs with secrets (RQ3)
@@ -87,8 +88,10 @@ and copy the binary; then `git apply bench/pre-ifc-opt.patch` there and build ag
 
 | Claim | Command | Time |
 |---|---|---|
-| noninterference on the core, without `sorry` | `cd lean && lake build` (Lean 4.35.0, which `elan` installs from `lean-toolchain`) | 1 min |
+| noninterference on the core, without `sorry` | `cd lean && lake build` (Lean 4.35.0, which `elan` installs from `lean-toolchain`) | 1.5 min |
 | the same for two runs of the small-step machine, and that a run of the machine is a derivation of the semantics the proof is about | the same build: `WasmIfc.machine_noninterference`, `WasmIfc.refinement` | |
 | the three programs of the findings: the leak has no typing and two runs that differ; the two secure programs are typed | the same build: `WasmIfc.leak_not_typed`, `leak_runs_differ`, `call_after_secret_branch_typed`, `write_after_public_branch_typed` | |
 | SecWasm's printed rule for `br_table` types the leak, and the repaired rule does not | the same build: `WasmIfc.SecWasm.printed_rule_accepts_leak`, `repaired_rule_rejects_leak`, `printed_rule_unsound` | |
+| the status of a host call depends on its operands and on the public part of the state: a definition of the model, used in one lemma; the shape of each of WASI's 46 functions | the same build: `WasmIfc.hostStatus`, `WasmIfc.StRel.status`; `lean/STATEMENTS.md`, section 8 | |
+| the judgment with labelled value types erases to the one on labels, and the theorems hold for it | the same build: `WasmIfc.ValueTyped.erase`, `WasmIfc.value_typed_noninterference` | |
 | the axioms it depends on | `#print axioms WasmIfc.machine_noninterference` in a file run with `lake env lean` | 10 s |
