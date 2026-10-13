@@ -1493,6 +1493,52 @@ operand, and the theorem says nothing of a run that traps, as for the load check
 `Examples.lean` has 6 divided by 2, which runs, 6 divided by 0, which has no evaluation, and
 the typing of a division of a secret.
 
+### Item 6: any number of tables (`7030d7b`, 6,274 lines)
+
+Every instruction on a table takes a table index, and so do `call_indirect` and
+`return_call_indirect`. Each table has its own level, entries, size and limit. `table.copy` is
+between two tables. `table.init` and `elem.drop` are new, with element segments in the state.
+
+**What changed in the statements.**
+
+- `Instr`: `tableGet x`, `tableSet x`, `tableFill x`, `tableSize x`, `tableGrow x` take the
+  table `x`; `tableCopy xd xs` takes the table copied to and the one copied from;
+  `callIndirect x ps b rs` and `retCallIndirect x ps b rs` take the table first. New:
+  `tableInit x k` (table `x`, element segment `k`) and `elemDrop k`.
+- `Ctx`: `table` is `Nat → Lab`, a level per table (it was one `Lab`).
+- `Typed`: the rules of the table instructions and of the two indirect calls read `C.table x`
+  where they read `C.table`. The premise of `tableCopy` is now
+  `pc ⊔ ℓn ⊔ ℓsrc ⊔ ℓdst ⊔ C.table xs ⊑ C.table xd`: the level of the table copied from
+  flows into the level of the table copied to, as `ITableCopy` asks (`lfrom`). New rules:
+  `tableInit`, with the premise of `tableFill` (`pc ⊔ ℓn ⊔ ℓsrc ⊔ ℓdst ⊑ C.table x`; a segment
+  is public), and `elemDrop`, without a premise under any pc, as `dataDrop`.
+- `State`: `tbl`, `tsize` and `tcap` are indexed by the table (`tbl : Nat → Nat → Option Nat`,
+  `tsize`, `tcap : Nat → Nat`). New field `elems : Nat → List (Option Nat)`, the element
+  segments, of which a dropped one is empty.
+- `State.sameTable s t x` is for one table `x` (it was `s.sameTable t`).
+- `Eval`: the table rules name their table, and each bound is that of its table (in
+  `tableCopy`, the range written is within `xd` and the range read within `xs`). New rules
+  `tableInit` (a trap unless the range is within the table and within the segment) and
+  `elemDrop`.
+- `LowEq`: the clause on the table is now `∀ x, C.table x = L → s.sameTable t x`, for every
+  public table. One clause more, after the one on data segments:
+  `∀ k, s.elems k = t.elems k ∨ s.elems k = [] ∨ t.elems k = []`.
+- `StRel` and `Conf`, the relations of the proof, change in the same two ways.
+- `Machine`: `Basic` has the table steps with their indices and the two new ones;
+  `Step.callIndirect` and `Step.retCallIndirect` look the entry up in their table.
+- The theorems are stated as before, word for word. They say more through `LowEq` and `Typed`.
+
+For the paper. Its definition of low equivalence should read "every table whose label is
+public" in clause (iv), and "every data segment and element segment" in clause (vii). Its
+figure has T+-Table-Get, T+-Table-Set, T+-Table-Size and T+-Table-Grow with the label of
+"the table", which is now the label of the instruction's table, so the rules stand. The text
+says that `table.copy` is typed like T+-Table-Set with three operands. Between two tables
+the premise has a fifth label, that of the table copied from; with one table it is the
+premise as printed. The text does not say how `table.init` and `elem.drop` are typed: as
+`table.fill` and as `data.drop`. `Examples.lean` has a context with a public and a secret
+table: a copy from the public one to the secret one is typed, the copy back has no typing,
+and a `table.init` followed by `elem.drop` runs.
+
 ## Where coverage stands (2026-10-12, for the paper's claim)
 
 Supported, with the 3.0 suite passing on all of it: **WebAssembly 3.0 without garbage
