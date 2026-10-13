@@ -25,7 +25,9 @@ import Hedgehog.Gen qualified as Gen
 import Hedgehog.Range qualified as Range
 import Network.Socket qualified as Net
 import Network.Socket.ByteString qualified as NetBS
+import System.Directory (createDirectoryIfMissing, createFileLink, removePathForcibly)
 import System.Environment (lookupEnv)
+import System.FilePath ((</>))
 import Test.Hspec
 import Test.Hspec.Hedgehog (annotate, classify, failure, forAll, hedgehog, label, modifyMaxSuccess, (===))
 
@@ -803,6 +805,17 @@ spec = do
             fmap describeCompletion leaked `shouldBe` Left (Trapped (SecretToHost "fd_write"))
             allowed <- runWithWasi noHost {descriptorLevels = publicDescriptors {standardOutput = High}} program "f" []
             fmap describeCompletion allowed `shouldBe` Right "returned [I32Value 0]"
+        it "a failure that a secret iovec array decides is a trap, and no status" $ do
+            -- The iovec at 8 points outside the memory. Stored as public, the call reports the
+            -- fault. Stored as a secret, for the secret standard output, the fault would tell
+            -- of the secret pointer in the call's public status.
+            let body store = [Const SI32 8, Const SI32 0x7FFFFFF0, store, Const SI32 12, Const SI32 4, Store SI32 (MemArg 0 0 0), Const SI32 1, Const SI32 8, Const SI32 1, Const SI32 16, Call (FunctionIdx 0)]
+                program store = either (error . show) id (load (wasiModule fdWriteImport (body store) [I32]))
+                secretOutput = noHost {descriptorLevels = publicDescriptors {standardOutput = High}}
+            public <- runWithWasi secretOutput (program (Store SI32 (MemArg 0 0 0))) "f" []
+            fmap describeCompletion public `shouldBe` Right "returned [I32Value 21]"
+            secret <- runWithWasi secretOutput (program (Annotated High (Store SI32 (MemArg 0 0 0)))) "f" []
+            fmap describeCompletion secret `shouldBe` Left (Trapped (SecretToHost "fd_write"))
         it "the byte count of a read from a secret descriptor is secret" $ do
             -- fd_read of no bytes from stdin (fd 0), then a public load of the count it stored at 16.
             let body = [Const SI32 8, Const SI32 0, Store SI32 (MemArg 0 0 0), Const SI32 12, Const SI32 0, Store SI32 (MemArg 0 0 0), Const SI32 0, Const SI32 8, Const SI32 1, Const SI32 16, Call (FunctionIdx 0), Drop, Const SI32 16, Load SI32 (MemArg 0 0 0)]
@@ -868,6 +881,40 @@ spec = do
             fmap describeCompletion secret `shouldBe` Left (Trapped (SecretToHost "path_open"))
             public <- runWithWasi cfg (program (name ++ [StoreN SI32 1 (MemArg 0 0 0)])) "f" []
             fmap describeCompletion public `shouldBe` Right "returned [I32Value 44]"
+        it "a file does not move between directories of different levels" $ do
+            -- path_rename of the one-byte name at 0, from the directory of fd 3 to that of fd 4.
+            let pathRename = wasiImport "path_rename" (FuncType [I32, I32, I32, I32, I32, I32] [I32])
+                body = [Const SI32 0, Const SI32 0x7A, StoreN SI32 1 (MemArg 0 0 0), Const SI32 3, Const SI32 0, Const SI32 1, Const SI32 4, Const SI32 0, Const SI32 1, Call (FunctionIdx 0)]
+                program = either (error . show) id (load (wasiModule pathRename body [I32]))
+                cfg levels = WasiConfig [] [] [Preopen "/a" "test", Preopen "/b" "src"] [] (DescriptorLevels Low Low Low levels Map.empty)
+            oneLevel <- runWithWasi (cfg Map.empty) program "f" []
+            fmap describeCompletion oneLevel `shouldBe` Right "returned [I32Value 44]"
+            fromSecret <- runWithWasi (cfg (Map.singleton "/a" High)) program "f" []
+            fmap describeCompletion fromSecret `shouldBe` Left (Trapped (SecretToHost "path_rename"))
+            toSecret <- runWithWasi (cfg (Map.singleton "/b" High)) program "f" []
+            fmap describeCompletion toSecret `shouldBe` Left (Trapped (SecretToHost "path_rename"))
+        it "a symbolic link does not lead out of its directory" $ do
+            -- path_open, following links, of the one-byte name at 0 in the directory of fd 3.
+            let pathOpen = wasiImport "path_open" (FuncType [I32, I32, I32, I32, I32, I64, I64, I32, I32] [I32])
+                open name = [Const SI32 0, Const SI32 name, StoreN SI32 1 (MemArg 0 0 0), Const SI32 3, Const SI32 1, Const SI32 0, Const SI32 1, Const SI32 0, Const SI64 0, Const SI64 0, Const SI32 0, Const SI32 16, Call (FunctionIdx 0)]
+                program name = either (error . show) id (load (wasiModule pathOpen (open name) [I32]))
+                root = "dist-newstyle/links-test"
+                cfg = WasiConfig [] [] [Preopen "/log" (root </> "log")] [] publicDescriptors
+            removePathForcibly root
+            createDirectoryIfMissing True (root </> "log")
+            createDirectoryIfMissing True (root </> "secrets")
+            writeFile (root </> "secrets" </> "p") "secret"
+            writeFile (root </> "log" </> "i") "inside"
+            createFileLink "../secrets/p" (root </> "log" </> "o")
+            createFileLink "i" (root </> "log" </> "l")
+            outside <- runWithWasi cfg (program 0x6F) "f" []
+            fmap describeCompletion outside `shouldBe` Right "returned [I32Value 76]"
+            inside <- runWithWasi cfg (program 0x6C) "f" []
+            fmap describeCompletion inside `shouldBe` Right "returned [I32Value 0]"
+        it "directories of different levels do not contain one another" $ do
+            let cfg = WasiConfig [] [] [Preopen "/a" "test", Preopen "/b" "test/spec"] [] (DescriptorLevels Low Low Low (Map.singleton "/b" High) Map.empty)
+                program = either (error . show) id (load (wasiModule procExitImport [Const SI32 3, Call (FunctionIdx 0)] []))
+            runWithWasi cfg program "f" [] `shouldThrow` anyIOException
         it "args_sizes_get reports the argument count and buffer size" $ do
             let cfg = WasiConfig ["prog", "xy"] [] [] [] publicDescriptors
                 body = [Const SI32 0, Const SI32 4, Call (FunctionIdx 0), Drop, Const SI32 0, Load SI32 (MemArg 0 0 0), Const SI32 4, Load SI32 (MemArg 0 0 0), Add SI32]

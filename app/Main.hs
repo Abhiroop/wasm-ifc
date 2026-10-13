@@ -10,6 +10,7 @@ import Data.Text qualified as T
 import GHC.Float (castWord32ToFloat, castWord64ToDouble)
 import System.Environment (getArgs)
 import System.Exit (ExitCode (..), die, exitSuccess, exitWith)
+import System.IO.Error (ioeGetErrorString)
 import Text.Read (readMaybe)
 
 import Codec.Wasm (decodeModule)
@@ -140,9 +141,12 @@ configFor options policy path programArgs =
 -- | Invoke an export with the WASI host serving its calls; hand the results to the printer.
 runUnderWasi :: WasiConfig -> SomeModuleInst -> Text -> [Value] -> ([Value] -> IO ()) -> IO ()
 runUnderWasi cfg wasmModule name args printResults = do
-    completion <- runWithWasi cfg wasmModule name args
-    case completion of
-        Left err -> die (describeRunError err)
+    -- (The host refuses a configuration by an exception: an address it cannot listen on, or
+    -- directories of different levels of which one contains the other.)
+    completion <- try (runWithWasi cfg wasmModule name args) :: IO (Either IOException (Either RunError Completion))
+    case either (Left . Left) (either (Left . Right) Right) completion of
+        Left (Left refused) -> die ("The host stopped: " ++ ioeGetErrorString refused)
+        Left (Right err) -> die (describeRunError err)
         Right (Ran _ results) -> printResults results
         Right (Exited 0) -> exitSuccess
         Right (Exited code) -> exitWith (ExitFailure code)
@@ -226,7 +230,7 @@ describeRunError err = case err of
     ArgumentType position expectedType actualType ->
         "argument " ++ show position ++ " should be " ++ show expectedType ++ ", got " ++ show actualType
     Trapped (SecretRead site) -> "trap: a load read a secret byte where the policy declares none; " ++ declareAt site
-    Trapped (SecretToHost call) -> "trap: " ++ T.unpack call ++ " was handed a byte more secret than its descriptor; nothing was written"
+    Trapped (SecretToHost call) -> "trap: " ++ T.unpack call ++ " would let a secret reach what is public (a secret byte for a public descriptor or in a path, a file between directories of different levels, or a status that a secret decides); the call did nothing"
     Trapped trap -> "trap: " ++ show trap
     HostCallNotServed -> "the function called into the host, which this path cannot serve"
 

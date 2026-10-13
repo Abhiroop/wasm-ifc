@@ -44,8 +44,10 @@ data Trap
       call out of the module would have carried a secret
       -}
       InformationFlowViolation
-    | {- | a host call was handed a byte more secret than the descriptor it concerns: the check
-      at the host boundary, made before anything leaves the module. The call is named as the
+    | {- | a host call would have let a secret reach what is public: a byte more secret than the
+      descriptor it is for, or in a path or a list of buffers, which are public; a file moved
+      or linked between directories of different levels; or a failure that a secret decides
+      and the call's public status would report. The call does nothing. It is named as the
       module imports it (@fd_write@).
       -}
       SecretToHost Text

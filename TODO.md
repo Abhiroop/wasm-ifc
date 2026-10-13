@@ -29,11 +29,14 @@ are summarised here, not repeated.
 
 ## Information flow
 
-- [ ] **P2** Error codes at the host boundary are as the host reports them. They depend on the
-  descriptor table, the operands and the names in a directory, which the paper's model treats
-  as public, and also on whether an operation on a secret file fails (a failed read or write),
-  which the model does not cover. `fd_fdstat_get` reports a descriptor's type, flags and rights
-  as public, as part of the descriptor table.
+- [ ] **P2** What the host still assumes (after the audit of 2026-10-14, `HANDOFF.md`, "Item 8").
+  A status depends on the operands, the descriptor table, and the names and kinds of the
+  entries of a directory, which the model treats as public, in a secret directory too. Three
+  things are outside: a failure of the operating system on a secret file or connection (a
+  full disk, a connection that the peer closed) shows in a public status; two granted
+  directories of different levels must share no file by a hard link made outside the run;
+  and a path is checked to stay in its directory before it is used, not while (another
+  process could change a link in between).
 - [ ] **P2** The error check after a read: the byte count of a read from a secret descriptor is
   secret, so C's check of `read`'s result raises the pc of what follows, and the password
   checker of `casestudies/` through libc is rejected (`casestudies/README.md`). The checker
@@ -54,9 +57,9 @@ are summarised here, not repeated.
   with `return`, direct and indirect calls, calls through a reference and tail calls, a
   memory with levels, local and global variables,
   preserved globals, `memory.size`, `memory.grow`, `memory.fill` and `memory.copy`, exceptions.
-  The memory is of bytes, with data segments. Not in it: a table's size and growth, references to exceptions, the
-  host's calls other than a read and a write, more than one value
-  type. Its semantics evaluates a block's body on the block's parameters alone; that this
+  The memories are of bytes, with data segments; the tables have sizes and element segments;
+  the host has one call for each shape of rule of WASI's functions. Not in it: more than one
+  value type. Its semantics evaluates a block's body on the block's parameters alone; that this
   agrees with the flat stack is not proved. `Formalisation/` holds earlier Agda and Lean
   models of the untyped core only.
 

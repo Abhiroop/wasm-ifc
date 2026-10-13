@@ -35,16 +35,16 @@ module Runtime.Wasi (
 
 import Control.Concurrent (threadDelay, threadWaitRead, threadWaitReadSTM, yield)
 import Control.Exception (IOException, finally, try)
-import Control.Monad (foldM, forM, unless, void, when)
+import Control.Monad (foldM, forM, unless, void, when, (>=>))
 import Control.Monad.IO.Class (liftIO)
-import Control.Monad.Trans.Except (ExceptT (..), except, runExceptT, throwE)
+import Control.Monad.Trans.Except (ExceptT (..), catchE, except, runExceptT, throwE)
 import Data.Bits (complement, shiftL, testBit, (.&.), (.|.))
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
 import Data.ByteString.Internal (createAndTrim)
 import Data.ByteString.Unsafe (unsafeUseAsCStringLen)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
-import Data.List (sort)
+import Data.List (isPrefixOf, sort)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe, isJust)
@@ -61,8 +61,8 @@ import GHC.IO.Exception (IOErrorType (..), IOException (..))
 import Network.Socket qualified as Net
 import Network.Socket.ByteString qualified as NetBS
 import System.CPUTime (getCPUTime)
-import System.Directory (listDirectory)
-import System.FilePath (takeDirectory, (</>))
+import System.Directory (canonicalizePath, listDirectory)
+import System.FilePath (splitDirectories, takeDirectory, takeFileName, (</>))
 import System.IO (Handle, IOMode (ReadMode), SeekMode (..), hFlush, stderr, stdin, stdout, withBinaryFile)
 import System.IO.Error (ioeGetErrorType)
 import System.Posix.Directory (createDirectory, removeDirectory)
@@ -187,10 +187,24 @@ data WasiHost = WasiHost
     }
 
 {- | A host with the standard streams at 0–2, the preopens from 3 on, and the listening sockets
-  after them. An address that cannot be listened on is an 'IOException'.
+  after them. An address that cannot be listened on is an 'IOException', and so are two
+  directories with different levels of which one contains the other: a file gets its level
+  from the directory it is opened in ('openPath'), and must have one.
 -}
 newHost :: WasiConfig -> IO WasiHost
 newHost cfg = do
+    roots <- forM cfg.preopens (canonicalizePath . (.hostPath))
+    let levelOf p = Map.findWithDefault Low p.guestPath cfg.descriptorLevels.preopenLevels
+        clashes =
+            [ (outer.guestPath, inner.guestPath)
+            | (outer, outerRoot) <- zip cfg.preopens roots
+            , (inner, innerRoot) <- zip cfg.preopens roots
+            , levelOf outer /= levelOf inner
+            , splitDirectories outerRoot `isPrefixOf` splitDirectories innerRoot
+            ]
+    case clashes of
+        (outer, inner) : _ -> ioError (userError ("the directory " <> T.unpack outer <> " contains " <> T.unpack inner <> ", and their levels differ: a file in both would have two levels"))
+        [] -> pure ()
     sockets <- forM cfg.listeners listenOn
     let stream h = Descriptor (StandardStream h) streamRights 0 0
         levels = cfg.descriptorLevels
@@ -447,21 +461,29 @@ peekPath mem ptr len = do
     bytes <- peekBytesAt Low mem ptr (fromIntegral len)
     except (either (const (Left Ilseq)) Right (decodeUtf8' (BS.pack bytes)))
 
--- | @len@ bytes of UTF-8 at @ptr@, unchecked: the caller checks their level ('requireAtMost').
-peekString :: MemInst m -> Word32 -> Word32 -> Host Text
-peekString mem ptr len = do
-    bytes <- peekBytes mem ptr (fromIntegral len)
-    except (either (const (Left Ilseq)) Right (decodeUtf8' (BS.pack bytes)))
-
-{- | The @(ptr, len)@ pairs of an iovec array, for a read from or a write to the given
-  descriptor. The array decides which bytes move and how many, which changes the descriptor's
-  state (its position, its contents), so the array's own bytes must flow into the descriptor's
-  level.
+{- | The buffers that an iovec array lists, for a read from or a write to a descriptor. The
+  array decides which bytes move and how many, which changes the descriptor's state (its
+  position, its contents), so the array's own bytes must flow into the descriptor's level. The
+  level of the array comes with the buffers: see 'usingBuffers'.
 -}
-peekIovecs :: Descriptor -> MemInst m -> Word32 -> Word32 -> Host [(Word32, Word32)]
-peekIovecs descriptor mem base count = forM [0 .. count - 1] $ \i -> do
-    entry <- peekBytesAt descriptor.level mem (base + i * 8) 8
-    pure (word32OfBytes (take 4 entry), word32OfBytes (drop 4 entry))
+data Buffers = Buffers SecLevel [(Word32, Word32)]
+
+peekIovecs :: Descriptor -> MemInst m -> Word32 -> Word32 -> Host Buffers
+peekIovecs descriptor mem base count = do
+    pairs <- forM (take (fromIntegral count) [0 ..]) $ \i -> do
+        entry <- peekBytesAt descriptor.level mem (base + i * 8) 8
+        pure (word32OfBytes (take 4 entry), word32OfBytes (drop 4 entry))
+    pure (Buffers (levelOfRange mem (fromIntegral base) (8 * fromIntegral count)) pairs)
+
+{- | The part of a call that uses the buffers of an iovec array. If the array has a secret
+  byte (which only a secret descriptor admits), then whether this part fails is a secret, for
+  instance by a pointer that is out of bounds, and the status of a call is public. So such a
+  failure is a flow violation, and the run ends.
+-}
+usingBuffers :: Buffers -> ([(Word32, Word32)] -> Host a) -> Host a
+usingBuffers (Buffers level pairs) action = case level of
+    Low -> action pairs
+    High -> action pairs `catchE` const (throwE FlowViolation)
 
 -- *** Descriptors ***
 
@@ -535,18 +557,62 @@ resolvePath base guest
             _ : up -> walk up rest
         | otherwise = walk (p : acc) rest
 
--- | Resolve a guest path against a directory descriptor that must hold the given right.
-resolveIn :: WasiHost -> Word32 -> Int -> MemInst m -> Word32 -> Word32 -> Host GuestPath
-resolveIn host fd right mem ptr len = snd <$> resolveUnder host fd right mem ptr len
+{- | The host path a call may act on: the resolved path, if what it names is inside the
+  directory it was resolved in once the symbolic links on the way are followed, and
+  'Notcapable' otherwise. 'resolvePath' looks at the text of a path only, and a link in a
+  directory can name anything on the host. With @follow@, a link in the last component is
+  followed here, step by step and under the same rule, so that the path handed to the
+  operating system has no link left in it. Without this a file would be reachable through a
+  directory that it is not in, with that directory's level and beyond what was granted.
+-}
+confine :: FilePath -> Bool -> FilePath -> Host FilePath
+confine base follow = go (40 :: Int)
+  where
+    go links path = do
+        root <- hostIO (canonicalizePath base)
+        parent <- hostIO (canonicalizePath (takeDirectory path))
+        let within candidate = splitDirectories root `isPrefixOf` splitDirectories candidate
+            name = takeFileName path
+            here = parent </> name
+        if name `notElem` ["", ".", ".."] && within here
+            then do
+                status <- statIfExists False here
+                case status of
+                    Just st | follow && isSymbolicLink st -> do
+                        when (links == 0) (throwE Loop)
+                        destination <- hostIO (readSymbolicLink here)
+                        go (links - 1) (parent </> destination)
+                    _ -> pure here
+            else do
+                -- (The directory itself, however it is spelled, or what a link's @..@ names.)
+                whole <- hostIO (canonicalizePath path)
+                unless (within whole) (throwE Notcapable)
+                pure whole
 
--- | 'resolveIn', with the directory's descriptor, whose level what the call reports carries.
-resolveUnder :: WasiHost -> Word32 -> Int -> MemInst m -> Word32 -> Word32 -> Host (Descriptor, GuestPath)
-resolveUnder host fd right mem ptr len = do
+-- | Resolve a guest path against a directory descriptor that must hold the given right.
+resolveIn :: WasiHost -> Word32 -> Int -> Bool -> MemInst m -> Word32 -> Word32 -> Host GuestPath
+resolveIn host fd right follow mem ptr len = snd <$> resolveUnder host fd right follow mem ptr len
+
+{- | 'resolveIn', with the directory's descriptor, whose level what the call reports carries.
+  The path is confined to the directory ('confine'); @follow@ says whether the call follows a
+  link in the last component.
+-}
+resolveUnder :: WasiHost -> Word32 -> Int -> Bool -> MemInst m -> Word32 -> Word32 -> Host (Descriptor, GuestPath)
+resolveUnder host fd right follow mem ptr len = do
     directory <- lookupFd host fd >>= requireRight right
     base <- directoryOf directory
     guest <- peekPath mem ptr len
     target <- resolvePath base guest
-    pure (directory, target)
+    inside <- confine base follow target.host
+    pure (directory, GuestPath inside target.mustBeDirectory)
+
+{- | Two directories that a call moves or links a file between must have one level. A file
+  that passed from a secret directory to a public one would be read there as public. In the
+  other direction a descriptor opened before, at the public level, would still read what is
+  then written to the file as a secret, and a hard link gives the file both levels at once.
+-}
+requireSameLevel :: Descriptor -> Descriptor -> Host ()
+requireSameLevel from to = unless (from.level == to.level) (throwE FlowViolation)
 
 -- *** File status ***
 
@@ -705,11 +771,15 @@ scatter level mem ((ptr, len) : rest) bytes
 
 {- | With the descriptor's non-blocking flag set, fail with 'Again' unless the socket has
   something to read or to accept now; without it, nothing: the operation that follows waits.
+  A secret socket that has nothing ends the run instead.
 -}
 unlessWouldBlock :: Descriptor -> Net.Socket -> Host ()
 unlessWouldBlock descriptor socket = when (testBit descriptor.fdflags 2) $ do
     ready <- liftIO (readable socket)
-    unless ready (throwE Again)
+    -- Whether something has arrived is the socket's to tell, which is why 'pollOneoff' labels
+    -- it with the socket's level. The status of a call is public, so on a secret socket the
+    -- answer "not now" is a flow violation.
+    unless ready (throwE (if descriptor.level == High then FlowViolation else Again))
 
 {- | Whether a socket has something to read or to accept now. The run-time system reports
   readiness to a waiting thread, so this waits for it, for a millisecond.
@@ -729,9 +799,9 @@ awaitReadable limit sockets = do
   level must flow into the descriptor's. This is the host boundary's dynamic check, the
   counterpart of a load's ('Runtime.MemInst.loadChecked'): a secret byte handed to a public
   descriptor is the leak the whole system exists to stop, and it ends the run as a trap. The
-  same check covers every other byte a call takes from memory: the iovec arrays themselves
-  ('peekIovecs'), paths ('peekPath'), the contents of a symbolic link and the subscriptions of
-  a poll. In the other direction, every byte a call stores about a descriptor (what it read,
+  same check covers the iovec arrays themselves ('peekIovecs'). Other bytes that a call takes
+  from memory must be public, because the call's public status depends on them: paths
+  ('peekPath'), the contents of a symbolic link and the subscriptions of a poll. In the other direction, every byte a call stores about a descriptor (what it read,
   how much, a position, a file's attributes, a directory's entries) carries the descriptor's
   level.
 -}
@@ -840,8 +910,8 @@ runWasiCall host func args mem = case (func, args) of
     (FdPread, nreadPtr :# offset :# iovsLen :# iovsPtr :# fd :# VNil) -> completing mem $ do
         descriptor <- lookupFd host fd >>= requireRight rightFdRead >>= requireRight rightFdSeek
         fd' <- fileOf descriptor
-        iovecs <- peekIovecs descriptor mem iovsPtr iovsLen
-        (mem', count) <- atOffset fd' offset (readInto mem descriptor iovecs)
+        buffers <- peekIovecs descriptor mem iovsPtr iovsLen
+        (mem', count) <- usingBuffers buffers (atOffset fd' offset . readInto mem descriptor)
         pokeWord32At descriptor.level mem' nreadPtr count
     (FdPrestatGet, outPtr :# fd :# VNil) -> completing mem $ do
         name <- lookupFd host fd >>= preopenName
@@ -854,16 +924,15 @@ runWasiCall host func args mem = case (func, args) of
     (FdPwrite, nwrittenPtr :# offset :# iovsLen :# iovsPtr :# fd :# VNil) -> completing mem $ do
         descriptor <- lookupFd host fd >>= requireRight rightFdWrite >>= requireRight rightFdSeek
         fd' <- fileOf descriptor
-        iovecs <- peekIovecs descriptor mem iovsPtr iovsLen
-        payload <- gather descriptor mem iovecs
+        buffers <- peekIovecs descriptor mem iovsPtr iovsLen
         -- The position is left where it was. With the append flag the offset is ignored and
         -- the data goes to the end, as Linux does.
-        written <- atOffset fd' offset (writeAll descriptor payload)
+        written <- usingBuffers buffers (gather descriptor mem >=> (atOffset fd' offset . writeAll descriptor))
         pokeWord32At descriptor.level mem nwrittenPtr (fromIntegral written)
     (FdRead, nreadPtr :# iovsLen :# iovsPtr :# fd :# VNil) -> completing mem $ do
         descriptor <- lookupFd host fd >>= requireRight rightFdRead
-        iovecs <- peekIovecs descriptor mem iovsPtr iovsLen
-        (mem', count) <- readInto mem descriptor iovecs
+        buffers <- peekIovecs descriptor mem iovsPtr iovsLen
+        (mem', count) <- usingBuffers buffers (readInto mem descriptor)
         pokeWord32At descriptor.level mem' nreadPtr count
     (FdReaddir, bufusedPtr :# cookie :# bufLen :# bufPtr :# fd :# VNil) -> completing mem $ do
         descriptor <- lookupFd host fd >>= requireRight 14
@@ -888,7 +957,12 @@ runWasiCall host func args mem = case (func, args) of
             1 -> pure RelativeSeek
             2 -> pure SeekFromEnd
             _ -> throwE Inval
-        position <- hostIO (fdSeek fd' mode (fromIntegral (toSigned64 offset)))
+        -- A seek from the end or from the position fails if it would land before the start,
+        -- which the file's size or position decides. Both are as secret as the descriptor and
+        -- the status is public, so on a secret file such a failure is a flow violation.
+        position <-
+            hostIO (fdSeek fd' mode (fromIntegral (toSigned64 offset)))
+                `catchE` \err -> throwE (if descriptor.level == High && whence /= 0 then FlowViolation else err)
         pokeWord64At descriptor.level mem newPtr (fromIntegral position)
     (FdTell, outPtr :# fd :# VNil) -> completing mem $ do
         descriptor <- lookupFd host fd >>= requireRight rightFdTell
@@ -897,35 +971,31 @@ runWasiCall host func args mem = case (func, args) of
         pokeWord64At descriptor.level mem outPtr (fromIntegral position)
     (FdWrite, nwrittenPtr :# iovsLen :# iovsPtr :# fd :# VNil) -> completing mem $ do
         descriptor <- lookupFd host fd >>= requireRight rightFdWrite
-        iovecs <- peekIovecs descriptor mem iovsPtr iovsLen
-        payload <- gather descriptor mem iovecs
-        written <- writeAll descriptor payload
+        buffers <- peekIovecs descriptor mem iovsPtr iovsLen
+        written <- usingBuffers buffers (gather descriptor mem >=> writeAll descriptor)
         pokeWord32At descriptor.level mem nwrittenPtr (fromIntegral written)
     (PathCreateDirectory, pathLen :# pathPtr :# fd :# VNil) -> completing mem $ do
-        target <- resolveIn host fd 9 mem pathPtr pathLen
+        target <- resolveIn host fd 9 False mem pathPtr pathLen
         hostIO (createDirectory target.host 0o755)
         pure mem
     (PathFilestatGet, outPtr :# pathLen :# pathPtr :# flags :# fd :# VNil) -> completing mem $ do
-        (directory, target) <- resolveUnder host fd 18 mem pathPtr pathLen
+        (directory, target) <- resolveUnder host fd 18 (testBit flags 0) mem pathPtr pathLen
         st <- statPath (testBit flags 0) target.host
         when (target.mustBeDirectory && not (isDirectory st)) (throwE Notdir)
         pokeStat directory.level mem outPtr st
     (PathFilestatSetTimes, fstFlags :# mtim :# atim :# pathLen :# pathPtr :# flags :# fd :# VNil) -> completing mem $ do
-        target <- resolveIn host fd 20 mem pathPtr pathLen
+        target <- resolveIn host fd 20 (testBit flags 0) mem pathPtr pathLen
         times <- timesToSet atim mtim fstFlags
         applyTimes (testBit flags 0) target.host times
         pure mem
     (PathLink, newLen :# newPtr :# newFd :# oldLen :# oldPtr :# oldFlags :# oldFd :# VNil) -> completing mem $ do
-        source <- resolveIn host oldFd 11 mem oldPtr oldLen
-        link <- resolveIn host newFd 12 mem newPtr newLen
+        (oldDirectory, source) <- resolveUnder host oldFd 11 (testBit oldFlags 0) mem oldPtr oldLen
+        (newDirectory, link) <- resolveUnder host newFd 12 False mem newPtr newLen
+        requireSameLevel oldDirectory newDirectory
         st <- statPath False source.host
         when (isDirectory st) (throwE Perm)
         when (source.mustBeDirectory || link.mustBeDirectory) (throwE Noent)
-        origin <-
-            if isSymbolicLink st && testBit oldFlags 0
-                then hostIO (relativeTo (takeDirectory source.host) <$> readSymbolicLink source.host)
-                else pure source.host
-        hostIO (createLink origin link.host)
+        hostIO (createLink source.host link.host)
         pure mem
     (PathOpen, outPtr :# fdflags :# inheriting :# rightsBase :# oflags :# pathLen :# pathPtr :# dirflags :# fd :# VNil) ->
         completing mem $ do
@@ -935,34 +1005,37 @@ runWasiCall host func args mem = case (func, args) of
             base <- directoryOf parent
             guest <- peekPath mem pathPtr pathLen
             target <- resolvePath base guest
-            opened <- openPath host parent target (testBit dirflags 0) oflags rightsBase inheriting (fromIntegral fdflags)
+            inside <- confine base (testBit dirflags 0) target.host
+            opened <- openPath host parent (GuestPath inside target.mustBeDirectory) (testBit dirflags 0) oflags rightsBase inheriting (fromIntegral fdflags)
             pokeWord32 mem outPtr opened
     (PathReadlink, usedPtr :# bufLen :# bufPtr :# pathLen :# pathPtr :# fd :# VNil) -> completing mem $ do
-        (directory, target) <- resolveUnder host fd 15 mem pathPtr pathLen
+        (directory, target) <- resolveUnder host fd 15 False mem pathPtr pathLen
         destination <- hostIO (readSymbolicLink target.host)
         let payload = take (fromIntegral bufLen) (BS.unpack (encodeUtf8 (T.pack destination)))
         mem' <- pokeBytesAt directory.level mem bufPtr payload
         pokeWord32At directory.level mem' usedPtr (fromIntegral (length payload))
     (PathRemoveDirectory, pathLen :# pathPtr :# fd :# VNil) -> completing mem $ do
-        target <- resolveIn host fd 25 mem pathPtr pathLen
+        target <- resolveIn host fd 25 False mem pathPtr pathLen
         hostIO (removeDirectory target.host)
         pure mem
     (PathRename, newLen :# newPtr :# newFd :# oldLen :# oldPtr :# fd :# VNil) -> completing mem $ do
-        source <- resolveIn host fd 16 mem oldPtr oldLen
-        destination <- resolveIn host newFd 17 mem newPtr newLen
+        (oldDirectory, source) <- resolveUnder host fd 16 False mem oldPtr oldLen
+        (newDirectory, destination) <- resolveUnder host newFd 17 False mem newPtr newLen
+        requireSameLevel oldDirectory newDirectory
         hostIO (rename source.host destination.host)
         pure mem
     (PathSymlink, newLen :# newPtr :# fd :# oldLen :# oldPtr :# VNil) -> completing mem $ do
-        contents <- peekString mem oldPtr oldLen
-        (directory, link) <- resolveUnder host fd 24 mem newPtr newLen
-        -- What the link holds is written into the directory, so it must flow into its level.
-        requireAtMost directory.level mem oldPtr oldLen
+        -- What a link holds is a path: the calls that follow the link succeed or fail by it,
+        -- in their public status, and this call's own status depends on it. So it is public,
+        -- as every path is, whatever the directory's level.
+        contents <- peekPath mem oldPtr oldLen
+        link <- resolveIn host fd 24 False mem newPtr newLen
         when (link.mustBeDirectory || T.null contents) (throwE Noent)
         when ("/" `T.isPrefixOf` contents) (throwE Perm)
         hostIO (createSymbolicLink (T.unpack contents) link.host)
         pure mem
     (PathUnlinkFile, pathLen :# pathPtr :# fd :# VNil) -> completing mem $ do
-        target <- resolveIn host fd 26 mem pathPtr pathLen
+        target <- resolveIn host fd 26 False mem pathPtr pathLen
         st <- statPath False target.host
         when (isDirectory st) (throwE Isdir)
         when target.mustBeDirectory (throwE Notdir)
@@ -994,8 +1067,8 @@ runWasiCall host func args mem = case (func, args) of
         _ <- requireRight rightFdRead descriptor
         -- (Neither peeking nor waiting for a full buffer is provided.)
         when (riFlags /= 0) (throwE Notsup)
-        iovecs <- peekIovecs descriptor mem iovsPtr iovsLen
-        (mem', count) <- readInto mem descriptor iovecs
+        buffers <- peekIovecs descriptor mem iovsPtr iovsLen
+        (mem', count) <- usingBuffers buffers (readInto mem descriptor)
         mem'' <- pokeWord32At descriptor.level mem' nreadPtr count
         pokeBytesAt descriptor.level mem'' flagsPtr [0, 0]
     -- What is sent must flow into the connection's level, like the data of 'FdWrite'.
@@ -1004,9 +1077,8 @@ runWasiCall host func args mem = case (func, args) of
         _ <- connectionOf descriptor
         _ <- requireRight rightFdWrite descriptor
         when (siFlags /= 0) (throwE Inval)
-        iovecs <- peekIovecs descriptor mem iovsPtr iovsLen
-        payload <- gather descriptor mem iovecs
-        written <- writeAll descriptor payload
+        buffers <- peekIovecs descriptor mem iovsPtr iovsLen
+        written <- usingBuffers buffers (gather descriptor mem >=> writeAll descriptor)
         pokeWord32At descriptor.level mem nwrittenPtr (fromIntegral written)
     (SockShutdown, how :# fd :# VNil) -> completing mem $ do
         descriptor <- lookupFd host fd
@@ -1067,12 +1139,6 @@ preopenName :: Descriptor -> Host Text
 preopenName descriptor = case descriptor.resource of
     Directory _ (Just name) -> pure name
     _ -> throwE Badf
-
--- | A relative link target, read from a link in @dir@, as a host path.
-relativeTo :: FilePath -> FilePath -> FilePath
-relativeTo dir target
-    | "/" `T.isPrefixOf` T.pack target = target
-    | otherwise = dir </> target
 
 -- | A @dirent@ (24-byte header, then the name) with the cookie of the entry after it.
 dirent :: Word64 -> Word64 -> Word8 -> FilePath -> [Word8]
@@ -1136,6 +1202,7 @@ openPath host parent target follow oflags requestedBase requestedInheriting flag
 -}
 pollOneoff :: WasiHost -> MemInst m -> Word32 -> Word32 -> Word32 -> Word32 -> Host (MemInst m)
 pollOneoff host mem inPtr outPtr count neventsPtr = do
+    when (count == 0) (throwE Inval)
     -- The subscriptions decide how long the call waits and which events it reports, all of
     -- which is public, so they must be.
     requireAtMost Low mem inPtr (count * 48)

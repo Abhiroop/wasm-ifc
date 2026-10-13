@@ -154,6 +154,8 @@ test-suite wasm-ifc-test
       , hspec-hedgehog ^>=0.3
       , singletons-base ^>=3.5
       , network
+      , directory
+      , filepath
 
 -- The official spec testsuite, driven through wasm-tools (or wabt's wast2json for the scripts
 -- it can parse); skips itself when the tool or the submodule is missing.
