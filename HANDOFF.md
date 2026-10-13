@@ -1631,8 +1631,97 @@ the directory's level, which is more careful than the assumption and not consist
 into `EFAULT` (the count is an unsigned number from which 1 is subtracted), where the first
 should succeed and the second return `EINVAL`.
 
-I am fixing 1 to 6 and the last one now, each by the system's uniform answer: what would leak
-traps, or is refused. The entry after this one says what changed.
+All of these are fixed: the next entry says how.
+
+### Item 8: the host, fixed (`0fe52a1`) and modelled (`8418282`, 6,494 lines)
+
+**The fixes in `Runtime.Wasi`.** Each finding of the entry above is closed by the system's
+one answer: what would leak traps (`SecretToHost`, named after the call) or is refused.
+
+| Finding | Now |
+|---|---|
+| 1. rename or hard link between directories | `path_rename` and `path_link` trap unless the two directories have one level (`requireSameLevel`), in both directions: a file moved into a secret directory could still be read through a descriptor opened before, at the public level. |
+| 2. a link that leads out of its directory | Every path is confined (`confine`): the host resolves the links on the way itself and returns `ENOTCAPABLE` if the result is not inside the directory the path was resolved in. A link in the last component is followed by the host, step by step under the same rule, and never by the operating system. This also closes the escape from the granted directory. |
+| nested directories of different levels | The host refuses to start (`newHost`), and the command line reports it. |
+| 3. the list of buffers | The iovec array may still be as secret as the descriptor: the password checker prints its verdict on the secret stream through a pointer and a length that the secret decides. But if the array has a secret byte, a failure of the part of the call that uses the buffers traps and is no status (`usingBuffers`). |
+| 4. a socket that does not block | On a secret socket that has nothing, `sock_accept`, `sock_recv` and `fd_read` trap in place of `EAGAIN` (`unlessWouldBlock`). |
+| 5. a seek from the end or the position | On a secret file, a failure of such a seek traps (the case of `FdSeek`). |
+| 6. the contents of a link | They are a path and so public bytes (`path_symlink` reads them with `peekPath`). |
+| lengths of 0 | An iovec array of length 0 is no buffer, and `poll_oneoff` without a subscription returns `EINVAL`. |
+
+Only a secret descriptor or directory sees a change of behaviour, besides the confinement of
+paths, so a run without a policy is as before: the WASI suite passes 72 of 72. The unit suite
+has four new tests (a rename between levels, a link that leads out, nested directories, a
+fault that a secret iovec array decides): 244 tests. The two
+programs that leaked now end with a trap (`rename`) and with a failed `open` (`symlink`).
+The gate passes, the suite gives 63,080 passed and 0 failed in both configurations, and the
+93 case studies give their recorded results.
+
+What the host still assumes is in `TODO.md` ("What the host still assumes"): the operating
+system's own failures on a secret file or connection, no hard link between granted
+directories of different levels made outside the run, and no change to a link between the
+check of a path and its use.
+
+**For the paper.**
+
+- The sentence "the evaluation rules assume that the status of a host primitive depends only
+  on its operands and on the public part of the state" was false of the implementation in
+  four places and is true now, up to the three assumptions above. In Lean it is no assumption
+  any more: it is the type of `hostStatus`.
+- "The label of a directory protects the contents of its files but not their names" needs one
+  more thing said: a file has one level because it is in one directory, which the host now
+  enforces (confined paths, no move between levels, no nesting of levels). Before this, the
+  claim was not true of a program that renames.
+- The trusted computing base has this code in it: `confine`, `requireSameLevel` and the check
+  in `newHost` are plain Haskell with no evidence type, as the other checks of the host
+  driver (`tab:trust` should list them with the driver).
+- A trap of the host is now also "a status that a secret would decide". The case studies do
+  not meet it.
+
+**The Lean model.** The core has six host primitives, one for each shape of rule. `hostRead`,
+`hostWrite` and `hostOpen` were there. New: `hostGet` (public data from no descriptor),
+`hostCtl` (changes to the descriptor table, a directory or a position) and `hostPoll`
+(`poll_oneoff`). `lean/STATEMENTS.md`, section 8, has the shape of each of the 46 functions
+with the line of its case in `Runtime.Wasi` and what there makes it so: 8 read, 3 write, 2
+make a descriptor, 10 give public data, 21 change the table, a directory or a position, 1
+polls, and `proc_exit` has no rule.
+
+**What changed in the statements.**
+
+- `Instr`: three constructors more, `hostGet`, `hostCtl`, `hostPoll`.
+- `Typed`: `hostRead` and `hostWrite` now leave a public value, the status, on the stack
+  (they left nothing). New rules `hostGet`, `hostCtl`, `hostPoll`, of the same form as the
+  others: a public pc, public operands, a public status.
+- New definitions in `Defs.lean`: `hostStatus`, an opaque function of the call, its operands,
+  the descriptor table, the names, the files' channels, the channels' levels and the size of
+  the first memory; `State.status`; `ctlFdt`, `ctlNames`, `ctlFile` and `reposition`, opaque
+  functions for what `hostCtl` makes of the table, the directories and a position, with
+  `State.control`; `State.polled`, `State.pollLevel`, `pollEvents` and `State.events` for a
+  poll. `State` has no new field.
+- `Eval`: `hostRead` and `hostWrite` have the premise that the status is 0 and push it. Each
+  host primitive but `hostOpen` has a second rule, for any other status, which leaves the
+  state as it was and pushes the status (`hostReadFail` and so on). `hostOpen` is unchanged:
+  its two rules already give its status from the names. New rules `hostGet`, `hostCtl`,
+  `hostPoll` and their failing ones.
+- `Machine.Basic`: the same steps.
+- `LowEq`, `StRel`, `Conf`, and the statements of the theorems: unchanged.
+- New lemmas that carry the argument: `StRel.status` (two runs give a call the same status;
+  the one place where the proof uses that a status depends on nothing secret),
+  `StRel.control`, `StRel.events`.
+
+How the noninterference proof goes for the new cases: the operands are public, so they are
+the same in both runs, and so is the status, hence both runs succeed or both fail. For
+`hostGet` the source is a public channel, which has the same left to read in both runs. For
+`hostCtl` the new table and directories are functions of equal things, and a position moves
+on a channel that is either public, with the same contents in both runs, or secret, where
+nothing is compared. For `hostPoll` the level is the same in both runs, and if it is public
+every channel polled is public, so the reports agree.
+
+What the model leaves out, said in the guide: a failure of the operating system on a secret
+file; `proc_exit`, which has no rule, so that a run that exits is as one that traps and the
+theorem says nothing of it (that the exit code is public follows from the typing of the call,
+which is under a public pc with a public operand, but it is not proved); the count that
+`fd_write` stores; and that `fd_seek` stores the new position besides moving it.
 
 ## Where coverage stands (2026-10-12, for the paper's claim)
 
