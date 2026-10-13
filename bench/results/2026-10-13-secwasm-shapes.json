@@ -1,5 +1,5 @@
 {
-  "clang 23, C (wasi-testsuite)": {
+  "C, clang 22.1 (WASI suite)": {
     "modules": 14,
     "analysed": 14,
     "not_analysed": [],
@@ -18,7 +18,7 @@
       "unreachable": 8
     }
   },
-  "rustc, Rust (wasi-testsuite)": {
+  "Rust, rustc 1.96 (WASI suite)": {
     "modules": 46,
     "analysed": 46,
     "not_analysed": [],
@@ -37,7 +37,7 @@
       "any": 46
     }
   },
-  "AssemblyScript (wasi-testsuite)": {
+  "AssemblyScript (WASI suite)": {
     "modules": 12,
     "analysed": 12,
     "not_analysed": [],
@@ -54,7 +54,7 @@
       "any": 10
     }
   },
-  "clang 23, C (our case studies)": {
+  "C, clang 23.1 (our case studies)": {
     "modules": 33,
     "analysed": 33,
     "not_analysed": [],
@@ -73,7 +73,7 @@
       "table > blocks": 10
     }
   },
-  "clang 23, C (CoreMark, PolyBench)": {
+  "C, clang 23.1 (CoreMark, PolyBench)": {
     "modules": 62,
     "analysed": 62,
     "not_analysed": [],

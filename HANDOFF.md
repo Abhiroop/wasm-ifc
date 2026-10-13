@@ -882,6 +882,169 @@ implemented since e87e76a.
   call of its own; the next commit inlines it again.) Five unit examples (`test/Spec.hs`,
   "typed function references").
 
+## The paper's numbers, checked (the plan's items 1 to 4b, 2026-10-13, at 67e5597)
+
+Checked against `08-evaluation.tex`, the abstract and the end of the introduction as they
+were at Overleaf 5063c84. `REPRODUCE.md` has the command behind each number.
+
+### Numbers that do not match
+
+1. **WANILLA (table `tab:eval`, section "Comparison", introduction).** The paper has 63 of 63
+   leaks, 152 of 196 secure specifications, 53 not expressible. Those are of 5 October. The
+   same translation at 67e5597 gives **67 of 67, 156 of 200, 45 not expressible**: eight
+   specifications import a memory or a global, which the decoder then refused. The 44
+   rejected secure ones and their breakdown (21, 11, 5, 4, 2, 1) are unchanged.
+   With two more kinds of query translated (see "WANILLA again" below) it is **73 of 73,
+   163 of 211, 28 not expressible**, and 48 rejected: the 44, and 4 at a store.
+2. **"Rejects every leaking program of an independent benchmark" (abstract).** It rejects
+   every leak among the specifications it can express. Of those it cannot, 20 are leaks under
+   the paper's translation and 14 under the wider one.
+3. **"Policies of two to four lines" (abstract, introduction).** True of the password checker
+   (4), the service (2) and PolyBench (2). The program with a stack frame of section
+   "C programs" runs under 5 lines (the four of the checker and `preserved global 0`).
+4. **The naive checker (section "A password checker").** The paper says the call that writes
+   the verdict happens under a secret pc. What the elaborator reports is in `open`, the call
+   that opens the log: `InFunction 24 (AtInstruction 4 (IllegalFlow "global.set" High Low))`.
+   Function 24 is `open`, and instruction 4 is the write of the stack pointer in its
+   prologue. Inference raised `open`'s bound to secret because `main` calls it under a secret
+   pc, and the first public write of `open` is then the failure. With `preserved global 0`
+   added, the rejection moves to `sbrk`: `InFunction 36 (AtInstruction 23 (IllegalFlow
+   "memory.grow" High Low))`.
+5. **"clang 23 (wasi-sdk 34) and rustc 1.99" (section "Conformance").** That sentence is about
+   the features the toolchains enable by default, and it holds. The binaries of the WASI
+   suite that we run were built by others, with **clang 22.1.0 (wasi-sdk) for the 14 C
+   programs and rustc 1.96.0 for the 46 Rust programs** (their `producers` sections); the 12
+   AssemblyScript binaries name no producer. Our own C programs are built with clang 23.1.0.
+6. **"Within a factor of two of WABT" (abstract, introduction, section "Other
+   interpreters").** True of the geometric mean, 1.5. By kernel the ratio goes from 0.85 to
+   7.7: WABT is 7.7 times as fast on `labels-64`, 4.5 on `globals-64` and 3.0 on `labels-16`.
+
+### Numbers that match
+
+63,080, 2,122, 877, 1,245 and 257; 72 programs as 14, 46 and 12; 100,000 programs with 36 %
+accepted (30 % finish, 6 % trap; 64 % rejected); 1,666 and 5,057 (not run again, from the
+entries of their day); 18 examples, of which two trap and five of SecWasm's are rejected, and
+the leaking program of the findings; four policy lines and three locals for the checker; two
+lines for the service; 8 of 14 C programs in both configurations and 6 rejected; 10 of 10
+PolyBench kernels under two lines, all rejected with their printing, at function 64 and, with
+the pointer preserved, at the indirect call of function 63; no accepted program needs the
+absence of the lift (49 programs, all accepted under the restrictions too); 24 kernels; the
+spread (at most 1.3 %); 1.04 with 0.88 to 1.25; 2 %, and 11 to 20 % at blocks; 8 % and 4 %
+with secrets; 4.5, 1.5, 11, 35, 46 and 53.
+
+Not measured again: the 0.97 of the typed obligations over seven workloads (50011b8, before
+this night's optimizations) and the 0.97 of the typed core against its erased copy (the laptop,
+18 September).
+
+### The versions of the benchmark
+
+From `environment.versions` of `bench/results/2026-10-13-c2a3f4b-t2-medium.json`: Wasmtime
+48.0.1 (Pulley, Winch and Cranelift), WAMR `iwasm` 2.4.5, wasm3 0.9.1-beta.1, wasmi 2.0.0;
+WABT `wasm-interp` 1.0.42 and the Hackage `wasm` 1.1.1 on the kernels.
+
+### The overview's example, from the real binary (item 3)
+
+The policy, `casestudies/password/checker.policy`:
+
+```
+preopen /secrets : H           ; files opened here are secret: the password
+preopen /log : L               ; the log shared with the developer is public
+stdout : H                     ; only the user sees the verdict
+load-default func 11 : H       ; main (__original_main) reads the password's bytes
+```
+
+The checker, with `/secrets/password` holding `letmein`:
+
+```
+$ wasm-ifc run --policy checker.policy --dir secrets::/secrets --dir log::/log password.wasm
+weak
+$ cat log/runs.log
+checked 4
+```
+
+A leaking variant (`-DLEAK_CONTROL` logs the verdict, `-DLEAK_MEMORY` the hash; both print the
+same):
+
+```
+$ wasm-ifc run --policy checker.policy --dir secrets::/secrets --dir log::/log password-leak-control.wasm
+weak
+trap: fd_write was handed a byte more secret than its descriptor; nothing was written
+$ cat log/runs.log
+$
+```
+
+The verdict still reaches the secret standard output, and the log stays empty. Until today
+this trap read `trap: InformationFlowViolation`; it names the call since 67e5597.
+
+The naive checker:
+
+```
+$ wasm-ifc check --policy checker.policy password-naive.wasm
+Validation error: InFunction 24 (AtInstruction 4 (IllegalFlow "global.set" High Low))
+```
+
+and `wasm-ifc explain` adds what inference had raised by then: 12 locals of `main`, and the
+bounds of functions 13 and 24 (`open`) to secret. Item 4 above says what this error means.
+
+### WANILLA again (item 2)
+
+- **Case studies:** re-recorded in `casestudies/results/2026-10-13-67e5597.json`. All 90
+  outcomes are those of 5 October.
+- **Imports of a memory or a global** are decoded now: 8 specifications moved from "not
+  expressible" to 4 leaks caught and 4 secure accepted.
+- **Memory.** A specification whose attacker observes the memory's data at the end is
+  expressible by declaring every store public: a store of a secret is then rejected, every
+  byte stays public, and our attacker sees what WANILLA's sees. 13 specifications: 3 leaks
+  caught, 6 accepted, 4 rejected at a store that writes a value WANILLA proves independent of
+  the secret. Six ask about areas of the memory, which a policy cannot say statically.
+- **Imports.** What flows into an imported function with public parameters, results and
+  context is our default for an import. 4 specifications: 3 leaks caught, 1 accepted. Eleven
+  give an import a secret parameter, result or context, or let it write the module's state.
+- **Tables.** A policy can label a table now, but only two specifications mention one, and
+  both also give an import a secret context. So tables make nothing more expressible.
+- **The four losses at indirect calls.** I declared the expected type and the functions in
+  the table with a secret bound (`type 1 : -{H}-> H`, `func 1 : -{H}-> H`, by hand; the
+  comparison's script does not do it). One of the four is then accepted
+  (`basic/call_indirect`, parameter and result secret). The other three stay rejected for
+  another reason: one returns a public result that both callees compute as the same constant,
+  and two call functions that write a public global, which WANILLA's specification does not
+  observe at the end. So the sentence "because our translation leaves the expected types of
+  indirect calls public" explains one loss of the four.
+
+### What SecWasm's rules reject in compiled code (item 4b)
+
+`./scripts/secwasm-shapes.py` types each function as validation does and counts four shapes.
+Each cell is instructions, then modules that have at least one. Every module was analysed, and
+the script found exactly the four shapes in the four hand-written programs of the findings,
+one each.
+
+| Binaries | Modules | Functions | `br_table` with more targets than blocks | `br_table` with values below | `unreachable` where the stack is not the block's result | branch to the function body |
+|---|---:|---:|---:|---:|---:|---:|
+| C, clang 22.1 (WASI suite) | 14 | 831 | 15; 14 | 0; 0 | 19; 8 | 0; 0 |
+| Rust, rustc 1.96 (WASI suite) | 46 | 15,320 | 230; 46 | 0; 0 | 354; 46 | 0; 0 |
+| AssemblyScript (WASI suite) | 12 | 337 | 0; 0 | 0; 0 | 12; 10 | 0; 0 |
+| C, clang 23.1 (our case studies) | 33 | 1,587 | 10; 10 | 0; 0 | 60; 30 | 0; 0 |
+| C, clang 23.1 (CoreMark, PolyBench) | 62 | 4,376 | 62; 62 | 0; 0 | 124; 62 | 0; 0 |
+
+What this supports:
+
+- **Every binary of clang and of rustc in the WASI suite has a `br_table` that SecWasm's
+  premise rejects**: 60 of 60, and so has every build of CoreMark and PolyBench. Of the 913
+  tables in the suite's C and Rust binaries, 245 have more targets than enclosing blocks.
+  Of our own small case studies 10 of 33 have one, and AssemblyScript's binaries have none.
+- **`unreachable` where T-Unreachable fails** is in 64 of the suite's 72 binaries, from all
+  three compilers (8 of 14 C, 46 of 46 Rust, 10 of 12 AssemblyScript).
+- **A `br_table` with values below the carried ones occurs in no compiled binary**, and
+  neither does a branch to the function body. Section 4.2's "compilers emit programs of the
+  first two kinds" is right if the second kind is read as `unreachable`; the example with
+  `br_table` under that heading is ours, not a compiler's.
+- The C binaries share wasi-libc, so their counts are not independent: most of the 15 tables
+  of the 14 C programs are the same functions of the library.
+
+Directories: `test/wasi/testsuite/tests/{c,rust,assemblyscript}/testsuite/wasm32-wasip1`,
+`casestudies/build/{password,frames,service,polybench}`, `bench/wasm-t2`. Data:
+`bench/results/2026-10-13-secwasm-shapes.json`.
+
 ## Performance and the clean benchmark (item 9, 2026-10-13)
 
 `BENCHMARKS.md`, last section, has the tables; `bench/results/2026-10-13-c2a3f4b*` the data.
