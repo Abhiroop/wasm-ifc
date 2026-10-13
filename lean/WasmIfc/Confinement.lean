@@ -158,6 +158,24 @@ theorem confine : ∀ (n : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P'
       | globalSetPreserved _ hpi hl ht' =>
         obtain ⟨h1, h2⟩ := ih _ (by omega) hF ht' hP (by simpa using hlen) he'
         exact ⟨(Conf.setGlob_preserved _ _ hpi).trans h1, h2⟩
+    | fill lm hb he' =>
+      cases ht with
+      | fill _ hle ht' =>
+        have hpc := hP.head
+        subst hpc
+        have hlm := hle (Lab.H_join _)
+        subst hlm
+        obtain ⟨h1, h2⟩ := ih _ (by omega) hF ht' (hiUpTo_zero_cons _) (by simpa using hlen) he'
+        exact ⟨(Conf.fill_high _ _ _ _ _).trans h1, h2⟩
+    | copy lm hb hb' he' =>
+      cases ht with
+      | copy _ hle ht' =>
+        have hpc := hP.head
+        subst hpc
+        have hlm := hle (Lab.H_join _)
+        subst hlm
+        obtain ⟨h1, h2⟩ := ih _ (by omega) hF ht' (hiUpTo_zero_cons _) (by simpa using hlen) he'
+        exact ⟨(Conf.copy_high _ _ _ _ _).trans h1, h2⟩
     | memSize he' =>
       cases ht with
       | memSize ht' => exact ih _ (by omega) hF ht' hP (by simp [hlen]) he'

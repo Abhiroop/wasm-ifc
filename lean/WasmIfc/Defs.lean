@@ -80,6 +80,10 @@ inductive Instr where
   | store (lm : Lab)
   | memSize
   | memGrow
+  /-- `fill lm`: write one value to a range of cells and label them `lm` -/
+  | fill (lm : Lab)
+  /-- `copy lm`: copy a range of cells; each keeps its level, raised by `lm` -/
+  | copy (lm : Lab)
   /--
   `block keep ps rs body`: where control comes out of the block, by its end or by a branch to
   its label, the globals `keep` must hold what they held at its start, or the run traps
@@ -205,6 +209,19 @@ inductive Typed (C : Ctx) : List STy → List Instr → Pcs → STy → Pcs → 
       Lab.le ((pc.join la).join lv) lm →
       Typed C Ls rest (pc :: Pr) st P' st' →
       Typed C Ls (.store lm :: rest) (pc :: Pr) (lv :: la :: st) P' st'
+  /-- `memory.fill`: the cells get a level at least the pc's, the count's, the value's and the address's. -/
+  | fill {Ls rest pc Pr ln lv ld st P' st'} (lm : Lab) :
+      Lab.le (pc.join (ln.join (lv.join ld))) lm →
+      Typed C Ls rest (pc :: Pr) st P' st' →
+      Typed C Ls (.fill lm :: rest) (pc :: Pr) (ln :: lv :: ld :: st) P' st'
+  /--
+  `memory.copy`: each copied cell keeps its own level, raised by one that is at least the pc's,
+  the count's and the two addresses'. No check is made: the levels move with the values.
+  -/
+  | copy {Ls rest pc Pr ln lsrc ld st P' st'} (lm : Lab) :
+      Lab.le (pc.join (ln.join (lsrc.join ld))) lm →
+      Typed C Ls rest (pc :: Pr) st P' st' →
+      Typed C Ls (.copy lm :: rest) (pc :: Pr) (ln :: lsrc :: ld :: st) P' st'
   /-- The size of the memory is public. -/
   | memSize {Ls rest pc Pr st P' st'} :
       Typed C Ls rest (pc :: Pr) (pc :: st) P' st' →
@@ -357,6 +374,16 @@ def State.setMem (s : State) (a v : Nat) (l : Lab) : State :=
   { s with mem := fun x => if x = a then v else s.mem x,
            lab := fun x => if x = a then l else s.lab x }
 
+/-- Write `v` to the `n` cells from `a`, and give them the level `l`. -/
+def State.fill (s : State) (a v n : Nat) (l : Lab) : State :=
+  { s with mem := fun x => if a ≤ x ∧ x < a + n then v else s.mem x,
+           lab := fun x => if a ≤ x ∧ x < a + n then l else s.lab x }
+
+/-- Copy the `n` cells from `a` to those from `d`: each value with its level, raised by `l`. -/
+def State.copy (s : State) (d a n : Nat) (l : Lab) : State :=
+  { s with mem := fun x => if d ≤ x ∧ x < d + n then s.mem (a + (x - d)) else s.mem x,
+           lab := fun x => if d ≤ x ∧ x < d + n then l.join (s.lab (a + (x - d))) else s.lab x }
+
 /-- What `memory.grow` gives when the memory cannot grow. -/
 def growFailed : Nat := 0xFFFFFFFF
 
@@ -488,6 +515,14 @@ inductive Eval (F : List Func) : Nat → List Nat → List Instr → List Nat �
   | store {n ls rest v a σ s o} (lm : Lab) :
       a < s.size →
       Eval F n ls rest σ (s.setMem a v lm) o → Eval F (n + 1) ls (.store lm :: rest) (v :: a :: σ) s o
+  | fill {n ls rest k v a σ s o} (lm : Lab) :
+      a + k ≤ s.size →
+      Eval F n ls rest σ (s.fill a v k lm) o →
+      Eval F (n + 1) ls (.fill lm :: rest) (k :: v :: a :: σ) s o
+  | copy {n ls rest k b a σ s o} (lm : Lab) :
+      a + k ≤ s.size → b + k ≤ s.size →
+      Eval F n ls rest σ (s.copy a b k lm) o →
+      Eval F (n + 1) ls (.copy lm :: rest) (k :: b :: a :: σ) s o
   | memSize {n ls rest σ s o} :
       Eval F n ls rest (s.size :: σ) s o → Eval F (n + 1) ls (.memSize :: rest) σ s o
   | memGrow {n ls rest d σ s o} :

@@ -4,7 +4,8 @@ A Lean 4 development that proves termination-insensitive noninterference for the
 typing rules of this repository on a core of WebAssembly: blocks, loops and conditionals with
 parameters and results, `br`, `br_if`, `br_table` and `return`, direct calls, indirect calls
 and tail calls of the module's functions (recursion included), a bounded memory whose cells carry a level, with
-SecWasm's run-time check on loads, `memory.size` and `memory.grow`, local and global
+SecWasm's run-time check on loads, `memory.size`, `memory.grow`, `memory.fill` and
+`memory.copy`, local and global
 variables with `local.tee`, exceptions (`throw` and `try_table`), preserved globals with
 their run-time comparison, and arithmetic on one value type. It has no `sorry`, and its
 theorems depend on Lean's three standard axioms only (`propext`, `Classical.choice`,
@@ -53,6 +54,9 @@ type `Syntax.Instructions.Instr` for the instructions above:
   time it traps unless the table entry names a function of exactly the expected type.
 - An exception is thrown only under a public pc and carries public values, and a `try_table`
   is typed only under a public pc. A clause's branch raises no pc.
+- `memory.fill` labels the cells it writes at a level that is at least the pc's and those of
+  its three operands. `memory.copy` makes no check: each cell it copies keeps its own level,
+  raised by one that is at least the pc's and those of the count and the two addresses.
 - The size of the memory is public: `memory.size` gives a value at the pc, and `memory.grow`
   is typed only under a public pc with a public amount.
 - A module is well typed if every function body is typed as the paper's rule for functions
@@ -126,7 +130,8 @@ paper's appendix B.4 has no counterpart here.
 - **The comparison names its globals.** The implementation compares every preserved global of
   the module, which a typed construct cannot leave out. Here a construct lists the globals it
   compares, and the rule asks that the list cover the preserved ones where the pc drops.
-- **The core is small.** One value type; two levels; no bulk memory; a tail call names its
+- **The core is small.** One value type; two levels; no data segments (`memory.init`,
+  `data.drop`); a tail call names its
   callee (`return_call`, not the indirect forms), and the semantics does not model that it
   runs in constant space. A tag
   is the number of public values its exceptions carry, a clause catches by tag or catches

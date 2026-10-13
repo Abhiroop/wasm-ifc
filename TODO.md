@@ -52,8 +52,8 @@ are summarised here, not repeated.
   precision loss against WANILLA, `casestudies/README.md`).
 - [ ] **P3** The noninterference proof in Lean (`lean/`, delta 6) covers a core: control flow
   with `return`, direct, indirect and tail calls, a memory with levels, local and global variables,
-  preserved globals, `memory.size` and `memory.grow`, exceptions. Not in it: a memory of bytes,
-  bulk memory, tables that are written, references to exceptions, indirect tail calls, the
+  preserved globals, `memory.size`, `memory.grow`, `memory.fill` and `memory.copy`, exceptions.
+  Not in it: a memory of bytes, data segments, tables that are written, references to exceptions, indirect tail calls, the
   host boundary, more than one value
   type. Its semantics evaluates a block's body on the block's parameters alone; that this
   agrees with the flat stack is not proved. `Formalisation/` holds earlier Agda and Lean

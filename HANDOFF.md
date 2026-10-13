@@ -609,7 +609,7 @@ implemented since e87e76a.
 
 ## Lean: noninterference on a core with control flow, calls and memory (item 12, 2026-10-12)
 
-- **Where:** `lean/` (Lean 4.35.0, no dependencies; `cd lean && lake build`). 3,018 lines in
+- **Where:** `lean/` (Lean 4.35.0, no dependencies; `cd lean && lake build`). 3,169 lines in
   five files; `lean/README.md` states what is proved and what differs from the paper.
 - **What is proved** (`WasmIfc.tini`, from `WasmIfc.ni`): termination-insensitive
   noninterference for a function of a well-typed module, under the lift-free rules, on a core
@@ -703,7 +703,11 @@ implemented since e87e76a.
        skips its epilogue, but it can only be called where no secret has decided the control
        flow, and there the stack pointer is the same in both runs.
     Not modelled: references to exceptions (`exnref`, `throw_ref`, `catch_ref`).
-  - *Tail calls* (the same day; 3,018 lines): `return_call`, with the rule of `IReturnCall`
+  - *Bulk memory* (the same day; 3,169 lines): `memory.fill` and `memory.copy`, with the
+    rules of `IMemFill` and `IMemCopy`. A copy makes no run-time check, and the proof confirms
+    that it needs none: each copied cell keeps its own level, so a cell that was secret in one
+    run is secret where it lands, and is not compared.
+  - *Tail calls* (the same day): `return_call`, with the rule of `IReturnCall`
     (the call, then the `return` of what the callee returns). The callee's comparison of the
     preserved globals is made where the tail call is, as in the machine (`tailCall`), and the
     caller's own stays with whoever called it. Not in the core: the indirect forms.

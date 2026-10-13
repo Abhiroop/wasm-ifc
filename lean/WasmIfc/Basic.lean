@@ -391,6 +391,68 @@ theorem Conf.setMem_high (C : Ctx) (s : State) (a v : Nat) : Conf C s (s.setMem 
   · simp only [State.setMem, hxa, ite_false] at hx ⊢
     exact ⟨hx, trivial⟩
 
+/--
+Two fills at the same level. At a public level the ranges and the value agree. At a secret
+level they need not, and each run's range becomes secret.
+-/
+theorem StRel.fill {C : Ctx} {s t : State} {a0 a1 v0 v1 k0 k1 : Nat} {lm : Lab}
+    (hv : lm = Lab.L → a0 = a1 ∧ v0 = v1 ∧ k0 = k1) (h : StRel C s t) :
+    StRel C (s.fill a0 v0 k0 lm) (t.fill a1 v1 k1 lm) := by
+  refine ⟨h.1, h.2.1, fun x hx hy => ?_, h.2.2.2⟩
+  cases lm with
+  | L =>
+    obtain ⟨rfl, rfl, rfl⟩ := hv rfl
+    by_cases hr : a0 ≤ x ∧ x < a0 + k0
+    · simp [State.fill, hr]
+    · simp only [State.fill, hr, ite_false] at hx hy ⊢
+      exact h.2.2.1 x hx hy
+  | H =>
+    by_cases hr0 : a0 ≤ x ∧ x < a0 + k0
+    · simp [State.fill, hr0] at hx
+    · by_cases hr1 : a1 ≤ x ∧ x < a1 + k1
+      · simp [State.fill, hr1] at hy
+      · simp only [State.fill, hr0, hr1, ite_false] at hx hy ⊢
+        exact h.2.2.1 x hx hy
+
+theorem Conf.fill_high (C : Ctx) (s : State) (a v k : Nat) : Conf C s (s.fill a v k Lab.H) := by
+  refine ⟨fun _ _ => rfl, fun _ _ _ => rfl, fun x hx => ?_, rfl, rfl, rfl⟩
+  by_cases hr : a ≤ x ∧ x < a + k
+  · simp [State.fill, hr] at hx
+  · simp only [State.fill, hr, ite_false] at hx ⊢
+    exact ⟨hx, trivial⟩
+
+/--
+Two copies at the same level. At a public level the ranges agree, and a copied cell is public
+in both runs only if its source was, where the two runs agree. At a secret level each run's
+destination becomes secret.
+-/
+theorem StRel.copy {C : Ctx} {s t : State} {d0 d1 a0 a1 k0 k1 : Nat} {lm : Lab}
+    (hv : lm = Lab.L → d0 = d1 ∧ a0 = a1 ∧ k0 = k1) (h : StRel C s t) :
+    StRel C (s.copy d0 a0 k0 lm) (t.copy d1 a1 k1 lm) := by
+  refine ⟨h.1, h.2.1, fun x hx hy => ?_, h.2.2.2⟩
+  cases lm with
+  | L =>
+    obtain ⟨rfl, rfl, rfl⟩ := hv rfl
+    by_cases hr : d0 ≤ x ∧ x < d0 + k0
+    · simp only [State.copy, hr] at hx hy ⊢
+      exact h.2.2.1 _ (Lab.join_eq_L hx).2 (Lab.join_eq_L hy).2
+    · simp only [State.copy, hr, ite_false] at hx hy ⊢
+      exact h.2.2.1 x hx hy
+  | H =>
+    by_cases hr0 : d0 ≤ x ∧ x < d0 + k0
+    · simp [State.copy, hr0, Lab.H_join] at hx
+    · by_cases hr1 : d1 ≤ x ∧ x < d1 + k1
+      · simp [State.copy, hr1, Lab.H_join] at hy
+      · simp only [State.copy, hr0, hr1, ite_false] at hx hy ⊢
+        exact h.2.2.1 x hx hy
+
+theorem Conf.copy_high (C : Ctx) (s : State) (d a k : Nat) : Conf C s (s.copy d a k Lab.H) := by
+  refine ⟨fun _ _ => rfl, fun _ _ _ => rfl, fun x hx => ?_, rfl, rfl, rfl⟩
+  by_cases hr : d ≤ x ∧ x < d + k
+  · simp [State.copy, hr, Lab.H_join] at hx
+  · simp only [State.copy, hr, ite_false] at hx ⊢
+    exact ⟨hx, trivial⟩
+
 /-- The memory grows by the same amount in two runs: the same result, and states that still agree. -/
 theorem StRel.grow {C : Ctx} {s t : State} (d : Nat) (h : StRel C s t) :
     (s.grow d).1 = (t.grow d).1 ∧ StRel C (s.grow d).2 (t.grow d).2 := by
@@ -561,6 +623,8 @@ theorem rise {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : Pcs} {st st' : S
   | globalSetPreserved _ _ _ _ ih => exact ih
   | load _ _ ih => exact ih
   | store _ _ _ ih => exact ih
+  | fill _ _ _ ih => exact ih
+  | copy _ _ _ ih => exact ih
   | memSize _ ih => exact ih
   | memGrow _ _ ih => exact ih
   | block _ _ _ _ _ ihb ihr => exact SFlows.trans ihb.tail ihr

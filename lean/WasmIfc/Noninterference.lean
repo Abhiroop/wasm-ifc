@@ -671,6 +671,40 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
               obtain ⟨hj', hlv⟩ := Lab.join_eq_L hj
               obtain ⟨_, hla⟩ := Lab.join_eq_L hj'
               exact ⟨ha hla, hv hlv⟩
+    | fill lm hle ht' =>
+      cases he0 with
+      | fill _ hb0 he0' =>
+        cases he1 with
+        | fill _ hb1 he1' =>
+          cases hσ with
+          | cons hk hσa =>
+            cases hσa with
+            | cons hv hσb =>
+              cases hσb with
+              | cons ha hσc =>
+                refine ih _ (by omega) hF ht' he0' he1' hσc (hs.fill (fun hlm => ?_))
+                  (hp.of_glob rfl rfl)
+                obtain ⟨_, hj1⟩ := Lab.join_eq_L (Lab.eq_L_of_le hle hlm)
+                obtain ⟨hln, hj2⟩ := Lab.join_eq_L hj1
+                obtain ⟨hlv, hld⟩ := Lab.join_eq_L hj2
+                exact ⟨ha hld, hv hlv, hk hln⟩
+    | copy lm hle ht' =>
+      cases he0 with
+      | copy _ hb0 hb0' he0' =>
+        cases he1 with
+        | copy _ hb1 hb1' he1' =>
+          cases hσ with
+          | cons hk hσa =>
+            cases hσa with
+            | cons hb hσb =>
+              cases hσb with
+              | cons ha hσc =>
+                refine ih _ (by omega) hF ht' he0' he1' hσc (hs.copy (fun hlm => ?_))
+                  (hp.of_glob rfl rfl)
+                obtain ⟨_, hj1⟩ := Lab.join_eq_L (Lab.eq_L_of_le hle hlm)
+                obtain ⟨hln, hj2⟩ := Lab.join_eq_L hj1
+                obtain ⟨hlb, hld⟩ := Lab.join_eq_L hj2
+                exact ⟨ha hld, hb hlb, hk hln⟩
     | memSize ht' =>
       cases he0 with
       | memSize he0' =>
