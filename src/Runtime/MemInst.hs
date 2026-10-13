@@ -325,10 +325,13 @@ wordInBounds mem addr count
 storeWord :: MemInst m -> Int -> Int -> Word64 -> Maybe (MemInst m)
 storeWord = storeWordAt Low
 
--- | 'storeWord' at a security level: the bytes written take that level (SecWasm's E-STORE).
+{- | 'storeWord' at a security level: the bytes written take that level (SecWasm's E-STORE).
+Strict in the word: it is used on two paths, and GHC otherwise shares it between them as a
+suspended computation, built at every store and forced inside the write.
+-}
 {-# INLINE storeWordAt #-}
 storeWordAt :: SecLevel -> MemInst m -> Int -> Int -> Word64 -> Maybe (MemInst m)
-storeWordAt level mem addr count word
+storeWordAt !level mem !addr !count !word
     | not (inBounds mem addr count) = Nothing
     | offset + count <= chunkSize = Just (setLevels level addr count mem {chunks = withChunk chunkIx written mem.chunks})
     | otherwise = writeBytesAt level mem addr [fromIntegral (word `shiftR` (8 * i)) | i <- [0 .. count - 1]]

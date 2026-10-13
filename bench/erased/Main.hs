@@ -175,10 +175,10 @@ data Instruction
 
 -- *** Runtime state, strict where the typed machine's is ***
 
-data Func = WasmFunction ![ValType] Code | HostFunction
+data Func = WasmFunction ![ValType] !Code | HostFunction
 
--- | The function index space; lazy, like 'FuncSpaceInst'.
-data Funcs = NoFuncs | FuncCons Func Funcs
+-- | The function index space, strict like 'FuncSpaceInst'.
+data Funcs = NoFuncs | FuncCons !Func !Funcs
 
 data TableEntry = TableEntry !FuncType !Nat
 
@@ -556,14 +556,27 @@ dropSegmentAt Z (_ :| rest) = Nothing :| rest
 dropSegmentAt (S ix) (s :| rest) = s :| dropSegmentAt ix rest
 dropSegmentAt _ NoSegments = NoSegments
 
+-- As 'Runtime.Stack.appendStack' and 'splitStack': with nothing to append or to take off,
+-- no call is made.
+{-# INLINE appendValues #-}
 appendValues :: Values -> Values -> Values
 appendValues Empty ys = ys
-appendValues (x :> xs) ys = x :> appendValues xs ys
+appendValues (x :> xs) ys = x :> appendMore xs ys
 
+appendMore :: Values -> Values -> Values
+appendMore Empty ys = ys
+appendMore (x :> xs) ys = x :> appendMore xs ys
+
+{-# INLINE splitValues #-}
 splitValues :: Nat -> Values -> (Values, Values)
 splitValues Z vs = (Empty, vs)
-splitValues (S w) (x :> vs) = let (upper, lower) = splitValues w vs in (x :> upper, lower)
+splitValues (S w) (x :> vs) = let (upper, lower) = splitMore w vs in (x :> upper, lower)
 splitValues (S _) Empty = (Empty, Empty)
+
+splitMore :: Nat -> Values -> (Values, Values)
+splitMore Z vs = (Empty, vs)
+splitMore (S w) (x :> vs) = let (upper, lower) = splitMore w vs in (x :> upper, lower)
+splitMore (S _) Empty = (Empty, Empty)
 
 {- | The erasure of 'Runtime.Stack.seedLocals': the arguments written from the last parameter's
   slot downwards, the declared locals at zero. The frame is the typed machine's own
@@ -622,16 +635,25 @@ popControl store locals vs (BlockLabel below cont rest) = resume store locals vs
 popControl store locals vs (LoopLabel below _ cont rest) = resume store locals vs below cont rest
 popControl store _ vs (CallBoundary _ below cl cont cf) = resume store cl vs below cont cf
 
+-- As 'Runtime.Interpreter.unwind': a branch to the innermost label is taken without a call.
+{-# INLINE unwind #-}
 unwind :: Store m -> Frame -> Nat -> Values -> Control -> StepResult m
-unwind store _ Z vs EntryBoundary = Done store vs
-unwind store locals Z vs (BlockLabel below cont rest) = resume store locals vs below cont rest
-unwind store locals Z vs (LoopLabel below body cont rest) =
-    Stepped (Config store locals vs body (LoopLabel below body cont rest))
-unwind store _ Z vs (CallBoundary _ below cl cont cf) = resume store cl vs below cont cf
-unwind store locals (S ix') vs (BlockLabel _ _ rest) = unwind store locals ix' vs rest
-unwind store locals (S ix') vs (LoopLabel _ _ _ rest) = unwind store locals ix' vs rest
-unwind _ _ (S _) _ (CallBoundary {}) = Wedged
-unwind _ _ (S _) _ EntryBoundary = Wedged
+unwind store locals target vs control = case target of
+    Z -> case control of
+        BlockLabel below cont rest -> resume store locals vs below cont rest
+        LoopLabel _ body _ _ -> Stepped (Config store locals vs body control)
+        _ -> unwindFrom store locals target vs control
+    S _ -> unwindFrom store locals target vs control
+
+unwindFrom :: Store m -> Frame -> Nat -> Values -> Control -> StepResult m
+unwindFrom store _ Z vs EntryBoundary = Done store vs
+unwindFrom store locals Z vs (BlockLabel below cont rest) = resume store locals vs below cont rest
+unwindFrom store locals Z vs control@(LoopLabel _ body _ _) = Stepped (Config store locals vs body control)
+unwindFrom store _ Z vs (CallBoundary _ below cl cont cf) = resume store cl vs below cont cf
+unwindFrom store locals (S ix') vs (BlockLabel _ _ rest) = unwindFrom store locals ix' vs rest
+unwindFrom store locals (S ix') vs (LoopLabel _ _ _ rest) = unwindFrom store locals ix' vs rest
+unwindFrom _ _ (S _) _ (CallBoundary {}) = Wedged
+unwindFrom _ _ (S _) _ EntryBoundary = Wedged
 
 returnUnwind :: Store m -> Frame -> Values -> Control -> StepResult m
 returnUnwind store _ vs EntryBoundary = Done store vs

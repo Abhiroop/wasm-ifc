@@ -71,7 +71,10 @@ noChunks () = Chunks 0 Absent
 beyond :: Int# -> Int# -> Bool
 beyond key shift = isTrue# (uncheckedIShiftRL# key (shift +# 4#) /=# 0#)
 
--- | The chunk at an index: 'Held', or 'Absent' if nothing was written there.
+{- | The chunk at an index: 'Held', or 'Absent' if nothing was written there.
+Inlined, so that the walk down the tree is a loop inside the load that asks for the chunk.
+-}
+{-# INLINE chunkAt #-}
 chunkAt :: Int -> Chunks -> Leaf
 chunkAt (I# key) (Chunks (I# rootShift) root)
     | beyond key rootShift = Absent
