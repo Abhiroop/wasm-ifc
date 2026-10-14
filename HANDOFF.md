@@ -2043,8 +2043,9 @@ read, write, and open files" is now six shapes with every WASI function assigned
 - Nothing else moved. The axioms of `noninterference`, `machine_noninterference` and
   `refinement` are as before.
 
-**The paper, edited on the `paper` branch (submodule `paper/current`, branch
-`prose-rewrite`, committed and not pushed).** Each edit is what the audit asked for, in the
+**The paper, edited on the `paper` branch (submodule `paper/current`, on its `main`, commit
+`623f4ec` on top of Overleaf's `main`; committed and not pushed; the branch `prose-rewrite` is
+deleted).** Each edit is what the audit asked for, in the
 paper's own words:
 
 | File | Change |
