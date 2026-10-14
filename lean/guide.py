@@ -54,9 +54,9 @@ HOST = [
     ("fd_fdstat_get", "FdFdstatGet", "hostGet", "the kind, the flags and the rights of a descriptor, from the descriptor table, stored as public (`pokeFdstat`)"),
     ("fd_close", "FdClose", "hostCtl", "removes a descriptor"),
     ("fd_renumber", "FdRenumber", "hostCtl", "moves a descriptor, with its level"),
-    ("fd_fdstat_set_flags", "FdFdstatSetFlags", "hostCtl", "changes a descriptor's flags"),
+    ("fd_fdstat_set_flags", "FdFdstatSetFlags", "hostCtl", "changes a descriptor's flags; a secret socket is not made non-blocking (`ENOTSUP`, `nonBlockingRefused`)"),
     ("fd_fdstat_set_rights", "FdFdstatSetRights", "hostCtl", "narrows a descriptor's rights"),
-    ("fd_seek", "FdSeek", "hostCtl", "moves the position; the new position is stored at the descriptor's level, as `fd_tell` stores it; a failure that the file's size or position decides traps on a secret file"),
+    ("fd_seek", "FdSeek", "hostCtl", "moves the position; the new position is stored at the descriptor's level, as `fd_tell` stores it; on a secret file a seek back from the end or the position is refused (`ENOTSUP`), since whether it lands before the start is the file's secret"),
     ("fd_advise", "FdAdvise", "hostCtl", "changes nothing"),
     ("fd_allocate", "FdAllocate", "hostCtl", "not supported: a status and nothing else"),
     ("fd_datasync", "FdDatasync", "hostCtl", "changes nothing that a program sees"),
@@ -65,9 +65,9 @@ HOST = [
     ("fd_filestat_set_times", "FdFilestatSetTimes", "hostCtl", "sets times that are operands"),
     ("path_create_directory", "PathCreateDirectory", "hostCtl", "adds a name to a directory"),
     ("path_filestat_set_times", "PathFilestatSetTimes", "hostCtl", "sets times that are operands"),
-    ("path_link", "PathLink", "hostCtl", "adds a name; the two directories must have one level, or the run traps (`requireSameLevel`)"),
+    ("path_link", "PathLink", "hostCtl", "adds a name; between directories of different levels it fails with `EXDEV`, as between two file systems (`requireSameLevel`)"),
     ("path_remove_directory", "PathRemoveDirectory", "hostCtl", "removes a name"),
-    ("path_rename", "PathRename", "hostCtl", "moves a name; the two directories must have one level, or the run traps (`requireSameLevel`)"),
+    ("path_rename", "PathRename", "hostCtl", "moves a name; between directories of different levels it fails with `EXDEV`, as between two file systems (`requireSameLevel`)"),
     ("path_symlink", "PathSymlink", "hostCtl", "adds a name; the link's contents are a path and so public"),
     ("path_unlink_file", "PathUnlinkFile", "hostCtl", "removes a name"),
     ("sock_shutdown", "SockShutdown", "hostCtl", "closes a direction of a connection"),
@@ -549,12 +549,17 @@ Convince yourself of three things that the table rests on:
   link made outside the run is assumed.
 - **What decides a public status is public.** Paths, the contents of a symbolic link and the
   subscriptions of a poll must be public bytes (`peekPath`, `requireAtMost`). The list of
-  buffers of a read or a write may be as secret as the descriptor, and then a failure of the
-  call traps and is no status (`usingBuffers`, {wasi(r"^usingBuffers ::")}). Whether a name exists in a directory and what
+  buffers of a read or a write may be as secret as the descriptor, and then a buffer out of
+  bounds is an access out of bounds of the memory, a trap as in WebAssembly, and no status
+  (`usingBuffers`, {wasi(r"^usingBuffers ::")}). Whether a name exists in a directory and what
   kind of entry it is decide the status of the `path_` calls, in a secret directory too: the
-  model has the names in `sameHost`, as public. A read from a secret socket that does not
-  block, and a seek on a secret file that would land before its start, trap in place of a
-  status (`unlessWouldBlock`, the case of `FdSeek`).
+  model has the names in `sameHost`, as public. Where the outcome of a call would tell a
+  secret, the host refuses the call before it is made, with a status that depends on the
+  operands and on the levels of the descriptors, which are public: a secret socket is not made
+  non-blocking (`ENOTSUP`, `nonBlockingRefused`, {wasi(r"^nonBlockingRefused ::")}), a seek back
+  from the end or the position of a secret file is refused (`ENOTSUP`), and a rename or a link
+  between directories of different levels fails with `EXDEV`. The model has these statuses:
+  `hostStatus` takes the channels' levels.
 - **What the model leaves out.** A failure of the operating system on a secret file or
   connection (a full disk, a connection that the peer closed) is a status that the model does
   not have. `proc_exit` has no rule. `hostWrite` does not store how much it wrote, which the

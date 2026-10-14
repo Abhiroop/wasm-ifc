@@ -805,7 +805,7 @@ spec = do
             fmap describeCompletion leaked `shouldBe` Left (Trapped (SecretToHost "fd_write"))
             allowed <- runWithWasi noHost {descriptorLevels = publicDescriptors {standardOutput = High}} program "f" []
             fmap describeCompletion allowed `shouldBe` Right "returned [I32Value 0]"
-        it "a failure that a secret iovec array decides is a trap, and no status" $ do
+        it "a buffer out of bounds whose pointer is secret is an access out of bounds, and no status" $ do
             -- The iovec at 8 points outside the memory. Stored as public, the call reports the
             -- fault. Stored as a secret, for the secret standard output, the fault would tell
             -- of the secret pointer in the call's public status.
@@ -815,7 +815,7 @@ spec = do
             public <- runWithWasi secretOutput (program (Store SI32 (MemArg 0 0 0))) "f" []
             fmap describeCompletion public `shouldBe` Right "returned [I32Value 21]"
             secret <- runWithWasi secretOutput (program (Annotated High (Store SI32 (MemArg 0 0 0)))) "f" []
-            fmap describeCompletion secret `shouldBe` Left (Trapped (SecretToHost "fd_write"))
+            fmap describeCompletion secret `shouldBe` Left (Trapped OutOfBoundsMemoryAccess)
         it "the byte count of a read from a secret descriptor is secret" $ do
             -- fd_read of no bytes from stdin (fd 0), then a public load of the count it stored at 16.
             let body = [Const SI32 8, Const SI32 0, Store SI32 (MemArg 0 0 0), Const SI32 12, Const SI32 0, Store SI32 (MemArg 0 0 0), Const SI32 0, Const SI32 8, Const SI32 1, Const SI32 16, Call (FunctionIdx 0), Drop, Const SI32 16, Load SI32 (MemArg 0 0 0)]
@@ -858,6 +858,14 @@ spec = do
             run [Const SI32 3, Const SI32 8, Const SI32 1, Const SI32 0, Const SI32 16, Const SI32 20, Call (FunctionIdx 1)] `shouldReturn` Right "returned [I32Value 53]"
             -- fd_fdstat_set_flags(3, NONBLOCK), then sock_accept with nobody connecting: EAGAIN (6)
             run [Const SI32 3, Const SI32 4, Call (FunctionIdx 3), Drop, Const SI32 3, Const SI32 0, Const SI32 0, Call (FunctionIdx 0)] `shouldReturn` Right "returned [I32Value 6]"
+        it "a secret socket is not made non-blocking: whether something has arrived is its secret" $ do
+            (address, _) <- freeAddress
+            let cfg = noHost {listeners = [address], descriptorLevels = DescriptorLevels Low Low Low Map.empty (Map.singleton address High)}
+                run body = fmap describeCompletion <$> runWithWasi cfg (either (error . show) id (load (socketModule body))) "f" []
+            -- fd_fdstat_set_flags(3, NONBLOCK) on the secret socket: ENOTSUP (58), in every run
+            run [Const SI32 3, Const SI32 4, Call (FunctionIdx 3)] `shouldReturn` Right "returned [I32Value 58]"
+            -- sock_accept(3, NONBLOCK) for the connection: ENOTSUP before anything is accepted
+            run [Const SI32 3, Const SI32 4, Const SI32 0, Call (FunctionIdx 0)] `shouldReturn` Right "returned [I32Value 58]"
         it "a poll waits for a socket, and what it reports about a secret one is secret" $ do
             -- Two subscriptions at 0 and 48: to read from descriptor 3 (user data 5), and a clock that is
             -- due after a millisecond (user data 7). Nobody connects, so the one event, at 128, is the clock's.
@@ -889,10 +897,11 @@ spec = do
                 cfg levels = WasiConfig [] [] [Preopen "/a" "test", Preopen "/b" "src"] [] (DescriptorLevels Low Low Low levels Map.empty)
             oneLevel <- runWithWasi (cfg Map.empty) program "f" []
             fmap describeCompletion oneLevel `shouldBe` Right "returned [I32Value 44]"
+            -- between levels: EXDEV (75), as between two file systems, before anything is touched
             fromSecret <- runWithWasi (cfg (Map.singleton "/a" High)) program "f" []
-            fmap describeCompletion fromSecret `shouldBe` Left (Trapped (SecretToHost "path_rename"))
+            fmap describeCompletion fromSecret `shouldBe` Right "returned [I32Value 75]"
             toSecret <- runWithWasi (cfg (Map.singleton "/b" High)) program "f" []
-            fmap describeCompletion toSecret `shouldBe` Left (Trapped (SecretToHost "path_rename"))
+            fmap describeCompletion toSecret `shouldBe` Right "returned [I32Value 75]"
         it "a symbolic link does not lead out of its directory" $ do
             -- path_open, following links, of the one-byte name at 0 in the directory of fd 3.
             let pathOpen = wasiImport "path_open" (FuncType [I32, I32, I32, I32, I32, I64, I64, I32, I32] [I32])

@@ -44,11 +44,10 @@ data Trap
       call out of the module would have carried a secret
       -}
       InformationFlowViolation
-    | {- | a host call would have let a secret reach what is public: a byte more secret than the
-      descriptor it is for, or in a path or a list of buffers, which are public; a file moved
-      or linked between directories of different levels; or a failure that a secret decides
-      and the call's public status would report. The call does nothing. It is named as the
-      module imports it (@fd_write@).
+    | {- | a host call was handed a byte more secret than where it would go: data for a
+      descriptor of a lower level, or a path, a link's contents or the subscriptions of a poll,
+      which are public. The check at the host boundary, made before anything leaves the module.
+      The call is named as the module imports it (@fd_write@).
       -}
       SecretToHost Text
     | {- | @call_indirect@ through a function whose bound is below the one the instruction

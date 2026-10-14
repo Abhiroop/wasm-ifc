@@ -344,6 +344,10 @@ data Errno
       reported
       -}
       FlowViolation
+    | {- | not an errno: a buffer out of bounds whose pointer was secret, which ends the run as
+      an access out of bounds of the memory does
+      -}
+      SecretFault
     deriving stock (Eq, Show, Enum, Bounded)
 
 errnoWord :: Errno -> Word32
@@ -476,14 +480,14 @@ peekIovecs descriptor mem base count = do
     pure (Buffers (levelOfRange mem (fromIntegral base) (8 * fromIntegral count)) pairs)
 
 {- | The part of a call that uses the buffers of an iovec array. If the array has a secret
-  byte (which only a secret descriptor admits), then whether this part fails is a secret, for
-  instance by a pointer that is out of bounds, and the status of a call is public. So such a
-  failure is a flow violation, and the run ends.
+  byte (which only a secret descriptor admits), whether a buffer is out of bounds is a secret,
+  and the status of a call is public. So a buffer out of bounds ends the run, as an access out
+  of bounds of the memory does in WebAssembly, and is no status.
 -}
 usingBuffers :: Buffers -> ([(Word32, Word32)] -> Host a) -> Host a
 usingBuffers (Buffers level pairs) action = case level of
     Low -> action pairs
-    High -> action pairs `catchE` const (throwE FlowViolation)
+    High -> action pairs `catchE` \err -> throwE (if err == Fault then SecretFault else err)
 
 -- *** Descriptors ***
 
@@ -606,13 +610,16 @@ resolveUnder host fd right follow mem ptr len = do
     inside <- confine base follow target.host
     pure (directory, GuestPath inside target.mustBeDirectory)
 
-{- | Two directories that a call moves or links a file between must have one level. A file
-  that passed from a secret directory to a public one would be read there as public. In the
-  other direction a descriptor opened before, at the public level, would still read what is
-  then written to the file as a secret, and a hard link gives the file both levels at once.
+{- | Two directories that a call moves or links a file between must have one level, or the call
+  fails with 'Xdev', as a rename between two file systems does. A file that passed from a
+  secret directory to a public one would be read there as public. In the other direction a
+  descriptor opened before, at the public level, would still read what is then written to the
+  file as a secret, and a hard link gives the file both levels at once. The levels of
+  directories are public, so the status tells nothing secret, and a program falls back to a
+  copy, as it does across file systems: a copy goes through the checks of reads and writes.
 -}
 requireSameLevel :: Descriptor -> Descriptor -> Host ()
-requireSameLevel from to = unless (from.level == to.level) (throwE FlowViolation)
+requireSameLevel from to = unless (from.level == to.level) (throwE Xdev)
 
 -- *** File status ***
 
@@ -771,7 +778,8 @@ scatter level mem ((ptr, len) : rest) bytes
 
 {- | With the descriptor's non-blocking flag set, fail with 'Again' unless the socket has
   something to read or to accept now; without it, nothing: the operation that follows waits.
-  A secret socket that has nothing ends the run instead.
+  A secret socket never has the flag ('nonBlockingRefused'); if it had, the answer "not now"
+  would end the run, since it would tell in a public status what the socket's level protects.
 -}
 unlessWouldBlock :: Descriptor -> Net.Socket -> Host ()
 unlessWouldBlock descriptor socket = when (testBit descriptor.fdflags 2) $ do
@@ -780,6 +788,20 @@ unlessWouldBlock descriptor socket = when (testBit descriptor.fdflags 2) $ do
     -- it with the socket's level. The status of a call is public, so on a secret socket the
     -- answer "not now" is a flow violation.
     unless ready (throwE (if descriptor.level == High then FlowViolation else Again))
+
+{- | Whether a call that would make a socket non-blocking is refused: on a secret socket it is.
+  Whether something has arrived on a socket is the socket's to tell (which is why 'pollOneoff'
+  labels it with the socket's level), and a non-blocking read or accept would report it in its
+  public status (@EAGAIN@). The refusal is the status 'Notsup', which depends on the socket's
+  level, and levels are public. A secret socket is read by calls that wait, or through a poll.
+-}
+nonBlockingRefused :: Descriptor -> Bool -> Bool
+nonBlockingRefused descriptor nonBlocking = nonBlocking && descriptor.level == High && socketResource descriptor.resource
+  where
+    socketResource resource = case resource of
+        ListeningSocket _ -> True
+        Connection _ -> True
+        _ -> False
 
 {- | Whether a socket has something to read or to accept now. The run-time system reports
   readiness to a waiting thread, so this waits for it, for a millisecond.
@@ -832,6 +854,7 @@ completing mem action = do
     result <- runExceptT action
     pure $ case result of
         Left FlowViolation -> WasiTrap InformationFlowViolation
+        Left SecretFault -> WasiTrap OutOfBoundsMemoryAccess
         Left err -> WasiReturn (errnoWord err :# VNil) mem
         Right mem' -> WasiReturn (errnoWord Success :# VNil) mem'
 
@@ -882,6 +905,8 @@ runWasiCall host func args mem = case (func, args) of
         pokeFdstat mem outPtr filetype descriptor
     (FdFdstatSetFlags, flags :# fd :# VNil) -> completing mem $ do
         descriptor <- lookupFd host fd >>= requireRight 3
+        -- A secret socket is not made non-blocking ('nonBlockingRefused').
+        when (nonBlockingRefused descriptor (testBit flags 2)) (throwE Notsup)
         liftIO (replaceFd host fd descriptor {fdflags = fromIntegral flags})
         pure mem
     (FdFdstatSetRights, inheriting :# base :# fd :# VNil) -> completing mem $ do
@@ -957,12 +982,13 @@ runWasiCall host func args mem = case (func, args) of
             1 -> pure RelativeSeek
             2 -> pure SeekFromEnd
             _ -> throwE Inval
-        -- A seek from the end or from the position fails if it would land before the start,
-        -- which the file's size or position decides. Both are as secret as the descriptor and
-        -- the status is public, so on a secret file such a failure is a flow violation.
-        position <-
-            hostIO (fdSeek fd' mode (fromIntegral (toSigned64 offset)))
-                `catchE` \err -> throwE (if descriptor.level == High && whence /= 0 then FlowViolation else err)
+        -- A seek back from the end or from the position fails if it would land before the
+        -- start, which the file's size or position decides. Both are as secret as the
+        -- descriptor, and the status is public, so on a secret file such a seek is refused,
+        -- whether it would land in the file or not: the refusal depends on the operands and on
+        -- the descriptor's level, which are public. A seek forward cannot land before the start.
+        when (descriptor.level == High && whence /= 0 && toSigned64 offset < 0) (throwE Notsup)
+        position <- hostIO (fdSeek fd' mode (fromIntegral (toSigned64 offset)))
         pokeWord64At descriptor.level mem newPtr (fromIntegral position)
     (FdTell, outPtr :# fd :# VNil) -> completing mem $ do
         descriptor <- lookupFd host fd >>= requireRight rightFdTell
@@ -1056,6 +1082,7 @@ runWasiCall host func args mem = case (func, args) of
             Connection _ -> throwE Inval
             _ -> throwE Notsock
         _ <- requireRight rightSockAccept listener
+        when (nonBlockingRefused listener (testBit flags 2)) (throwE Notsup)
         unlessWouldBlock listener socket
         (connection, _) <- hostIO (Net.accept socket)
         accepted <- liftIO (insertFd host (Descriptor (Connection connection) listener.rightsInheriting 0 (fromIntegral flags .&. 4) listener.level))

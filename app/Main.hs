@@ -230,7 +230,7 @@ describeRunError err = case err of
     ArgumentType position expectedType actualType ->
         "argument " ++ show position ++ " should be " ++ show expectedType ++ ", got " ++ show actualType
     Trapped (SecretRead site) -> "trap: a load read a secret byte where the policy declares none; " ++ declareAt site
-    Trapped (SecretToHost call) -> "trap: " ++ T.unpack call ++ " would let a secret reach what is public (a secret byte for a public descriptor or in a path, a file between directories of different levels, or a status that a secret decides); the call did nothing"
+    Trapped (SecretToHost call) -> "trap: " ++ T.unpack call ++ " was handed a byte more secret than where it would go (a public descriptor, or a path, which is public); nothing was written"
     Trapped trap -> "trap: " ++ show trap
     HostCallNotServed -> "the function called into the host, which this path cannot serve"
 

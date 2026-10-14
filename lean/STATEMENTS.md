@@ -389,75 +389,80 @@ There are six primitives, one for each shape of rule:
 | `hostCtl` | line 999 | changes the descriptor table, the directories and the position of a descriptor, by functions of the operands and of what the table and the directories were (`State.control`, `Defs.lean:755`) |
 | `hostPoll` | line 1013 | stores a report on several descriptors at the join of their channels' levels (`State.pollLevel`, `Defs.lean:765`); the report is a function of what those channels have left to read |
 
-Each function of WASI Preview 1, with the case of `runWasiCall` (`Wasi.hs:843`)
+Each function of WASI Preview 1, with the case of `runWasiCall` (`Wasi.hs:866`)
 that serves it:
 
 | WASI function | Where | Shape | What in `Runtime.Wasi` makes it so |
 |---|---|---|---|
-| `fd_read` | `Wasi.hs:932` | `hostRead` | what is read and its count are stored at the descriptor's level (`readInto`, `pokeWord32At`) |
-| `fd_pread` | `Wasi.hs:910` | `hostRead` | as `fd_read`, at an offset that is an operand |
-| `sock_recv` | `Wasi.hs:1064` | `hostRead` | as `fd_read`; the flags it stores are at the connection's level too |
-| `fd_readdir` | `Wasi.hs:937` | `hostRead` | the entries and their size are stored at the directory's level |
-| `path_readlink` | `Wasi.hs:1011` | `hostRead` | the link's contents are stored at the directory's level |
-| `fd_filestat_get` | `Wasi.hs:892` | `hostRead` | the attributes are stored at the descriptor's level (`pokeStat`) |
-| `path_filestat_get` | `Wasi.hs:981` | `hostRead` | the attributes are stored at the directory's level |
-| `fd_tell` | `Wasi.hs:967` | `hostRead` | the position is stored at the descriptor's level |
-| `fd_write` | `Wasi.hs:972` | `hostWrite` | every byte taken must flow into the descriptor's level, or the run traps (`gather`) |
-| `fd_pwrite` | `Wasi.hs:924` | `hostWrite` | as `fd_write` |
-| `sock_send` | `Wasi.hs:1075` | `hostWrite` | as `fd_write` |
-| `path_open` | `Wasi.hs:1000` | `hostOpen` | the new descriptor has the directory's level and a public number (`openPath`, `insertFd`); the path is public (`peekPath`) and stays in the directory (`confine`) |
-| `sock_accept` | `Wasi.hs:1052` | `hostOpen` | the connection has the listening socket's level and a public number; in the model the connections of a socket are one channel, its file of the empty name |
-| `args_get` | `Wasi.hs:846` | `hostGet` | public bytes from the run's configuration |
-| `args_sizes_get` | `Wasi.hs:847` | `hostGet` | as `args_get` |
-| `environ_get` | `Wasi.hs:848` | `hostGet` | as `args_get` |
-| `environ_sizes_get` | `Wasi.hs:849` | `hostGet` | as `args_get` |
-| `clock_res_get` | `Wasi.hs:850` | `hostGet` | a public constant |
-| `clock_time_get` | `Wasi.hs:858` | `hostGet` | the time, stored as public: a public input of the run |
-| `random_get` | `Wasi.hs:1047` | `hostGet` | random bytes, stored as public: a public input of the run |
-| `fd_prestat_get` | `Wasi.hs:916` | `hostGet` | the length of a granted directory's name, from the descriptor table |
-| `fd_prestat_dir_name` | `Wasi.hs:919` | `hostGet` | a granted directory's name, from the descriptor table |
-| `fd_fdstat_get` | `Wasi.hs:874` | `hostGet` | the kind, the flags and the rights of a descriptor, from the descriptor table, stored as public (`pokeFdstat`) |
-| `fd_close` | `Wasi.hs:868` | `hostCtl` | removes a descriptor |
-| `fd_renumber` | `Wasi.hs:947` | `hostCtl` | moves a descriptor, with its level |
-| `fd_fdstat_set_flags` | `Wasi.hs:883` | `hostCtl` | changes a descriptor's flags |
-| `fd_fdstat_set_rights` | `Wasi.hs:887` | `hostCtl` | narrows a descriptor's rights |
-| `fd_seek` | `Wasi.hs:952` | `hostCtl` | moves the position; the new position is stored at the descriptor's level, as `fd_tell` stores it; a failure that the file's size or position decides traps on a secret file |
-| `fd_advise` | `Wasi.hs:859` | `hostCtl` | changes nothing |
-| `fd_allocate` | `Wasi.hs:864` | `hostCtl` | not supported: a status and nothing else |
-| `fd_datasync` | `Wasi.hs:872` | `hostCtl` | changes nothing that a program sees |
-| `fd_sync` | `Wasi.hs:873` | `hostCtl` | as `fd_datasync` |
-| `fd_filestat_set_size` | `Wasi.hs:895` | `hostCtl` | cuts or extends the file by an operand: what is left to read changes |
-| `fd_filestat_set_times` | `Wasi.hs:900` | `hostCtl` | sets times that are operands |
-| `path_create_directory` | `Wasi.hs:977` | `hostCtl` | adds a name to a directory |
-| `path_filestat_set_times` | `Wasi.hs:986` | `hostCtl` | sets times that are operands |
-| `path_link` | `Wasi.hs:991` | `hostCtl` | adds a name; the two directories must have one level, or the run traps (`requireSameLevel`) |
-| `path_remove_directory` | `Wasi.hs:1017` | `hostCtl` | removes a name |
-| `path_rename` | `Wasi.hs:1021` | `hostCtl` | moves a name; the two directories must have one level, or the run traps (`requireSameLevel`) |
-| `path_symlink` | `Wasi.hs:1027` | `hostCtl` | adds a name; the link's contents are a path and so public |
-| `path_unlink_file` | `Wasi.hs:1037` | `hostCtl` | removes a name |
-| `sock_shutdown` | `Wasi.hs:1083` | `hostCtl` | closes a direction of a connection |
-| `sched_yield` | `Wasi.hs:1046` | `hostCtl` | changes nothing |
-| `proc_raise` | `Wasi.hs:1045` | `hostCtl` | not supported: a status and nothing else |
-| `poll_oneoff` | `Wasi.hs:1044` | `hostPoll` | the events and their number are stored at the join of the levels of the sockets polled (`pollOneoff`); the subscriptions are public |
-| `proc_exit` | `Wasi.hs:845` | none | ends the run; the core has no rule for it, so a run that exits is as one that traps, and the theorem says nothing of it |
+| `fd_read` | `Wasi.hs:957` | `hostRead` | what is read and its count are stored at the descriptor's level (`readInto`, `pokeWord32At`) |
+| `fd_pread` | `Wasi.hs:935` | `hostRead` | as `fd_read`, at an offset that is an operand |
+| `sock_recv` | `Wasi.hs:1091` | `hostRead` | as `fd_read`; the flags it stores are at the connection's level too |
+| `fd_readdir` | `Wasi.hs:962` | `hostRead` | the entries and their size are stored at the directory's level |
+| `path_readlink` | `Wasi.hs:1037` | `hostRead` | the link's contents are stored at the directory's level |
+| `fd_filestat_get` | `Wasi.hs:917` | `hostRead` | the attributes are stored at the descriptor's level (`pokeStat`) |
+| `path_filestat_get` | `Wasi.hs:1007` | `hostRead` | the attributes are stored at the directory's level |
+| `fd_tell` | `Wasi.hs:993` | `hostRead` | the position is stored at the descriptor's level |
+| `fd_write` | `Wasi.hs:998` | `hostWrite` | every byte taken must flow into the descriptor's level, or the run traps (`gather`) |
+| `fd_pwrite` | `Wasi.hs:949` | `hostWrite` | as `fd_write` |
+| `sock_send` | `Wasi.hs:1102` | `hostWrite` | as `fd_write` |
+| `path_open` | `Wasi.hs:1026` | `hostOpen` | the new descriptor has the directory's level and a public number (`openPath`, `insertFd`); the path is public (`peekPath`) and stays in the directory (`confine`) |
+| `sock_accept` | `Wasi.hs:1078` | `hostOpen` | the connection has the listening socket's level and a public number; in the model the connections of a socket are one channel, its file of the empty name |
+| `args_get` | `Wasi.hs:869` | `hostGet` | public bytes from the run's configuration |
+| `args_sizes_get` | `Wasi.hs:870` | `hostGet` | as `args_get` |
+| `environ_get` | `Wasi.hs:871` | `hostGet` | as `args_get` |
+| `environ_sizes_get` | `Wasi.hs:872` | `hostGet` | as `args_get` |
+| `clock_res_get` | `Wasi.hs:873` | `hostGet` | a public constant |
+| `clock_time_get` | `Wasi.hs:881` | `hostGet` | the time, stored as public: a public input of the run |
+| `random_get` | `Wasi.hs:1073` | `hostGet` | random bytes, stored as public: a public input of the run |
+| `fd_prestat_get` | `Wasi.hs:941` | `hostGet` | the length of a granted directory's name, from the descriptor table |
+| `fd_prestat_dir_name` | `Wasi.hs:944` | `hostGet` | a granted directory's name, from the descriptor table |
+| `fd_fdstat_get` | `Wasi.hs:897` | `hostGet` | the kind, the flags and the rights of a descriptor, from the descriptor table, stored as public (`pokeFdstat`) |
+| `fd_close` | `Wasi.hs:891` | `hostCtl` | removes a descriptor |
+| `fd_renumber` | `Wasi.hs:972` | `hostCtl` | moves a descriptor, with its level |
+| `fd_fdstat_set_flags` | `Wasi.hs:906` | `hostCtl` | changes a descriptor's flags; a secret socket is not made non-blocking (`ENOTSUP`, `nonBlockingRefused`) |
+| `fd_fdstat_set_rights` | `Wasi.hs:912` | `hostCtl` | narrows a descriptor's rights |
+| `fd_seek` | `Wasi.hs:977` | `hostCtl` | moves the position; the new position is stored at the descriptor's level, as `fd_tell` stores it; on a secret file a seek back from the end or the position is refused (`ENOTSUP`), since whether it lands before the start is the file's secret |
+| `fd_advise` | `Wasi.hs:882` | `hostCtl` | changes nothing |
+| `fd_allocate` | `Wasi.hs:887` | `hostCtl` | not supported: a status and nothing else |
+| `fd_datasync` | `Wasi.hs:895` | `hostCtl` | changes nothing that a program sees |
+| `fd_sync` | `Wasi.hs:896` | `hostCtl` | as `fd_datasync` |
+| `fd_filestat_set_size` | `Wasi.hs:920` | `hostCtl` | cuts or extends the file by an operand: what is left to read changes |
+| `fd_filestat_set_times` | `Wasi.hs:925` | `hostCtl` | sets times that are operands |
+| `path_create_directory` | `Wasi.hs:1003` | `hostCtl` | adds a name to a directory |
+| `path_filestat_set_times` | `Wasi.hs:1012` | `hostCtl` | sets times that are operands |
+| `path_link` | `Wasi.hs:1017` | `hostCtl` | adds a name; between directories of different levels it fails with `EXDEV`, as between two file systems (`requireSameLevel`) |
+| `path_remove_directory` | `Wasi.hs:1043` | `hostCtl` | removes a name |
+| `path_rename` | `Wasi.hs:1047` | `hostCtl` | moves a name; between directories of different levels it fails with `EXDEV`, as between two file systems (`requireSameLevel`) |
+| `path_symlink` | `Wasi.hs:1053` | `hostCtl` | adds a name; the link's contents are a path and so public |
+| `path_unlink_file` | `Wasi.hs:1063` | `hostCtl` | removes a name |
+| `sock_shutdown` | `Wasi.hs:1110` | `hostCtl` | closes a direction of a connection |
+| `sched_yield` | `Wasi.hs:1072` | `hostCtl` | changes nothing |
+| `proc_raise` | `Wasi.hs:1071` | `hostCtl` | not supported: a status and nothing else |
+| `poll_oneoff` | `Wasi.hs:1070` | `hostPoll` | the events and their number are stored at the join of the levels of the sockets polled (`pollOneoff`); the subscriptions are public |
+| `proc_exit` | `Wasi.hs:868` | none | ends the run; the core has no rule for it, so a run that exits is as one that traps, and the theorem says nothing of it |
 
 Convince yourself of three things that the table rests on:
 
 - **A file has one level.** A file gets the level of the directory it is opened in
-  (`openPath`, `Wasi.hs:1155`). So a path must stay in its directory once symbolic
-  links are followed (`confine`, `Wasi.hs:568`), no call moves or links a file between
-  directories of different levels (`requireSameLevel`, `Wasi.hs:614`), and
+  (`openPath`, `Wasi.hs:1182`). So a path must stay in its directory once symbolic
+  links are followed (`confine`, `Wasi.hs:572`), no call moves or links a file between
+  directories of different levels (`requireSameLevel`, `Wasi.hs:621`), and
   the host refuses to start if a directory contains another of a different level
   (`newHost`, `Wasi.hs:194`). That the granted directories share no file by a hard
   link made outside the run is assumed.
 - **What decides a public status is public.** Paths, the contents of a symbolic link and the
   subscriptions of a poll must be public bytes (`peekPath`, `requireAtMost`). The list of
-  buffers of a read or a write may be as secret as the descriptor, and then a failure of the
-  call traps and is no status (`usingBuffers`, `Wasi.hs:483`). Whether a name exists in a directory and what
+  buffers of a read or a write may be as secret as the descriptor, and then a buffer out of
+  bounds is an access out of bounds of the memory, a trap as in WebAssembly, and no status
+  (`usingBuffers`, `Wasi.hs:487`). Whether a name exists in a directory and what
   kind of entry it is decide the status of the `path_` calls, in a secret directory too: the
-  model has the names in `sameHost`, as public. A read from a secret socket that does not
-  block, and a seek on a secret file that would land before its start, trap in place of a
-  status (`unlessWouldBlock`, the case of `FdSeek`).
+  model has the names in `sameHost`, as public. Where the outcome of a call would tell a
+  secret, the host refuses the call before it is made, with a status that depends on the
+  operands and on the levels of the descriptors, which are public: a secret socket is not made
+  non-blocking (`ENOTSUP`, `nonBlockingRefused`, `Wasi.hs:798`), a seek back
+  from the end or the position of a secret file is refused (`ENOTSUP`), and a rename or a link
+  between directories of different levels fails with `EXDEV`. The model has these statuses:
+  `hostStatus` takes the channels' levels.
 - **What the model leaves out.** A failure of the operating system on a secret file or
   connection (a full disk, a connection that the peer closed) is a status that the model does
   not have. `proc_exit` has no rule. `hostWrite` does not store how much it wrote, which the
