@@ -157,7 +157,8 @@ inductive Basic : Instr → List Nat → State → List Nat → State → Prop w
   | hostOpen {p o k a fd c d σ s} :
       s.fdt fd = some c → a + k ≤ s.size 0 → p < s.size 0 →
       (∀ x, a ≤ x → x < a + k → s.lab 0 x = Lab.L) →
-      (s.cells a k ∈ s.names c ∨ o % 2 = 1) → s.fresh d →
+      (s.cells a k ∈ s.names c ∨ o % 2 = 1) → s.chan (s.file c (s.cells a k)) = s.chan c →
+      s.fresh d →
       Basic .hostOpen (p :: o :: k :: a :: fd :: σ) s (0 :: σ)
         ((s.openAt c (s.cells a k) d).setMem 0 p d Lab.L)
   | hostOpenNone {p o k a fd c σ s} :
@@ -319,7 +320,7 @@ theorem Basic.eval {F : List Func} {n : Nat} {ls : List Nat} {i : Instr} {rest :
     {σ σ' : List Nat} {s s' : State} {o : Out} (h : Basic i σ s σ' s')
     (he : Eval F n ls rest σ' s' o) : Eval F (n + 1) ls (i :: rest) σ s o := by
   cases h with
-  | hostOpen h1 h2 h3 h4 h5 h6 => exact .hostOpen h1 h2 h3 h4 h5 h6 he
+  | hostOpen h1 h2 h3 h4 h5 h6 h7 => exact .hostOpen h1 h2 h3 h4 h5 h6 h7 he
   | hostOpenNone h1 h2 h3 h4 h5 h6 => exact .hostOpenNone h1 h2 h3 h4 h5 h6 he
   | hostRead h1 h2 h3 h4 => exact .hostRead h1 h2 h3 h4 he
   | hostReadFail h => exact .hostReadFail h he

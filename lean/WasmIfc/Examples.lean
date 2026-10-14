@@ -256,10 +256,10 @@ example : WellLTyped moduleCtx [identity, callsIdentity] := by
   match i, hf with
   | 0, hf =>
     cases hf
-    exact ⟨rfl, _, .localGet 0 .nil, .inl rfl⟩
+    exact ⟨rfl, (fun _ _ h => nomatch h), _, .localGet 0 .nil, .inl rfl⟩
   | 1, hf =>
     cases hf
-    exact ⟨rfl, _, .const 3 (LTyped.call (ft := identity.ty) (targs := [Lab.L]) (st := []) rfl
+    exact ⟨rfl, (fun _ _ h => nomatch h), _, .const 3 (LTyped.call (ft := identity.ty) (targs := [Lab.L]) (st := []) rfl
       (Lab.le_refl _) (SFlows.refl _) .nil), .inl rfl⟩
   | i + 2, hf => simp at hf
 
@@ -477,7 +477,8 @@ def opener : Func where
 The run, from a state where descriptor 3 is to the channel 9 and descriptor 4 is free: the
 status is 0, and descriptor 4 is to the file of that name in that directory.
 -/
-example (s : State) (hdir : s.fdt 3 = some 9) (hfree : s.fdt 4 = none) (hsize : 0 < s.size 0) :
+example (s : State) (hdir : s.fdt 3 = some 9) (hfree : s.fdt 4 = none) (hsize : 0 < s.size 0)
+    (hlevel : s.chan (s.file 9 []) = s.chan 9) :
     ∃ t, Runs [opener] (Config.entry opener [] s) (.returned [0] t) ∧
       t.fdt 4 = some (s.file 9 []) := by
   have hfresh : State.fresh { s with loc := frame [] } 4 :=
@@ -488,7 +489,7 @@ example (s : State) (hdir : s.fdt 3 = some 9) (hfree : s.fdt 4 = none) (hsize : 
   refine ⟨_, .go (.basic (.const 3)) <| .go (.basic (.const 0)) <| .go (.basic (.const 0)) <|
     .go (.basic (.const 1)) <| .go (.basic (.const 0)) <|
     .go (.basic (.hostOpen (c := 9) (d := 4) hdir (Nat.zero_le _) hsize
-      (fun x h1 h2 => absurd h2 (by omega)) (.inr rfl) hfresh)) <|
+      (fun x h1 h2 => absurd h2 (by omega)) (.inr rfl) hlevel hfresh)) <|
     .go (.endCall nothingKept) <| .stop .done, ?_⟩
   simp [State.openAt, State.setMem, State.cells]
 

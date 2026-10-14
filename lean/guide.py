@@ -74,7 +74,7 @@ HOST = [
     ("sched_yield", "SchedYield", "hostCtl", "changes nothing"),
     ("proc_raise", "ProcRaise", "hostCtl", "not supported: a status and nothing else"),
     ("poll_oneoff", "PollOneoff", "hostPoll", "the events and their number are stored at the join of the levels of the sockets polled (`pollOneoff`); the subscriptions are public"),
-    ("proc_exit", "ProcExit", "none", "ends the run; the core has no rule for it, so a run that exits is as one that traps, and the theorem says nothing of it"),
+    ("proc_exit", "ProcExit", "hostExit", "ends the run; the core types it under a public pc with a public code and gives it no evaluation rule, so a run that exits is as one that traps, and the theorem says nothing of it"),
 ]
 
 
@@ -154,6 +154,7 @@ RULES = [
     ("hostGet", "a call of a host import that stores public data from no descriptor", "T+-Call", "the arguments, the environment, the clocks, random numbers"),
     ("hostCtl", "a call of a host import that changes the descriptor table, a directory or a position", "T+-Call", "`fd_close`, `fd_seek`, `path_rename` and the like"),
     ("hostPoll", "the host function `PollOneoff`", "T+-Call", "what it reports is at the join of the levels of the descriptors polled"),
+    ("hostExit", "the host function `ProcExit`", "T+-Call", "no evaluation rule: a run that exits ends in no outcome, as one that traps"),
     ("hostOpen", "the host function `PathOpen` (`Runtime.Host`), which is not an instruction", "T+-Call", "`path_open`"),
     ("block", "`IBlock`", "T+-Block", "with `Restores`, the comparison of preserved globals"),
     ("loop", "`ILoop`", "T+-Loop", "with `Restores`"),
@@ -276,7 +277,7 @@ of SecWasm's full version): the column marks them "(SecWasm)". Its own rules are
 T+-Block and so on (its figures of rules in the appendix). Where the column says "as" a rule,
 the paper prints no rule for the instruction and says in the text of the appendix that it
 follows that one. The paper types a call of a
-host import by T+-Call; the core's six host instructions stand for such calls (section 8), with the
+host import by T+-Call; the core's seven host instructions stand for such calls (section 8), with the
 host's part of the call in their rules.
 
 Two side definitions carry premises:
@@ -295,10 +296,10 @@ and each is a premise of the Lean rule.
 `WellLTyped C F` ({at("Defs", r"^def WellLTyped")}) is the paper's rule for functions, for every
 function of the module: its body is typed under the one label of the function, from an empty
 segment, at the function's bound; and either it ends under a public pc or the function
-compares every preserved global at its return (`Validation.Shape.ReturnsWith`). It does not
-ask a function's results to be at least its bound (the premise of the paper's T+-Func that,
-as the paper says, the types do not enforce); the rules for the indirect call and the
-call through a reference ask that of the type they expect, which is where the proof uses it.
+compares every preserved global at its return (`Validation.Shape.ReturnsWith`). It also asks,
+as the paper's T+-Func does, that the function's results be at least its bound, which the
+policy stage checks for every function type of the module; the proof uses it where two runs
+call different functions through a secret index or reference.
 
 ## 4. States and semantics
 
@@ -520,7 +521,7 @@ call does, and one for any other status, which leaves the state as it was. Both 
 What a public pointer among the operands points to (a path, the subscriptions of a poll)
 counts as an operand: the host checks those bytes to be public before it uses them.
 
-There are six primitives, one for each shape of rule:
+There are seven primitives, one for each shape of rule:
 
 | Primitive | Rule | What it does on success |
 |---|---|---|
@@ -529,6 +530,7 @@ There are six primitives, one for each shape of rule:
 | `hostOpen` | line {evaluated["hostOpen"]} | makes a descriptor, with a public number, for a file of a directory; the name's bytes must be public |
 | `hostGet` | line {evaluated["hostGet"]} | stores public data of a public source that has no descriptor |
 | `hostCtl` | line {evaluated["hostCtl"]} | changes the descriptor table, the directories and the position of a descriptor, by functions of the operands and of what the table and the directories were (`State.control`, {at("Defs", r"^def State.control")}) |
+| `hostExit` | none | ends the run: no outcome, as a trap, so the theorem says nothing of a run that exits |
 | `hostPoll` | line {evaluated["hostPoll"]} | stores a report on several descriptors at the join of their channels' levels (`State.pollLevel`, {at("Defs", r"^def State.pollLevel")}); the report is a function of what those channels have left to read |
 
 Each function of WASI Preview 1, with the case of `runWasiCall` ({wasi(r"^runWasiCall ::")})
@@ -540,8 +542,10 @@ that serves it:
 
 Convince yourself of three things that the table rests on:
 
-- **A file has one level.** A file gets the level of the directory it is opened in
-  (`openPath`, {wasi(r"^openPath ::")}). So a path must stay in its directory once symbolic
+- **A file has its directory's level.** The rule `hostOpen` has the premise that the channel
+  of the file opened has the level of the directory's channel: a descriptor inherits the
+  level of the directory, as the paper says. The host keeps this true: a file gets the level
+  of the directory it is opened in (`openPath`, {wasi(r"^openPath ::")}). So a path must stay in its directory once symbolic
   links are followed (`confine`, {wasi(r"^confine ::")}), no call moves or links a file between
   directories of different levels (`requireSameLevel`, {wasi(r"^requireSameLevel ::")}), and
   the host refuses to start if a directory contains another of a different level
@@ -562,7 +566,8 @@ Convince yourself of three things that the table rests on:
   `hostStatus` takes the channels' levels.
 - **What the model leaves out.** A failure of the operating system on a secret file or
   connection (a full disk, a connection that the peer closed) is a status that the model does
-  not have. `proc_exit` has no rule. `hostWrite` does not store how much it wrote, which the
+  not have. `proc_exit` is `hostExit`, typed and without an evaluation rule, so a run that
+  exits has no outcome. `hostWrite` does not store how much it wrote, which the
   host stores at the descriptor's level. `fd_seek` is a `hostCtl` that also stores the new
   position, as `fd_tell` would.
 
@@ -593,8 +598,7 @@ tables among them. What it does not model: that a value of a type is within that
 
 The numeric and vector instructions one by one (an operation is any function on numbers, of
 one or two operands, total or partial); the ranges of the value types;
-linking; `proc_exit`, and the failures of the operating system on a secret file or connection
-(section 8); local variables split into webs and the inference of labels, which
+linking; the failures of the operating system on a secret file or connection (section 8); local variables split into webs and the inference of labels, which
 happen before typing; declassification.
 """
     (HERE / "STATEMENTS.md").write_text(text)

@@ -116,6 +116,8 @@ inductive Instr where
   | hostCtl
   /-- a host call that reports on several descriptors at once (`poll_oneoff`) -/
   | hostPoll
+  /-- `proc_exit`: a host call that ends the run, with a public code -/
+  | hostExit
   /-- `fill m lm`: write one value to a range of cells of the memory `m` and label them `lm` -/
   | fill (m : Nat) (lm : Lab)
   /--
@@ -326,6 +328,9 @@ inductive LTyped (C : Ctx) : List STy → List Instr → Pcs → STy → Pcs →
   | hostPoll {Ls rest Pr st P' st'} :
       LTyped C Ls rest (Lab.L :: Pr) (Lab.L :: st) P' st' →
       LTyped C Ls (.hostPoll :: rest) (Lab.L :: Pr) (Lab.L :: Lab.L :: Lab.L :: Lab.L :: st) P' st'
+  /-- `proc_exit` ends the run, so nothing after it is typed; it has no evaluation rule. -/
+  | hostExit {Ls rest Pr st stAny} :
+      LTyped C Ls (.hostExit :: rest) (Lab.L :: Pr) (Lab.L :: st) (Lab.L :: Pr) stAny
   /--
   Opening a file is a host call: under a public pc, with public arguments (where to put the new
   descriptor, the open flags, the length and the address of the name, the directory's
@@ -446,16 +451,16 @@ inductive LTyped (C : Ctx) : List STy → List Instr → Pcs → STy → Pcs →
         (raise pc (pc :: Pr) (Ls.length - 1)) stAny
   /--
   The pc, the level of the table index and the level of the table flow into the bound of the
-  expected type, whose results are at least its bound (the type is well formed, as the paper's
-  rule for functions asks of every function type).
+  expected type. That the results of a function are at least its bound is asked of every
+  function of the module (`WellLTyped`), which is where the proof of this case gets it.
   -/
   | callIndirect {Ls rest pc Pr l x ps b rs targs st P' st'} :
-      Lab.le (pc.join (l.join (C.table x))) b → AllGe b rs → SFlows targs ps →
+      Lab.le (pc.join (l.join (C.table x))) b → SFlows targs ps →
       LTyped C Ls rest (pc :: Pr) (rs ++ st) P' st' →
       LTyped C Ls (.callIndirect x ps b rs :: rest) (pc :: Pr) (l :: (targs ++ st)) P' st'
   /-- An indirect tail call: the premises of the indirect call, then those of `return`. -/
   | retCallIndirect {Ls rest pc Pr l x ps b rs ret targs st stAny} :
-      Lab.le (pc.join (l.join (C.table x))) b → AllGe b rs → SFlows targs ps →
+      Lab.le (pc.join (l.join (C.table x))) b → SFlows targs ps →
       Ls[Ls.length - 1]? = some ret → AllGe pc ret → SFlows rs ret →
       LTyped C Ls (.retCallIndirect x ps b rs :: rest) (pc :: Pr) (l :: (targs ++ st))
         (raise pc (pc :: Pr) (Ls.length - 1)) stAny
@@ -464,7 +469,7 @@ inductive LTyped (C : Ctx) : List STy → List Instr → Pcs → STy → Pcs →
   callee as a table index does, so its level is in the premise on the bound.
   -/
   | callRef {Ls rest pc Pr l ps b rs targs st P' st'} :
-      Lab.le (pc.join l) b → AllGe b rs → SFlows targs ps →
+      Lab.le (pc.join l) b → SFlows targs ps →
       LTyped C Ls rest (pc :: Pr) (rs ++ st) P' st' →
       LTyped C Ls (.callRef ps b rs :: rest) (pc :: Pr) (l :: (targs ++ st)) P' st'
   | unreachable {Ls rest P st stAny} :
@@ -508,14 +513,15 @@ def Func.locals (f : Func) : Nat → Lab := fun i => ((f.ty.params ++ f.extra)[i
 def Ctx.enter (C : Ctx) (f : Func) : Ctx := { C with locals := f.locals }
 
 /--
-A module is well typed if each function has the type the context gives it and its body is
-typed as the paper's rule for functions says: under the one label of the function, whose type
-is the result type, from the empty segment, at the function's bound. If the pc may be secret
-when the function returns, every preserved global is among those compared at the return.
+A module is well typed if each function has the type the context gives it, its results are at
+least its bound, and its body is typed as the paper's rule for functions says: under the one
+label of the function, whose type is the result type, from the empty segment, at the
+function's bound. If the pc may be secret when the function returns, every preserved global is
+among those compared at the return.
 -/
 def WellLTyped (C : Ctx) (F : List Func) : Prop :=
   ∀ (i : Nat) (f : Func), F[i]? = some f →
-    C.funcs[i]? = some f.ty ∧
+    C.funcs[i]? = some f.ty ∧ AllGe f.ty.bound f.ty.results ∧
       ∃ p, LTyped (C.enter f) [f.ty.results] f.body [f.ty.bound] [] [p] f.ty.results ∧
         (p = Lab.L ∨ ∀ j, C.preserved j → j ∈ f.keep)
 
@@ -1026,12 +1032,14 @@ inductive Eval (F : List Func) : Nat → List Nat → List Instr → List Nat �
   Open the file whose name is the `k` cells from `a`, in the directory `c` of the descriptor
   `fd`: a trap if a byte of the name is secret. If the directory has the name, or the flags
   `o` ask for the file to be made (`O_CREAT`, their lowest bit), the new descriptor is put in
-  the cell `p` as a public value and the status is 0.
+  the cell `p` as a public value and the status is 0. The file's channel has the directory's
+  level: a descriptor inherits the level of the directory its file is opened in.
   -/
   | hostOpen {n ls rest p o k a fd c d σ s out} :
       s.fdt fd = some c → a + k ≤ s.size 0 → p < s.size 0 →
       (∀ x, a ≤ x → x < a + k → s.lab 0 x = Lab.L) →
-      (s.cells a k ∈ s.names c ∨ o % 2 = 1) → s.fresh d →
+      (s.cells a k ∈ s.names c ∨ o % 2 = 1) → s.chan (s.file c (s.cells a k)) = s.chan c →
+      s.fresh d →
       Eval F n ls rest (0 :: σ) ((s.openAt c (s.cells a k) d).setMem 0 p d Lab.L) out →
       Eval F (n + 1) ls (.hostOpen :: rest) (p :: o :: k :: a :: fd :: σ) s out
   /-- Otherwise nothing is opened, and the status says so. -/

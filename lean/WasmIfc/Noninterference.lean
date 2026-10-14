@@ -994,14 +994,15 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
           obtain ⟨rfl, rfl, rfl, rfl, hσd⟩ := four_public hσ
           rw [hs.status] at he0'
           exact ih _ (by omega) hF ht' he0' he1' (.cons (fun _ => rfl) hσd) hs hp
+    | hostExit => cases he0
     | hostOpen ht' =>
       -- the arguments are public, and so are the name's bytes in both runs, by the check:
       -- the two runs look the same name up in the same directory
       have hhost := hs.host
       cases he0 with
-      | hostOpen hc0 hb0 hp0 hl0 hin0 hd0 he0' =>
+      | hostOpen hc0 hb0 hp0 hl0 hin0 hch0 hd0 he0' =>
         cases he1 with
-        | hostOpen hc1 hb1 hp1 hl1 hin1 hd1 he1' =>
+        | hostOpen hc1 hb1 hp1 hl1 hin1 hch1 hd1 he1' =>
           obtain ⟨rfl, rfl, rfl, rfl, rfl, hσ'⟩ := five_public hσ
           rw [hhost.1] at hc0
           cases hc0.symm.trans hc1
@@ -1018,7 +1019,7 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
           exact absurd hin0 (fun h => h.elim hin1 ho1)
       | hostOpenNone hc0 hb0 hp0 hl0 hin0 ho0 he0' =>
         cases he1 with
-        | hostOpen hc1 hb1 hp1 hl1 hin1 hd1 he1' =>
+        | hostOpen hc1 hb1 hp1 hl1 hin1 hch1 hd1 he1' =>
           obtain ⟨rfl, rfl, rfl, rfl, rfl, hσ'⟩ := five_public hσ
           rw [hhost.1] at hc0
           cases hc0.symm.trans hc1
@@ -1426,7 +1427,7 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
       obtain ⟨f0, args0, base0, m0, ob0, hf0, rfl, hargs0, hm0, hb0, hc0⟩ := call_inv he0
       obtain ⟨f1, args1, base1, m1, ob1, hf1, rfl, hargs1, hm1, hb1, hc1⟩ := call_inv he1
       cases hf0.symm.trans hf1
-      obtain ⟨hty, q, hbodyT, hret⟩ := hF _ _ hf0
+      obtain ⟨hty, _, q, hbodyT, hret⟩ := hF _ _ hf0
       cases hft.symm.trans hty
       obtain ⟨hargs, hbase⟩ := StkRel.split hσ (hargs0.trans hfl.length_eq.symm)
         (hargs1.trans hfl.length_eq.symm)
@@ -1464,7 +1465,7 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
       obtain ⟨f0, args0, base0, m0, ob0, hf0, rfl, hargs0, hm0, hb0, hc0⟩ := retCall_inv he0
       obtain ⟨f1, args1, base1, m1, ob1, hf1, rfl, hargs1, hm1, hb1, hc1⟩ := retCall_inv he1
       cases hf0.symm.trans hf1
-      obtain ⟨hty, q, hbodyT, hret⟩ := hF _ _ hf0
+      obtain ⟨hty, _, q, hbodyT, hret⟩ := hF _ _ hf0
       cases hft.symm.trans hty
       obtain ⟨hargs, hbase⟩ := StkRel.split hσ (hargs0.trans hfl.length_eq.symm)
         (hargs1.trans hfl.length_eq.symm)
@@ -1499,7 +1500,7 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
             cases ho1.symm.trans hob1
             subst ho1'
             exact .inl (.tailExn htag hlen (StRel.leave hs hst) (fun i hi => hpe i hi))
-    | @callIndirect _ _ _ _ _ x _ _ _ _ _ _ _ hpc hge hfl hrest =>
+    | @callIndirect _ _ _ _ _ x _ _ _ _ _ _ _ hpc hfl hrest =>
       obtain ⟨c0, i0, f0, args0, base0, m0, ob0, htbl0, hf0, hps0, hrs0, hbd0, rfl, hargs0, hm0, hb0, hc0⟩ :=
         callIndirect_inv he0
       obtain ⟨c1, i1, f1, args1, base1, m1, ob1, htbl1, hf1, hps1, hrs1, hbd1, rfl, hargs1, hm1, hb1, hc1⟩ :=
@@ -1508,8 +1509,8 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
       | cons hc hσ' =>
         obtain ⟨hargs, hbase⟩ := StkRel.split hσ' (hargs0.trans hfl.length_eq.symm)
           (hargs1.trans hfl.length_eq.symm)
-        obtain ⟨_, q0, hbody0, hret0⟩ := hF _ _ hf0
-        obtain ⟨_, q1, hbody1, hret1⟩ := hF _ _ hf1
+        obtain ⟨_, hge0, q0, hbody0, hret0⟩ := hF _ _ hf0
+        obtain ⟨_, hge1, q1, hbody1, hret1⟩ := hF _ _ hf1
         rw [← hrs0] at hb0
         rw [← hrs1] at hb1
         rcases Lab.table_cases (C.table x) hc with ⟨hcc, hlt⟩ | hsec
@@ -1554,6 +1555,9 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
           subst hbound
           have hb0H := hbd0 rfl
           have hb1H := hbd1 rfl
+          -- the callee's results are at least its bound, which is secret
+          rw [hb0H, hrs0] at hge0
+          have hge := hge0
           obtain ⟨hcf0, hi0⟩ := confine _ (hF.enter _) hbody0
             (by rw [hb0H]; exact hiUpTo_zero_cons _) rfl hb0
           obtain ⟨hcf1, hi1⟩ := confine _ (hF.enter _) hbody1
@@ -1586,7 +1590,7 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
               · exact .inl (fun i hi =>
                   ((hk0 i (hcov0 i hi)).trans (he i hi)).trans (hk1 i (hcov1 i hi)).symm)
               · exact .inr hh
-    | callRef hpc hge hfl hrest =>
+    | callRef hpc hfl hrest =>
       obtain ⟨c0, i0, f0, args0, base0, m0, ob0, href0, hf0, hps0, hrs0, hbd0, rfl, hargs0, hm0, hb0, hc0⟩ :=
         callRef_inv he0
       obtain ⟨c1, i1, f1, args1, base1, m1, ob1, href1, hf1, hps1, hrs1, hbd1, rfl, hargs1, hm1, hb1, hc1⟩ :=
@@ -1595,8 +1599,8 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
       | cons hc hσ' =>
         obtain ⟨hargs, hbase⟩ := StkRel.split hσ' (hargs0.trans hfl.length_eq.symm)
           (hargs1.trans hfl.length_eq.symm)
-        obtain ⟨_, q0, hbody0, hret0⟩ := hF _ _ hf0
-        obtain ⟨_, q1, hbody1, hret1⟩ := hF _ _ hf1
+        obtain ⟨_, hge0, q0, hbody0, hret0⟩ := hF _ _ hf0
+        obtain ⟨_, hge1, q1, hbody1, hret1⟩ := hF _ _ hf1
         rw [← hrs0] at hb0
         rw [← hrs1] at hb1
         rcases cond_cases hc with hcc | hlH
@@ -1641,6 +1645,9 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
           subst hbound
           have hb0H := hbd0 rfl
           have hb1H := hbd1 rfl
+          -- the callee's results are at least its bound, which is secret
+          rw [hb0H, hrs0] at hge0
+          have hge := hge0
           obtain ⟨hcf0, hi0⟩ := confine _ (hF.enter _) hbody0
             (by rw [hb0H]; exact hiUpTo_zero_cons _) rfl hb0
           obtain ⟨hcf1, hi1⟩ := confine _ (hF.enter _) hbody1
@@ -1673,7 +1680,7 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
               · exact .inl (fun i hi =>
                   ((hk0 i (hcov0 i hi)).trans (he i hi)).trans (hk1 i (hcov1 i hi)).symm)
               · exact .inr hh
-    | @retCallIndirect _ _ _ _ _ x _ _ _ _ _ _ _ hpc hge hfl hLs hgr hres =>
+    | @retCallIndirect _ _ _ _ _ x _ _ _ _ _ _ _ hpc hfl hLs hgr hres =>
       -- the indirect call, then the branch to the function's label with what the callee returned
       obtain ⟨c0, i0, f0, args0, base0, m0, ob0, htbl0, hf0, hps0, hrs0, hbd0, rfl, hargs0, hm0, hb0, hc0⟩ :=
         retCallIndirect_inv he0
@@ -1683,8 +1690,8 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
       | cons hc hσ' =>
         obtain ⟨hargs, hbase⟩ := StkRel.split hσ' (hargs0.trans hfl.length_eq.symm)
           (hargs1.trans hfl.length_eq.symm)
-        obtain ⟨_, q0, hbody0, hret0⟩ := hF _ _ hf0
-        obtain ⟨_, q1, hbody1, hret1⟩ := hF _ _ hf1
+        obtain ⟨_, hge0, q0, hbody0, hret0⟩ := hF _ _ hf0
+        obtain ⟨_, hge1, q1, hbody1, hret1⟩ := hF _ _ hf1
         rw [← hrs0] at hb0
         rw [← hrs1] at hb1
         simp only [List.length_map] at hc0 hc1
@@ -1730,6 +1737,9 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
           subst hbound
           have hb0H := hbd0 rfl
           have hb1H := hbd1 rfl
+          -- the callee's results are at least its bound, which is secret
+          rw [hb0H, hrs0] at hge0
+          have hge := hge0
           obtain ⟨hcf0, hi0⟩ := confine _ (hF.enter _) hbody0
             (by rw [hb0H]; exact hiUpTo_zero_cons _) rfl hb0
           obtain ⟨hcf1, hi1⟩ := confine _ (hF.enter _) hbody1
@@ -1826,7 +1836,7 @@ theorem tini {C : Ctx} (hF : WellLTyped C F) {i : Nat} {f : Func} (hf : F[i]? = 
       (Kept f.keep s0 t0 → Kept f.keep s1 t1 → PresEq C t0 t1)) ∨
     (∃ t w u0 u1, o0.thrown = some (t, w, u0) ∧ o1.thrown = some (t, w, u1) ∧
       StRel C { u0 with loc := s0.loc } { u1 with loc := s1.loc } ∧ PresEq C u0 u1) := by
-  obtain ⟨_, q, hbody, hret⟩ := hF _ _ hf
+  obtain ⟨_, _, q, hbody, hret⟩ := hF _ _ hf
   rcases fun_result (ni n0 (hF.enter f) hbody h0 h1 .nil (StRel.enter ha hs)
       (.inl (fun i hi => hp i hi))) with
     ⟨r0, t0, r1, t1, hl0, hl1, hres, hst, hpt⟩ | ⟨t, k, w, u0, u1, ho0, ho1, _, _, hst, hpe⟩

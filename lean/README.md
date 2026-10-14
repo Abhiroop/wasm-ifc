@@ -173,13 +173,15 @@ paper's appendix B.4 has no counterpart here.
 - **The comparison names its globals.** The implementation compares every preserved global of
   the module, which a typed construct cannot leave out. Here a construct lists the globals it
   compares, and the rule asks that the list cover the preserved ones where the pc drops.
-- **The host is six calls**, one for each shape of rule that the functions of WASI have:
+- **The host is seven calls**, one for each shape of rule that the functions of WASI have:
   one reads from a descriptor, one writes to one, one opens a file in a directory, one stores
   public data that comes from no descriptor, one changes the descriptor table, a directory or
-  a position, and one polls several descriptors. Each returns a status, which is a function
+  a position, one polls several descriptors, and one ends the run (`proc_exit`, which has
+  no evaluation). Each returns a status, which is a function
   of the call's operands and of the public part of the state (`hostStatus`): the paper's
   assumption about the host is this definition. `STATEMENTS.md` has the shape of each of the
-  46 functions. `proc_exit` and the operating system's failures are not modelled.
+  46 functions. `proc_exit` is typed and has no evaluation, so a run that exits has no
+  outcome; the operating system's failures are not modelled.
 - **The core is small.** The proofs are for one value type, and `ValueTypes.lean` adds the
   value types on top by erasure; two levels; the semantics of a tail call does not
   model that it runs in constant space. A tag is the number of public values its exceptions

@@ -1127,10 +1127,11 @@ theorem rise_labels {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : Pcs} {st 
   | brTable _ _ _ => exact sflows_raise _ _ _
   | ret _ _ _ => exact sflows_raise _ _ _
   | retCall _ _ _ _ _ _ => exact sflows_raise _ _ _
-  | retCallIndirect _ _ _ _ _ _ => exact sflows_raise _ _ _
+  | retCallIndirect _ _ _ _ _ => exact sflows_raise _ _ _
   | call _ _ _ _ ih => exact ih
-  | callIndirect _ _ _ _ ih => exact ih
-  | callRef _ _ _ _ ih => exact ih
+  | callIndirect _ _ _ ih => exact ih
+  | callRef _ _ _ ih => exact ih
+  | hostExit => exact SFlows.refl _
   | unreachable => exact SFlows.refl _
   | throw _ _ _ => exact SFlows.refl _
   | throwRef => exact SFlows.refl _

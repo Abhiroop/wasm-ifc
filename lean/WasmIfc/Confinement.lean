@@ -228,7 +228,7 @@ theorem confine : ∀ (n : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P'
     | hostPollFail _ he' =>
       cases ht with
       | hostPoll _ => exact absurd hP.head (by decide)
-    | hostOpen _ _ _ _ _ _ he' =>
+    | hostOpen _ _ _ _ _ _ _ he' =>
       cases ht with
       | hostOpen _ => exact absurd hP.head (by decide)
     | hostOpenNone _ _ _ _ _ _ he' =>
@@ -392,7 +392,7 @@ theorem confine : ∀ (n : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P'
     | retCall hf hargs hb hl hk =>
       cases ht with
       | retCall hft hpc hfl hLs hge hres =>
-        obtain ⟨hty, P'', hbodyT, _⟩ := hF _ _ hf
+        obtain ⟨hty, _, P'', hbodyT, _⟩ := hF _ _ hf
         cases hft.symm.trans hty
         have hpcH := hP.head
         subst hpcH
@@ -408,7 +408,7 @@ theorem confine : ∀ (n : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P'
     | retCallExn hf hargs hb hth =>
       cases ht with
       | retCall hft hpc hfl hLs hge hres =>
-        obtain ⟨hty, P'', hbodyT, _⟩ := hF _ _ hf
+        obtain ⟨hty, _, P'', hbodyT, _⟩ := hF _ _ hf
         cases hft.symm.trans hty
         have hbound := hpc hP.head
         exact ((ih _ (by omega) (hF.enter _) hbodyT
@@ -416,15 +416,15 @@ theorem confine : ∀ (n : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P'
     | callExn hf hargs hb hth =>
       cases ht with
       | call hft hpc hfl hrest =>
-        obtain ⟨hty, P'', hbodyT, _⟩ := hF _ _ hf
+        obtain ⟨hty, _, P'', hbodyT, _⟩ := hF _ _ hf
         cases hft.symm.trans hty
         have hbound := hpc hP.head
         exact ((ih _ (by omega) (hF.enter _) hbodyT
           (by rw [hbound]; exact hiUpTo_zero_cons _) rfl hb).2.not_thrown hth).elim
     | callIndirect htbl hf hps hrs hbd hargs hb hl hk hr =>
       cases ht with
-      | callIndirect hpc hge hfl hrest =>
-        obtain ⟨_, P'', hbodyT, _⟩ := hF _ _ hf
+      | callIndirect hpc hfl hrest =>
+        obtain ⟨_, _, P'', hbodyT, _⟩ := hF _ _ hf
         have hpcH := hP.head
         subst hpcH
         have hbound := hpc (Lab.H_join _)
@@ -446,8 +446,8 @@ theorem confine : ∀ (n : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P'
         exact ⟨(Conf.call (hst' ▸ hs1)).trans h1, h2⟩
     | callIndirectExn htbl hf hps hrs hbd hargs hb hth =>
       cases ht with
-      | callIndirect hpc hge hfl hrest =>
-        obtain ⟨_, P'', hbodyT, _⟩ := hF _ _ hf
+      | callIndirect hpc hfl hrest =>
+        obtain ⟨_, _, P'', hbodyT, _⟩ := hF _ _ hf
         have hpcH := hP.head
         subst hpcH
         have hbound := hpc (Lab.H_join _)
@@ -458,8 +458,8 @@ theorem confine : ∀ (n : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P'
           (by rw [hfb]; exact hiUpTo_zero_cons _) rfl hb).2.not_thrown hth).elim
     | callRef href hf hps hrs hbd hargs hb hl hk hr =>
       cases ht with
-      | callRef hpc hge hfl hrest =>
-        obtain ⟨_, P'', hbodyT, _⟩ := hF _ _ hf
+      | callRef hpc hfl hrest =>
+        obtain ⟨_, _, P'', hbodyT, _⟩ := hF _ _ hf
         have hpcH := hP.head
         subst hpcH
         have hbound := hpc (Lab.H_join _)
@@ -481,8 +481,8 @@ theorem confine : ∀ (n : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P'
         exact ⟨(Conf.call (hst' ▸ hs1)).trans h1, h2⟩
     | callRefExn href hf hps hrs hbd hargs hb hth =>
       cases ht with
-      | callRef hpc hge hfl hrest =>
-        obtain ⟨_, P'', hbodyT, _⟩ := hF _ _ hf
+      | callRef hpc hfl hrest =>
+        obtain ⟨_, _, P'', hbodyT, _⟩ := hF _ _ hf
         have hpcH := hP.head
         subst hpcH
         have hbound := hpc (Lab.H_join _)
@@ -493,8 +493,8 @@ theorem confine : ∀ (n : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P'
           (by rw [hfb]; exact hiUpTo_zero_cons _) rfl hb).2.not_thrown hth).elim
     | retCallIndirect htbl hf hps hrs hbd hargs hb hl hk =>
       cases ht with
-      | retCallIndirect hpc hge hfl hLs hgr hres =>
-        obtain ⟨_, P'', hbodyT, _⟩ := hF _ _ hf
+      | retCallIndirect hpc hfl hLs hgr hres =>
+        obtain ⟨_, _, P'', hbodyT, _⟩ := hF _ _ hf
         have hpcH := hP.head
         subst hpcH
         have hbound := hpc (Lab.H_join _)
@@ -512,8 +512,8 @@ theorem confine : ∀ (n : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P'
           hiUpTo_raise _ _ _ (Nat.le_refl _)⟩
     | retCallIndirectExn htbl hf hps hrs hbd hargs hb hth =>
       cases ht with
-      | retCallIndirect hpc hge hfl hLs hgr hres =>
-        obtain ⟨_, P'', hbodyT, _⟩ := hF _ _ hf
+      | retCallIndirect hpc hfl hLs hgr hres =>
+        obtain ⟨_, _, P'', hbodyT, _⟩ := hF _ _ hf
         have hpcH := hP.head
         subst hpcH
         have hbound := hpc (Lab.H_join _)
@@ -604,7 +604,7 @@ theorem confine : ∀ (n : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P'
     | call hf hargs hb hl hk hr =>
       cases ht with
       | call hft hpc hfl hrest =>
-        obtain ⟨hty, P'', hbodyT, _⟩ := hF _ _ hf
+        obtain ⟨hty, _, P'', hbodyT, _⟩ := hF _ _ hf
         cases hft.symm.trans hty
         have hbound := hpc hP.head
         obtain ⟨hs1, hi1⟩ := ih _ (by omega) (hF.enter _) hbodyT

@@ -202,6 +202,8 @@ inductive Typed (C : VCtx) : List VSTy → List Instr → Pcs → VSTy → Pcs �
       Typed C Ls rest (Lab.L :: Pr) ((.i32, Lab.L) :: st) P' st' →
       Typed C Ls (.hostPoll :: rest) (Lab.L :: Pr)
         ((.i32, Lab.L) :: (.i32, Lab.L) :: (.i32, Lab.L) :: (.i32, Lab.L) :: st) P' st'
+  | hostExit {Ls rest Pr st stAny} :
+      Typed C Ls (.hostExit :: rest) (Lab.L :: Pr) ((.i32, Lab.L) :: st) (Lab.L :: Pr) stAny
   | hostOpen {Ls rest Pr st P' st'} :
       Typed C Ls rest (Lab.L :: Pr) ((.i32, Lab.L) :: st) P' st' →
       Typed C Ls (.hostOpen :: rest) (Lab.L :: Pr)
@@ -294,17 +296,17 @@ inductive Typed (C : VCtx) : List VSTy → List Instr → Pcs → VSTy → Pcs �
         (raise pc (pc :: Pr) (Ls.length - 1)) stAny
   /-- The index has the table's address type; the expected type is the labels of `ps` and `rs`. -/
   | callIndirect {Ls rest pc Pr l x ps b rs targs st P' st'} :
-      Lab.le (pc.join (l.join (C.table x))) b → AllGe b (labelsOf rs) → VFlows targs ps →
+      Lab.le (pc.join (l.join (C.table x))) b → VFlows targs ps →
       Typed C Ls rest (pc :: Pr) (rs ++ st) P' st' →
       Typed C Ls (.callIndirect x (labelsOf ps) b (labelsOf rs) :: rest) (pc :: Pr)
         ((C.taddr x, l) :: (targs ++ st)) P' st'
   | retCallIndirect {Ls rest pc Pr l x ps b rs ret targs st stAny} :
-      Lab.le (pc.join (l.join (C.table x))) b → AllGe b (labelsOf rs) → VFlows targs ps →
+      Lab.le (pc.join (l.join (C.table x))) b → VFlows targs ps →
       Ls[Ls.length - 1]? = some ret → AllGe pc (labelsOf ret) → VFlows rs ret →
       Typed C Ls (.retCallIndirect x (labelsOf ps) b (labelsOf rs) :: rest) (pc :: Pr)
         ((C.taddr x, l) :: (targs ++ st)) (raise pc (pc :: Pr) (Ls.length - 1)) stAny
   | callRef {Ls rest pc Pr l ps b rs targs st P' st'} :
-      Lab.le (pc.join l) b → AllGe b (labelsOf rs) → VFlows targs ps →
+      Lab.le (pc.join l) b → VFlows targs ps →
       Typed C Ls rest (pc :: Pr) (rs ++ st) P' st' →
       Typed C Ls (.callRef (labelsOf ps) b (labelsOf rs) :: rest) (pc :: Pr)
         ((.funcref, l) :: (targs ++ st)) P' st'
@@ -393,6 +395,7 @@ theorem Typed.erase {C : VCtx} {Ls : List VSTy} {e : List Instr} {P P' : Pcs} {s
   | hostCtl _ ih => exact .hostCtl ih
   | hostPoll _ ih => exact .hostPoll ih
   | hostOpen _ ih => exact .hostOpen ih
+  | hostExit => exact .hostExit
   | memInit m k lm h1 _ ih => exact .memInit m k lm h1 ih
   | dataDrop k _ ih => exact .dataDrop k ih
   | tableFill x h1 _ ih => exact .tableFill x h1 ih
@@ -439,20 +442,20 @@ theorem Typed.erase {C : VCtx} {Ls : List VSTy} {e : List Instr} {P P' : Pcs} {s
       (last_labels hl) hge hres.labelsOf
     rw [List.length_map] at h
     exact h
-  | callIndirect h1 hge hfl _ ih =>
+  | callIndirect h1 hfl _ ih =>
     rw [labels_append] at ih
     simp only [labelsOf, List.map_cons, List.map_append] at ih ⊢
-    exact .callIndirect h1 hge hfl.labelsOf ih
-  | @retCallIndirect Ls rest pc Pr l x ps b rs ret targs st stAny h1 hge hfl hl hgr hres =>
+    exact .callIndirect h1 hfl.labelsOf ih
+  | @retCallIndirect Ls rest pc Pr l x ps b rs ret targs st stAny h1 hfl hl hgr hres =>
     have h := LTyped.retCallIndirect (C := C.erase) (rest := rest) (pc := pc) (Pr := Pr)
-      (st := labelsOf st) (stAny := labelsOf stAny) (l := l) (x := x) h1 hge hfl.labelsOf
+      (st := labelsOf st) (stAny := labelsOf stAny) (l := l) (x := x) h1 hfl.labelsOf
       (last_labels hl) hgr hres.labelsOf
     rw [List.length_map] at h
     simpa only [labelsOf, List.map_cons, List.map_append] using h
-  | callRef h1 hge hfl _ ih =>
+  | callRef h1 hfl _ ih =>
     rw [labels_append] at ih
     simp only [labelsOf, List.map_cons, List.map_append] at ih ⊢
-    exact .callRef h1 hge hfl.labelsOf ih
+    exact .callRef h1 hfl.labelsOf ih
   | unreachable => exact .unreachable
   | throw ht hty hpub =>
     rw [labels_append]
@@ -498,7 +501,7 @@ theorem VCtx.erase_enter (C : VCtx) (f : VFunc) : (C.enter f).erase = C.erase.en
 /-- `WellLTyped` with value types: every function's body is typed, with value types, at its type. -/
 def WellTyped (C : VCtx) (F : List VFunc) : Prop :=
   ∀ (i : Nat) (f : VFunc), F[i]? = some f →
-    C.funcs[i]? = some f.ty ∧
+    C.funcs[i]? = some f.ty ∧ AllGe f.ty.bound (labelsOf f.ty.results) ∧
       ∃ p, Typed (C.enter f) [f.ty.results] f.body [f.ty.bound] [] [p] f.ty.results ∧
         (p = Lab.L ∨ ∀ j, C.preserved j → j ∈ f.keep)
 
@@ -512,8 +515,8 @@ theorem WellTyped.erase {C : VCtx} {F : List VFunc} (h : WellTyped C F) :
   | some f =>
     simp only [hf, Option.map_some, Option.some.injEq] at hg
     subst hg
-    obtain ⟨hty, p, hbody, hret⟩ := h i f hf
-    refine ⟨by simp [VCtx.erase, hty, VFunc.erase], p, ?_, hret⟩
+    obtain ⟨hty, hge, p, hbody, hret⟩ := h i f hf
+    refine ⟨by simp [VCtx.erase, hty, VFunc.erase], hge, p, ?_, hret⟩
     have := hbody.erase
     rw [VCtx.erase_enter] at this
     exact this
