@@ -76,7 +76,7 @@ parameters are public. If both calls end, then both return or both end by the sa
 with the same values. If they return, their results agree where the function's result type
 is public. In both cases the states they end in are low-equivalent.
 -/
-theorem noninterference {C : Ctx} {F : List Func} (hF : WellTyped C F)
+theorem noninterference_labels {C : Ctx} {F : List Func} (hF : WellLTyped C F)
     (hpub : ∀ i, C.preserved i → C.globals i = Lab.L) {i : Nat} {f : Func} (hf : F[i]? = some f)
     {a0 a1 : List Nat} {s0 s1 : State} {e0 e1 : Ended}
     (ha : StkRel f.ty.params a0 a1) (hs : LowEq C s0 s1)

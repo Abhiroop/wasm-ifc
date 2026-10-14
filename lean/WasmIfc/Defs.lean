@@ -209,83 +209,83 @@ def Restores (C : Ctx) (pcEnd : Lab) (after : Pcs) (keep : List Nat) : Prop :=
   (∀ q, after.head? = some q → Lab.le pcEnd q) ∨ ∀ i, C.preserved i → i ∈ keep
 
 /--
-`Typed C Ls e P st P' st'`: under the labels `Ls`, the sequence `e` takes the pc stack `P` and
+`LTyped C Ls e P st P' st'`: under the labels `Ls`, the sequence `e` takes the pc stack `P` and
 the segment `st` to `P'` and `st'`. Each rule types an instruction followed by the rest of its
 sequence. The code after a transfer (`br`, `br_table`, `return`, a tail call, `throw`, `unreachable`) is not typed, as the
 elaborator does not build its typed form.
 -/
-inductive Typed (C : Ctx) : List STy → List Instr → Pcs → STy → Pcs → STy → Prop where
-  | nil {Ls P st} : Typed C Ls [] P st P st
+inductive LTyped (C : Ctx) : List STy → List Instr → Pcs → STy → Pcs → STy → Prop where
+  | nil {Ls P st} : LTyped C Ls [] P st P st
   | const {Ls rest pc Pr st P' st'} (n : Nat) :
-      Typed C Ls rest (pc :: Pr) (pc :: st) P' st' →
-      Typed C Ls (.const n :: rest) (pc :: Pr) st P' st'
+      LTyped C Ls rest (pc :: Pr) (pc :: st) P' st' →
+      LTyped C Ls (.const n :: rest) (pc :: Pr) st P' st'
   | binop {Ls rest pc Pr l0 l1 st P' st'} (f : Nat → Nat → Nat) :
-      Typed C Ls rest (pc :: Pr) (((l0.join l1).join pc) :: st) P' st' →
-      Typed C Ls (.binop f :: rest) (pc :: Pr) (l0 :: l1 :: st) P' st'
+      LTyped C Ls rest (pc :: Pr) (((l0.join l1).join pc) :: st) P' st' →
+      LTyped C Ls (.binop f :: rest) (pc :: Pr) (l0 :: l1 :: st) P' st'
   | unop {Ls rest pc Pr l st P' st'} (f : Nat → Nat) :
-      Typed C Ls rest (pc :: Pr) ((l.join pc) :: st) P' st' →
-      Typed C Ls (.unop f :: rest) (pc :: Pr) (l :: st) P' st'
+      LTyped C Ls rest (pc :: Pr) ((l.join pc) :: st) P' st' →
+      LTyped C Ls (.unop f :: rest) (pc :: Pr) (l :: st) P' st'
   /-- An operation that may trap is typed as one that does not: whether it traps is not observed. -/
   | partialBinop {Ls rest pc Pr l0 l1 st P' st'} (f : Nat → Nat → Option Nat) :
-      Typed C Ls rest (pc :: Pr) (((l0.join l1).join pc) :: st) P' st' →
-      Typed C Ls (.partialBinop f :: rest) (pc :: Pr) (l0 :: l1 :: st) P' st'
+      LTyped C Ls rest (pc :: Pr) (((l0.join l1).join pc) :: st) P' st' →
+      LTyped C Ls (.partialBinop f :: rest) (pc :: Pr) (l0 :: l1 :: st) P' st'
   | partialUnop {Ls rest pc Pr l st P' st'} (f : Nat → Option Nat) :
-      Typed C Ls rest (pc :: Pr) ((l.join pc) :: st) P' st' →
-      Typed C Ls (.partialUnop f :: rest) (pc :: Pr) (l :: st) P' st'
+      LTyped C Ls rest (pc :: Pr) ((l.join pc) :: st) P' st' →
+      LTyped C Ls (.partialUnop f :: rest) (pc :: Pr) (l :: st) P' st'
   | dup {Ls rest P l st P' st'} :
-      Typed C Ls rest P (l :: l :: st) P' st' →
-      Typed C Ls (.dup :: rest) P (l :: st) P' st'
+      LTyped C Ls rest P (l :: l :: st) P' st' →
+      LTyped C Ls (.dup :: rest) P (l :: st) P' st'
   | select {Ls rest pc Pr lc l1 l2 st P' st'} :
-      Typed C Ls rest (pc :: Pr) ((pc.join (lc.join (l1.join l2))) :: st) P' st' →
-      Typed C Ls (.select :: rest) (pc :: Pr) (lc :: l1 :: l2 :: st) P' st'
+      LTyped C Ls rest (pc :: Pr) ((pc.join (lc.join (l1.join l2))) :: st) P' st' →
+      LTyped C Ls (.select :: rest) (pc :: Pr) (lc :: l1 :: l2 :: st) P' st'
   | drop {Ls rest P l st P' st'} :
-      Typed C Ls rest P st P' st' →
-      Typed C Ls (.drop :: rest) P (l :: st) P' st'
+      LTyped C Ls rest P st P' st' →
+      LTyped C Ls (.drop :: rest) P (l :: st) P' st'
   | nop {Ls rest P st P' st'} :
-      Typed C Ls rest P st P' st' →
-      Typed C Ls (.nop :: rest) P st P' st'
+      LTyped C Ls rest P st P' st' →
+      LTyped C Ls (.nop :: rest) P st P' st'
   | relabel {Ls rest P st st1 P' st'} :
       SFlows st st1 →
-      Typed C Ls rest P st1 P' st' →
-      Typed C Ls (.relabel :: rest) P st P' st'
+      LTyped C Ls rest P st1 P' st' →
+      LTyped C Ls (.relabel :: rest) P st P' st'
   | localGet {Ls rest pc Pr st P' st'} (i : Nat) :
-      Typed C Ls rest (pc :: Pr) (((C.locals i).join pc) :: st) P' st' →
-      Typed C Ls (.localGet i :: rest) (pc :: Pr) st P' st'
+      LTyped C Ls rest (pc :: Pr) (((C.locals i).join pc) :: st) P' st' →
+      LTyped C Ls (.localGet i :: rest) (pc :: Pr) st P' st'
   | localSet {Ls rest pc Pr l st P' st'} (i : Nat) :
       Lab.le pc (C.locals i) → Lab.le l (C.locals i) →
-      Typed C Ls rest (pc :: Pr) st P' st' →
-      Typed C Ls (.localSet i :: rest) (pc :: Pr) (l :: st) P' st'
+      LTyped C Ls rest (pc :: Pr) st P' st' →
+      LTyped C Ls (.localSet i :: rest) (pc :: Pr) (l :: st) P' st'
   | localTee {Ls rest pc Pr l st P' st'} (i : Nat) :
       Lab.le pc (C.locals i) → Lab.le l (C.locals i) →
-      Typed C Ls rest (pc :: Pr) (l :: st) P' st' →
-      Typed C Ls (.localTee i :: rest) (pc :: Pr) (l :: st) P' st'
+      LTyped C Ls rest (pc :: Pr) (l :: st) P' st' →
+      LTyped C Ls (.localTee i :: rest) (pc :: Pr) (l :: st) P' st'
   | globalGet {Ls rest pc Pr st P' st'} (i : Nat) :
-      Typed C Ls rest (pc :: Pr) (((C.globals i).join pc) :: st) P' st' →
-      Typed C Ls (.globalGet i :: rest) (pc :: Pr) st P' st'
+      LTyped C Ls rest (pc :: Pr) (((C.globals i).join pc) :: st) P' st' →
+      LTyped C Ls (.globalGet i :: rest) (pc :: Pr) st P' st'
   | globalSet {Ls rest pc Pr l st P' st'} (i : Nat) :
       ¬ C.preserved i → Lab.le pc (C.globals i) → Lab.le l (C.globals i) →
-      Typed C Ls rest (pc :: Pr) st P' st' →
-      Typed C Ls (.globalSet i :: rest) (pc :: Pr) (l :: st) P' st'
+      LTyped C Ls rest (pc :: Pr) st P' st' →
+      LTyped C Ls (.globalSet i :: rest) (pc :: Pr) (l :: st) P' st'
   /--
   A write to a preserved global: the pc need not flow into the global, and the value may be as
   secret as the pc. Under a public pc this is the ordinary rule.
   -/
   | globalSetPreserved {Ls rest pc Pr l st P' st'} (i : Nat) :
       C.preserved i → Lab.le l pc →
-      Typed C Ls rest (pc :: Pr) st P' st' →
-      Typed C Ls (.globalSet i :: rest) (pc :: Pr) (l :: st) P' st'
+      LTyped C Ls rest (pc :: Pr) st P' st' →
+      LTyped C Ls (.globalSet i :: rest) (pc :: Pr) (l :: st) P' st'
   | load {Ls rest pc Pr la st P' st'} (m w : Nat) (lm : Lab) :
-      Typed C Ls rest (pc :: Pr) (((la.join lm).join pc) :: st) P' st' →
-      Typed C Ls (.load m w lm :: rest) (pc :: Pr) (la :: st) P' st'
+      LTyped C Ls rest (pc :: Pr) (((la.join lm).join pc) :: st) P' st' →
+      LTyped C Ls (.load m w lm :: rest) (pc :: Pr) (la :: st) P' st'
   | store {Ls rest pc Pr lv la st P' st'} (m w : Nat) (lm : Lab) :
       Lab.le ((pc.join la).join lv) lm →
-      Typed C Ls rest (pc :: Pr) st P' st' →
-      Typed C Ls (.store m w lm :: rest) (pc :: Pr) (lv :: la :: st) P' st'
+      LTyped C Ls rest (pc :: Pr) st P' st' →
+      LTyped C Ls (.store m w lm :: rest) (pc :: Pr) (lv :: la :: st) P' st'
   /-- `memory.fill`: the cells get a level at least the pc's, the count's, the value's and the address's. -/
   | fill {Ls rest pc Pr ln lv ld st P' st'} (m : Nat) (lm : Lab) :
       Lab.le (pc.join (ln.join (lv.join ld))) lm →
-      Typed C Ls rest (pc :: Pr) st P' st' →
-      Typed C Ls (.fill m lm :: rest) (pc :: Pr) (ln :: lv :: ld :: st) P' st'
+      LTyped C Ls rest (pc :: Pr) st P' st' →
+      LTyped C Ls (.fill m lm :: rest) (pc :: Pr) (ln :: lv :: ld :: st) P' st'
   /--
   `memory.copy`, within a memory or between two: each copied cell keeps its own level, raised by
   one that is at least the pc's, the count's and the two addresses'. No check is made: the
@@ -293,109 +293,109 @@ inductive Typed (C : Ctx) : List STy → List Instr → Pcs → STy → Pcs → 
   -/
   | copy {Ls rest pc Pr ln lsrc ld st P' st'} (md ms : Nat) (lm : Lab) :
       Lab.le (pc.join (ln.join (lsrc.join ld))) lm →
-      Typed C Ls rest (pc :: Pr) st P' st' →
-      Typed C Ls (.copy md ms lm :: rest) (pc :: Pr) (ln :: lsrc :: ld :: st) P' st'
+      LTyped C Ls rest (pc :: Pr) st P' st' →
+      LTyped C Ls (.copy md ms lm :: rest) (pc :: Pr) (ln :: lsrc :: ld :: st) P' st'
   /-- What is read from the table is as secret as the table, the index and the pc. -/
   | tableGet {Ls rest pc Pr li st P' st'} (x : Nat) :
-      Typed C Ls rest (pc :: Pr) ((pc.join (li.join (C.table x))) :: st) P' st' →
-      Typed C Ls (.tableGet x :: rest) (pc :: Pr) (li :: st) P' st'
+      LTyped C Ls rest (pc :: Pr) ((pc.join (li.join (C.table x))) :: st) P' st' →
+      LTyped C Ls (.tableGet x :: rest) (pc :: Pr) (li :: st) P' st'
   /-- A write to the table needs the pc, the index and the value to flow into the table's level. -/
   | tableSet {Ls rest pc Pr lv li st P' st'} (x : Nat) :
       Lab.le (pc.join (li.join lv)) (C.table x) →
-      Typed C Ls rest (pc :: Pr) st P' st' →
-      Typed C Ls (.tableSet x :: rest) (pc :: Pr) (lv :: li :: st) P' st'
+      LTyped C Ls rest (pc :: Pr) st P' st' →
+      LTyped C Ls (.tableSet x :: rest) (pc :: Pr) (lv :: li :: st) P' st'
   /--
   A host call is made under a public pc with public arguments: where to put what is read, how
   much at most, the descriptor, and where to put how much was read. What it stores is labelled
   at run time, with the descriptor's level. Its result is its status, which is public.
   -/
   | hostRead {Ls rest Pr st P' st'} :
-      Typed C Ls rest (Lab.L :: Pr) (Lab.L :: st) P' st' →
-      Typed C Ls (.hostRead :: rest) (Lab.L :: Pr) (Lab.L :: Lab.L :: Lab.L :: Lab.L :: st) P' st'
+      LTyped C Ls rest (Lab.L :: Pr) (Lab.L :: st) P' st' →
+      LTyped C Ls (.hostRead :: rest) (Lab.L :: Pr) (Lab.L :: Lab.L :: Lab.L :: Lab.L :: st) P' st'
   /-- The cells a host call takes are checked at run time against the descriptor's level. -/
   | hostWrite {Ls rest Pr st P' st'} :
-      Typed C Ls rest (Lab.L :: Pr) (Lab.L :: st) P' st' →
-      Typed C Ls (.hostWrite :: rest) (Lab.L :: Pr) (Lab.L :: Lab.L :: Lab.L :: st) P' st'
+      LTyped C Ls rest (Lab.L :: Pr) (Lab.L :: st) P' st' →
+      LTyped C Ls (.hostWrite :: rest) (Lab.L :: Pr) (Lab.L :: Lab.L :: Lab.L :: st) P' st'
   /-- Every host call is typed alike: a public pc, public operands, and a public status. -/
   | hostGet {Ls rest Pr st P' st'} :
-      Typed C Ls rest (Lab.L :: Pr) (Lab.L :: st) P' st' →
-      Typed C Ls (.hostGet :: rest) (Lab.L :: Pr) (Lab.L :: Lab.L :: Lab.L :: Lab.L :: st) P' st'
+      LTyped C Ls rest (Lab.L :: Pr) (Lab.L :: st) P' st' →
+      LTyped C Ls (.hostGet :: rest) (Lab.L :: Pr) (Lab.L :: Lab.L :: Lab.L :: Lab.L :: st) P' st'
   | hostCtl {Ls rest Pr st P' st'} :
-      Typed C Ls rest (Lab.L :: Pr) (Lab.L :: st) P' st' →
-      Typed C Ls (.hostCtl :: rest) (Lab.L :: Pr) (Lab.L :: Lab.L :: Lab.L :: st) P' st'
+      LTyped C Ls rest (Lab.L :: Pr) (Lab.L :: st) P' st' →
+      LTyped C Ls (.hostCtl :: rest) (Lab.L :: Pr) (Lab.L :: Lab.L :: Lab.L :: st) P' st'
   | hostPoll {Ls rest Pr st P' st'} :
-      Typed C Ls rest (Lab.L :: Pr) (Lab.L :: st) P' st' →
-      Typed C Ls (.hostPoll :: rest) (Lab.L :: Pr) (Lab.L :: Lab.L :: Lab.L :: Lab.L :: st) P' st'
+      LTyped C Ls rest (Lab.L :: Pr) (Lab.L :: st) P' st' →
+      LTyped C Ls (.hostPoll :: rest) (Lab.L :: Pr) (Lab.L :: Lab.L :: Lab.L :: Lab.L :: st) P' st'
   /--
   Opening a file is a host call: under a public pc, with public arguments (where to put the new
   descriptor, the open flags, the length and the address of the name, the directory's
   descriptor). Its status is public. The name's bytes are checked at run time to be public.
   -/
   | hostOpen {Ls rest Pr st P' st'} :
-      Typed C Ls rest (Lab.L :: Pr) (Lab.L :: st) P' st' →
-      Typed C Ls (.hostOpen :: rest) (Lab.L :: Pr)
+      LTyped C Ls rest (Lab.L :: Pr) (Lab.L :: st) P' st' →
+      LTyped C Ls (.hostOpen :: rest) (Lab.L :: Pr)
         (Lab.L :: Lab.L :: Lab.L :: Lab.L :: Lab.L :: st) P' st'
   /-- `memory.init`: as `memory.fill`, with the segment's bytes for the value. A segment is public. -/
   | memInit {Ls rest pc Pr ln lsrc ld st P' st'} (m k : Nat) (lm : Lab) :
       Lab.le (pc.join (ln.join (lsrc.join ld))) lm →
-      Typed C Ls rest (pc :: Pr) st P' st' →
-      Typed C Ls (.memInit m k lm :: rest) (pc :: Pr) (ln :: lsrc :: ld :: st) P' st'
+      LTyped C Ls rest (pc :: Pr) st P' st' →
+      LTyped C Ls (.memInit m k lm :: rest) (pc :: Pr) (ln :: lsrc :: ld :: st) P' st'
   /-- `data.drop` has no premise, under any pc. -/
   | dataDrop {Ls rest P st P' st'} (k : Nat) :
-      Typed C Ls rest P st P' st' →
-      Typed C Ls (.dataDrop k :: rest) P st P' st'
+      LTyped C Ls rest P st P' st' →
+      LTyped C Ls (.dataDrop k :: rest) P st P' st'
   /-- `table.fill`: as `table.set`, with the count. -/
   | tableFill {Ls rest pc Pr ln lv li st P' st'} (x : Nat) :
       Lab.le (pc.join (ln.join (lv.join li))) (C.table x) →
-      Typed C Ls rest (pc :: Pr) st P' st' →
-      Typed C Ls (.tableFill x :: rest) (pc :: Pr) (ln :: lv :: li :: st) P' st'
+      LTyped C Ls rest (pc :: Pr) st P' st' →
+      LTyped C Ls (.tableFill x :: rest) (pc :: Pr) (ln :: lv :: li :: st) P' st'
   /--
   `table.copy`: the pc, the count, the two indices and the level of the table copied from flow
   into the level of the table copied to.
   -/
   | tableCopy {Ls rest pc Pr ln lsrc ld st P' st'} (xd xs : Nat) :
       Lab.le (pc.join (ln.join (lsrc.join (ld.join (C.table xs))))) (C.table xd) →
-      Typed C Ls rest (pc :: Pr) st P' st' →
-      Typed C Ls (.tableCopy xd xs :: rest) (pc :: Pr) (ln :: lsrc :: ld :: st) P' st'
+      LTyped C Ls rest (pc :: Pr) st P' st' →
+      LTyped C Ls (.tableCopy xd xs :: rest) (pc :: Pr) (ln :: lsrc :: ld :: st) P' st'
   /-- `table.size`: the size of the table is as secret as the table. -/
   | tableSize {Ls rest pc Pr st P' st'} (x : Nat) :
-      Typed C Ls rest (pc :: Pr) (pc.join (C.table x) :: st) P' st' →
-      Typed C Ls (.tableSize x :: rest) (pc :: Pr) st P' st'
+      LTyped C Ls rest (pc :: Pr) (pc.join (C.table x) :: st) P' st' →
+      LTyped C Ls (.tableSize x :: rest) (pc :: Pr) st P' st'
   /-- `table.grow` is a write to the table, and its result is as secret as the table. -/
   | tableGrow {Ls rest pc Pr ln lv st P' st'} (x : Nat) :
       Lab.le (pc.join (ln.join lv)) (C.table x) →
-      Typed C Ls rest (pc :: Pr) (pc.join (C.table x) :: st) P' st' →
-      Typed C Ls (.tableGrow x :: rest) (pc :: Pr) (ln :: lv :: st) P' st'
+      LTyped C Ls rest (pc :: Pr) (pc.join (C.table x) :: st) P' st' →
+      LTyped C Ls (.tableGrow x :: rest) (pc :: Pr) (ln :: lv :: st) P' st'
   /-- `table.init`: as `table.fill`, with the segment's references for the value. A segment is public. -/
   | tableInit {Ls rest pc Pr ln lsrc ld st P' st'} (x k : Nat) :
       Lab.le (pc.join (ln.join (lsrc.join ld))) (C.table x) →
-      Typed C Ls rest (pc :: Pr) st P' st' →
-      Typed C Ls (.tableInit x k :: rest) (pc :: Pr) (ln :: lsrc :: ld :: st) P' st'
+      LTyped C Ls rest (pc :: Pr) st P' st' →
+      LTyped C Ls (.tableInit x k :: rest) (pc :: Pr) (ln :: lsrc :: ld :: st) P' st'
   /-- `elem.drop` has no premise, under any pc. -/
   | elemDrop {Ls rest P st P' st'} (k : Nat) :
-      Typed C Ls rest P st P' st' →
-      Typed C Ls (.elemDrop k :: rest) P st P' st'
+      LTyped C Ls rest P st P' st' →
+      LTyped C Ls (.elemDrop k :: rest) P st P' st'
   /-- The size of a memory is public. -/
   | memSize {Ls rest pc Pr st P' st'} (m : Nat) :
-      Typed C Ls rest (pc :: Pr) (pc :: st) P' st' →
-      Typed C Ls (.memSize m :: rest) (pc :: Pr) st P' st'
+      LTyped C Ls rest (pc :: Pr) (pc :: st) P' st' →
+      LTyped C Ls (.memSize m :: rest) (pc :: Pr) st P' st'
   /-- A memory grows only under a public pc, by a public amount, so that its size stays public. -/
   | memGrow {Ls rest pc Pr l st P' st'} (m : Nat) :
       Lab.le (pc.join l) Lab.L →
-      Typed C Ls rest (pc :: Pr) (pc :: st) P' st' →
-      Typed C Ls (.memGrow m :: rest) (pc :: Pr) (l :: st) P' st'
+      LTyped C Ls rest (pc :: Pr) (pc :: st) P' st' →
+      LTyped C Ls (.memGrow m :: rest) (pc :: Pr) (l :: st) P' st'
   /-- The results are at least the pc at which the body starts (the paper's Property (E)). -/
   | block {Ls rest pc Pr tin keep ps rs body p P1 st P' st'} :
       SFlows tin ps → AllGe pc rs → Restores C p P1 keep →
-      Typed C (rs :: Ls) body (pc :: pc :: Pr) ps (p :: P1) rs →
-      Typed C Ls rest P1 (rs ++ st) P' st' →
-      Typed C Ls (.block keep ps rs body :: rest) (pc :: Pr) (tin ++ st) P' st'
+      LTyped C (rs :: Ls) body (pc :: pc :: Pr) ps (p :: P1) rs →
+      LTyped C Ls rest P1 (rs ++ st) P' st' →
+      LTyped C Ls (.block keep ps rs body :: rest) (pc :: Pr) (tin ++ st) P' st'
   /-- The body starts at a pc `pcL` of the rule's choice, and must end at most there. -/
   | loop {Ls rest pc Pr pcL tin keep ps rs body p P1 st P' st'} :
       Lab.le pc pcL → Lab.le p pcL → SFlows tin ps → AllGe pcL rs → Restores C pcL P1 keep →
-      Typed C (ps :: Ls) body (pcL :: pc :: Pr) ps (p :: P1) rs →
-      Typed C Ls rest P1 (rs ++ st) P' st' →
-      Typed C Ls (.loop keep ps rs body :: rest) (pc :: Pr) (tin ++ st) P' st'
+      LTyped C (ps :: Ls) body (pcL :: pc :: Pr) ps (p :: P1) rs →
+      LTyped C Ls rest P1 (rs ++ st) P' st' →
+      LTyped C Ls (.loop keep ps rs body :: rest) (pc :: Pr) (tin ++ st) P' st'
   /--
   The iterations of a loop's body, as the loop's rule types them: the body is typed under the
   loop's label, and the iterations stand where a block's body would, under a label that
@@ -403,37 +403,37 @@ inductive Typed (C : Ctx) : List STy → List Instr → Pcs → STy → Pcs → 
   -/
   | iter {Ls l0 rest pcL Pb ps rs body p P1} :
       Lab.le p pcL → AllGe pcL rs →
-      Typed C (ps :: Ls) body (pcL :: Pb) ps (p :: P1) rs →
-      Typed C (l0 :: Ls) (.iter ps rs body :: rest) (pcL :: Pb) ps (pcL :: P1) rs
+      LTyped C (ps :: Ls) body (pcL :: Pb) ps (p :: P1) rs →
+      LTyped C (l0 :: Ls) (.iter ps rs body :: rest) (pcL :: Pb) ps (pcL :: P1) rs
   | ite {Ls rest pc Pr l tin keep ps rs thn els p1 P1 p2 P2 st P' st'} :
       SFlows tin ps → AllGe (pc.join l) rs → Restores C (p1.join p2) (joinEach P1 P2) keep →
-      Typed C (rs :: Ls) thn (pc.join l :: pc :: Pr) ps (p1 :: P1) rs →
-      Typed C (rs :: Ls) els (pc.join l :: pc :: Pr) ps (p2 :: P2) rs →
-      Typed C Ls rest (joinEach P1 P2) (rs ++ st) P' st' →
-      Typed C Ls (.ite keep ps rs thn els :: rest) (pc :: Pr) (l :: (tin ++ st)) P' st'
+      LTyped C (rs :: Ls) thn (pc.join l :: pc :: Pr) ps (p1 :: P1) rs →
+      LTyped C (rs :: Ls) els (pc.join l :: pc :: Pr) ps (p2 :: P2) rs →
+      LTyped C Ls rest (joinEach P1 P2) (rs ++ st) P' st' →
+      LTyped C Ls (.ite keep ps rs thn els :: rest) (pc :: Pr) (l :: (tin ++ st)) P' st'
   | br {Ls rest pc Pr i rs carried st stAny} :
       Ls[i]? = some rs → AllGe pc rs → SFlows carried rs →
-      Typed C Ls (.br i :: rest) (pc :: Pr) (carried ++ st) (raise pc (pc :: Pr) i) stAny
+      LTyped C Ls (.br i :: rest) (pc :: Pr) (carried ++ st) (raise pc (pc :: Pr) i) stAny
   /-- Not taken, the carried values keep their own labels. -/
   | brIf {Ls rest pc Pr l i rs carried st P' st'} :
       Ls[i]? = some rs → AllGe (pc.join l) rs → SFlows carried rs →
-      Typed C Ls rest (raise (pc.join l) (pc :: Pr) i) (carried ++ st) P' st' →
-      Typed C Ls (.brIf i :: rest) (pc :: Pr) (l :: (carried ++ st)) P' st'
+      LTyped C Ls rest (raise (pc.join l) (pc :: Pr) i) (carried ++ st) P' st' →
+      LTyped C Ls (.brIf i :: rest) (pc :: Pr) (l :: (carried ++ st)) P' st'
   /-- The repaired rule: the pcs are raised down to a depth `k` that no target exceeds. -/
   | brTable {Ls rest pc Pr l ts d k rs carried st stAny} :
       (∀ t, t ∈ d :: ts → Ls[t]? = some rs ∧ t ≤ k) → AllGe (pc.join l) rs → SFlows carried rs →
-      Typed C Ls (.brTable ts d :: rest) (pc :: Pr) (l :: (carried ++ st))
+      LTyped C Ls (.brTable ts d :: rest) (pc :: Pr) (l :: (carried ++ st))
         (raise (pc.join l) (pc :: Pr) k) stAny
   /-- `return` is typed as the branch to the outermost label, which raises every pc. -/
   | ret {Ls rest pc Pr rs carried st stAny} :
       Ls[Ls.length - 1]? = some rs → AllGe pc rs → SFlows carried rs →
-      Typed C Ls (.ret :: rest) (pc :: Pr) (carried ++ st)
+      LTyped C Ls (.ret :: rest) (pc :: Pr) (carried ++ st)
         (raise pc (pc :: Pr) (Ls.length - 1)) stAny
   /-- The caller's pc flows into the callee's bound. The arguments keep their own labels, below the parameters'. -/
   | call {Ls rest pc Pr i ft targs st P' st'} :
       C.funcs[i]? = some ft → Lab.le pc ft.bound → SFlows targs ft.params →
-      Typed C Ls rest (pc :: Pr) (ft.results ++ st) P' st' →
-      Typed C Ls (.call i :: rest) (pc :: Pr) (targs ++ st) P' st'
+      LTyped C Ls rest (pc :: Pr) (ft.results ++ st) P' st' →
+      LTyped C Ls (.call i :: rest) (pc :: Pr) (targs ++ st) P' st'
   /--
   A tail call is typed as the call followed by the `return` it stands for: the premises of the
   call, then those of `return` on what the callee returns, which flows into the function's
@@ -442,7 +442,7 @@ inductive Typed (C : Ctx) : List STy → List Instr → Pcs → STy → Pcs → 
   | retCall {Ls rest pc Pr i ft ret targs st stAny} :
       C.funcs[i]? = some ft → Lab.le pc ft.bound → SFlows targs ft.params →
       Ls[Ls.length - 1]? = some ret → AllGe pc ret → SFlows ft.results ret →
-      Typed C Ls (.retCall i :: rest) (pc :: Pr) (targs ++ st)
+      LTyped C Ls (.retCall i :: rest) (pc :: Pr) (targs ++ st)
         (raise pc (pc :: Pr) (Ls.length - 1)) stAny
   /--
   The pc, the level of the table index and the level of the table flow into the bound of the
@@ -451,13 +451,13 @@ inductive Typed (C : Ctx) : List STy → List Instr → Pcs → STy → Pcs → 
   -/
   | callIndirect {Ls rest pc Pr l x ps b rs targs st P' st'} :
       Lab.le (pc.join (l.join (C.table x))) b → AllGe b rs → SFlows targs ps →
-      Typed C Ls rest (pc :: Pr) (rs ++ st) P' st' →
-      Typed C Ls (.callIndirect x ps b rs :: rest) (pc :: Pr) (l :: (targs ++ st)) P' st'
+      LTyped C Ls rest (pc :: Pr) (rs ++ st) P' st' →
+      LTyped C Ls (.callIndirect x ps b rs :: rest) (pc :: Pr) (l :: (targs ++ st)) P' st'
   /-- An indirect tail call: the premises of the indirect call, then those of `return`. -/
   | retCallIndirect {Ls rest pc Pr l x ps b rs ret targs st stAny} :
       Lab.le (pc.join (l.join (C.table x))) b → AllGe b rs → SFlows targs ps →
       Ls[Ls.length - 1]? = some ret → AllGe pc ret → SFlows rs ret →
-      Typed C Ls (.retCallIndirect x ps b rs :: rest) (pc :: Pr) (l :: (targs ++ st))
+      LTyped C Ls (.retCallIndirect x ps b rs :: rest) (pc :: Pr) (l :: (targs ++ st))
         (raise pc (pc :: Pr) (Ls.length - 1)) stAny
   /--
   A call through a reference is an indirect call without the table: the reference decides the
@@ -465,26 +465,26 @@ inductive Typed (C : Ctx) : List STy → List Instr → Pcs → STy → Pcs → 
   -/
   | callRef {Ls rest pc Pr l ps b rs targs st P' st'} :
       Lab.le (pc.join l) b → AllGe b rs → SFlows targs ps →
-      Typed C Ls rest (pc :: Pr) (rs ++ st) P' st' →
-      Typed C Ls (.callRef ps b rs :: rest) (pc :: Pr) (l :: (targs ++ st)) P' st'
+      LTyped C Ls rest (pc :: Pr) (rs ++ st) P' st' →
+      LTyped C Ls (.callRef ps b rs :: rest) (pc :: Pr) (l :: (targs ++ st)) P' st'
   | unreachable {Ls rest P st stAny} :
-      Typed C Ls (.unreachable :: rest) P st P stAny
+      LTyped C Ls (.unreachable :: rest) P st P stAny
   /-- An exception is thrown only under a public pc, and carries public values. -/
   | throw {Ls rest Pr t k args st stAny} :
       C.tags[t]? = some k → args.length = k → (∀ l, l ∈ args → l = Lab.L) →
-      Typed C Ls (.throw t k :: rest) (Lab.L :: Pr) (args ++ st) (Lab.L :: Pr) stAny
+      LTyped C Ls (.throw t k :: rest) (Lab.L :: Pr) (args ++ st) (Lab.L :: Pr) stAny
   /-- An exception is thrown again only under a public pc, from a public reference. -/
   | throwRef {Ls rest Pr st stAny} :
-      Typed C Ls (.throwRef :: rest) (Lab.L :: Pr) (Lab.L :: st) (Lab.L :: Pr) stAny
+      LTyped C Ls (.throwRef :: rest) (Lab.L :: Pr) (Lab.L :: st) (Lab.L :: Pr) stAny
   /--
   A `try_table` is typed only under a public pc, and otherwise as a block. A clause branches
   under that pc, so it raises none.
   -/
   | tryTable {Ls rest Pr tin keep ps rs clauses body p P1 st P' st'} :
       SFlows tin ps → Restores C p P1 keep → (∀ c, c ∈ clauses → ClauseOk C Ls c) →
-      Typed C (rs :: Ls) body (Lab.L :: Lab.L :: Pr) ps (p :: P1) rs →
-      Typed C Ls rest P1 (rs ++ st) P' st' →
-      Typed C Ls (.tryTable keep ps rs clauses body :: rest) (Lab.L :: Pr) (tin ++ st) P' st'
+      LTyped C (rs :: Ls) body (Lab.L :: Lab.L :: Pr) ps (p :: P1) rs →
+      LTyped C Ls rest P1 (rs ++ st) P' st' →
+      LTyped C Ls (.tryTable keep ps rs clauses body :: rest) (Lab.L :: Pr) (tin ++ st) P' st'
 
 /--
 A function: its type, the levels of its local variables that are not parameters, the globals
@@ -513,10 +513,10 @@ typed as the paper's rule for functions says: under the one label of the functio
 is the result type, from the empty segment, at the function's bound. If the pc may be secret
 when the function returns, every preserved global is among those compared at the return.
 -/
-def WellTyped (C : Ctx) (F : List Func) : Prop :=
+def WellLTyped (C : Ctx) (F : List Func) : Prop :=
   ∀ (i : Nat) (f : Func), F[i]? = some f →
     C.funcs[i]? = some f.ty ∧
-      ∃ p, Typed (C.enter f) [f.ty.results] f.body [f.ty.bound] [] [p] f.ty.results ∧
+      ∃ p, LTyped (C.enter f) [f.ty.results] f.body [f.ty.bound] [] [p] f.ty.results ∧
         (p = Lab.L ∨ ∀ j, C.preserved j → j ∈ f.keep)
 
 /--

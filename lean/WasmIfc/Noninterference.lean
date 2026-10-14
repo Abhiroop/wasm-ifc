@@ -343,12 +343,12 @@ first run. `e0` and `e1` are the states at the construct's start.
 theorem after_body {C : Ctx} {Ls : List STy} {rs st st' : STy} {p : Lab} {P1 P' : Pcs}
     {keep : List Nat} {rest : List Instr} {ob0 ob1 o0 o1 : Out} {base0 base1 : List Nat}
     {e0 e1 : State} {n0 n1 : Nat}
-    (hF : WellTyped C F)
+    (hF : WellLTyped C F)
     (hIH : ∀ m, m < n0 → ∀ (σ0 : List Nat) (s0 : State) (o0 : Out) (m1 : Nat) (σ1 : List Nat)
       (s1 : State) (o1 : Out), Eval F m (Ls.map List.length) rest σ0 s0 o0 →
       Eval F m1 (Ls.map List.length) rest σ1 s1 o1 → StkRel (rs ++ st) σ0 σ1 → StRel C s0 s1 →
       PresOr C 0 P1 s0 s1 → OutRel C Ls P' st' o0 o1)
-    (hrest : Typed C Ls rest P1 (rs ++ st) P' st')
+    (hrest : LTyped C Ls rest P1 (rs ++ st) P' st')
     (hrel : BodyRel C Ls rs (p :: P1) ob0 ob1)
     (hbase : StkRel st base0 base1)
     (hres : Restores C p P1 keep) (hentry : PresOr C 0 P1 e0 e1)
@@ -365,7 +365,7 @@ theorem after_body {C : Ctx} {Ls : List STy} {rs st st' : STy} {p : Lab} {P1 P' 
       have hP1 : HiUpTo 0 P1 := (hinfo1 st').hiUpTo_zero hbr1
       obtain ⟨hs0, hi0⟩ := confine _ hF hrest hP1
         (by simp only [List.length_append, hlen0, hbase.length_left]) he0
-      exact .inr ⟨⟨hs.conf_left hs0, hi0, (hinfo1 st').mono (rise hrest)⟩, .inr hbr1⟩
+      exact .inr ⟨⟨hs.conf_left hs0, hi0, (hinfo1 st').mono (rise_labels hrest)⟩, .inr hbr1⟩
   | exit hx0 =>
     cases hc1 with
     | land hl1 hk1 hm1 he1 =>
@@ -373,8 +373,8 @@ theorem after_body {C : Ctx} {Ls : List STy} {rs st st' : STy} {p : Lab} {P1 P' 
       have hP1 : HiUpTo 0 P1 := (hinfo0 st').hiUpTo_zero hbr0
       obtain ⟨hs1, hi1⟩ := confine _ hF hrest hP1
         (by simp only [List.length_append, hlen1, hbase.length_right]) he1
-      exact .inr ⟨⟨hs.conf_right hs1, (hinfo0 st').mono (rise hrest), hi1⟩, .inl hbr0⟩
-    | exit hx1 => exact (join_exit_exit hrel hx0 hx1 st').mono (rise hrest)
+      exact .inr ⟨⟨hs.conf_right hs1, (hinfo0 st').mono (rise_labels hrest), hi1⟩, .inl hbr0⟩
+    | exit hx1 => exact (join_exit_exit hrel hx0 hx1 st').mono (rise_labels hrest)
 
 /-! ### The iterations of a loop's body -/
 
@@ -409,8 +409,8 @@ A run that is on its own after one run of a loop's body under a secret pc: whate
 iterations then do, the public variables stay as they were and the outcome is as `Info` says.
 -/
 theorem iter_alone {C : Ctx} {Ls : List STy} {l0 ps rs : STy} {body rest : List Instr}
-    {Pb P1 : Pcs} {p : Lab} {ob o : Out} {n : Nat} (hF : WellTyped C F) (hge : AllGe Lab.H rs)
-    (hbody : Typed C (ps :: Ls) body (Lab.H :: Pb) ps (p :: P1) rs)
+    {Pb P1 : Pcs} {p : Lab} {ob o : Out} {n : Nat} (hF : WellLTyped C F) (hge : AllGe Lab.H rs)
+    (hbody : LTyped C (ps :: Ls) body (Lab.H :: Pb) ps (p :: P1) rs)
     (hi : Info (ps :: Ls) (p :: P1) rs ob)
     (hc : IterCont F ((l0 :: Ls).map List.length) ps rs body rest ob n o) :
     Conf C ob.state o.state ∧ Info (l0 :: Ls) (Lab.H :: P1) rs o := by
@@ -423,7 +423,7 @@ theorem iter_alone {C : Ctx} {Ls : List STy} {l0 ps rs : STy} {body rest : List 
     obtain ⟨rs', h1, _, h3, _⟩ := hi
     simp at h1
     subst h1
-    exact confine _ hF (Typed.iter (Lab.le_H p) hge hbody) (hiUpTo_zero_cons _) h3 he
+    exact confine _ hF (LTyped.iter (Lab.le_H p) hge hbody) (hiUpTo_zero_cons _) h3 he
   | exit hob ho =>
     subst hob ho
     obtain ⟨rs', h1, h2, h3, h4⟩ := hi
@@ -614,8 +614,8 @@ theorem fun_result {C : Ctx} {rs : STy} {P : Pcs} {o0 o1 : Out} (h : OutRel C [r
 
 theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : Pcs}
     {st st' : STy} {σ0 : List Nat} {s0 : State} {o0 : Out} {n1 : Nat} {σ1 : List Nat}
-    {s1 : State} {o1 : Out}, WellTyped C F →
-    Typed C Ls e P st P' st' →
+    {s1 : State} {o1 : Out}, WellLTyped C F →
+    LTyped C Ls e P st P' st' →
     Eval F n0 (Ls.map List.length) e σ0 s0 o0 → Eval F n1 (Ls.map List.length) e σ1 s1 o1 →
     StkRel st σ0 σ1 → StRel C s0 s1 → PresOr C 0 P s0 s1 → OutRel C Ls P' st' o0 o1 := by
   intro n0
@@ -1169,18 +1169,18 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
       have hrel := (ih _ hm0 hF hbody hb0 hb1 (hvs.mono hfl) hs (hp.enter (Lab.le_refl _))).toBody
       exact after_body hF
         (fun m hm σ0 s0 o0 m1 σ1 s1 o1 h0 h1 hσ hs hp => ih m hm hF hrest h0 h1 hσ hs hp)
-        hrest hrel hbase hres (hp.mono (rise hbody).tail) hc0 hc1
+        hrest hrel hbase hres (hp.mono (rise_labels hbody).tail) hc0 hc1
     | loop hpc hpl hfl hge hres hbody hrest =>
       -- A loop is a block around the iterations of its body, which end at the loop's own pc.
       obtain ⟨vs0, base0, m0, ob0, rfl, hvs0, hm0, hb0, hc0⟩ := loop_inv he0
       obtain ⟨vs1, base1, m1, ob1, rfl, hvs1, hm1, hb1, hc1⟩ := loop_inv he1
       obtain ⟨hvs, hbase⟩ := StkRel.split hσ (hvs0.trans hfl.length_eq.symm)
         (hvs1.trans hfl.length_eq.symm)
-      have hrel := (ih _ hm0 hF (Typed.iter hpl hge hbody) hb0 hb1 (hvs.mono hfl) hs
+      have hrel := (ih _ hm0 hF (LTyped.iter hpl hge hbody) hb0 hb1 (hvs.mono hfl) hs
         (hp.enter hpc)).toBody
       exact after_body hF
         (fun m hm σ0 s0 o0 m1 σ1 s1 o1 h0 h1 hσ hs hp => ih m hm hF hrest h0 h1 hσ hs hp)
-        hrest hrel hbase hres (hp.mono (rise hbody).tail) hc0 hc1
+        hrest hrel hbase hres (hp.mono (rise_labels hbody).tail) hc0 hc1
     | iter hpl hge hbody =>
       obtain ⟨m0, ob0, hm0, hb0, hc0⟩ := iter_inv he0
       obtain ⟨m1, ob1, hm1, hb1, hc1⟩ := iter_inv he1
@@ -1257,7 +1257,7 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
               | done hob1 _ => cases hob1
               | again hob1 hmr1 hr1 =>
                 cases hob1
-                refine ih _ hmr0 hF (Typed.iter hpl hge hbody) hr0 hr1 hσb hsb ?_
+                refine ih _ hmr0 hF (LTyped.iter hpl hge hbody) hr0 hr1 hσb hsb ?_
                 rcases hpb with h | h
                 · exact .inl h
                 · have hH := hpl h.head
@@ -1300,7 +1300,7 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
     | ite hfl hge hres h1 h2 hrest =>
       obtain ⟨c0, vs0, base0, m0, ob0, rfl, hvs0, hm0, hb0, hc0⟩ := ite_inv he0
       obtain ⟨c1, vs1, base1, m1, ob1, rfl, hvs1, hm1, hb1, hc1⟩ := ite_inv he1
-      have hentry := hp.mono (sflows_joinEach (rise h1).tail (rise h2).tail).2.2
+      have hentry := hp.mono (sflows_joinEach (rise_labels h1).tail (rise_labels h2).tail).2.2
       cases hσ with
       | cons hc hσ' =>
         obtain ⟨hvs, hbase⟩ := StkRel.split hσ' (hvs0.trans hfl.length_eq.symm)
@@ -1323,7 +1323,7 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
             .inr ⟨⟨(hs.conf_left hs0).conf_right hs1, hi0.mono (.cons (Lab.le_H _) hPa),
               hi1.mono (.cons (Lab.le_H _) hPb)⟩, hiUpTo_zero_cons _, .inl hge⟩
           have hresH := hres.mono (p := Lab.H) (fun _ => by
-            rw [(rise h1).head rfl]
+            rw [(rise_labels h1).head rfl]
             exact Lab.H_join _)
           exact after_body hF
             (fun m hm σ0 s0 o0 m1 σ1 s1 o1 h0 h1 hσ hs hp => ih m hm hF hrest h0 h1 hσ hs hp)
@@ -1349,7 +1349,7 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
           cases hσ with
           | cons hc hσ' =>
             exact .inl (.br hLs (carried_rel hfl hσ') hs
-              ((hp.br (Nat.le_refl _) (Lab.le_join_left _ _)).mono (rise hrest)))
+              ((hp.br (Nat.le_refl _) (Lab.le_join_left _ _)).mono (rise_labels hrest)))
         | brIfNot he1' =>
           cases hσ with
           | cons hc hσ' =>
@@ -1359,7 +1359,7 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
             obtain ⟨hs1, hi1⟩ := confine _ hF hrest (hiUpTo_raise _ 0 _ (Nat.zero_le _))
               hσ'.length_right he1'
             refine .inr ⟨⟨hs.conf_right hs1, ⟨_, hLs, hge, ?_,
-              HiUpTo.sflows (rise hrest) (hiUpTo_raise _ _ _ (Nat.le_refl _))⟩, hi1⟩, .inl trivial⟩
+              HiUpTo.sflows (rise_labels hrest) (hiUpTo_raise _ _ _ (Nat.le_refl _))⟩, hi1⟩, .inl trivial⟩
             have h1 := hσ'.length_left
             have h2 := hfl.length_eq
             simp only [List.length_append] at h1
@@ -1378,7 +1378,7 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
             obtain ⟨hs0, hi0⟩ := confine _ hF hrest (hiUpTo_raise _ 0 _ (Nat.zero_le _))
               hσ'.length_left he0'
             refine .inr ⟨⟨hs.conf_left hs0, hi0, ⟨_, hLs, hge, ?_,
-              HiUpTo.sflows (rise hrest) (hiUpTo_raise _ _ _ (Nat.le_refl _))⟩⟩, .inr trivial⟩
+              HiUpTo.sflows (rise_labels hrest) (hiUpTo_raise _ _ _ (Nat.le_refl _))⟩⟩, .inr trivial⟩
             have h1 := hσ'.length_right
             have h2 := hfl.length_eq
             simp only [List.length_append] at h1
@@ -1578,8 +1578,8 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
                 (PresOr.of_glob rfl rfl ?_)
               -- Each callee ends under a secret pc, so each compared the preserved globals
               -- with their values at the call.
-              have hq0 : q0 = Lab.H := (rise hbody0).head hb0H
-              have hq1 : q1 = Lab.H := (rise hbody1).head hb1H
+              have hq0 : q0 = Lab.H := (rise_labels hbody0).head hb0H
+              have hq1 : q1 = Lab.H := (rise_labels hbody1).head hb1H
               have hcov0 := hret0.resolve_left (by rw [hq0]; decide)
               have hcov1 := hret1.resolve_left (by rw [hq1]; decide)
               rcases hp with he | hh
@@ -1665,8 +1665,8 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
                 (PresOr.of_glob rfl rfl ?_)
               -- Each callee ends under a secret pc, so each compared the preserved globals
               -- with their values at the call.
-              have hq0 : q0 = Lab.H := (rise hbody0).head hb0H
-              have hq1 : q1 = Lab.H := (rise hbody1).head hb1H
+              have hq0 : q0 = Lab.H := (rise_labels hbody0).head hb0H
+              have hq1 : q1 = Lab.H := (rise_labels hbody1).head hb1H
               have hcov0 := hret0.resolve_left (by rw [hq0]; decide)
               have hcov1 := hret1.resolve_left (by rw [hq1]; decide)
               rcases hp with he | hh
@@ -1749,8 +1749,8 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
               rw [hl1] at hl1'
               cases hl1'
               subst ho0 ho1
-              have hq0 : q0 = Lab.H := (rise hbody0).head hb0H
-              have hq1 : q1 = Lab.H := (rise hbody1).head hb1H
+              have hq0 : q0 = Lab.H := (rise_labels hbody0).head hb0H
+              have hq1 : q1 = Lab.H := (rise_labels hbody1).head hb1H
               have hcov0 := hret0.resolve_left (by rw [hq0]; decide)
               have hcov1 := hret1.resolve_left (by rw [hq1]; decide)
               refine .inl (.br hLs ((StkRel.of_allH hge hlen0 hlen1).mono hres)
@@ -1798,7 +1798,7 @@ theorem ni : ∀ (n0 : Nat) {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : P
         (ih _ hm0 hF hbody hb0 hb1 (hvs.mono hfl) hs (hp.enter (Lab.le_refl _)))
       exact after_body hF
         (fun m hm σ0 s0 o0 m1 σ1 s1 o1 h0 h1 hσ hs hp => ih m hm hF hrest h0 h1 hσ hs hp)
-        hrest hrel hbase hres (hp.mono (rise hbody).tail) hc0 hc1
+        hrest hrel hbase hres (hp.mono (rise_labels hbody).tail) hc0 hc1
     | unreachable => cases he0
 
 /-! ### A function of a well-typed module -/
@@ -1816,7 +1816,7 @@ call returns at the end of the body or by a branch to the function's label, whic
 `return` is; a call that traps or runs forever does not end. The function may call the module's
 functions, itself included.
 -/
-theorem tini {C : Ctx} (hF : WellTyped C F) {i : Nat} {f : Func} (hf : F[i]? = some f)
+theorem tini {C : Ctx} (hF : WellLTyped C F) {i : Nat} {f : Func} (hf : F[i]? = some f)
     {a0 a1 : List Nat} {s0 s1 : State} {n0 n1 : Nat} {o0 o1 : Out}
     (h0 : Eval F n0 [f.ty.results.length] f.body [] { s0 with loc := frame a0 } o0)
     (h1 : Eval F n1 [f.ty.results.length] f.body [] { s1 with loc := frame a1 } o1)

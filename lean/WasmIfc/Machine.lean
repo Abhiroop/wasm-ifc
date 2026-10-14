@@ -9,7 +9,7 @@ the operands of the current block, the rest of the block, and a control stack of
 call boundaries. One transition runs one instruction.
 
 `refinement` says that a run of the machine from the call of a function to an end is a
-derivation of `Eval` with the same end, and `machine_noninterference` is the theorem of
+derivation of `Eval` with the same end, and `machine_noninterference_labels` is the theorem of
 `Statement.lean` about two runs of the machine. What remains by inspection is that this
 machine is the Haskell one; `STATEMENTS.md` puts the two side by side.
 -/
@@ -617,7 +617,7 @@ states on arguments that agree where its parameters are public. If both runs end
 or both end by the same exception with the same values; the results of two returns agree
 where the function's result type is public; and the two final states are low-equivalent.
 -/
-theorem machine_noninterference {C : Ctx} {F : List Func} (hF : WellTyped C F)
+theorem machine_noninterference_labels {C : Ctx} {F : List Func} (hF : WellLTyped C F)
     (hpub : ∀ i, C.preserved i → C.globals i = Lab.L) {i : Nat} {f : Func} (hf : F[i]? = some f)
     {a0 a1 : List Nat} {s0 s1 : State} {e0 e1 : Ended}
     (ha : StkRel f.ty.params a0 a1) (hs : LowEq C s0 s1)
@@ -625,6 +625,6 @@ theorem machine_noninterference {C : Ctx} {F : List Func} (hF : WellTyped C F)
     (∃ r0 t0 r1 t1, e0 = .returned r0 t0 ∧ e1 = .returned r1 t1 ∧
       StkRel f.ty.results r0 r1 ∧ LowEq C t0 t1) ∨
     (∃ tag w t0 t1, e0 = .threw tag w t0 ∧ e1 = .threw tag w t1 ∧ LowEq C t0 t1) :=
-  noninterference hF hpub hf ha hs (refinement h0) (refinement h1)
+  noninterference_labels hF hpub hf ha hs (refinement h0) (refinement h1)
 
 end WasmIfc

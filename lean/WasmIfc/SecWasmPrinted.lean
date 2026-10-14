@@ -164,7 +164,7 @@ theorem repaired_rule_rejects_leak (γ' : SoS) :
                       cases hwrite with
                       | const _ hset =>
                         have hpc := write_under_public_pc hset
-                        simp [Lab.join, leakCtx] at hpc
+                        simp [Lab.join, leakCtx, leakTypedCtx, VCtx.erase] at hpc
 
 /--
 The same leak two blocks deep: the write follows the first block inside the second, and the
@@ -203,7 +203,7 @@ theorem printed_rule_rejects_shallow_leak (γ' : SoS) :
               cases hwrite with
               | const _ hset =>
                 have hpc := write_under_public_pc hset
-                simp [Lab.join, leakCtx] at hpc
+                simp [Lab.join, leakCtx, leakTypedCtx, VCtx.erase] at hpc
 
 /--
 The first finding in one statement. The printed rules type the leak, and it has two runs,

@@ -26,15 +26,15 @@ implementation and the rule of the paper it stands for, and what is assumed.
 
 | Theorem | File | Statement |
 |---|---|---|
-| `rise` | `Basic.lean` | A typed sequence ends with a pc stack that is entrywise at least the one it started with (the paper's `lem:rise`). |
+| `rise`, `rise_labels` | `ValueTypes.lean`, `Basic.lean` | A typed sequence ends with a pc stack that is entrywise at least the one it started with (the paper's `lem:rise`). |
 | `confine` | `Confinement.lean` | A typed sequence that starts under a secret pc leaves the public variables unchanged, except the preserved globals, and changes no public memory cell except to make it secret (`Conf`). If it leaves by a branch, the label's type is all secret and the pcs of the blocks it leaves are secret (`Info`). |
 | `pres_after`, `pres_after_call` | `Basic.lean` | Where two runs come out of a block, a loop, a conditional or a call, they agree on the preserved globals unless the pc there is secret. |
 | `ni` | `Noninterference.lean` | Two runs of a typed sequence from stacks and states that agree where public, and on the preserved globals unless the pc is secret, end in related outcomes (`OutRel`). |
-| `noninterference` | `Statement.lean` | The theorem in the paper's terms: two calls of a function from low-equivalent states (`LowEq`, the paper's definition of the attacker), if both end, end alike and in low-equivalent states. It is `tini` with the two relations of the proof put together. |
+| `noninterference`, `noninterference_labels` | `ValueTypes.lean`, `Statement.lean` | The theorem in the paper's terms: two calls of a function from low-equivalent states (`LowEq`, the paper's definition of the attacker), if both end, end alike and in low-equivalent states. It is `tini` with the two relations of the proof put together. |
 | `refinement` | `Machine.lean` | A run of the small-step machine from the call of a function to its end is a derivation of the big-step semantics with the same end (the paper's `lem:refinement`). No typing is assumed. |
-| `machine_noninterference` | `Machine.lean` | `noninterference` for two runs of the machine. |
+| `machine_noninterference`, `machine_noninterference_labels` | `ValueTypes.lean`, `Machine.lean` | `noninterference` for two runs of the machine. |
 | `tini` | `Noninterference.lean` | For a function of a well-typed module: two calls with arguments that agree where the parameters are public, from states that agree where public, if both end, either both return or both end by the same exception with the same values, and they leave states that agree where public. If they return, their results agree where the result type is public, and they agree on the preserved globals too if both pass the comparison made at the function's return. |
-| `ValueTyped.erase`, `value_typed_noninterference`, `value_typed_machine_noninterference` | `ValueTypes.lean` | The judgment with labelled value types `t⟨ℓ⟩`, with address types for 64-bit memories and tables, erases to the judgment on labels, and the two theorems hold for a module typed with value types. |
+| `Typed.erase`, `WellTyped.erase` | `ValueTypes.lean` | The paper's judgment, with labelled value types `t⟨ℓ⟩` and address types for 64-bit memories and tables, erases to its label part `LTyped`, on which the proofs are. The paper's names (`Typed`, `WellTyped`, `rise`, `noninterference`, `machine_noninterference`) are the value-typed ones; the label part has `LTyped`, `WellLTyped` and the suffix `_labels`. |
 | `leak_not_typed`, `leak_runs_differ` | `Findings.lean` | The paper's leak through `br_table` has no typing by these rules, and it has two runs, from states that differ in a secret local only, after which a public global differs. |
 | `call_after_secret_branch_typed`, `write_after_public_branch_typed` | `Findings.lean` | The paper's two secure programs that SecWasm's rules for `call` and `br_if` reject are typed. |
 | `SecWasm.printed_rule_accepts_leak`, `SecWasm.repaired_rule_rejects_leak`, `SecWasm.printed_rule_unsound` | `SecWasmPrinted.lean` | SecWasm's rules as printed, for the five instructions of the leak, type it; with the lift of `br_table` down to the deepest target they do not. |
@@ -57,7 +57,7 @@ the comparison, and without the comparison no typing of it exists.
 
 ## The rules
 
-`Typed C Λ e Π st Π' st'` in `Defs.lean` is the paper's judgment
+`LTyped C Λ e Π st Π' st'` in `Defs.lean` is the label part of the paper's judgment
 `Λ ⊢ e : Π | st ⇒ Π' | st'` (appendix B, "The Rules"), with the rules of the typed instruction
 type `Syntax.Instructions.Instr` for the instructions above:
 

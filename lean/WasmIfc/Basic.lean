@@ -951,8 +951,8 @@ theorem Conf.call {C : Ctx} {f : Func} {args : List Nat} {s t : State}
     (h : Conf (C.enter f) { s with loc := frame args } t) : Conf C s { t with loc := s.loc } :=
   ⟨fun _ _ => rfl, h.2⟩
 
-theorem WellTyped.enter {C : Ctx} {F : List Func} (h : WellTyped C F) (g : Func) :
-    WellTyped (C.enter g) F := fun i f hf => h i f hf
+theorem WellLTyped.enter {C : Ctx} {F : List Func} (h : WellLTyped C F) (g : Func) :
+    WellLTyped (C.enter g) F := fun i f hf => h i f hf
 
 /-! ### Preserved globals where control comes out of a construct -/
 
@@ -1074,10 +1074,10 @@ theorem Loose.mono {C : Ctx} {Ls : List STy} {P P' : Pcs} {st : STy} {o0 o1 : Ou
     (hf : SFlows P P') (h : Loose C Ls P st o0 o1) : Loose C Ls P' st o0 o1 :=
   ⟨h.1, h.2.1.mono hf, h.2.2.mono hf⟩
 
-/-! ### Pc stacks only rise (the paper's `lem:rise`) -/
+/-! ### Pc stacks only rise (the paper's `lem:rise_labels`) -/
 
-theorem rise {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : Pcs} {st st' : STy}
-    (h : Typed C Ls e P st P' st') : SFlows P P' := by
+theorem rise_labels {C : Ctx} {Ls : List STy} {e : List Instr} {P P' : Pcs} {st st' : STy}
+    (h : LTyped C Ls e P st P' st') : SFlows P P' := by
   induction h with
   | nil => exact SFlows.refl _
   | const _ _ ih => exact ih

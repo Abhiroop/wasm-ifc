@@ -93,5 +93,5 @@ and copy the binary; then `git apply bench/pre-ifc-opt.patch` there and build ag
 | the three programs of the findings: the leak has no typing and two runs that differ; the two secure programs are typed | the same build: `WasmIfc.leak_not_typed`, `leak_runs_differ`, `call_after_secret_branch_typed`, `write_after_public_branch_typed` | |
 | SecWasm's printed rule for `br_table` types the leak, and the repaired rule does not | the same build: `WasmIfc.SecWasm.printed_rule_accepts_leak`, `repaired_rule_rejects_leak`, `printed_rule_unsound` | |
 | the status of a host call depends on its operands and on the public part of the state: a definition of the model, used in one lemma; the shape of each of WASI's 46 functions | the same build: `WasmIfc.hostStatus`, `WasmIfc.StRel.status`; `lean/STATEMENTS.md`, section 8 | |
-| the judgment with labelled value types erases to the one on labels, and the theorems hold for it | the same build: `WasmIfc.ValueTyped.erase`, `WasmIfc.value_typed_noninterference` | |
+| the judgment with labelled value types erases to the one on labels, and the theorems hold for it | the same build: `WasmIfc.Typed.erase`, `WasmIfc.noninterference` (on labels: `WasmIfc.noninterference_labels`) | |
 | the axioms it depends on | `#print axioms WasmIfc.machine_noninterference` in a file run with `lake env lean` | 10 s |

@@ -4,14 +4,25 @@ For a reviewer who checks the definitions and the statement and leaves the proof
 `lake build` checks every proof, and `#print axioms WasmIfc.machine_noninterference` lists
 `propext`, `Classical.choice` and `Quot.sound` only. So what remains to be checked by a person
 is that the definitions say what the paper says, and that the machine of the last section is
-the implementation's. They are in three files, 1218, 120
-and 630 lines long, of the development's 7,066:
+the implementation's. They are in four files, 1218, 120,
+630 and 577 lines long, of the development's 7,099:
 
-- `WasmIfc/Defs.lean`: the syntax, the typing judgment, the states and the semantics.
-- `WasmIfc/Statement.lean`: low equivalence, a call from outside, and the theorem.
+- `WasmIfc/Defs.lean`: the syntax, the label part of the typing judgment, the states and the
+  semantics.
+- `WasmIfc/Statement.lean`: low equivalence, a call from outside, and the theorem on labels.
 - `WasmIfc/Machine.lean`: the small-step machine, down to `Config.entry`
   (`Machine.lean:313`), and the two theorems at its end. What is between
   is proof.
+- `WasmIfc/ValueTypes.lean`: the paper's judgment, with labelled value types, and the theorems
+  under the paper's names.
+
+**The names.** The names that the paper cites for the judgment and the theorems, `Typed`,
+`WellTyped`, `rise`, `noninterference` and `machine_noninterference`, are those of the judgment
+with labelled value types `t⟨ℓ⟩` and of its theorems, in `ValueTypes.lean` (section 9). The
+proofs are about the label part of that judgment, which forgets the value types: `LTyped`,
+`WellLTyped`, and the theorems with the suffix `_labels`. Sections 3 to 6 are about the label
+part, which is where the rules and the proof are, and section 9 says how the two meet. The
+lemmas of the proof that the paper names, `confine`, `ni` and `tini`, are about the label part.
 
 The other files (`Basic.lean`, `Confinement.lean`, `Noninterference.lean`) are lemmas and
 proofs, `Examples.lean` has small programs with their typings and runs, `Findings.lean`
@@ -47,8 +58,9 @@ bound on the pc of its callers, results.
 
 ## 3. The typing judgment
 
-`Typed C Ls e P st P' st'`, `Defs.lean:217`, is the paper's judgment of
-appendix B, "The Rules of SecWasm+": under the labels `Ls` (innermost first), the sequence `e` takes the pc
+`LTyped C Ls e P st P' st'`, `Defs.lean:217`, is the label part of the
+paper's judgment of appendix B, "The Rules of SecWasm+" (the judgment with value types is
+`Typed`, section 9): under the labels `Ls` (innermost first), the sequence `e` takes the pc
 stack `P` and the current block's segment `st` to `P'` and `st'`. Each rule types one
 instruction followed by the rest of its sequence, so SecWasm's T-Seq is built into every
 rule. `Ctx` (`Defs.lean:180`) has the levels of the locals and the globals,
@@ -138,7 +150,7 @@ raises the label of one value (`relabel` here is T+-Relabel-Results, on the whol
 The premises that the paper prints in brackets are the witnesses of the Haskell constructors,
 and each is a premise of the Lean rule.
 
-`WellTyped C F` (`Defs.lean:516`) is the paper's rule for functions, for every
+`WellLTyped C F` (`Defs.lean:516`) is the paper's rule for functions, for every
 function of the module: its body is typed under the one label of the function, from an empty
 segment, at the function's bound; and either it ends under a public pc or the function
 compares every preserved global at its return (`Validation.Shape.ReturnsWith`). It does not
@@ -243,7 +255,8 @@ exception. Convince yourself that it is `Eval` of the body as rule `call` runs i
 comparison of the function's `keep` included, which the machine makes for the invoked function
 as for a callee.
 
-`noninterference`, `Statement.lean:79`:
+`noninterference_labels`, `Statement.lean:79`, which section 9
+restates for the judgment with value types as `noninterference`:
 
 > For a well-typed module whose preserved globals are public, a function of it, two calls from
 > low-equivalent states with arguments that agree where the parameters are public: if both
@@ -258,7 +271,7 @@ the results.
 
 ### What is assumed
 
-- `WellTyped C F`: every function of the module is typed, as section 3 says.
+- `WellLTyped C F`: every function of the module is typed, as section 3 says.
 - `∀ i, C.preserved i → C.globals i = L`: a preserved global is public, which the policy
   ensures (`Validation.Policy`).
 - The two calls are of the same function, and their arguments and states are related as above.
@@ -268,7 +281,8 @@ the results.
 
 ### Where the statements differ from the paper's
 
-The paper states its theorem for the calculus (`lem:swp-ni`) as `noninterference` is stated:
+The paper states its theorem for the calculus (`lem:swp-ni`) as `noninterference` is stated
+(section 9; on labels, `noninterference_labels`):
 two `Invoke`s of one function from low-equivalent states. Its `ret(r, s')` is
 `Ended.returned r s'` and its `exn_t(w, s')` is `Ended.threw t w s'`. The differences left:
 
@@ -277,9 +291,9 @@ two `Invoke`s of one function from low-equivalent states. Its `ret(r, s')` is
   runs that end by the same exception too, which the paper's `thm:tini` does not state.
 - The paper's `thm:tini` is about the implementation: a typed program and `step`. Two links
   of it are outside Lean, by reading: that a value of the Haskell instruction type is a
-  derivation of `Typed` (the table of section 3), and that `step` makes the transitions of
+  derivation of `Typed`, whose label part is `LTyped` (the table of section 3), and that `step` makes the transitions of
   `Step` (the table of section 6).
-- `tini` in `Noninterference.lean` is `noninterference` in the terms of the proof (`StRel` and
+- `tini` in `Noninterference.lean` is `noninterference_labels` in the terms of the proof (`StRel` and
   `PresEq`, which together are `LowEq`: `LowEq.split`, `LowEq.join`).
 
 ## 6. The machine, and refinement
@@ -311,8 +325,9 @@ or does not end has no `Runs`.
 `Config.entry f a s` to an end `e` is `Invoke F f a s e`. No typing is assumed. This is the
 paper's `lem:refinement`, in the direction the theorem needs.
 
-`machine_noninterference`, `Machine.lean:620`: the statement
-of `noninterference` with two runs of the machine for the two `Invoke`s.
+`machine_noninterference_labels`, `Machine.lean:620`: the
+statement of `noninterference_labels` with two runs of the machine for the two `Invoke`s.
+Section 9 restates it with value types as `machine_noninterference`.
 
 What stays by reading is the table above: that the Haskell `step` makes the transitions of
 `Step`. Four differences are known. The Haskell machine bounds the depth of calls and traps
@@ -330,11 +345,11 @@ instruction that compares two references to exceptions.
 
 | Lean | Where | What it says |
 |---|---|---|
-| `leak` | `Findings.lean:29` | the program (a): four nested blocks, a `br_table` on the secret local with the targets 0 and 3, and a write to the public global after the third block. |
-| `leak_not_typed` | `Findings.lean:70` | `Typed` has no derivation for it from a public pc, for any labels, segment and result. |
-| `leak_runs_differ`, `leak_runs_globals` | `Findings.lean:109` | `Eval` has a run that ends with 1 in the public global if the secret local is 0, and one that leaves the global if it is not. |
-| `call_after_secret_branch_typed` | `Findings.lean:164` | the program (b) is typed from a public pc. |
-| `write_after_public_branch_typed` | `Findings.lean:196` | the program (c) is typed from a public pc. |
+| `leak` | `Findings.lean:36` | the program (a): four nested blocks, a `br_table` on the secret local with the targets 0 and 3, and a write to the public global after the third block. |
+| `leak_not_typed` | `Findings.lean:107` | `Typed` has no derivation for it from a public pc, for any labels, segment and result; `leak_not_typed_labels` says it of `LTyped`, and the first follows. |
+| `leak_runs_differ`, `leak_runs_globals` | `Findings.lean:121` | `Eval` has a run that ends with 1 in the public global if the secret local is 0, and one that leaves the global if it is not. |
+| `call_after_secret_branch_typed` | `Findings.lean:181` | the program (b) is typed from a public pc (with value types; `_labels` for the label part). |
+| `write_after_public_branch_typed` | `Findings.lean:220` | the program (c) is typed from a public pc (likewise). |
 | `SecWasm.Typed` | `SecWasmPrinted.lean:47` | SecWasm's judgment on a stack of stacks, with T-Const, T-Get-Local, T-Set-Global, T-Block and T-Br-Table of the full version's Fig. 13, each composed with T-Seq. Check them against the figure. The parameter `lifted` is how many entries below the current one T-Br-Table lifts. |
 | `SecWasm.printed`, `SecWasm.repaired` | `SecWasmPrinted.lean:89` | the number of targets (as printed: the entries 0 to m - 1), and the deepest target (as T-Br-If lifts the entries 0 to i - 1). |
 | `SecWasm.printed_rule_accepts_leak` | `SecWasmPrinted.lean:99` | the printed rules type `leak` as a function body with a public bound. |
@@ -346,7 +361,7 @@ instruction that compares two references to exceptions.
 Three things to convince yourself of in `SecWasm.Typed`. The order `Below` is the full
 version's Definition 14, entry by entry. A `br_table ts d` has the targets `ts` and then `d`,
 so the `m` of the printed rule is `ts.length + 1`. And the code after a `br_table` is typed
-from the rule's output, as T-Seq does, where `WasmIfc.Typed` does not type it. In `leak`
+from the rule's output, as T-Seq does, where `WasmIfc.LTyped` does not type it. In `leak`
 nothing follows the `br_table` in its block.
 
 ## 8. The host
@@ -449,23 +464,25 @@ Convince yourself of three things that the table rests on:
   host stores at the descriptor's level. `fd_seek` is a `hostCtl` that also stores the new
   position, as `fd_tell` would.
 
-## 9. Value types
+## 9. Value types, and the paper's names
 
-`Typed` has one type for all values. `ValueTypes.lean` has the judgment with labelled value
-types, the paper's `t⟨ℓ⟩`, over the same instructions and the same semantics:
+`LTyped` has one type for all values. `ValueTypes.lean` has the paper's judgment, with labelled
+value types `t⟨ℓ⟩`, over the same instructions and the same semantics, and it has the paper's
+names:
 
 | Lean | Where | Convince yourself that |
 |---|---|---|
 | `VTy`, `LTy`, `VSTy` | `ValueTypes.lean:18` | the value types are WebAssembly's numbers, vectors and references to functions and to exceptions, and a stack type is a list of pairs of a value type and a level. `labelsOf` forgets the types. |
 | `VCtx` | `ValueTypes.lean:67` | the context has the labelled types of the locals and the globals, the types that each tag carries, and an address type for each memory and each table (`i32`, or `i64` for a 64-bit one). `VCtx.erase` is the `Ctx` of section 3. |
-| `ValueTyped` | `ValueTypes.lean:104` | each rule is the rule of `Typed` of the same name with the types that `Syntax.Instructions` gives the instruction: an address has its memory's or its table's address type, a condition and the operands of a host call are `i32`, a table holds references to functions, the operands of an operation on two values have one type. A block type in an instruction is the labels of the block's types. |
-| `ValueTyped.erase` | `ValueTypes.lean:363` | a derivation with value types is, with the types forgotten, a derivation of `Typed`. |
-| `WellValueTyped`, `WellValueTyped.erase` | `ValueTypes.lean:494` | a module whose functions are typed with value types is well typed in the sense of section 3. |
-| `value_typed_noninterference`, `value_typed_machine_noninterference` | `ValueTypes.lean:520` | the two theorems for such a module: `noninterference` and `machine_noninterference` with the function's type and the context read through `labelsOf` and `VCtx.erase`. |
+| `Typed` | `ValueTypes.lean:104` | each rule is the rule of `LTyped` of the same name with the types that `Syntax.Instructions` gives the instruction: an address has its memory's or its table's address type, a condition and the operands of a host call are `i32`, a table holds references to functions, the operands of an operation on two values have one type. A block type in an instruction is the labels of the block's types. |
+| `Typed.erase` | `ValueTypes.lean:363` | a derivation of `Typed` is, with the types forgotten, a derivation of `LTyped`. |
+| `rise` | `ValueTypes.lean:467` | the paper's `lem:rise` for `Typed`, from `rise_labels`. |
+| `WellTyped`, `WellTyped.erase` | `ValueTypes.lean:499` | a module whose functions are `Typed` is `WellLTyped` with the types forgotten. |
+| `noninterference`, `machine_noninterference` | `ValueTypes.lean:525` | the two theorems for such a module: `noninterference_labels` and `machine_noninterference_labels` with the function's type and the context read through `labelsOf` and `VCtx.erase`. |
 
 The semantics does not look at types: a value is a number whatever its type, and an operation
-is a function on numbers. So the theorems with value types follow from the ones without, by
-`ValueTyped.erase`, and no proof was done again. What the layer adds to the statement is that
+is a function on numbers. So the theorems with value types follow from the ones on labels, by
+`Typed.erase`, and no proof was done again. What the layer adds to the statement is that
 the hypothesis is about programs typed as WebAssembly types them, with 64-bit memories and
 tables among them. What it does not model: that a value of a type is within that type's range
 (an `i32` below 2^32), and so the wrapping of an address.

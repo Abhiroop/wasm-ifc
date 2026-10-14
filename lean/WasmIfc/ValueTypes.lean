@@ -1,13 +1,13 @@
 /-
-Value types. The judgment `Typed` of `Defs.lean` has one type for all values, so a labelled
+Value types. The judgment `LTyped` of `Defs.lean` has one type for all values, so a labelled
 type is its label. This file has the judgment with labelled value types `t⟨ℓ⟩`, as the paper
 writes them and as `Syntax.Instructions` has them: a stack type is a list of pairs of a value
 type and a level, an instruction asks for the types its operands have in WebAssembly, and a
 memory and a table have an address type, `i32` or `i64`.
 
 The semantics does not look at types: a value is a number whatever its type. So nothing is to
-be proved again. `ValueTyped.erase` says that a derivation with value types, with the types
-forgotten, is a derivation of `Typed`, and the theorems for a module that is well typed with
+be proved again. `Typed.erase` says that a derivation with value types, with the types
+forgotten, is a derivation of `LTyped`, and the theorems for a module that is well typed with
 value types follow from those of `Statement.lean` and `Machine.lean`.
 -/
 import WasmIfc.Machine
@@ -31,7 +31,7 @@ abbrev LTy := VTy × Lab
 /-- A stack type with value types, top first. -/
 abbrev VSTy := List LTy
 
-/-- The labels of a stack type: what `Typed` knows of it. -/
+/-- The labels of a stack type: what `LTyped` knows of it. -/
 def labelsOf (st : VSTy) : STy := st.map Prod.snd
 
 /-- The value types of a stack type. -/
@@ -74,7 +74,7 @@ structure VCtx where
   addr : Nat → VTy
   taddr : Nat → VTy
 
-/-- The context that `Typed` sees. -/
+/-- The context that `LTyped` sees. -/
 def VCtx.erase (C : VCtx) : Ctx where
   locals := fun i => (C.locals i).2
   globals := fun i => (C.globals i).2
@@ -95,232 +95,232 @@ def VClauseOk (C : VCtx) (Ls : List VSTy) : Option Nat × Nat × Bool → Prop
   | (none, j, true) => ∃ l, Ls[j]? = some [(.exnref, l)]
 
 /--
-`ValueTyped C Ls e P st P' st'`: the judgment `Typed` with value types. Each rule is the rule
+`Typed C Ls e P st P' st'`: the judgment `LTyped` with value types. Each rule is the rule
 of the same name there, with the types that the instruction's operands and results have in
 WebAssembly. A block type of an instruction is the labels of the block's types (`labelsOf`).
 An operation on one or two values may give a value of another type (a comparison, a
 conversion). There is no rule for `iter`, which no program contains.
 -/
-inductive ValueTyped (C : VCtx) : List VSTy → List Instr → Pcs → VSTy → Pcs → VSTy → Prop where
-  | nil {Ls P st} : ValueTyped C Ls [] P st P st
+inductive Typed (C : VCtx) : List VSTy → List Instr → Pcs → VSTy → Pcs → VSTy → Prop where
+  | nil {Ls P st} : Typed C Ls [] P st P st
   | const {Ls rest pc Pr st P' st'} (t : VTy) (n : Nat) :
-      ValueTyped C Ls rest (pc :: Pr) ((t, pc) :: st) P' st' →
-      ValueTyped C Ls (.const n :: rest) (pc :: Pr) st P' st'
+      Typed C Ls rest (pc :: Pr) ((t, pc) :: st) P' st' →
+      Typed C Ls (.const n :: rest) (pc :: Pr) st P' st'
   | binop {Ls rest pc Pr l0 l1 st P' st'} (t t' : VTy) (f : Nat → Nat → Nat) :
-      ValueTyped C Ls rest (pc :: Pr) ((t', (l0.join l1).join pc) :: st) P' st' →
-      ValueTyped C Ls (.binop f :: rest) (pc :: Pr) ((t, l0) :: (t, l1) :: st) P' st'
+      Typed C Ls rest (pc :: Pr) ((t', (l0.join l1).join pc) :: st) P' st' →
+      Typed C Ls (.binop f :: rest) (pc :: Pr) ((t, l0) :: (t, l1) :: st) P' st'
   | unop {Ls rest pc Pr l st P' st'} (t t' : VTy) (f : Nat → Nat) :
-      ValueTyped C Ls rest (pc :: Pr) ((t', l.join pc) :: st) P' st' →
-      ValueTyped C Ls (.unop f :: rest) (pc :: Pr) ((t, l) :: st) P' st'
+      Typed C Ls rest (pc :: Pr) ((t', l.join pc) :: st) P' st' →
+      Typed C Ls (.unop f :: rest) (pc :: Pr) ((t, l) :: st) P' st'
   | partialBinop {Ls rest pc Pr l0 l1 st P' st'} (t : VTy) (f : Nat → Nat → Option Nat) :
-      ValueTyped C Ls rest (pc :: Pr) ((t, (l0.join l1).join pc) :: st) P' st' →
-      ValueTyped C Ls (.partialBinop f :: rest) (pc :: Pr) ((t, l0) :: (t, l1) :: st) P' st'
+      Typed C Ls rest (pc :: Pr) ((t, (l0.join l1).join pc) :: st) P' st' →
+      Typed C Ls (.partialBinop f :: rest) (pc :: Pr) ((t, l0) :: (t, l1) :: st) P' st'
   | partialUnop {Ls rest pc Pr l st P' st'} (t t' : VTy) (f : Nat → Option Nat) :
-      ValueTyped C Ls rest (pc :: Pr) ((t', l.join pc) :: st) P' st' →
-      ValueTyped C Ls (.partialUnop f :: rest) (pc :: Pr) ((t, l) :: st) P' st'
+      Typed C Ls rest (pc :: Pr) ((t', l.join pc) :: st) P' st' →
+      Typed C Ls (.partialUnop f :: rest) (pc :: Pr) ((t, l) :: st) P' st'
   | dup {Ls rest P τ st P' st'} :
-      ValueTyped C Ls rest P (τ :: τ :: st) P' st' →
-      ValueTyped C Ls (.dup :: rest) P (τ :: st) P' st'
+      Typed C Ls rest P (τ :: τ :: st) P' st' →
+      Typed C Ls (.dup :: rest) P (τ :: st) P' st'
   | select {Ls rest pc Pr lc l1 l2 st P' st'} (t : VTy) :
-      ValueTyped C Ls rest (pc :: Pr) ((t, pc.join (lc.join (l1.join l2))) :: st) P' st' →
-      ValueTyped C Ls (.select :: rest) (pc :: Pr) ((.i32, lc) :: (t, l1) :: (t, l2) :: st) P' st'
+      Typed C Ls rest (pc :: Pr) ((t, pc.join (lc.join (l1.join l2))) :: st) P' st' →
+      Typed C Ls (.select :: rest) (pc :: Pr) ((.i32, lc) :: (t, l1) :: (t, l2) :: st) P' st'
   | drop {Ls rest P τ st P' st'} :
-      ValueTyped C Ls rest P st P' st' →
-      ValueTyped C Ls (.drop :: rest) P (τ :: st) P' st'
+      Typed C Ls rest P st P' st' →
+      Typed C Ls (.drop :: rest) P (τ :: st) P' st'
   | nop {Ls rest P st P' st'} :
-      ValueTyped C Ls rest P st P' st' →
-      ValueTyped C Ls (.nop :: rest) P st P' st'
+      Typed C Ls rest P st P' st' →
+      Typed C Ls (.nop :: rest) P st P' st'
   | relabel {Ls rest P st st1 P' st'} :
       VFlows st st1 →
-      ValueTyped C Ls rest P st1 P' st' →
-      ValueTyped C Ls (.relabel :: rest) P st P' st'
+      Typed C Ls rest P st1 P' st' →
+      Typed C Ls (.relabel :: rest) P st P' st'
   | localGet {Ls rest pc Pr st P' st'} (i : Nat) :
-      ValueTyped C Ls rest (pc :: Pr) (((C.locals i).1, (C.locals i).2.join pc) :: st) P' st' →
-      ValueTyped C Ls (.localGet i :: rest) (pc :: Pr) st P' st'
+      Typed C Ls rest (pc :: Pr) (((C.locals i).1, (C.locals i).2.join pc) :: st) P' st' →
+      Typed C Ls (.localGet i :: rest) (pc :: Pr) st P' st'
   | localSet {Ls rest pc Pr l st P' st'} (i : Nat) :
       Lab.le pc (C.locals i).2 → Lab.le l (C.locals i).2 →
-      ValueTyped C Ls rest (pc :: Pr) st P' st' →
-      ValueTyped C Ls (.localSet i :: rest) (pc :: Pr) (((C.locals i).1, l) :: st) P' st'
+      Typed C Ls rest (pc :: Pr) st P' st' →
+      Typed C Ls (.localSet i :: rest) (pc :: Pr) (((C.locals i).1, l) :: st) P' st'
   | localTee {Ls rest pc Pr l st P' st'} (i : Nat) :
       Lab.le pc (C.locals i).2 → Lab.le l (C.locals i).2 →
-      ValueTyped C Ls rest (pc :: Pr) (((C.locals i).1, l) :: st) P' st' →
-      ValueTyped C Ls (.localTee i :: rest) (pc :: Pr) (((C.locals i).1, l) :: st) P' st'
+      Typed C Ls rest (pc :: Pr) (((C.locals i).1, l) :: st) P' st' →
+      Typed C Ls (.localTee i :: rest) (pc :: Pr) (((C.locals i).1, l) :: st) P' st'
   | globalGet {Ls rest pc Pr st P' st'} (i : Nat) :
-      ValueTyped C Ls rest (pc :: Pr) (((C.globals i).1, (C.globals i).2.join pc) :: st) P' st' →
-      ValueTyped C Ls (.globalGet i :: rest) (pc :: Pr) st P' st'
+      Typed C Ls rest (pc :: Pr) (((C.globals i).1, (C.globals i).2.join pc) :: st) P' st' →
+      Typed C Ls (.globalGet i :: rest) (pc :: Pr) st P' st'
   | globalSet {Ls rest pc Pr l st P' st'} (i : Nat) :
       ¬ C.preserved i → Lab.le pc (C.globals i).2 → Lab.le l (C.globals i).2 →
-      ValueTyped C Ls rest (pc :: Pr) st P' st' →
-      ValueTyped C Ls (.globalSet i :: rest) (pc :: Pr) (((C.globals i).1, l) :: st) P' st'
+      Typed C Ls rest (pc :: Pr) st P' st' →
+      Typed C Ls (.globalSet i :: rest) (pc :: Pr) (((C.globals i).1, l) :: st) P' st'
   | globalSetPreserved {Ls rest pc Pr l st P' st'} (i : Nat) :
       C.preserved i → Lab.le l pc →
-      ValueTyped C Ls rest (pc :: Pr) st P' st' →
-      ValueTyped C Ls (.globalSet i :: rest) (pc :: Pr) (((C.globals i).1, l) :: st) P' st'
+      Typed C Ls rest (pc :: Pr) st P' st' →
+      Typed C Ls (.globalSet i :: rest) (pc :: Pr) (((C.globals i).1, l) :: st) P' st'
   /-- The address has the memory's address type; the value read has the type the load names. -/
   | load {Ls rest pc Pr la st P' st'} (t : VTy) (m w : Nat) (lm : Lab) :
-      ValueTyped C Ls rest (pc :: Pr) ((t, (la.join lm).join pc) :: st) P' st' →
-      ValueTyped C Ls (.load m w lm :: rest) (pc :: Pr) ((C.addr m, la) :: st) P' st'
+      Typed C Ls rest (pc :: Pr) ((t, (la.join lm).join pc) :: st) P' st' →
+      Typed C Ls (.load m w lm :: rest) (pc :: Pr) ((C.addr m, la) :: st) P' st'
   | store {Ls rest pc Pr lv la st P' st'} (t : VTy) (m w : Nat) (lm : Lab) :
       Lab.le ((pc.join la).join lv) lm →
-      ValueTyped C Ls rest (pc :: Pr) st P' st' →
-      ValueTyped C Ls (.store m w lm :: rest) (pc :: Pr) ((t, lv) :: (C.addr m, la) :: st) P' st'
+      Typed C Ls rest (pc :: Pr) st P' st' →
+      Typed C Ls (.store m w lm :: rest) (pc :: Pr) ((t, lv) :: (C.addr m, la) :: st) P' st'
   | fill {Ls rest pc Pr ln lv ld st P' st'} (m : Nat) (lm : Lab) :
       Lab.le (pc.join (ln.join (lv.join ld))) lm →
-      ValueTyped C Ls rest (pc :: Pr) st P' st' →
-      ValueTyped C Ls (.fill m lm :: rest) (pc :: Pr)
+      Typed C Ls rest (pc :: Pr) st P' st' →
+      Typed C Ls (.fill m lm :: rest) (pc :: Pr)
         ((C.addr m, ln) :: (.i32, lv) :: (C.addr m, ld) :: st) P' st'
   | copy {Ls rest pc Pr ln lsrc ld st P' st'} (md ms : Nat) (lm : Lab) :
       Lab.le (pc.join (ln.join (lsrc.join ld))) lm →
-      ValueTyped C Ls rest (pc :: Pr) st P' st' →
-      ValueTyped C Ls (.copy md ms lm :: rest) (pc :: Pr)
+      Typed C Ls rest (pc :: Pr) st P' st' →
+      Typed C Ls (.copy md ms lm :: rest) (pc :: Pr)
         ((minAddr (C.addr md) (C.addr ms), ln) :: (C.addr ms, lsrc) :: (C.addr md, ld) :: st) P' st'
   | tableGet {Ls rest pc Pr li st P' st'} (x : Nat) :
-      ValueTyped C Ls rest (pc :: Pr) ((.funcref, pc.join (li.join (C.table x))) :: st) P' st' →
-      ValueTyped C Ls (.tableGet x :: rest) (pc :: Pr) ((C.taddr x, li) :: st) P' st'
+      Typed C Ls rest (pc :: Pr) ((.funcref, pc.join (li.join (C.table x))) :: st) P' st' →
+      Typed C Ls (.tableGet x :: rest) (pc :: Pr) ((C.taddr x, li) :: st) P' st'
   | tableSet {Ls rest pc Pr lv li st P' st'} (x : Nat) :
       Lab.le (pc.join (li.join lv)) (C.table x) →
-      ValueTyped C Ls rest (pc :: Pr) st P' st' →
-      ValueTyped C Ls (.tableSet x :: rest) (pc :: Pr) ((.funcref, lv) :: (C.taddr x, li) :: st) P' st'
+      Typed C Ls rest (pc :: Pr) st P' st' →
+      Typed C Ls (.tableSet x :: rest) (pc :: Pr) ((.funcref, lv) :: (C.taddr x, li) :: st) P' st'
   /-- A host call takes and returns 32-bit integers. -/
   | hostRead {Ls rest Pr st P' st'} :
-      ValueTyped C Ls rest (Lab.L :: Pr) ((.i32, Lab.L) :: st) P' st' →
-      ValueTyped C Ls (.hostRead :: rest) (Lab.L :: Pr)
+      Typed C Ls rest (Lab.L :: Pr) ((.i32, Lab.L) :: st) P' st' →
+      Typed C Ls (.hostRead :: rest) (Lab.L :: Pr)
         ((.i32, Lab.L) :: (.i32, Lab.L) :: (.i32, Lab.L) :: (.i32, Lab.L) :: st) P' st'
   | hostWrite {Ls rest Pr st P' st'} :
-      ValueTyped C Ls rest (Lab.L :: Pr) ((.i32, Lab.L) :: st) P' st' →
-      ValueTyped C Ls (.hostWrite :: rest) (Lab.L :: Pr)
+      Typed C Ls rest (Lab.L :: Pr) ((.i32, Lab.L) :: st) P' st' →
+      Typed C Ls (.hostWrite :: rest) (Lab.L :: Pr)
         ((.i32, Lab.L) :: (.i32, Lab.L) :: (.i32, Lab.L) :: st) P' st'
   | hostGet {Ls rest Pr st P' st'} :
-      ValueTyped C Ls rest (Lab.L :: Pr) ((.i32, Lab.L) :: st) P' st' →
-      ValueTyped C Ls (.hostGet :: rest) (Lab.L :: Pr)
+      Typed C Ls rest (Lab.L :: Pr) ((.i32, Lab.L) :: st) P' st' →
+      Typed C Ls (.hostGet :: rest) (Lab.L :: Pr)
         ((.i32, Lab.L) :: (.i32, Lab.L) :: (.i32, Lab.L) :: (.i32, Lab.L) :: st) P' st'
   | hostCtl {Ls rest Pr st P' st'} :
-      ValueTyped C Ls rest (Lab.L :: Pr) ((.i32, Lab.L) :: st) P' st' →
-      ValueTyped C Ls (.hostCtl :: rest) (Lab.L :: Pr)
+      Typed C Ls rest (Lab.L :: Pr) ((.i32, Lab.L) :: st) P' st' →
+      Typed C Ls (.hostCtl :: rest) (Lab.L :: Pr)
         ((.i32, Lab.L) :: (.i32, Lab.L) :: (.i32, Lab.L) :: st) P' st'
   | hostPoll {Ls rest Pr st P' st'} :
-      ValueTyped C Ls rest (Lab.L :: Pr) ((.i32, Lab.L) :: st) P' st' →
-      ValueTyped C Ls (.hostPoll :: rest) (Lab.L :: Pr)
+      Typed C Ls rest (Lab.L :: Pr) ((.i32, Lab.L) :: st) P' st' →
+      Typed C Ls (.hostPoll :: rest) (Lab.L :: Pr)
         ((.i32, Lab.L) :: (.i32, Lab.L) :: (.i32, Lab.L) :: (.i32, Lab.L) :: st) P' st'
   | hostOpen {Ls rest Pr st P' st'} :
-      ValueTyped C Ls rest (Lab.L :: Pr) ((.i32, Lab.L) :: st) P' st' →
-      ValueTyped C Ls (.hostOpen :: rest) (Lab.L :: Pr)
+      Typed C Ls rest (Lab.L :: Pr) ((.i32, Lab.L) :: st) P' st' →
+      Typed C Ls (.hostOpen :: rest) (Lab.L :: Pr)
         ((.i32, Lab.L) :: (.i32, Lab.L) :: (.i32, Lab.L) :: (.i32, Lab.L) :: (.i32, Lab.L) :: st) P' st'
   | memInit {Ls rest pc Pr ln lsrc ld st P' st'} (m k : Nat) (lm : Lab) :
       Lab.le (pc.join (ln.join (lsrc.join ld))) lm →
-      ValueTyped C Ls rest (pc :: Pr) st P' st' →
-      ValueTyped C Ls (.memInit m k lm :: rest) (pc :: Pr)
+      Typed C Ls rest (pc :: Pr) st P' st' →
+      Typed C Ls (.memInit m k lm :: rest) (pc :: Pr)
         ((.i32, ln) :: (.i32, lsrc) :: (C.addr m, ld) :: st) P' st'
   | dataDrop {Ls rest P st P' st'} (k : Nat) :
-      ValueTyped C Ls rest P st P' st' →
-      ValueTyped C Ls (.dataDrop k :: rest) P st P' st'
+      Typed C Ls rest P st P' st' →
+      Typed C Ls (.dataDrop k :: rest) P st P' st'
   | tableFill {Ls rest pc Pr ln lv li st P' st'} (x : Nat) :
       Lab.le (pc.join (ln.join (lv.join li))) (C.table x) →
-      ValueTyped C Ls rest (pc :: Pr) st P' st' →
-      ValueTyped C Ls (.tableFill x :: rest) (pc :: Pr)
+      Typed C Ls rest (pc :: Pr) st P' st' →
+      Typed C Ls (.tableFill x :: rest) (pc :: Pr)
         ((C.taddr x, ln) :: (.funcref, lv) :: (C.taddr x, li) :: st) P' st'
   | tableCopy {Ls rest pc Pr ln lsrc ld st P' st'} (xd xs : Nat) :
       Lab.le (pc.join (ln.join (lsrc.join (ld.join (C.table xs))))) (C.table xd) →
-      ValueTyped C Ls rest (pc :: Pr) st P' st' →
-      ValueTyped C Ls (.tableCopy xd xs :: rest) (pc :: Pr)
+      Typed C Ls rest (pc :: Pr) st P' st' →
+      Typed C Ls (.tableCopy xd xs :: rest) (pc :: Pr)
         ((minAddr (C.taddr xd) (C.taddr xs), ln) :: (C.taddr xs, lsrc) :: (C.taddr xd, ld) :: st) P' st'
   | tableSize {Ls rest pc Pr st P' st'} (x : Nat) :
-      ValueTyped C Ls rest (pc :: Pr) ((C.taddr x, pc.join (C.table x)) :: st) P' st' →
-      ValueTyped C Ls (.tableSize x :: rest) (pc :: Pr) st P' st'
+      Typed C Ls rest (pc :: Pr) ((C.taddr x, pc.join (C.table x)) :: st) P' st' →
+      Typed C Ls (.tableSize x :: rest) (pc :: Pr) st P' st'
   | tableGrow {Ls rest pc Pr ln lv st P' st'} (x : Nat) :
       Lab.le (pc.join (ln.join lv)) (C.table x) →
-      ValueTyped C Ls rest (pc :: Pr) ((C.taddr x, pc.join (C.table x)) :: st) P' st' →
-      ValueTyped C Ls (.tableGrow x :: rest) (pc :: Pr) ((C.taddr x, ln) :: (.funcref, lv) :: st) P' st'
+      Typed C Ls rest (pc :: Pr) ((C.taddr x, pc.join (C.table x)) :: st) P' st' →
+      Typed C Ls (.tableGrow x :: rest) (pc :: Pr) ((C.taddr x, ln) :: (.funcref, lv) :: st) P' st'
   | tableInit {Ls rest pc Pr ln lsrc ld st P' st'} (x k : Nat) :
       Lab.le (pc.join (ln.join (lsrc.join ld))) (C.table x) →
-      ValueTyped C Ls rest (pc :: Pr) st P' st' →
-      ValueTyped C Ls (.tableInit x k :: rest) (pc :: Pr)
+      Typed C Ls rest (pc :: Pr) st P' st' →
+      Typed C Ls (.tableInit x k :: rest) (pc :: Pr)
         ((.i32, ln) :: (.i32, lsrc) :: (C.taddr x, ld) :: st) P' st'
   | elemDrop {Ls rest P st P' st'} (k : Nat) :
-      ValueTyped C Ls rest P st P' st' →
-      ValueTyped C Ls (.elemDrop k :: rest) P st P' st'
+      Typed C Ls rest P st P' st' →
+      Typed C Ls (.elemDrop k :: rest) P st P' st'
   /-- The size of a memory and what it grows by have the memory's address type. -/
   | memSize {Ls rest pc Pr st P' st'} (m : Nat) :
-      ValueTyped C Ls rest (pc :: Pr) ((C.addr m, pc) :: st) P' st' →
-      ValueTyped C Ls (.memSize m :: rest) (pc :: Pr) st P' st'
+      Typed C Ls rest (pc :: Pr) ((C.addr m, pc) :: st) P' st' →
+      Typed C Ls (.memSize m :: rest) (pc :: Pr) st P' st'
   | memGrow {Ls rest pc Pr l st P' st'} (m : Nat) :
       Lab.le (pc.join l) Lab.L →
-      ValueTyped C Ls rest (pc :: Pr) ((C.addr m, pc) :: st) P' st' →
-      ValueTyped C Ls (.memGrow m :: rest) (pc :: Pr) ((C.addr m, l) :: st) P' st'
+      Typed C Ls rest (pc :: Pr) ((C.addr m, pc) :: st) P' st' →
+      Typed C Ls (.memGrow m :: rest) (pc :: Pr) ((C.addr m, l) :: st) P' st'
   /-- The instruction's block type is the labels of `ps` and `rs`. -/
   | block {Ls rest pc Pr tin keep ps rs body p P1 st P' st'} :
       VFlows tin ps → AllGe pc (labelsOf rs) → Restores C.erase p P1 keep →
-      ValueTyped C (rs :: Ls) body (pc :: pc :: Pr) ps (p :: P1) rs →
-      ValueTyped C Ls rest P1 (rs ++ st) P' st' →
-      ValueTyped C Ls (.block keep (labelsOf ps) (labelsOf rs) body :: rest) (pc :: Pr) (tin ++ st) P' st'
+      Typed C (rs :: Ls) body (pc :: pc :: Pr) ps (p :: P1) rs →
+      Typed C Ls rest P1 (rs ++ st) P' st' →
+      Typed C Ls (.block keep (labelsOf ps) (labelsOf rs) body :: rest) (pc :: Pr) (tin ++ st) P' st'
   | loop {Ls rest pc Pr pcL tin keep ps rs body p P1 st P' st'} :
       Lab.le pc pcL → Lab.le p pcL → VFlows tin ps → AllGe pcL (labelsOf rs) →
       Restores C.erase pcL P1 keep →
-      ValueTyped C (ps :: Ls) body (pcL :: pc :: Pr) ps (p :: P1) rs →
-      ValueTyped C Ls rest P1 (rs ++ st) P' st' →
-      ValueTyped C Ls (.loop keep (labelsOf ps) (labelsOf rs) body :: rest) (pc :: Pr) (tin ++ st) P' st'
+      Typed C (ps :: Ls) body (pcL :: pc :: Pr) ps (p :: P1) rs →
+      Typed C Ls rest P1 (rs ++ st) P' st' →
+      Typed C Ls (.loop keep (labelsOf ps) (labelsOf rs) body :: rest) (pc :: Pr) (tin ++ st) P' st'
   | ite {Ls rest pc Pr l tin keep ps rs thn els p1 P1 p2 P2 st P' st'} :
       VFlows tin ps → AllGe (pc.join l) (labelsOf rs) →
       Restores C.erase (p1.join p2) (joinEach P1 P2) keep →
-      ValueTyped C (rs :: Ls) thn (pc.join l :: pc :: Pr) ps (p1 :: P1) rs →
-      ValueTyped C (rs :: Ls) els (pc.join l :: pc :: Pr) ps (p2 :: P2) rs →
-      ValueTyped C Ls rest (joinEach P1 P2) (rs ++ st) P' st' →
-      ValueTyped C Ls (.ite keep (labelsOf ps) (labelsOf rs) thn els :: rest) (pc :: Pr)
+      Typed C (rs :: Ls) thn (pc.join l :: pc :: Pr) ps (p1 :: P1) rs →
+      Typed C (rs :: Ls) els (pc.join l :: pc :: Pr) ps (p2 :: P2) rs →
+      Typed C Ls rest (joinEach P1 P2) (rs ++ st) P' st' →
+      Typed C Ls (.ite keep (labelsOf ps) (labelsOf rs) thn els :: rest) (pc :: Pr)
         ((.i32, l) :: (tin ++ st)) P' st'
   | br {Ls rest pc Pr i rs carried st stAny} :
       Ls[i]? = some rs → AllGe pc (labelsOf rs) → VFlows carried rs →
-      ValueTyped C Ls (.br i :: rest) (pc :: Pr) (carried ++ st) (raise pc (pc :: Pr) i) stAny
+      Typed C Ls (.br i :: rest) (pc :: Pr) (carried ++ st) (raise pc (pc :: Pr) i) stAny
   | brIf {Ls rest pc Pr l i rs carried st P' st'} :
       Ls[i]? = some rs → AllGe (pc.join l) (labelsOf rs) → VFlows carried rs →
-      ValueTyped C Ls rest (raise (pc.join l) (pc :: Pr) i) (carried ++ st) P' st' →
-      ValueTyped C Ls (.brIf i :: rest) (pc :: Pr) ((.i32, l) :: (carried ++ st)) P' st'
+      Typed C Ls rest (raise (pc.join l) (pc :: Pr) i) (carried ++ st) P' st' →
+      Typed C Ls (.brIf i :: rest) (pc :: Pr) ((.i32, l) :: (carried ++ st)) P' st'
   | brTable {Ls rest pc Pr l ts d k rs carried st stAny} :
       (∀ t, t ∈ d :: ts → Ls[t]? = some rs ∧ t ≤ k) → AllGe (pc.join l) (labelsOf rs) →
       VFlows carried rs →
-      ValueTyped C Ls (.brTable ts d :: rest) (pc :: Pr) ((.i32, l) :: (carried ++ st))
+      Typed C Ls (.brTable ts d :: rest) (pc :: Pr) ((.i32, l) :: (carried ++ st))
         (raise (pc.join l) (pc :: Pr) k) stAny
   | ret {Ls rest pc Pr rs carried st stAny} :
       Ls[Ls.length - 1]? = some rs → AllGe pc (labelsOf rs) → VFlows carried rs →
-      ValueTyped C Ls (.ret :: rest) (pc :: Pr) (carried ++ st)
+      Typed C Ls (.ret :: rest) (pc :: Pr) (carried ++ st)
         (raise pc (pc :: Pr) (Ls.length - 1)) stAny
   | call {Ls rest pc Pr i ft targs st P' st'} :
       C.funcs[i]? = some ft → Lab.le pc ft.bound → VFlows targs ft.params →
-      ValueTyped C Ls rest (pc :: Pr) (ft.results ++ st) P' st' →
-      ValueTyped C Ls (.call i :: rest) (pc :: Pr) (targs ++ st) P' st'
+      Typed C Ls rest (pc :: Pr) (ft.results ++ st) P' st' →
+      Typed C Ls (.call i :: rest) (pc :: Pr) (targs ++ st) P' st'
   | retCall {Ls rest pc Pr i ft ret targs st stAny} :
       C.funcs[i]? = some ft → Lab.le pc ft.bound → VFlows targs ft.params →
       Ls[Ls.length - 1]? = some ret → AllGe pc (labelsOf ret) → VFlows ft.results ret →
-      ValueTyped C Ls (.retCall i :: rest) (pc :: Pr) (targs ++ st)
+      Typed C Ls (.retCall i :: rest) (pc :: Pr) (targs ++ st)
         (raise pc (pc :: Pr) (Ls.length - 1)) stAny
   /-- The index has the table's address type; the expected type is the labels of `ps` and `rs`. -/
   | callIndirect {Ls rest pc Pr l x ps b rs targs st P' st'} :
       Lab.le (pc.join (l.join (C.table x))) b → AllGe b (labelsOf rs) → VFlows targs ps →
-      ValueTyped C Ls rest (pc :: Pr) (rs ++ st) P' st' →
-      ValueTyped C Ls (.callIndirect x (labelsOf ps) b (labelsOf rs) :: rest) (pc :: Pr)
+      Typed C Ls rest (pc :: Pr) (rs ++ st) P' st' →
+      Typed C Ls (.callIndirect x (labelsOf ps) b (labelsOf rs) :: rest) (pc :: Pr)
         ((C.taddr x, l) :: (targs ++ st)) P' st'
   | retCallIndirect {Ls rest pc Pr l x ps b rs ret targs st stAny} :
       Lab.le (pc.join (l.join (C.table x))) b → AllGe b (labelsOf rs) → VFlows targs ps →
       Ls[Ls.length - 1]? = some ret → AllGe pc (labelsOf ret) → VFlows rs ret →
-      ValueTyped C Ls (.retCallIndirect x (labelsOf ps) b (labelsOf rs) :: rest) (pc :: Pr)
+      Typed C Ls (.retCallIndirect x (labelsOf ps) b (labelsOf rs) :: rest) (pc :: Pr)
         ((C.taddr x, l) :: (targs ++ st)) (raise pc (pc :: Pr) (Ls.length - 1)) stAny
   | callRef {Ls rest pc Pr l ps b rs targs st P' st'} :
       Lab.le (pc.join l) b → AllGe b (labelsOf rs) → VFlows targs ps →
-      ValueTyped C Ls rest (pc :: Pr) (rs ++ st) P' st' →
-      ValueTyped C Ls (.callRef (labelsOf ps) b (labelsOf rs) :: rest) (pc :: Pr)
+      Typed C Ls rest (pc :: Pr) (rs ++ st) P' st' →
+      Typed C Ls (.callRef (labelsOf ps) b (labelsOf rs) :: rest) (pc :: Pr)
         ((.funcref, l) :: (targs ++ st)) P' st'
   | unreachable {Ls rest P st stAny} :
-      ValueTyped C Ls (.unreachable :: rest) P st P stAny
+      Typed C Ls (.unreachable :: rest) P st P stAny
   /-- An exception carries public values of its tag's types. -/
   | throw {Ls rest Pr t ts args st stAny} :
       C.tags[t]? = some ts → typesOf args = ts → (∀ l, l ∈ labelsOf args → l = Lab.L) →
-      ValueTyped C Ls (.throw t ts.length :: rest) (Lab.L :: Pr) (args ++ st) (Lab.L :: Pr) stAny
+      Typed C Ls (.throw t ts.length :: rest) (Lab.L :: Pr) (args ++ st) (Lab.L :: Pr) stAny
   | throwRef {Ls rest Pr st stAny} :
-      ValueTyped C Ls (.throwRef :: rest) (Lab.L :: Pr) ((.exnref, Lab.L) :: st) (Lab.L :: Pr) stAny
+      Typed C Ls (.throwRef :: rest) (Lab.L :: Pr) ((.exnref, Lab.L) :: st) (Lab.L :: Pr) stAny
   | tryTable {Ls rest Pr tin keep ps rs clauses body p P1 st P' st'} :
       VFlows tin ps → Restores C.erase p P1 keep → (∀ c, c ∈ clauses → VClauseOk C Ls c) →
-      ValueTyped C (rs :: Ls) body (Lab.L :: Lab.L :: Pr) ps (p :: P1) rs →
-      ValueTyped C Ls rest P1 (rs ++ st) P' st' →
-      ValueTyped C Ls (.tryTable keep (labelsOf ps) (labelsOf rs) clauses body :: rest) (Lab.L :: Pr)
+      Typed C (rs :: Ls) body (Lab.L :: Lab.L :: Pr) ps (p :: P1) rs →
+      Typed C Ls rest P1 (rs ++ st) P' st' →
+      Typed C Ls (.tryTable keep (labelsOf ps) (labelsOf rs) clauses body :: rest) (Lab.L :: Pr)
         (tin ++ st) P' st'
 
 /-! ### Forgetting the value types -/
@@ -356,13 +356,13 @@ theorem VClauseOk.erase {C : VCtx} {Ls : List VSTy} {c : Option Nat × Nat × Bo
       simpa [labelsOf, typesOf] using this
 
 /--
-A derivation with value types is, with the types forgotten, a derivation of `Typed`: of the
+A derivation with value types is, with the types forgotten, a derivation of `LTyped`: of the
 same instructions, from the labels of the same stack types, in the context that keeps the
 labels.
 -/
-theorem ValueTyped.erase {C : VCtx} {Ls : List VSTy} {e : List Instr} {P P' : Pcs} {st st' : VSTy}
-    (h : ValueTyped C Ls e P st P' st') :
-    Typed C.erase (Ls.map labelsOf) e P (labelsOf st) P' (labelsOf st') := by
+theorem Typed.erase {C : VCtx} {Ls : List VSTy} {e : List Instr} {P P' : Pcs} {st st' : VSTy}
+    (h : Typed C Ls e P st P' st') :
+    LTyped C.erase (Ls.map labelsOf) e P (labelsOf st) P' (labelsOf st') := by
   induction h with
   | nil => exact .nil
   | const t n _ ih => exact .const n ih
@@ -425,7 +425,7 @@ theorem ValueTyped.erase {C : VCtx} {Ls : List VSTy} {e : List Instr} {P P' : Pc
     exact .brTable (fun t ht => ⟨getElem?_labels (hl t ht).1, (hl t ht).2⟩) hge hfl.labelsOf
   | @ret Ls rest pc Pr rs carried st stAny hl hge hfl =>
     rw [labels_append]
-    have h := Typed.ret (C := C.erase) (rest := rest) (pc := pc) (Pr := Pr) (st := labelsOf st)
+    have h := LTyped.ret (C := C.erase) (rest := rest) (pc := pc) (Pr := Pr) (st := labelsOf st)
       (stAny := labelsOf stAny) (last_labels hl) hge hfl.labelsOf
     rw [List.length_map] at h
     exact h
@@ -434,7 +434,7 @@ theorem ValueTyped.erase {C : VCtx} {Ls : List VSTy} {e : List Instr} {P P' : Pc
     exact .call (ft := VFuncTy.erase _) (by simp [VCtx.erase, hf]) hb hfl.labelsOf ih
   | @retCall Ls rest pc Pr i ft ret targs st stAny hf hb hfl hl hge hres =>
     rw [labels_append]
-    have h := Typed.retCall (C := C.erase) (rest := rest) (pc := pc) (Pr := Pr) (st := labelsOf st)
+    have h := LTyped.retCall (C := C.erase) (rest := rest) (pc := pc) (Pr := Pr) (st := labelsOf st)
       (stAny := labelsOf stAny) (i := i) (ft := ft.erase) (by simp [VCtx.erase, hf]) hb hfl.labelsOf
       (last_labels hl) hge hres.labelsOf
     rw [List.length_map] at h
@@ -444,7 +444,7 @@ theorem ValueTyped.erase {C : VCtx} {Ls : List VSTy} {e : List Instr} {P P' : Pc
     simp only [labelsOf, List.map_cons, List.map_append] at ih ⊢
     exact .callIndirect h1 hge hfl.labelsOf ih
   | @retCallIndirect Ls rest pc Pr l x ps b rs ret targs st stAny h1 hge hfl hl hgr hres =>
-    have h := Typed.retCallIndirect (C := C.erase) (rest := rest) (pc := pc) (Pr := Pr)
+    have h := LTyped.retCallIndirect (C := C.erase) (rest := rest) (pc := pc) (Pr := Pr)
       (st := labelsOf st) (stAny := labelsOf stAny) (l := l) (x := x) h1 hge hfl.labelsOf
       (last_labels hl) hgr hres.labelsOf
     rw [List.length_map] at h
@@ -462,6 +462,11 @@ theorem ValueTyped.erase {C : VCtx} {Ls : List VSTy} {e : List Instr} {P P' : Pc
   | tryTable hfl hres hcl _ _ ihb ihr =>
     rw [labels_append] at ihr ⊢
     exact .tryTable hfl.labelsOf hres (fun c hc => (hcl c hc).erase) ihb ihr
+
+/-- The pc stacks only rise (the paper's `lem:rise`), with value types as without. -/
+theorem rise {C : VCtx} {Ls : List VSTy} {e : List Instr} {P P' : Pcs} {st st' : VSTy}
+    (h : Typed C Ls e P st P' st') : SFlows P P' :=
+  rise_labels h.erase
 
 /-! ### Modules and the theorems -/
 
@@ -490,16 +495,16 @@ theorem VCtx.erase_enter (C : VCtx) (f : VFunc) : (C.enter f).erase = C.erase.en
     cases (f.ty.params ++ f.extra)[i]? <;> rfl
   simp only [VCtx.erase, VCtx.enter, Ctx.enter, hloc]
 
-/-- `WellTyped` with value types: every function's body is typed, with value types, at its type. -/
-def WellValueTyped (C : VCtx) (F : List VFunc) : Prop :=
+/-- `WellLTyped` with value types: every function's body is typed, with value types, at its type. -/
+def WellTyped (C : VCtx) (F : List VFunc) : Prop :=
   ∀ (i : Nat) (f : VFunc), F[i]? = some f →
     C.funcs[i]? = some f.ty ∧
-      ∃ p, ValueTyped (C.enter f) [f.ty.results] f.body [f.ty.bound] [] [p] f.ty.results ∧
+      ∃ p, Typed (C.enter f) [f.ty.results] f.body [f.ty.bound] [] [p] f.ty.results ∧
         (p = Lab.L ∨ ∀ j, C.preserved j → j ∈ f.keep)
 
 /-- A module that is well typed with value types is well typed with the types forgotten. -/
-theorem WellValueTyped.erase {C : VCtx} {F : List VFunc} (h : WellValueTyped C F) :
-    WellTyped C.erase (F.map VFunc.erase) := by
+theorem WellTyped.erase {C : VCtx} {F : List VFunc} (h : WellTyped C F) :
+    WellLTyped C.erase (F.map VFunc.erase) := by
   intro i g hg
   rw [List.getElem?_map] at hg
   cases hf : F[i]? with
@@ -514,10 +519,10 @@ theorem WellValueTyped.erase {C : VCtx} {F : List VFunc} (h : WellValueTyped C F
     exact this
 
 /--
-Noninterference for a module that is well typed with value types: `noninterference`, with the
+Noninterference for a module that is well typed with value types: `noninterference_labels`, with the
 function's type and the context read through `labelsOf` and `VCtx.erase`.
 -/
-theorem value_typed_noninterference {C : VCtx} {F : List VFunc} (hF : WellValueTyped C F)
+theorem noninterference {C : VCtx} {F : List VFunc} (hF : WellTyped C F)
     (hpub : ∀ i, C.preserved i → (C.globals i).2 = Lab.L) {i : Nat} {f : VFunc}
     (hf : F[i]? = some f) {a0 a1 : List Nat} {s0 s1 : State} {e0 e1 : Ended}
     (ha : StkRel (labelsOf f.ty.params) a0 a1) (hs : LowEq C.erase s0 s1)
@@ -526,11 +531,11 @@ theorem value_typed_noninterference {C : VCtx} {F : List VFunc} (hF : WellValueT
     (∃ r0 t0 r1 t1, e0 = .returned r0 t0 ∧ e1 = .returned r1 t1 ∧
       StkRel (labelsOf f.ty.results) r0 r1 ∧ LowEq C.erase t0 t1) ∨
     (∃ tag w t0 t1, e0 = .threw tag w t0 ∧ e1 = .threw tag w t1 ∧ LowEq C.erase t0 t1) :=
-  noninterference hF.erase hpub (i := i) (by simp [hf]) ha hs h0 h1
+  noninterference_labels hF.erase hpub (i := i) (by simp [hf]) ha hs h0 h1
 
 /-- The same for two runs of the machine. -/
-theorem value_typed_machine_noninterference {C : VCtx} {F : List VFunc}
-    (hF : WellValueTyped C F) (hpub : ∀ i, C.preserved i → (C.globals i).2 = Lab.L) {i : Nat}
+theorem machine_noninterference {C : VCtx} {F : List VFunc}
+    (hF : WellTyped C F) (hpub : ∀ i, C.preserved i → (C.globals i).2 = Lab.L) {i : Nat}
     {f : VFunc} (hf : F[i]? = some f) {a0 a1 : List Nat} {s0 s1 : State} {e0 e1 : Ended}
     (ha : StkRel (labelsOf f.ty.params) a0 a1) (hs : LowEq C.erase s0 s1)
     (h0 : Runs (F.map VFunc.erase) (Config.entry f.erase a0 s0) e0)
@@ -538,7 +543,7 @@ theorem value_typed_machine_noninterference {C : VCtx} {F : List VFunc}
     (∃ r0 t0 r1 t1, e0 = .returned r0 t0 ∧ e1 = .returned r1 t1 ∧
       StkRel (labelsOf f.ty.results) r0 r1 ∧ LowEq C.erase t0 t1) ∨
     (∃ tag w t0 t1, e0 = .threw tag w t0 ∧ e1 = .threw tag w t1 ∧ LowEq C.erase t0 t1) :=
-  value_typed_noninterference hF hpub hf ha hs (refinement h0) (refinement h1)
+  noninterference hF hpub hf ha hs (refinement h0) (refinement h1)
 
 /-! ### An example: a 64-bit memory -/
 
@@ -556,16 +561,16 @@ def wideCtx : VCtx where
 /-- A 64-bit address, and a load of a 64-bit float from it, declared secret. -/
 def wideLoad : List Instr := [.localGet 0, .load 0 8 Lab.H, .drop]
 
-theorem wideLoad_typed : ValueTyped wideCtx [[]] wideLoad [Lab.L] [] [Lab.L] [] :=
+theorem wideLoad_typed : Typed wideCtx [[]] wideLoad [Lab.L] [] [Lab.L] [] :=
   .localGet 0 (.load .f64 0 8 Lab.H (.drop .nil))
 
-/-- With the types forgotten it is typed by `Typed`. -/
-example : Typed wideCtx.erase [[]] wideLoad [Lab.L] [] [Lab.L] [] :=
+/-- With the types forgotten it is typed by `LTyped`. -/
+example : LTyped wideCtx.erase [[]] wideLoad [Lab.L] [] [Lab.L] [] :=
   wideLoad_typed.erase
 
 /-- A 32-bit address for the 64-bit memory is not typed. -/
 example (P' : Pcs) (st' : VSTy) :
-    ¬ ValueTyped wideCtx [[]] [.load 0 8 Lab.H] [Lab.L] [(.i32, Lab.L)] P' st' := by
+    ¬ Typed wideCtx [[]] [.load 0 8 Lab.H] [Lab.L] [(.i32, Lab.L)] P' st' := by
   intro h
   cases h
 
