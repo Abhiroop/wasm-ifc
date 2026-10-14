@@ -1893,6 +1893,134 @@ of bounds. A more precise design, for the future work: a status declared secret 
 says, with the type system treating the answer as a secret, checked at run time as a load is
 (`TODO.md`).
 
+## Audit: does the Lean model the paper faithfully? (2026-10-14, Lean at 7e24625, paper at Overleaf 9ee893e)
+
+Read rule by rule against appendix B's three figures and the sixteen rules cited from SecWasm,
+the evaluation figure, Definition `def:attacker`, Theorems `lem:swp-ni`, `lem:refinement` and
+`thm:tini`, and the host paragraph of Section 3.6. Verdict: every rule and every statement that
+the paper marks with the Lean badge is in the Lean in the paper's form, with the differences
+below. None affects soundness; four need a sentence in the paper, and one is a choice.
+
+**A. Where the paper and the Lean state a rule differently.**
+
+1. *The premise `ℓ ⊑ τ2` of T+-Func is not in `WellTyped`.* The Lean puts it where the proof
+   uses it: `callIndirect`, `retCallIndirect` and `callRef` have the premise `AllGe b rs`, that
+   the results of the expected type are at least its bound. In the paper, T+-Call-Indirect and
+   T+-Call-Ref have no such premise, and T+-Func has `ℓ ⊑ τ2` for every declared function. The
+   two systems agree on every program whose indirect calls can proceed: in the paper's, a
+   function that the run-time check accepts at an expected type `τ1 -ℓf-> τ2` has bound at
+   least `ℓf` and results `τ2`, so by its own T+-Func `ℓf ⊑ τ2`. A paper-typed program with an
+   expected type that violates it (`[] -H-> [L]`) has no Lean typing, and its call traps in
+   every run. The implementation checks the premise for every type of the module (type
+   section included), so for it the two agree. For the paper: either add to T+-Call-Indirect
+   and T+-Call-Ref the side condition that the expected type is well formed (`ℓf ⊑ τ2`), which
+   is what the policy stage checks, or say in the appendix that the Lean carries the premise
+   there and not in T+-Func.
+2. *T+-Br-Table's `d = max_j i_j`.* The Lean rule has `∀ t ∈ targets, t ≤ k` and raises down to
+   `k`: any depth at or beyond the deepest target. The Haskell type is the same
+   (`TableReach` of any depth, the targets as `Elem`s within it); the elaborator always takes
+   the deepest target. A derivation with `k` beyond the deepest target raises more pcs and is
+   proved sound. So the paper's rule is the instance the elaborator builds, and the Lean rule
+   is the type. No change needed; if the paper wants `d = max` in Lean, that is a one-line
+   change to the premise (`k = max`), which I have not made since the statements are under
+   review.
+3. *The witness on preserved globals of T+-Loop.* The text of appendix B.2 says of a block, a
+   loop, an if and a try_table that "the pc `p` with which the body ends flows to the pc in
+   force after the construct". For a loop, the Lean (`Restores C pcL P1 keep`) and the Haskell
+   (`Restores pcLoop pcs'`) use the loop's pc `pc_L`, which is at least `p`. The text should
+   say `pc_L` for the loop.
+4. *`clauses(c*, Λ)`.* The caption of the third figure says a clause's label has a type that
+   "consists of the public values of the clause's tag". The Lean (`ClauseOk`) and the Haskell
+   (`Handler`, with a `SegmentFlows` to the target) ask only that the label take as many
+   values as the tag carries (one more for a clause by reference): the values are public and
+   flow into any label. "whose type takes the public values of the clause's tag" is the exact
+   wording.
+5. *Rules the paper does not print and the Lean has:* `tableCopy` between two tables with the
+   source table's level in the premise, `tableInit`, `elemDrop`, the three host primitives
+   `hostGet`, `hostCtl`, `hostPoll`, and `iter` and `dup`, which no program contains (`iter`
+   is how a loop runs; `dup` is what `br_on_null` elaborates to). All reported in the entries
+   of items 6 and 8 above. T+-Relabel on one value is the case of `relabel` (the Lean has only
+   `relabel_results`) with the other labels unchanged.
+
+**B. Where the semantics and the statements differ in form.**
+
+6. *The outcome grammar.* The paper's `o ::= end | br_i | exn_t`. The Lean has a fourth
+   outcome, `tailExn`, for an exception that leaves the callee of a tail call: the function
+   that made the tail call is gone, so its own `try_table`s do not see the exception, and it
+   is an ordinary exception for the caller. The refinement proof found that without it `Eval`
+   let a `try_table` around a tail call catch the callee's exception, which the machine does
+   not do. The paper's grammar and the caption of `fig:eval` (`exits`) should name it, or the
+   text should say that an exception that leaves a tail call is not offered to the function's
+   handlers.
+7. *`⟨f(a), s⟩ ⇓ ret(r, s')` and the initial configuration.* Section 3.2 defines the call's
+   evaluation without the comparison of the function's preserved globals at its return, and
+   Section 4.3 says the initial configuration's control stack `Entry` is empty. The Lean
+   `Invoke` has `Kept f.keep s t`, `Config.entry` runs the body over a boundary that carries
+   the comparison, and the Haskell `startFunction` does the same ("the entry function is held
+   to what every callee is"). E+-Call in `fig:eval` relies on the same `ret`. One clause in
+   each place: the call returns only if the globals the function compares hold what they held
+   at the call.
+8. *The state.* Section 3.2 lists the globals, the memories, "the table", the descriptors, the
+   data segments and the exceptions. The Lean state has any number of tables, the element
+   segments, and the local variables (which the paper keeps outside the state, as the `F` of a
+   configuration), plus the names of the files in each directory and the channel of each
+   file, which the paper's clause (v) covers. Say "the tables" and "the data and element
+   segments".
+9. *Descriptor labels are not inherited in the model.* Section 3.6 says a descriptor inherits
+   the label of the directory in which the file is opened. In the Lean, a file is a channel
+   with a level fixed for the run (`State.file`, `State.chan`), and `hostOpen` gives the new
+   descriptor the file's channel; nothing relates that level to the directory's. The model is
+   the more abstract one, and the theorem holds for any assignment of levels to files that does
+   not change during the run. The inheritance of Section 3.6, with the three checks of the
+   host (confined paths, `EXDEV` between levels, no nesting of levels), is what makes the
+   level of a file fixed and equal to its directory's. The last row of `tab:trust` ("no file
+   is linked into two directories with different labels") is this assumption; it could say
+   "each file has one label for the run, that of its directory, which the host's checks on
+   paths, renames, links and nested directories ensure".
+10. *`lem:refinement` and `thm:tini`* are stated for a run that returns. `refinement` and
+    `machine_noninterference` also cover a run that ends by an exception (the second case of
+    `lem:swp-ni`). The paper may say so or leave it.
+11. *`lem:rise`* has the hypothesis `|Π| = |Π'|`; the Lean `rise` has none and proves the
+    lengths equal (`SFlows` relates lists of one length).
+
+**C. Verified as matching, nothing to change.** The sixteen rules from SecWasm (`const`,
+`unop`, `binop`, `drop`, `select`, the locals and globals, `load`, `store`, `memory.size`,
+`memory.grow` with its public pc and argument, `nop`, and T-Seq built into every rule);
+T+-Block, T+-If, T+-Br, T+-Br-If, T+-Return (the outermost label is the function's result
+type), T+-Unreachable, T+-Call, T+-Return-Call, `return_call_indirect`, T+-Throw,
+T+-Throw-Ref, T+-Try-Table (body under `L :: L :: Π_r`, a clause's branch raises nothing),
+T+-Memory-Fill, T+-Memory-Copy, `memory.init`, `data.drop`, the four table rules,
+T+-Set-Global-Preserved (`ℓ ⊑ pc`; the global's public label is the theorem's hypothesis),
+the witness on preserved globals of block, if and try_table (`Restores`) and of a function's
+return (`WellTyped`'s disjunction, the Haskell's `ReturnsWith`); the five rules of
+`fig:eval`; the run-time checks of a load and an indirect call as premises; `select`'s and
+`binop`'s operand order; the host rules of Section 3.6 (what a read stores is at the
+descriptor's level, a write checks every byte, paths and the other inputs are public, a poll
+reports at the join); the eight clauses of `def:attacker`, in order, with the two extra
+hypotheses that appendix B.4 already names; the attacker's three observations in the
+conclusion; and the statement of `lem:swp-ni` word for word.
+
+**D. What the Lean leaves out, for the appendix's "Scope".** A value is a natural number
+with no range, so the wrapping of a 32-bit address or sum is not modelled, and an operation
+is any function on numbers, so the numeric instructions are not modelled one by one; the
+run-time check of an indirect call compares the labels of the expected type, not its value
+types; `proc_exit`; the operating system's failures on a secret file; linking; the pass that
+splits locals and the inference of labels; the initial labelling of memory from the policy's
+regions (the initial state is any state).
+
+**E. The paper's description of the Lean is behind the code.** Not a question of the Lean's
+faithfulness, but the reviewer will compare. "approximately 6,100 lines" (7,099); "with a
+single value type" and "It leaves out 64-bit memories, linking, and most WASI calls"
+(Section 7.2 and appendix B.4): the value types with address types and the six host shapes
+are in, linking is not; "at 48ac063" (7e24625); `tab:lean`'s files after the renaming of this
+morning: `Typed` and `WellTyped` are in `ValueTypes.lean`, and so are `noninterference` and
+`machine_noninterference` (`Defs.lean` has `LTyped` and `WellLTyped`, `Statement.lean`
+`noninterference_labels`, `Machine.lean` `machine_noninterference_labels`); `tab:trust`'s row
+"The features outside the mechanized core (value types, 64-bit memories, linking, other WASI
+calls)" is now "linking, and the ranges of the value types"; appendix B.4's "host calls that
+read, write, and open files" is now six shapes with every WASI function assigned to one
+(`lean/STATEMENTS.md`, section 8).
+
 ## Where coverage stands (2026-10-12, for the paper's claim)
 
 Supported, with the 3.0 suite passing on all of it: **WebAssembly 3.0 without garbage
