@@ -1863,6 +1863,36 @@ too. `Defs.lean` has the label part and the semantics, `Statement.lean` low equi
 become: the Lean judgment has the value types, and the proofs are on its label part, which
 `Typed.erase` connects. `lean/STATEMENTS.md` says which name is which at its start.
 
+### The host refuses instead of trapping (`3f86d62`; Daniel: the traps "sound a bit hacky", "there has to be a better standard answer")
+
+This supersedes the traps in the table of "Item 8: the host, fixed and modelled". Those traps
+depended on what happened in a run (no data yet on a non-blocking secret socket), so a
+program could pass its tests and stop in use. Now the host refuses an operation whose outcome
+would tell a secret before it makes it, with an ordinary status that depends only on the
+operands and on the levels of the descriptors, which are public. This is the capability
+discipline that WASI has already (`ENOTCAPABLE`), extended to levels.
+
+| Case | Status now | Why it tells nothing |
+|---|---|---|
+| a secret socket made non-blocking (`fd_fdstat_set_flags`, `sock_accept` with the flag) | `ENOTSUP`, in every run; reads on a secret socket wait, and a poll reports at the socket's level | it depends on the socket's level |
+| a seek back from the end or the position of a secret file | `ENOTSUP`, whether or not it would land before the start | it depends on the operands and the file's level |
+| a rename or a hard link between directories of different levels | `EXDEV`, as between two file systems; a program falls back to a copy, which the checks of reads and writes govern | it depends on the directories' levels |
+| a buffer out of bounds through a secret pointer in the list of a read or a write | the trap for an access out of bounds of the memory, as a `store` to a bad address | WebAssembly's own trap; a trap is outside a termination-insensitive theorem |
+
+The one trap left at the host boundary is SecWasm's check that no secret byte goes where it
+may not (a public descriptor, a path). The unit suite has 245 tests (one new: a secret socket
+is not made non-blocking); the gate, both configurations of the suite (63,080 passed, 0
+failed) and the 93 case studies pass. The program that renamed the password into the public
+directory now gets `EXDEV` and stops by itself. The Lean model has these statuses already,
+since `hostStatus` takes the channels' levels.
+
+For the paper: the rule to state is "the host refuses what would tell a secret, with a status
+that depends on the descriptors' levels"; the only traps are the flow check and the access out
+of bounds. A more precise design, for the future work: a status declared secret in the policy
+(an import can already be declared with a secret result) would let the host answer as WASI
+says, with the type system treating the answer as a secret, checked at run time as a load is
+(`TODO.md`).
+
 ## Where coverage stands (2026-10-12, for the paper's claim)
 
 Supported, with the 3.0 suite passing on all of it: **WebAssembly 3.0 without garbage

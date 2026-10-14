@@ -37,6 +37,14 @@ are summarised here, not repeated.
   directories of different levels must share no file by a hard link made outside the run;
   and a path is checked to stay in its directory before it is used, not while (another
   process could change a link in between).
+- [ ] **P2** A status declared secret. Where the outcome of a host call would tell a secret
+  (a non-blocking read on a secret socket, a seek back on a secret file), the host refuses
+  the call with a status that depends only on levels (`nonBlockingRefused`, `FdSeek`). More
+  precise: let the policy declare the status of a call secret (an import can already be
+  declared with a secret result), and then answer as WASI says, with the type system treating
+  the answer as a secret: the declared level against the descriptor's, checked at run time as
+  a load's level is. Needs the declared level in `runWasiCall` and in the Lean `hostStatus`.
+  **decision**, after the deadline.
 - [ ] **P2** The error check after a read: the byte count of a read from a secret descriptor is
   secret, so C's check of `read`'s result raises the pc of what follows, and the password
   checker of `casestudies/` through libc is rejected (`casestudies/README.md`). The checker
