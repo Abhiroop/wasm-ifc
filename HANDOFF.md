@@ -1840,6 +1840,29 @@ fixed point, and the merging of webs after inference (`mergeWebs`) to be a coars
 of the same kind. It is a compiler-correctness proof for one pass. Today the evidence is the
 suite: all 63,080 assertions run through the elaborator with the split on.
 
+### The paper's names on the judgment with value types (`7e24625`, 7,099 lines; Daniel: "Take the names that are on the paper")
+
+| Paper's name | Now | File | Axioms |
+|---|---|---|---|
+| `Typed`, `WellTyped` | the judgment with labelled value types `t⟨ℓ⟩`, and a module typed by it | `ValueTypes.lean` | |
+| `rise` | `lem:rise` for `Typed` | `ValueTypes.lean` | `propext` |
+| `noninterference` | the theorem for a `WellTyped` module | `ValueTypes.lean` | the three standard ones |
+| `machine_noninterference` | the same for two runs of the machine | `ValueTypes.lean` | the three standard ones |
+| `leak_not_typed`, `call_after_secret_branch_typed`, `write_after_public_branch_typed` | about `Typed`, in contexts with value types (`leakTypedCtx` and so on) | `Findings.lean` | `propext` |
+| `Eval`, `Out`, `Invoke`, `Ended`, `StkRel`, `LowEq`, `Config`, `Step`, `Runs`, `refinement`, `Step.sem`, `Runs.sem` | unchanged | as before | as before |
+| `confine`, `ni`, `tini` | unchanged: lemmas of the proof, about the label part | as before | as before |
+
+The label part, on which every proof is, has new names: `LTyped`, `WellLTyped`,
+`rise_labels`, `noninterference_labels`, `machine_noninterference_labels`,
+`leak_not_typed_labels` and the like. `Typed.erase` and `WellTyped.erase` connect the two.
+
+For the paper's table of notation: the judgment and the well-typed module (`Typed`,
+`WellTyped`) and `noninterference` are now in `ValueTypes.lean`, and `machine_noninterference`
+too. `Defs.lean` has the label part and the semantics, `Statement.lean` low equivalence and
+`Invoke`. The appendix's sentence that the Lean rules "are the label part of the rules" can
+become: the Lean judgment has the value types, and the proofs are on its label part, which
+`Typed.erase` connects. `lean/STATEMENTS.md` says which name is which at its start.
+
 ## Where coverage stands (2026-10-12, for the paper's claim)
 
 Supported, with the 3.0 suite passing on all of it: **WebAssembly 3.0 without garbage
