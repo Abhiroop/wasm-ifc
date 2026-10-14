@@ -2021,6 +2021,47 @@ calls)" is now "linking, and the ranges of the value types"; appendix B.4's "hos
 read, write, and open files" is now six shapes with every WASI function assigned to one
 (`lean/STATEMENTS.md`, section 8).
 
+### After the audit: the Lean changed (`9c32712`, 7,123 lines) and the paper edited (Daniel: "Fix and extend the Lean formalization and then update the paper to match")
+
+**What changed in the statements.**
+
+- `WellTyped` and `WellLTyped` have the premise of T+-Func that the function's results are at
+  least its bound (`AllGe f.ty.bound f.ty.results`). The rules `callIndirect`,
+  `retCallIndirect` and `callRef` no longer ask it of the expected type: they have the
+  premises the paper prints and nothing more. The proof gets the secrecy of the results from
+  the callee's own type where two runs call different functions. Item 1 of the audit is
+  closed: the two systems now have the same rules.
+- `Eval.hostOpen` and `Basic.hostOpen` have one premise more: the channel of the file opened
+  has the level of the directory's channel (`s.chan (s.file c name) = s.chan c`). A descriptor
+  inherits the level of the directory its file is opened in, as Section 3.6 says. Item 9 of
+  the audit is closed; the host's checks on paths, renames, links and nested directories are
+  what keep the premise true, and `tab:trust` says so.
+- `proc_exit` is in the core as `hostExit`: typed under a public pc with a public code and the
+  output stack free, like `unreachable`, and without an evaluation rule or a machine step. A
+  run that exits has no outcome, as a run that traps. The guide's table of the 46 functions
+  gives every one a primitive.
+- Nothing else moved. The axioms of `noninterference`, `machine_noninterference` and
+  `refinement` are as before.
+
+**The paper, edited on the `paper` branch (submodule `paper/current`, branch
+`prose-rewrite`, committed and not pushed).** Each edit is what the audit asked for, in the
+paper's own words:
+
+| File | Change |
+|---|---|
+| `03-findings.tex` | the state has "the tables" and "the data and element segments"; the outcome grammar has the fourth outcome $\mathsf{exn}^{\mathrm{tail}}$ with one sentence on it; $\langle f(a), s\rangle \Downarrow \mathsf{ret}(r, s')$ includes the function's comparison of preserved globals; T+-Br-Table's premise is $\max_j i_j \le d$ in `fig:swp-rules` and the text says the elaborator takes the deepest target |
+| `04-core.tex` | the initial configuration's `Entry` holds the invoked function's comparison |
+| `07-metatheory.tex` | the mechanization paragraph: 7,100 lines, any number of memories and tables, the value types with address types, a host primitive per shape; only linking is left out; the verify box names 9c32712 |
+| `B-proofs.tex` | T+-Br-Table's premise as above; the witness on preserved globals says $p$, or $\pc_L$ for a loop; the caption of `fig:wrules3` says the tag's values flow into the clause's label, with the reference in front for a clause by reference; the "Scope" paragraph of appendix B.4 rewritten (seven host primitives, the status as a definition, value types by erasure, what is left out); `tab:lean` points `Typed`, `WellTyped`, `rise`, `noninterference`, `machine_noninterference` at `ValueTypes.lean`; the caption of `fig:eval` has `exits` for the fourth outcome; the step-inventory box notes the counts are unchanged |
+| `A-deviations.tex` | `tab:trust`: the row on features outside the core is "linking, the ranges of the value types"; the host row says each file has one label for the run, that of its directory, kept by the host's checks |
+
+Not changed in the paper, and open for the paper track: Section 3.6's description of the host
+says "A link or a rename requires its two directories to have equal labels", which is now a
+status (`EXDEV`) and no trap, and nothing there says that a secret socket is not made
+non-blocking; the "Runs that trap" paragraph could say that the host's refusals are statuses,
+not traps. The audit's items 10 and 11 (the exception case of `refinement`, `rise` without a
+length hypothesis) were left as they were.
+
 ## Where coverage stands (2026-10-12, for the paper's claim)
 
 Supported, with the 3.0 suite passing on all of it: **WebAssembly 3.0 without garbage
